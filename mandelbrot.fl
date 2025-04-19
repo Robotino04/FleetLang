@@ -1,0 +1,47 @@
+on(self.threads[0]) { // aka the main function
+    let width = 100;
+    let height = 100;
+
+    let num_iterations = 5000;
+    let num_pixels_left: sync i32 = width * height;
+    let image: sync i32[width][height];
+
+    // `all` is a special executor that means execution is distributed across all available
+    // accelerators, CPU cores and machines that are specified when starting the runtime
+    let render = detach (observe(num_pixels_left)) on (all[px@width][py@height], auto(num_pixels_left), unsync(image[px][py])) {
+        // `unsync(image[px][py])` only allows access to one element of image. Will cause a
+        // compilation error if any other part of `image` is accessed (just like any other variable)
+        let x0 = scale_x(px); // `scale_x` and `scale_y` aren't important
+        let y0 = scale_y(py);
+
+        let x = 0;
+        let y = 0;
+        let i = 0;
+        while (x*x + y*y <= 4 && i < num_iterations) {
+            let xtmp = x*x - y*y + x0;
+            let y = 2*x*y + y0;
+            x = xtmp;
+            i += 1;
+        }
+        image[px][py] = i;
+        num_pixels_left -= 1;
+    }
+
+    /*
+    `print(image[0][0]);`
+    This would be illegal here because neither `image[0][0]` nor
+    any superset of it is synced with observe or higher externally.
+    */
+
+    while (!render.done()) {
+        print("{num_pixels_left} pixels left to render");   // works because `num_pixels_left` is
+                                                            // externally synced as `observe`
+    }
+
+    attach render;
+    // `drop render;` // this would stop the task and drop any pending state updates
+                    // also returns all variables just like `attach`
+
+    print(image[0][0]); // works now because attach has waited for the task to complete and ensured
+                        // the consistency of any previously bound variables
+}

@@ -1,0 +1,3 @@
+on(self.threads[0]) {
+    exit(0);
+}
