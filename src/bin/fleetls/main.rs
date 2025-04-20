@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::process::exit;
 use std::sync::LazyLock;
 
+use fleet::parser::Parser;
+use fleet::pretty_print::PrettyPrint;
 use fleet::tokenizer::{TokenType, Tokenizer};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -68,6 +70,7 @@ impl LanguageServer for Backend {
                         save: None,
                     },
                 )),
+                document_formatting_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -214,6 +217,48 @@ impl LanguageServer for Backend {
     async fn shutdown(&self) -> Result<()> {
         exit(0);
         Ok(())
+    }
+
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let text = self
+            .documents
+            .read()
+            .unwrap()
+            .get(&params.text_document.uri)
+            .unwrap()
+            .clone();
+
+        let tokens =
+            Tokenizer::new(text.clone())
+                .tokenize()
+                .map_err(|_| tower_lsp::jsonrpc::Error {
+                    code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                    message: "Tokenization failed".into(),
+                    data: None,
+                })?;
+
+        let program =
+            Parser::new(tokens)
+                .parse_program()
+                .map_err(|_| tower_lsp::jsonrpc::Error {
+                    code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                    message: "Parsing failed".into(),
+                    data: None,
+                })?;
+
+        return Ok(Some(vec![TextEdit {
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: text.chars().filter(|c| *c == '\n').count() as u32,
+                    character: text.split('\n').last().unwrap().chars().count() as u32,
+                },
+            },
+            new_text: program.pretty_print(),
+        }]));
     }
 }
 

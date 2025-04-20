@@ -3,7 +3,7 @@ pub struct Tokenizer {
     index: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TokenType {
     Keyword(Keyword),
     Identifier(String),
@@ -18,7 +18,7 @@ pub enum TokenType {
     Number(i64),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Keyword {
     On,
     Self_,
@@ -33,9 +33,9 @@ pub struct SourceLocation {
 
 #[derive(Clone, Debug)]
 pub struct Token {
+    pub type_: TokenType,
     pub start: SourceLocation,
     pub end: SourceLocation,
-    pub type_: TokenType,
 }
 
 impl Tokenizer {

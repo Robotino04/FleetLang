@@ -16,6 +16,7 @@ name = "fleetls"
 path = "src/bin/fleetls/main.rs"
 
 [dependencies]
+indent = "0.1.1"
 tokio = { version = "1.44.2", features = ["full"] }
 tower-lsp = "0.20.0"
 
