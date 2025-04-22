@@ -1,100 +1,69 @@
-use crate::ast::{AstNode, Executor, ExecutorHost, Expression, Function, Program, Statement};
+use crate::ast::{AstNode, Executor, ExecutorHost, Expression, Statement, TopLevelStatement};
 
-pub trait PrettyPrint: AstNode {
-    fn pretty_print(&self) -> String;
-}
-
-impl PrettyPrint for Program {
-    fn pretty_print(&self) -> String {
-        return self
-            .loose_statements
-            .iter()
-            .map(|stmt| stmt.pretty_print())
-            .collect::<Vec<_>>()
-            .join("\n")
-            + self
-                .functions
+pub fn pretty_print(node: AstNode) -> String {
+    match node {
+        AstNode::Program(program) => {
+            return program
+                .toplevel_statements
                 .iter()
-                .map(|f| f.pretty_print())
+                .map(|stmt| pretty_print(AstNode::TopLevelStatement(stmt.clone())))
                 .collect::<Vec<_>>()
-                .join("\n")
-                .as_str();
-    }
-}
-
-impl PrettyPrint for Statement {
-    fn pretty_print(&self) -> String {
-        match self {
-            Statement::Expression(expression) => expression.pretty_print() + ";",
-            Statement::On {
-                on_token: _,
-                executor,
-                body,
-            } => {
-                return "on (".to_string()
-                    + executor.pretty_print().as_str()
-                    + ") {\n"
-                    + indent::indent_all_by(
-                        4,
-                        body.iter()
-                            .map(|stmt| stmt.pretty_print())
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                    )
-                    .as_str()
-                    + "\n}";
-            }
+                .join("\n");
         }
-    }
-}
-
-impl PrettyPrint for Function {
-    fn pretty_print(&self) -> String {
-        todo!()
-    }
-}
-
-impl PrettyPrint for Expression {
-    fn pretty_print(&self) -> String {
-        match self {
-            Expression::Number { value, token: _ } => value.to_string(),
-            Expression::FunctionCall {
-                name,
-                name_token: _,
-                arguments,
-            } => {
-                return name.clone()
-                    + "("
-                    + arguments
-                        .iter()
-                        .map(|e| e.pretty_print())
+        AstNode::TopLevelStatement(TopLevelStatement::FunctionDefinition(function)) => {
+            pretty_print(AstNode::FunctionDefinition(function))
+        }
+        AstNode::TopLevelStatement(TopLevelStatement::LooseStatement(stmt)) => {
+            pretty_print(AstNode::Statement(stmt))
+        }
+        AstNode::FunctionDefinition(function) => todo!(),
+        AstNode::Statement(Statement::Expression(expression)) => {
+            pretty_print(AstNode::Expression(expression)) + ";"
+        }
+        AstNode::Statement(Statement::On {
+            on_token,
+            executor,
+            body,
+        }) => {
+            return "on (".to_string()
+                + pretty_print(AstNode::Executor(executor)).as_str()
+                + ") {\n"
+                + indent::indent_all_by(
+                    4,
+                    body.iter()
+                        .map(|tls| pretty_print(AstNode::Statement(tls.clone())))
                         .collect::<Vec<_>>()
-                        .join(", ")
-                        .as_str()
-                    + ")";
-            }
+                        .join("\n"),
+                )
+                .as_str()
+                + "\n}";
         }
-    }
-}
-
-impl PrettyPrint for Executor {
-    fn pretty_print(&self) -> String {
-        match self {
-            Executor::Thread {
-                thread_token: _,
-                index,
-                host,
-            } => {
-                return host.pretty_print() + ".threads[" + index.pretty_print().as_str() + "]";
-            }
+        AstNode::ExecutorHost(ExecutorHost::Self_ { token }) => "self".to_string(),
+        AstNode::Executor(Executor::Thread {
+            thread_token,
+            index,
+            host,
+        }) => {
+            return pretty_print(AstNode::ExecutorHost(host))
+                + ".threads["
+                + pretty_print(AstNode::Expression(index)).as_str()
+                + "]";
         }
-    }
-}
-
-impl PrettyPrint for ExecutorHost {
-    fn pretty_print(&self) -> String {
-        match self {
-            ExecutorHost::Self_ { token: _ } => "self".to_string(),
+        AstNode::Expression(Expression::Number { value, token }) => value.to_string(),
+        AstNode::Expression(Expression::FunctionCall {
+            name,
+            name_token,
+            arguments,
+        }) => {
+            return name.clone()
+                + "("
+                + arguments
+                    .iter()
+                    .map(|e| pretty_print(AstNode::Expression(e.clone())))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+                    .as_str()
+                + ")";
         }
     }
 }

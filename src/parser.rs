@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Executor, ExecutorHost, Expression, Program, Statement},
+    ast::{Executor, ExecutorHost, Expression, Program, Statement, TopLevelStatement},
     tokenizer::{Keyword, Token, TokenType},
 };
 
@@ -16,32 +16,38 @@ impl Parser {
         Parser { tokens, index: 0 }
     }
 
-    fn current_token(&self) -> Token {
-        self.tokens[self.index].clone()
+    fn current_token(&self) -> Option<Token> {
+        if self.index < self.tokens.len() {
+            Some(self.tokens[self.index].clone())
+        } else {
+            None
+        }
+    }
+    fn current_token_type(&self) -> Option<TokenType> {
+        self.current_token().map(|tok| tok.type_)
     }
     fn is_done(&self) -> bool {
         self.index >= self.tokens.len()
     }
-    fn consume(&mut self) -> Token {
+    fn consume(&mut self) -> Option<Token> {
         let t = self.current_token();
         self.index += 1;
         return t;
     }
     fn expect(&mut self, token_type: TokenType) -> Result<Token> {
-        if self.current_token().type_ == token_type {
-            return Ok(self.consume());
+        if self.current_token_type() == Some(token_type) {
+            return Ok(self.consume().unwrap());
         } else {
             return Err(());
         }
     }
 
     pub fn parse_program(&mut self) -> Result<Program> {
-        let mut functions = vec![];
-        let mut loose_statements = vec![];
+        let mut tls = vec![];
 
         while !self.is_done() {
             if let Ok(stmt) = self.parse_statement() {
-                loose_statements.push(stmt);
+                tls.push(TopLevelStatement::LooseStatement(stmt));
             } else {
                 eprintln!("Unexpected token {:?}", self.current_token());
                 self.consume();
@@ -49,25 +55,55 @@ impl Parser {
         }
 
         Ok(Program {
-            functions,
-            loose_statements,
+            toplevel_statements: tls,
         })
     }
 
+    pub fn expect_recovering(
+        &mut self,
+        main_type: TokenType,
+        recovery_stops: Vec<TokenType>,
+    ) -> Result<Token> {
+        loop {
+            if recovery_stops
+                .iter()
+                .any(|t| Some(t) == self.current_token_type().as_ref())
+            {
+                break;
+            } else if Some(main_type.clone()) == self.current_token_type() {
+                break;
+            } else if self.current_token_type() == None {
+                break;
+            } else {
+                self.consume();
+                println!(
+                    "recovering from error until one of {:?}, expecting {:?}",
+                    recovery_stops, main_type
+                );
+            }
+        }
+        return self.expect(main_type);
+    }
+
     pub fn parse_statement(&mut self) -> Result<Statement> {
-        match self.current_token().type_ {
-            TokenType::Keyword(Keyword::On) => {
-                let on_token = self.consume();
+        match self.current_token_type() {
+            Some(TokenType::Keyword(Keyword::On)) => {
+                let on_token = self.expect(TokenType::Keyword(Keyword::On)).unwrap();
                 self.expect(TokenType::OpenParen)?;
                 let executor = self.parse_executor()?;
                 self.expect(TokenType::CloseParen)?;
                 self.expect(TokenType::OpenBrace)?;
 
                 let mut body = vec![];
-                while self.current_token().type_ != TokenType::CloseBrace {
-                    body.push(self.parse_statement()?);
+                while self.current_token_type() != Some(TokenType::CloseBrace) {
+                    if let Ok(stmt) = self.parse_statement() {
+                        body.push(stmt);
+                    } else {
+                        println!("failed to parse statement");
+                        break;
+                    }
                 }
-                self.expect(TokenType::CloseBrace)?;
+                self.expect_recovering(TokenType::CloseBrace, vec![])?;
                 return Ok(Statement::On {
                     on_token,
                     executor,
@@ -76,7 +112,7 @@ impl Parser {
             }
             _ => {
                 if let Ok(exp) = self.parse_expression() {
-                    self.expect(TokenType::Semicolon)?;
+                    self.expect_recovering(TokenType::Semicolon, vec![TokenType::CloseBrace])?;
                     return Ok(Statement::Expression(exp));
                 } else {
                     return Err(());
@@ -86,19 +122,19 @@ impl Parser {
     }
 
     pub fn parse_expression(&mut self) -> Result<Expression> {
-        match self.current_token().type_ {
-            TokenType::Number(value) => {
+        match self.current_token_type() {
+            Some(TokenType::Number(value)) => {
                 return Ok(Expression::Number {
                     value,
-                    token: self.consume(),
+                    token: self.consume().unwrap(),
                 });
             }
 
-            TokenType::Identifier(name) => {
-                let name_token = self.consume();
+            Some(TokenType::Identifier(name)) => {
+                let name_token = self.consume().unwrap();
                 self.expect(TokenType::OpenParen)?;
                 let mut arguments = vec![];
-                while self.current_token().type_ != TokenType::CloseParen {
+                while self.current_token_type() != Some(TokenType::CloseParen) {
                     arguments.push(self.parse_expression()?);
                 }
                 self.expect(TokenType::CloseParen)?;

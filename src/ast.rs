@@ -1,14 +1,25 @@
 use crate::tokenizer::Token;
 
-pub trait AstNode {}
+pub enum AstNode {
+    Program(Program),
+    TopLevelStatement(TopLevelStatement),
+    FunctionDefinition(Function),
+    Statement(Statement),
+    ExecutorHost(ExecutorHost),
+    Executor(Executor),
+    Expression(Expression),
+}
 
 #[derive(Clone, Debug)]
 pub struct Program {
-    pub functions: Vec<Function>,
-    pub loose_statements: Vec<Statement>,
+    pub toplevel_statements: Vec<TopLevelStatement>,
 }
 
-impl AstNode for Program {}
+#[derive(Clone, Debug)]
+pub enum TopLevelStatement {
+    FunctionDefinition(Function),
+    LooseStatement(Statement),
+}
 
 #[derive(Clone, Debug)]
 pub struct Function {
@@ -16,7 +27,6 @@ pub struct Function {
     pub name_token: Token,
     pub body: Vec<Statement>,
 }
-impl AstNode for Function {}
 
 #[derive(Clone, Debug)]
 pub enum Statement {
@@ -27,13 +37,11 @@ pub enum Statement {
         body: Vec<Statement>,
     },
 }
-impl AstNode for Statement {}
 
 #[derive(Clone, Debug)]
 pub enum ExecutorHost {
     Self_ { token: Token },
 }
-impl AstNode for ExecutorHost {}
 
 #[derive(Clone, Debug)]
 pub enum Executor {
@@ -43,7 +51,6 @@ pub enum Executor {
         host: ExecutorHost,
     },
 }
-impl AstNode for Executor {}
 
 #[derive(Clone, Debug)]
 pub enum Expression {
@@ -57,4 +64,3 @@ pub enum Expression {
         arguments: Vec<Expression>,
     },
 }
-impl AstNode for Expression {}

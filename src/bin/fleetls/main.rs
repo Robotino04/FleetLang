@@ -1,13 +1,15 @@
 use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::process::exit;
 use std::sync::LazyLock;
 
+use fleet::ast::{AstNode, Executor, ExecutorHost, Expression, Statement};
 use fleet::parser::Parser;
-use fleet::pretty_print::PrettyPrint;
-use fleet::tokenizer::{TokenType, Tokenizer};
+use fleet::pretty_print::pretty_print;
+use fleet::tokenizer::{SourceLocation, Token, TokenType, Tokenizer};
 use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
-use tower_lsp::{Client, LanguageServer, LspService, Server};
+use tower_lsp::{Client, LspService, Server};
+use tower_lsp::{LanguageServer, lsp_types::*};
 
 #[derive(Debug)]
 struct Backend {
@@ -17,17 +19,164 @@ struct Backend {
 
 static SEMANTIC_TOKEN_TYPES: LazyLock<Vec<SemanticTokenType>> = std::sync::LazyLock::new(|| {
     vec![
+        SemanticTokenType::NAMESPACE,
+        SemanticTokenType::TYPE,
+        SemanticTokenType::CLASS,
+        SemanticTokenType::ENUM,
+        SemanticTokenType::INTERFACE,
+        SemanticTokenType::STRUCT,
+        SemanticTokenType::TYPE_PARAMETER,
+        SemanticTokenType::PARAMETER,
         SemanticTokenType::VARIABLE,
-        SemanticTokenType::NUMBER,
+        SemanticTokenType::PROPERTY,
+        SemanticTokenType::ENUM_MEMBER,
+        SemanticTokenType::EVENT,
+        SemanticTokenType::FUNCTION,
+        SemanticTokenType::METHOD,
+        SemanticTokenType::MACRO,
         SemanticTokenType::KEYWORD,
+        SemanticTokenType::MODIFIER,
+        SemanticTokenType::COMMENT,
+        SemanticTokenType::STRING,
+        SemanticTokenType::NUMBER,
+        SemanticTokenType::REGEXP,
+        SemanticTokenType::OPERATOR,
+        SemanticTokenType::DECORATOR,
     ]
 });
 
-fn find_token_type_index(token_type: SemanticTokenType) -> u32 {
-    SEMANTIC_TOKEN_TYPES
-        .iter()
-        .position(|t| t.as_str() == token_type.as_str())
-        .unwrap_or(0) as u32
+fn token_delta_line(a: &Token, b: &Token) -> u32 {
+    (b.start.line - a.start.line) as u32
+}
+fn token_delta_start(a: &Token, b: &Token) -> u32 {
+    if b.start.line == a.start.line {
+        (b.start.column - a.start.column) as u32
+    } else {
+        b.start.column as u32
+    }
+}
+fn token_length(a: &Token) -> u32 {
+    (a.end.index - a.start.index) as u32
+}
+
+impl Backend {
+    fn get_lsp_tokens(
+        &self,
+        previous_token: &mut Token,
+        tokens: &mut Vec<SemanticToken>,
+        node: AstNode,
+    ) {
+        match node {
+            AstNode::Program(program) => {
+                for tls in program.toplevel_statements {
+                    self.get_lsp_tokens(previous_token, tokens, AstNode::TopLevelStatement(tls));
+                }
+            }
+            AstNode::TopLevelStatement(fleet::ast::TopLevelStatement::LooseStatement(stmt)) => {
+                self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(stmt))
+            }
+            AstNode::TopLevelStatement(fleet::ast::TopLevelStatement::FunctionDefinition(
+                function,
+            )) => self.get_lsp_tokens(
+                previous_token,
+                tokens,
+                AstNode::FunctionDefinition(function),
+            ),
+            AstNode::FunctionDefinition(function) => {
+                tokens.push(self.build_semantic_token(
+                    previous_token,
+                    &function.name_token,
+                    SemanticTokenType::FUNCTION,
+                ));
+                for stmt in &function.body {
+                    self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(stmt.clone()));
+                }
+            }
+            AstNode::Statement(Statement::Expression(expression)) => {
+                self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(expression))
+            }
+            AstNode::Statement(Statement::On {
+                on_token,
+                executor,
+                body,
+            }) => {
+                tokens.push(self.build_semantic_token(
+                    previous_token,
+                    &on_token,
+                    SemanticTokenType::KEYWORD,
+                ));
+                self.get_lsp_tokens(previous_token, tokens, AstNode::Executor(executor));
+                for stmt in &body {
+                    self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(stmt.clone()));
+                }
+            }
+            AstNode::ExecutorHost(ExecutorHost::Self_ { token }) => {
+                tokens.push(self.build_semantic_token(
+                    previous_token,
+                    &token,
+                    SemanticTokenType::KEYWORD,
+                ));
+            }
+            AstNode::Executor(Executor::Thread {
+                thread_token,
+                index,
+                host,
+            }) => {
+                self.get_lsp_tokens(previous_token, tokens, AstNode::ExecutorHost(host));
+                tokens.push(self.build_semantic_token(
+                    previous_token,
+                    &thread_token,
+                    SemanticTokenType::VARIABLE,
+                ));
+                self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(index));
+            }
+            AstNode::Expression(Expression::Number { value: _, token }) => {
+                tokens.push(self.build_semantic_token(
+                    previous_token,
+                    &token,
+                    SemanticTokenType::NUMBER,
+                ));
+            }
+            AstNode::Expression(Expression::FunctionCall {
+                name: _,
+                name_token,
+                arguments,
+            }) => {
+                tokens.push(self.build_semantic_token(
+                    previous_token,
+                    &name_token,
+                    SemanticTokenType::FUNCTION,
+                ));
+                for arg in arguments {
+                    self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(arg));
+                }
+            }
+        }
+    }
+
+    fn build_semantic_token(
+        &self,
+        previous_token: &mut Token,
+        token: &Token,
+        token_type: SemanticTokenType,
+    ) -> SemanticToken {
+        let res = SemanticToken {
+            delta_line: token_delta_line(previous_token, token),
+            delta_start: token_delta_start(previous_token, token),
+            length: token_length(token),
+            token_type: self.find_token_type_index(token_type),
+            token_modifiers_bitset: 0,
+        };
+        *previous_token = token.clone();
+        return res;
+    }
+
+    fn find_token_type_index(&self, token_type: SemanticTokenType) -> u32 {
+        SEMANTIC_TOKEN_TYPES
+            .iter()
+            .position(|t| t.as_str() == token_type.as_str())
+            .unwrap_or(0) as u32
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -153,6 +302,7 @@ impl LanguageServer for Backend {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
+        println!("---------------------------------------");
         let text = self
             .documents
             .read()
@@ -169,48 +319,36 @@ impl LanguageServer for Backend {
                 data: None,
             })?;
 
-        let mut prev_token = tokens.first().unwrap();
+        let program =
+            Parser::new(tokens)
+                .parse_program()
+                .map_err(|_| tower_lsp::jsonrpc::Error {
+                    code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                    message: "Tokenization failed".into(),
+                    data: None,
+                })?;
+
+        let mut prev_token = Token {
+            type_: TokenType::Semicolon,
+            start: SourceLocation {
+                index: 0,
+                line: 1,
+                column: 0,
+            },
+            end: SourceLocation {
+                index: 0,
+                line: 1,
+                column: 0,
+            },
+        };
+
+        let mut lsp_tokens = vec![];
+
+        self.get_lsp_tokens(&mut prev_token, &mut lsp_tokens, AstNode::Program(program));
 
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             result_id: None,
-            data: tokens
-                .iter()
-                .map(|token| {
-                    let r = Some(SemanticToken {
-                        delta_line: (token.start.line - prev_token.start.line) as u32,
-                        delta_start: if prev_token.start.line == token.start.line {
-                            (token.start.column - prev_token.start.column) as u32
-                        } else {
-                            token.start.column as u32
-                        },
-                        length: (token.end.index - token.start.index) as u32,
-                        token_type: match token.type_ {
-                            TokenType::Keyword(_) => {
-                                find_token_type_index(SemanticTokenType::KEYWORD)
-                            }
-                            TokenType::Identifier(_) => {
-                                find_token_type_index(SemanticTokenType::VARIABLE)
-                            }
-                            TokenType::Number(_) => {
-                                find_token_type_index(SemanticTokenType::NUMBER)
-                            }
-                            TokenType::OpenBrace
-                            | TokenType::CloseBrace
-                            | TokenType::OpenParen
-                            | TokenType::CloseParen
-                            | TokenType::OpenBracket
-                            | TokenType::CloseBracket
-                            | TokenType::Semicolon
-                            | TokenType::Dot => return None,
-                        },
-                        token_modifiers_bitset: 0,
-                    });
-                    prev_token = token;
-                    return r;
-                })
-                .filter(|x| *x != None)
-                .map(|x| x.unwrap())
-                .collect(),
+            data: lsp_tokens,
         })))
     }
 
@@ -257,19 +395,30 @@ impl LanguageServer for Backend {
                     character: text.split('\n').last().unwrap().chars().count() as u32,
                 },
             },
-            new_text: program.pretty_print(),
+            new_text: pretty_print(AstNode::Program(program)),
         }]));
     }
 }
 
 #[tokio::main]
 async fn main() {
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.set_reuseaddr(true).unwrap();
+    socket
+        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234))
+        .unwrap();
+    let listener = socket.listen(5).unwrap();
 
-    let (service, socket) = LspService::new(|client| Backend {
-        client,
-        documents: Default::default(),
-    });
-    Server::new(stdin, stdout, socket).serve(service).await;
+    loop {
+        let (mut client_connection, client_addr) = listener.accept().await.unwrap();
+        let (service, loopback_socket) = LspService::new(|client| Backend {
+            client,
+            documents: Default::default(),
+        });
+
+        let (read_half, write_half) = client_connection.split();
+        Server::new(read_half, write_half, loopback_socket)
+            .serve(service)
+            .await;
+    }
 }
