@@ -10,12 +10,14 @@ impl PrettyPrint for Program {
             .loose_statements
             .iter()
             .map(|stmt| stmt.pretty_print())
-            .collect::<String>()
+            .collect::<Vec<_>>()
+            .join("\n")
             + self
                 .functions
                 .iter()
                 .map(|f| f.pretty_print())
-                .collect::<String>()
+                .collect::<Vec<_>>()
+                .join("\n")
                 .as_str();
     }
 }
@@ -23,7 +25,7 @@ impl PrettyPrint for Program {
 impl PrettyPrint for Statement {
     fn pretty_print(&self) -> String {
         match self {
-            Statement::Expression(expression) => expression.pretty_print() + ";\n",
+            Statement::Expression(expression) => expression.pretty_print() + ";",
             Statement::On {
                 on_token: _,
                 executor,
@@ -31,15 +33,16 @@ impl PrettyPrint for Statement {
             } => {
                 return "on (".to_string()
                     + executor.pretty_print().as_str()
-                    + ") {\n    "
-                    + indent::indent_by(
+                    + ") {\n"
+                    + indent::indent_all_by(
                         4,
                         body.iter()
                             .map(|stmt| stmt.pretty_print())
-                            .collect::<String>(),
+                            .collect::<Vec<_>>()
+                            .join("\n"),
                     )
                     .as_str()
-                    + "}\n";
+                    + "\n}";
             }
         }
     }
@@ -65,7 +68,8 @@ impl PrettyPrint for Expression {
                     + arguments
                         .iter()
                         .map(|e| e.pretty_print())
-                        .collect::<String>()
+                        .collect::<Vec<_>>()
+                        .join(", ")
                         .as_str()
                     + ")";
             }
