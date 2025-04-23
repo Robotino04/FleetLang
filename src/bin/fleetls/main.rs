@@ -317,7 +317,7 @@ impl LanguageServer for Backend {
             .remove(&params.text_document.uri);
     }
 
-    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+    async fn hover(&self, _params: HoverParams) -> Result<Option<Hover>> {
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
@@ -383,7 +383,6 @@ impl LanguageServer for Backend {
 
     async fn shutdown(&self) -> Result<()> {
         exit(0);
-        Ok(())
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
@@ -447,7 +446,7 @@ async fn main() {
     let listener = socket.listen(5).unwrap();
 
     loop {
-        let (mut client_connection, client_addr) = listener.accept().await.unwrap();
+        let (mut client_connection, _client_addr) = listener.accept().await.unwrap();
         let (service, loopback_socket) = LspService::new(|client| Backend {
             client,
             documents: Default::default(),

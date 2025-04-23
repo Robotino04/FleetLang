@@ -16,12 +16,12 @@ pub fn pretty_print(node: AstNode) -> String {
         AstNode::TopLevelStatement(TopLevelStatement::LooseStatement(stmt)) => {
             pretty_print(AstNode::Statement(stmt))
         }
-        AstNode::FunctionDefinition(function) => todo!(),
+        AstNode::FunctionDefinition(_function) => todo!(),
         AstNode::Statement(Statement::Expression(expression)) => {
             pretty_print(AstNode::Expression(expression)) + ";"
         }
         AstNode::Statement(Statement::On {
-            on_token,
+            on_token: _,
             executor,
             body,
         }) => {
@@ -38,9 +38,9 @@ pub fn pretty_print(node: AstNode) -> String {
                 .as_str()
                 + "\n}";
         }
-        AstNode::ExecutorHost(ExecutorHost::Self_ { token }) => "self".to_string(),
+        AstNode::ExecutorHost(ExecutorHost::Self_ { token: _ }) => "self".to_string(),
         AstNode::Executor(Executor::Thread {
-            thread_token,
+            thread_token: _,
             index,
             host,
         }) => {
@@ -49,10 +49,10 @@ pub fn pretty_print(node: AstNode) -> String {
                 + pretty_print(AstNode::Expression(index)).as_str()
                 + "]";
         }
-        AstNode::Expression(Expression::Number { value, token }) => value.to_string(),
+        AstNode::Expression(Expression::Number { value, token: _ }) => value.to_string(),
         AstNode::Expression(Expression::FunctionCall {
             name,
-            name_token,
+            name_token: _,
             arguments,
         }) => {
             return name.clone()
