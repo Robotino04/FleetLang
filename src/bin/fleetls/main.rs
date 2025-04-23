@@ -239,31 +239,60 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentDiagnosticParams,
     ) -> Result<DocumentDiagnosticReportResult> {
+        let text = self
+            .documents
+            .read()
+            .unwrap()
+            .get(&params.text_document.uri)
+            .unwrap()
+            .clone();
+
+        let tokens = Tokenizer::new(text)
+            .tokenize()
+            .map_err(|_| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: "Tokenization failed".into(),
+                data: None,
+            })?;
+
+        let mut parser = Parser::new(tokens);
+        let _program = parser
+            .parse_program()
+            .map_err(|_| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: "Parsing failed completely".into(),
+                data: None,
+            })?;
+
         Ok(DocumentDiagnosticReportResult::Report(
             DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
                 related_documents: None,
                 full_document_diagnostic_report: FullDocumentDiagnosticReport {
                     result_id: None,
-                    items: vec![Diagnostic {
-                        range: Range {
-                            start: Position {
-                                line: 0,
-                                character: 0,
+                    items: parser
+                        .errors()
+                        .iter()
+                        .map(|error| Diagnostic {
+                            range: Range {
+                                start: Position {
+                                    line: (error.start.line - 1) as u32,
+                                    character: error.start.column as u32,
+                                },
+                                end: Position {
+                                    line: (error.end.line - 1) as u32,
+                                    character: error.end.column as u32,
+                                },
                             },
-                            end: Position {
-                                line: 0,
-                                character: 0,
-                            },
-                        },
-                        severity: Some(DiagnosticSeverity::ERROR),
-                        code: None,
-                        code_description: None,
-                        source: Some("FleetLS".to_string()),
-                        message: "FleetLS is running".to_string(),
-                        related_information: None,
-                        tags: None,
-                        data: None,
-                    }],
+                            severity: Some(DiagnosticSeverity::ERROR),
+                            code: None,
+                            code_description: None,
+                            source: Some("FleetLS".to_string()),
+                            message: error.message.clone(),
+                            related_information: None,
+                            tags: None,
+                            data: None,
+                        })
+                        .collect(),
                 },
             }),
         ))
@@ -324,7 +353,7 @@ impl LanguageServer for Backend {
                 .parse_program()
                 .map_err(|_| tower_lsp::jsonrpc::Error {
                     code: tower_lsp::jsonrpc::ErrorCode::ParseError,
-                    message: "Tokenization failed".into(),
+                    message: "Parsing failed completely".into(),
                     data: None,
                 })?;
 
@@ -375,14 +404,22 @@ impl LanguageServer for Backend {
                     data: None,
                 })?;
 
-        let program =
-            Parser::new(tokens)
-                .parse_program()
-                .map_err(|_| tower_lsp::jsonrpc::Error {
-                    code: tower_lsp::jsonrpc::ErrorCode::ParseError,
-                    message: "Parsing failed".into(),
-                    data: None,
-                })?;
+        let mut parser = Parser::new(tokens);
+        let program = parser
+            .parse_program()
+            .map_err(|_| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: "Parsing failed completely".into(),
+                data: None,
+            })?;
+
+        if !parser.errors().is_empty() {
+            return Err(tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: "Code has errors. Not formatting.".into(),
+                data: None,
+            });
+        }
 
         return Ok(Some(vec![TextEdit {
             range: Range {

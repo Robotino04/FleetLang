@@ -24,14 +24,14 @@ pub enum Keyword {
     Self_,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct SourceLocation {
     pub index: usize,
     pub line: usize,
     pub column: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Token {
     pub type_: TokenType,
     pub start: SourceLocation,

@@ -1,19 +1,35 @@
 use crate::{
     ast::{Executor, ExecutorHost, Expression, Program, Statement, TopLevelStatement},
-    tokenizer::{Keyword, Token, TokenType},
+    tokenizer::{Keyword, SourceLocation, Token, TokenType},
 };
 
 type Result<T> = ::core::result::Result<T, ()>;
 
 #[derive(Clone, Debug)]
+pub struct ParseError {
+    pub start: SourceLocation,
+    pub end: SourceLocation,
+    pub message: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct Parser {
     tokens: Vec<Token>,
     index: usize,
+    errors: Vec<ParseError>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Parser {
-        Parser { tokens, index: 0 }
+        Parser {
+            tokens,
+            index: 0,
+            errors: vec![],
+        }
+    }
+
+    pub fn errors(&self) -> &Vec<ParseError> {
+        return &self.errors;
     }
 
     fn current_token(&self) -> Option<Token> {
@@ -35,10 +51,24 @@ impl Parser {
         return t;
     }
     fn expect(&mut self, token_type: TokenType) -> Result<Token> {
-        if self.current_token_type() == Some(token_type) {
+        if self.current_token_type() == Some(token_type.clone()) {
             return Ok(self.consume().unwrap());
         } else {
-            return Err(());
+            if let Some(token) = self.current_token() {
+                self.errors.push(ParseError {
+                    start: token.start,
+                    end: token.end,
+                    message: format!("Expected {:?}, but found {:?}", token_type, token.type_),
+                });
+                return Err(());
+            } else {
+                self.errors.push(ParseError {
+                    start: self.tokens.last().unwrap().start,
+                    end: self.tokens.last().unwrap().end,
+                    message: format!("Expected {:?}, but found End of file", token_type),
+                });
+                return Err(());
+            }
         }
     }
 
@@ -49,8 +79,13 @@ impl Parser {
             if let Ok(stmt) = self.parse_statement() {
                 tls.push(TopLevelStatement::LooseStatement(stmt));
             } else {
-                eprintln!("Unexpected token {:?}", self.current_token());
-                self.consume();
+                if let Some(token) = self.consume() {
+                    self.errors.push(ParseError {
+                        start: token.start,
+                        end: token.end,
+                        message: format!("Unexpected token {:?}", token),
+                    });
+                }
             }
         }
 
@@ -64,6 +99,8 @@ impl Parser {
         main_type: TokenType,
         recovery_stops: Vec<TokenType>,
     ) -> Result<Token> {
+        let recovery_start = self.current_token();
+        let mut recovery_end = self.current_token();
         loop {
             if recovery_stops
                 .iter()
@@ -80,6 +117,19 @@ impl Parser {
                     "recovering from error until one of {:?}, expecting {:?}",
                     recovery_stops, main_type
                 );
+            }
+            recovery_end = self.current_token();
+        }
+        if recovery_start != recovery_end {
+            if let (Some(start), Some(end)) = (recovery_start, recovery_end) {
+                self.errors.push(ParseError {
+                    start: start.start,
+                    end: end.end,
+                    message: format!(
+                        "Expected {:?}. Recovered by skipping until one of {:?} or {:?}",
+                        main_type, recovery_stops, main_type
+                    ),
+                })
             }
         }
         return self.expect(main_type);
