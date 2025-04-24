@@ -142,6 +142,14 @@ impl Parser {
                 self.expect(TokenType::OpenParen)?;
                 let executor = self.parse_executor()?;
                 self.expect(TokenType::CloseParen)?;
+
+                return Ok(Statement::On {
+                    on_token,
+                    executor,
+                    body: Box::new(self.parse_statement()?),
+                });
+            }
+            Some(TokenType::OpenBrace) => {
                 self.expect(TokenType::OpenBrace)?;
 
                 let mut body = vec![];
@@ -154,11 +162,8 @@ impl Parser {
                     }
                 }
                 self.expect_recovering(TokenType::CloseBrace, vec![])?;
-                return Ok(Statement::On {
-                    on_token,
-                    executor,
-                    body,
-                });
+
+                return Ok(Statement::Block(body));
             }
             _ => {
                 if let Ok(exp) = self.parse_expression() {

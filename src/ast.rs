@@ -24,8 +24,8 @@ pub enum TopLevelStatement {
 #[derive(Clone, Debug)]
 pub struct Function {
     pub name: String,
-    pub name_token: Token,
-    pub body: Vec<Statement>,
+    pub name_token: Option<Token>,
+    pub body: Statement,
 }
 
 #[derive(Clone, Debug)]
@@ -34,8 +34,9 @@ pub enum Statement {
     On {
         on_token: Token,
         executor: Executor,
-        body: Vec<Statement>,
+        body: Box<Statement>,
     },
+    Block(Vec<Statement>),
 }
 
 #[derive(Clone, Debug)]

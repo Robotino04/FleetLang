@@ -83,14 +83,14 @@ impl Backend {
                 AstNode::FunctionDefinition(function),
             ),
             AstNode::FunctionDefinition(function) => {
-                tokens.push(self.build_semantic_token(
-                    previous_token,
-                    &function.name_token,
-                    SemanticTokenType::FUNCTION,
-                ));
-                for stmt in &function.body {
-                    self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(stmt.clone()));
+                if let Some(name_token) = function.name_token {
+                    tokens.push(self.build_semantic_token(
+                        previous_token,
+                        &name_token,
+                        SemanticTokenType::FUNCTION,
+                    ));
                 }
+                self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(function.body));
             }
             AstNode::Statement(Statement::Expression(expression)) => {
                 self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(expression))
@@ -106,8 +106,11 @@ impl Backend {
                     SemanticTokenType::KEYWORD,
                 ));
                 self.get_lsp_tokens(previous_token, tokens, AstNode::Executor(executor));
-                for stmt in &body {
-                    self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(stmt.clone()));
+                self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(*body));
+            }
+            AstNode::Statement(Statement::Block(body)) => {
+                for stmt in body {
+                    self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(stmt));
                 }
             }
             AstNode::ExecutorHost(ExecutorHost::Self_ { token }) => {

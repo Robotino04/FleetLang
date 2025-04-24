@@ -1,5 +1,6 @@
 use fleet::{
     ast::AstNode,
+    generate_c::generate_c,
     parser::{ParseError, Parser},
     pretty_print::pretty_print,
     tokenizer::Tokenizer,
@@ -70,11 +71,15 @@ fn main() {
 
     println!("{}", generate_header("AST", 50));
 
-    println!("{}", pretty_print(AstNode::Program(program)));
+    println!("{}", pretty_print(AstNode::Program(program.clone())));
 
     println!("{}", generate_header("Errors", 50));
 
     for error in parser.errors() {
         print_error_message(&src.to_string(), error);
     }
+
+    println!("{}", generate_header("C Code", 50));
+
+    println!("{}", generate_c(AstNode::Program(program)));
 }

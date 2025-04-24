@@ -27,7 +27,11 @@ pub fn pretty_print(node: AstNode) -> String {
         }) => {
             return "on (".to_string()
                 + pretty_print(AstNode::Executor(executor)).as_str()
-                + ") {\n"
+                + ") "
+                + pretty_print(AstNode::Statement(*body)).as_str();
+        }
+        AstNode::Statement(Statement::Block(body)) => {
+            return "{\n".to_string()
                 + indent::indent_all_by(
                     4,
                     body.iter()
