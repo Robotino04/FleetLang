@@ -1,9 +1,17 @@
+use std::path::Path;
+
 use fleet::{
     ast::AstNode,
     generate_c::generate_c,
+    ir_generator::IrGenerator,
     parser::{ParseError, Parser},
     pretty_print::pretty_print,
     tokenizer::Tokenizer,
+};
+use inkwell::{
+    OptimizationLevel,
+    context::Context,
+    targets::{CodeModel, FileType, RelocMode, Target, TargetTriple},
 };
 
 fn generate_header(text: impl AsRef<str>, length: usize) -> String {
@@ -81,5 +89,36 @@ fn main() {
 
     println!("{}", generate_header("C Code", 50));
 
-    println!("{}", generate_c(AstNode::Program(program)));
+    println!("{}", generate_c(AstNode::Program(program.clone())));
+
+    println!("{}", generate_header("LLVM IR", 50));
+
+    let context = Context::create();
+    let mut ir_generator = IrGenerator::new(&context);
+    let module = ir_generator.generate_program_ir(&program);
+
+    println!("{}", module.print_to_string().to_str().unwrap());
+
+    Target::initialize_all(&inkwell::targets::InitializationConfig::default());
+
+    let triple = TargetTriple::create("x86_64-pc-linux-gnu");
+    let target = Target::from_triple(&triple).unwrap();
+    let target_machine = target
+        .create_target_machine(
+            &triple,
+            "x86-64",
+            "+avx2",
+            OptimizationLevel::Default,
+            RelocMode::Default,
+            CodeModel::Default,
+        )
+        .unwrap();
+    println!("target created");
+
+    let output_path = Path::new("output.o");
+    target_machine
+        .write_to_file(module, FileType::Object, output_path)
+        .unwrap();
+
+    println!("Object file written to {:?}", output_path);
 }
