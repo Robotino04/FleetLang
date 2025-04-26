@@ -1,3 +1,10 @@
+if exists("g:fleetls_loaded")
+    echo "FleetLS already loaded"
+    finish
+endif
+
+let g:fleetls_loaded = 1
+
 au BufEnter,BufRead,BufNewFile *.fl     setfiletype fleet
 au BufEnter,BufRead,BufNewFile *.fleet  setfiletype fleet
 "au BufEnter,BufRead,BufNewFile *.fl     source highlight.vim
@@ -20,3 +27,4 @@ configs.fleetls = {
 }
 lspconfig.fleetls.setup {}
 EOF
+echo "FleetLS is now loaded"
