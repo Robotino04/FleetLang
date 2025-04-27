@@ -254,8 +254,11 @@ impl Tokenizer {
         }
 
         // flush the last unknown character
-        self.unk_char_token.type_ = TokenType::UnknownCharacters(self.unk_char_accumulator.clone());
-        self.tokens.push(self.unk_char_token.clone());
+        if !self.unk_char_accumulator.is_empty() {
+            self.unk_char_token.type_ =
+                TokenType::UnknownCharacters(self.unk_char_accumulator.clone());
+            self.tokens.push(self.unk_char_token.clone());
+        }
 
         return Ok(&self.tokens);
     }

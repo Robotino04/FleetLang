@@ -35,7 +35,6 @@ macro_rules! expect {
                     result
                 },
                 _ => {
-                    dbg!();
                     if let Some(token) = $self.current_token() {
                         $self.errors.push(ParseError {
                             start: token.start,
@@ -58,9 +57,8 @@ macro_rules! expect {
 }
 
 macro_rules! recover_until {
-    {$self:ident, $($recovery_stops:pat),+} => {
+    {$self:ident, $start_of_recovery:ident, $($recovery_stops:pat),+} => {
         {
-            let recovery_start = $self.current_token();
             loop {
                 match $self.current_token_type() {
                     None => break,
@@ -75,9 +73,8 @@ macro_rules! recover_until {
                 }
             }
             let recovery_end = $self.current_token();
-            if recovery_start != recovery_end {
-                if let (Some(start), Some(end)) = (recovery_start, recovery_end) {
-                    dbg!();
+            if $start_of_recovery != recovery_end {
+                if let (Some(start), Some(end)) = ($start_of_recovery, recovery_end) {
                     $self.errors.push(ParseError {
                         start: start.start,
                         end: end.end,
@@ -132,10 +129,11 @@ impl Parser {
         let mut functions = vec![];
 
         while !self.is_done() {
+            let recovery_start = self.current_token();
             if let Ok(function) = self.parse_function_definition() {
                 functions.push(function);
             } else {
-                recover_until!(self, TokenType::Keyword(Keyword::Let));
+                recover_until!(self, recovery_start, TokenType::Keyword(Keyword::Let));
                 /*
                 if let Some(token) = self.consume() {
                     self.errors.push(ParseError {
@@ -171,11 +169,17 @@ impl Parser {
                 while self.current_token_type() != Some(TokenType::CloseBrace)
                     && self.current_token_type() != None
                 {
+                    let recovery_start = self.current_token();
                     if let Ok(stmt) = self.parse_statement() {
                         body.push(stmt);
                     } else {
                         println!("failed to parse statement");
-                        recover_until!(self, TokenType::Semicolon, TokenType::CloseBracket);
+                        recover_until!(
+                            self,
+                            recovery_start,
+                            TokenType::Semicolon,
+                            TokenType::CloseBracket
+                        );
                         if let Some(TokenType::Semicolon) = self.current_token_type() {
                             expect!(self, TokenType::Semicolon)?;
                         }
