@@ -95,7 +95,11 @@ macro_rules! recover_until {
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Parser {
         Parser {
-            tokens,
+            tokens: tokens
+                .iter()
+                .cloned()
+                .filter(|tok| !matches!(tok.type_, TokenType::UnknownCharacters(_)))
+                .collect(),
             index: 0,
             errors: vec![],
         }

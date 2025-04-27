@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 use fleet::ast::{
     AstNode, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
 };
-use fleet::parser::Parser;
+use fleet::parser::{ParseError, Parser};
 use fleet::pretty_print::pretty_print;
 use fleet::tokenizer::{SourceLocation, Token, TokenType, Tokenizer};
 use tower_lsp::jsonrpc::Result;
@@ -299,7 +299,8 @@ impl LanguageServer for Backend {
             .unwrap()
             .clone();
 
-        let tokens = Tokenizer::new(text)
+        let mut tokenizer = Tokenizer::new(text);
+        let tokens = tokenizer
             .tokenize()
             .map_err(|_| tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
@@ -307,7 +308,7 @@ impl LanguageServer for Backend {
                 data: None,
             })?;
 
-        let mut parser = Parser::new(tokens);
+        let mut parser = Parser::new(tokens.clone());
         let _program = parser
             .parse_program()
             .map_err(|_| tower_lsp::jsonrpc::Error {
@@ -324,6 +325,15 @@ impl LanguageServer for Backend {
                     items: parser
                         .errors()
                         .iter()
+                        .cloned()
+                        .chain(tokens.iter().filter_map(|tok| match tok.type_.clone() {
+                            TokenType::UnknownCharacters(_) => Some(ParseError {
+                                start: tok.start,
+                                end: tok.end,
+                                message: "Unrecognozed characters".to_string(),
+                            }),
+                            _ => None,
+                        }))
                         .map(|error| Diagnostic {
                             range: Range {
                                 start: Position {
@@ -392,7 +402,8 @@ impl LanguageServer for Backend {
             .unwrap()
             .clone();
 
-        let tokens = Tokenizer::new(text)
+        let mut tokenizer = Tokenizer::new(text);
+        let tokens = tokenizer
             .tokenize()
             .map_err(|_| tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
@@ -401,7 +412,7 @@ impl LanguageServer for Backend {
             })?;
 
         let program =
-            Parser::new(tokens)
+            Parser::new(tokens.clone())
                 .parse_program()
                 .map_err(|_| tower_lsp::jsonrpc::Error {
                     code: tower_lsp::jsonrpc::ErrorCode::ParseError,
@@ -446,16 +457,27 @@ impl LanguageServer for Backend {
             .unwrap()
             .clone();
 
-        let tokens =
-            Tokenizer::new(text.clone())
-                .tokenize()
-                .map_err(|_| tower_lsp::jsonrpc::Error {
-                    code: tower_lsp::jsonrpc::ErrorCode::ParseError,
-                    message: "Tokenization failed".into(),
-                    data: None,
-                })?;
+        let mut tokenizer = Tokenizer::new(text.clone());
+        let tokens = tokenizer
+            .tokenize()
+            .map_err(|_| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: "Tokenization failed".into(),
+                data: None,
+            })?;
 
-        let mut parser = Parser::new(tokens);
+        if tokens
+            .iter()
+            .any(|tok| matches!(tok.type_, TokenType::UnknownCharacters(_)))
+        {
+            return Err(tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: "Code has token errors. Not formatting.".into(),
+                data: None,
+            });
+        }
+
+        let mut parser = Parser::new(tokens.clone());
         let program = parser
             .parse_program()
             .map_err(|_| tower_lsp::jsonrpc::Error {
@@ -467,7 +489,7 @@ impl LanguageServer for Backend {
         if !parser.errors().is_empty() {
             return Err(tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
-                message: "Code has errors. Not formatting.".into(),
+                message: "Code has parse errors. Not formatting.".into(),
                 data: None,
             });
         }

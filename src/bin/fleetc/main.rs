@@ -72,7 +72,7 @@ fn main() {
 
     println!("{}", generate_header("Tokens", 50));
 
-    let mut parser = Parser::new(tokens);
+    let mut parser = Parser::new(tokens.clone());
     let program = parser.parse_program().unwrap();
 
     println!("{:#?}", program);
