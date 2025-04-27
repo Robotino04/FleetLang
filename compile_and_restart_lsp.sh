@@ -5,5 +5,6 @@ cargo run --bin fleetls --color=always 2>&1 | while IFS= read -r line; do
     if [[ "$line" == *"Running"* ]]; then
         nvim --server $XDG_RUNTIME_DIR/nvim.* --remote-send "<Esc><Esc>:source load.vim | LspStop fleetls<CR>" --headless
         nvim --server $XDG_RUNTIME_DIR/nvim.* --remote-send "<Esc><Esc>:LspStart fleetls<CR>" --headless
+        nvim --server $XDG_RUNTIME_DIR/nvim.* --remote-send "<Esc><Esc>:edit<CR>" --headless
     fi
 done

@@ -1,22 +1,31 @@
-use crate::ast::{AstNode, Executor, ExecutorHost, Expression, Statement, TopLevelStatement};
+use crate::ast::{
+    AstNode, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
+};
 
 pub fn pretty_print(node: AstNode) -> String {
     match node {
         AstNode::Program(program) => {
             return program
-                .toplevel_statements
+                .functions
                 .iter()
-                .map(|stmt| pretty_print(AstNode::TopLevelStatement(stmt.clone())))
+                .map(|f| pretty_print(AstNode::FunctionDefinition(f.clone())))
                 .collect::<Vec<_>>()
                 .join("\n");
         }
-        AstNode::TopLevelStatement(TopLevelStatement::FunctionDefinition(function)) => {
-            pretty_print(AstNode::FunctionDefinition(function))
+        AstNode::FunctionDefinition(FunctionDefinition {
+            name,
+            name_token: _,
+            let_token: _,
+            return_type,
+            body,
+        }) => {
+            return format!(
+                "let {name} = () -> {} {}",
+                pretty_print(AstNode::Type(return_type)),
+                pretty_print(AstNode::Statement(body))
+            );
         }
-        AstNode::TopLevelStatement(TopLevelStatement::LooseStatement(stmt)) => {
-            pretty_print(AstNode::Statement(stmt))
-        }
-        AstNode::FunctionDefinition(_function) => todo!(),
+        AstNode::Type(Type::I32 { token: _ }) => "i32".to_string(),
         AstNode::Statement(Statement::Expression(expression)) => {
             pretty_print(AstNode::Expression(expression)) + ";"
         }

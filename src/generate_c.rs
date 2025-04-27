@@ -1,83 +1,57 @@
 use crate::ast::{
-    AstNode, Executor, ExecutorHost, Expression, Function, Statement, TopLevelStatement,
+    AstNode, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
 };
 
-fn generate_function_declaration(function: &Function) -> String {
-    return "void ".to_string() + function.name.as_str() + "(void)";
+fn generate_function_declaration(function: &FunctionDefinition) -> String {
+    return generate_c(AstNode::Type(function.return_type.clone()))
+        + " "
+        + function.name.as_str()
+        + "(void)";
 }
 
 pub fn generate_c(node: AstNode) -> String {
     match node {
         AstNode::Program(program) => {
-            let functions = program.toplevel_statements.iter().filter_map(|tls| {
-                if let TopLevelStatement::FunctionDefinition(f) = tls {
-                    Some(f)
-                } else {
-                    None
-                }
-            });
-            let function_definitions = functions
-                .clone()
-                .map(|f| {
-                    generate_c(AstNode::TopLevelStatement(
-                        TopLevelStatement::FunctionDefinition(f.clone()),
-                    ))
-                })
+            let function_definitions = program
+                .functions
+                .iter()
+                .map(|f| generate_c(AstNode::FunctionDefinition(f.clone())))
                 .collect::<Vec<_>>()
                 .join("\n");
-            let function_declarations = functions
+
+            let function_declarations = program
+                .functions
+                .iter()
                 .map(|f| generate_function_declaration(&f))
                 .collect::<Vec<_>>()
                 .join(";\n");
 
-            let main_function = Function {
-                name: "main".to_string(),
-                name_token: None,
-                body: Statement::Block(
-                    program
-                        .toplevel_statements
-                        .iter()
-                        .filter_map(|tls| match tls {
-                            TopLevelStatement::LooseStatement(s) => Some(s.clone()),
-                            _ => None,
-                        })
-                        .collect(),
-                ),
-            };
-            let main_function_code = generate_c(AstNode::FunctionDefinition(main_function));
-
             return format!(
                 r##"#include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 // function declarations
 {function_declarations}
 
 // function definitions
 {function_definitions}
-
-{main_function_code}
 "##
             );
-        }
-        AstNode::TopLevelStatement(TopLevelStatement::FunctionDefinition(function)) => {
-            generate_c(AstNode::FunctionDefinition(function))
-        }
-        AstNode::TopLevelStatement(TopLevelStatement::LooseStatement(stmt)) => {
-            generate_c(AstNode::Statement(stmt))
         }
         AstNode::FunctionDefinition(function) => {
             return generate_function_declaration(&function)
                 + " "
                 + generate_c(AstNode::Statement(function.body)).as_str();
         }
+        AstNode::Type(Type::I32 { token: _ }) => "int32_t".to_string(),
         AstNode::Statement(Statement::Expression(expression)) => {
             generate_c(AstNode::Expression(expression)) + ";"
         }
         AstNode::Statement(Statement::On {
             on_token: _,
-            executor,
-            body,
+            executor: _,
+            body: _,
         }) => {
             todo!();
         }

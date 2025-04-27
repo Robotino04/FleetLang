@@ -15,6 +15,8 @@ pub enum TokenType {
     CloseBracket,
     Semicolon,
     Dot,
+    EqualSign,
+    SingleRightArrow,
     Number(i64),
 }
 
@@ -22,6 +24,8 @@ pub enum TokenType {
 pub enum Keyword {
     On,
     Self_,
+    Let,
+    I32,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -92,11 +96,35 @@ impl Tokenizer {
                     TokenType::CloseBracket,
                 )),
 
-                '.' => tokens.push(single_char_token(&mut self.current_location, TokenType::Dot)),
+                '.' => tokens.push(single_char_token(
+                    &mut self.current_location,
+                    TokenType::Dot,
+                )),
                 ';' => tokens.push(single_char_token(
                     &mut self.current_location,
                     TokenType::Semicolon,
                 )),
+                '=' => tokens.push(single_char_token(
+                    &mut self.current_location,
+                    TokenType::EqualSign,
+                )),
+
+                '-' => {
+                    let start = self.current_location;
+                    match chars.get(self.current_location.index + 1) {
+                        Some('>') => {
+                            self.current_location.index += 2;
+                            self.current_location.column += 2;
+
+                            tokens.push(Token {
+                                type_: TokenType::SingleRightArrow,
+                                start,
+                                end: self.current_location,
+                            });
+                        }
+                        _ => continue,
+                    }
+                }
 
                 'a'..='z' | 'A'..='Z' | '_' => {
                     let start_location = self.current_location;
@@ -122,6 +150,8 @@ impl Tokenizer {
                         type_: match lexeme.as_str() {
                             "on" => TokenType::Keyword(Keyword::On),
                             "self" => TokenType::Keyword(Keyword::Self_),
+                            "let" => TokenType::Keyword(Keyword::Let),
+                            "i32" => TokenType::Keyword(Keyword::I32),
                             _ => TokenType::Identifier(lexeme.to_string()),
                         },
                     })

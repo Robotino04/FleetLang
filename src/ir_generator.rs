@@ -4,13 +4,11 @@ use inkwell::{
     builder::Builder,
     context::Context,
     module::Module,
-    types::BasicTypeEnum,
-    values::{
-        AnyValue, AnyValueEnum, BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue,
-    },
+    types::{AnyTypeEnum, BasicMetadataTypeEnum, FunctionType},
+    values::{BasicValue, BasicValueEnum, FunctionValue},
 };
 
-use crate::ast::{Expression, Function, Program, Statement, TopLevelStatement};
+use crate::ast::{Expression, FunctionDefinition, Program, Statement, Type};
 
 pub struct IrGenerator<'a> {
     context: &'a Context,
@@ -42,43 +40,48 @@ impl<'a> IrGenerator<'a> {
         );
         self.functions.insert("exit".to_string(), exit_fn);
 
-        let functions = program
-            .toplevel_statements
-            .iter()
-            .filter_map(|tls| {
-                if let TopLevelStatement::FunctionDefinition(f) = tls {
-                    Some(f)
-                } else {
-                    None
-                }
-            })
-            .map(|f| self.generate_function_ir(f))
-            .collect::<Vec<_>>();
-
-        let main_function = Function {
-            name: "main".to_string(),
-            name_token: None,
-            body: Statement::Block(
-                program
-                    .toplevel_statements
-                    .iter()
-                    .filter_map(|tls| match tls {
-                        TopLevelStatement::LooseStatement(s) => Some(s.clone()),
-                        _ => None,
-                    })
-                    .collect(),
-            ),
-        };
-        let main_function_code = self.generate_function_ir(&main_function);
+        for f in &program.functions {
+            self.generate_function_ir(f);
+        }
 
         return &self.module;
     }
 
-    fn generate_function_ir(&mut self, function: &Function) -> FunctionValue<'a> {
+    fn generate_type(&mut self, type_: &Type) -> AnyTypeEnum<'a> {
+        match type_ {
+            Type::I32 { token: _ } => self.context.i32_type().into(),
+        }
+    }
+
+    fn make_into_function_type<'b>(
+        &self,
+        type_: AnyTypeEnum<'b>,
+        param_types: &[BasicMetadataTypeEnum<'b>],
+        is_var_args: bool,
+    ) -> FunctionType<'b> {
+        match type_ {
+            AnyTypeEnum::ArrayType(array_type) => array_type.fn_type(param_types, is_var_args),
+            AnyTypeEnum::FloatType(float_type) => float_type.fn_type(param_types, is_var_args),
+            AnyTypeEnum::FunctionType(_) => {
+                panic!("Tried to make a function type into a function type again")
+            }
+            AnyTypeEnum::IntType(int_type) => int_type.fn_type(param_types, is_var_args),
+            AnyTypeEnum::PointerType(pointer_type) => {
+                pointer_type.fn_type(param_types, is_var_args)
+            }
+            AnyTypeEnum::StructType(struct_type) => struct_type.fn_type(param_types, is_var_args),
+            AnyTypeEnum::VectorType(vector_type) => vector_type.fn_type(param_types, is_var_args),
+            AnyTypeEnum::VoidType(void_type) => void_type.fn_type(param_types, is_var_args),
+        }
+    }
+
+    fn generate_function_ir(&mut self, function: &FunctionDefinition) -> FunctionValue<'a> {
         eprintln!("Generating function {:?}", function.name);
+
+        let return_type_ir = self.generate_type(&function.return_type);
         let ir_function = self.module.add_function(
             &function.name,
-            self.context.void_type().fn_type(&[], false),
+            self.make_into_function_type(return_type_ir, &[], false),
             None,
         );
 
@@ -87,7 +90,13 @@ impl<'a> IrGenerator<'a> {
 
         self.generate_statement_ir(&function.body);
 
-        self.builder.build_return(None).unwrap();
+        match function.return_type {
+            Type::I32 { token: _ } => {
+                self.builder
+                    .build_return(Some(&self.context.i32_type().const_int(0, false)))
+                    .unwrap();
+            } // Type::Unit { token } => { self.builder.build_return(None).unwrap(); }
+        }
 
         return ir_function;
     }
@@ -100,8 +109,8 @@ impl<'a> IrGenerator<'a> {
             }
             Statement::On {
                 on_token: _,
-                executor,
-                body,
+                executor: _,
+                body: _,
             } => todo!(),
             Statement::Block(statements) => {
                 for substmt in statements {

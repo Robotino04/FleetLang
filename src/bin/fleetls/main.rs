@@ -3,7 +3,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::process::exit;
 use std::sync::LazyLock;
 
-use fleet::ast::{AstNode, Executor, ExecutorHost, Expression, Statement};
+use fleet::ast::{
+    AstNode, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
+};
 use fleet::parser::Parser;
 use fleet::pretty_print::pretty_print;
 use fleet::tokenizer::{SourceLocation, Token, TokenType, Tokenizer};
@@ -42,8 +44,24 @@ static SEMANTIC_TOKEN_TYPES: LazyLock<Vec<SemanticTokenType>> = std::sync::LazyL
         SemanticTokenType::REGEXP,
         SemanticTokenType::OPERATOR,
         SemanticTokenType::DECORATOR,
+        SemanticTokenType::new("brace"),
     ]
 });
+static SEMANTIC_TOKEN_MODIFIERS: LazyLock<Vec<SemanticTokenModifier>> =
+    std::sync::LazyLock::new(|| {
+        vec![
+            SemanticTokenModifier::DECLARATION,
+            SemanticTokenModifier::DEFINITION,
+            SemanticTokenModifier::READONLY,
+            SemanticTokenModifier::STATIC,
+            SemanticTokenModifier::DEPRECATED,
+            SemanticTokenModifier::ABSTRACT,
+            SemanticTokenModifier::ASYNC,
+            SemanticTokenModifier::MODIFICATION,
+            SemanticTokenModifier::DOCUMENTATION,
+            SemanticTokenModifier::DEFAULT_LIBRARY,
+        ]
+    });
 
 fn token_delta_line(a: &Token, b: &Token) -> u32 {
     (b.start.line - a.start.line) as u32
@@ -68,29 +86,42 @@ impl Backend {
     ) {
         match node {
             AstNode::Program(program) => {
-                for tls in program.toplevel_statements {
-                    self.get_lsp_tokens(previous_token, tokens, AstNode::TopLevelStatement(tls));
+                for f in program.functions {
+                    self.get_lsp_tokens(previous_token, tokens, AstNode::FunctionDefinition(f));
                 }
             }
-            AstNode::TopLevelStatement(fleet::ast::TopLevelStatement::LooseStatement(stmt)) => {
-                self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(stmt))
+            AstNode::FunctionDefinition(FunctionDefinition {
+                name: _,
+                let_token,
+                name_token,
+                return_type,
+                body,
+            }) => {
+                tokens.push(self.build_semantic_token(
+                    previous_token,
+                    &let_token,
+                    SemanticTokenType::KEYWORD,
+                    vec![],
+                ));
+                tokens.push(self.build_semantic_token(
+                    previous_token,
+                    &name_token,
+                    SemanticTokenType::FUNCTION,
+                    vec![
+                        SemanticTokenModifier::DEFINITION,
+                        SemanticTokenModifier::DECLARATION,
+                    ],
+                ));
+                self.get_lsp_tokens(previous_token, tokens, AstNode::Type(return_type));
+                self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(body));
             }
-            AstNode::TopLevelStatement(fleet::ast::TopLevelStatement::FunctionDefinition(
-                function,
-            )) => self.get_lsp_tokens(
-                previous_token,
-                tokens,
-                AstNode::FunctionDefinition(function),
-            ),
-            AstNode::FunctionDefinition(function) => {
-                if let Some(name_token) = function.name_token {
-                    tokens.push(self.build_semantic_token(
-                        previous_token,
-                        &name_token,
-                        SemanticTokenType::FUNCTION,
-                    ));
-                }
-                self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(function.body));
+            AstNode::Type(Type::I32 { token }) => {
+                tokens.push(self.build_semantic_token(
+                    previous_token,
+                    &token,
+                    SemanticTokenType::TYPE,
+                    vec![],
+                ));
             }
             AstNode::Statement(Statement::Expression(expression)) => {
                 self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(expression))
@@ -104,6 +135,7 @@ impl Backend {
                     previous_token,
                     &on_token,
                     SemanticTokenType::KEYWORD,
+                    vec![],
                 ));
                 self.get_lsp_tokens(previous_token, tokens, AstNode::Executor(executor));
                 self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(*body));
@@ -118,6 +150,7 @@ impl Backend {
                     previous_token,
                     &token,
                     SemanticTokenType::KEYWORD,
+                    vec![],
                 ));
             }
             AstNode::Executor(Executor::Thread {
@@ -130,6 +163,7 @@ impl Backend {
                     previous_token,
                     &thread_token,
                     SemanticTokenType::VARIABLE,
+                    vec![],
                 ));
                 self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(index));
             }
@@ -138,6 +172,7 @@ impl Backend {
                     previous_token,
                     &token,
                     SemanticTokenType::NUMBER,
+                    vec![],
                 ));
             }
             AstNode::Expression(Expression::FunctionCall {
@@ -149,6 +184,7 @@ impl Backend {
                     previous_token,
                     &name_token,
                     SemanticTokenType::FUNCTION,
+                    vec![],
                 ));
                 for arg in arguments {
                     self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(arg));
@@ -162,13 +198,14 @@ impl Backend {
         previous_token: &mut Token,
         token: &Token,
         token_type: SemanticTokenType,
+        token_modifiers: Vec<SemanticTokenModifier>,
     ) -> SemanticToken {
         let res = SemanticToken {
             delta_line: token_delta_line(previous_token, token),
             delta_start: token_delta_start(previous_token, token),
             length: token_length(token),
             token_type: self.find_token_type_index(token_type),
-            token_modifiers_bitset: 0,
+            token_modifiers_bitset: self.build_token_modifier_bitset(token_modifiers),
         };
         *previous_token = token.clone();
         return res;
@@ -180,11 +217,23 @@ impl Backend {
             .position(|t| t.as_str() == token_type.as_str())
             .unwrap_or(0) as u32
     }
+    fn build_token_modifier_bitset(&self, token_modifiers: Vec<SemanticTokenModifier>) -> u32 {
+        token_modifiers
+            .iter()
+            .map(|modifier| {
+                1u32 << (SEMANTIC_TOKEN_MODIFIERS
+                    .iter()
+                    .position(|t| t.as_str() == modifier.as_str())
+                    .unwrap_or(0))
+            })
+            .reduce(|a, b| a | b)
+            .unwrap_or(0)
+    }
 }
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, _params: InitializeParams) -> Result<InitializeResult> {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
@@ -206,7 +255,7 @@ impl LanguageServer for Backend {
                             },
                             legend: SemanticTokensLegend {
                                 token_types: SEMANTIC_TOKEN_TYPES.clone(),
-                                token_modifiers: vec![],
+                                token_modifiers: SEMANTIC_TOKEN_MODIFIERS.clone(),
                             },
                             range: Some(false),
                             full: Some(SemanticTokensFullOptions::Bool(true)),

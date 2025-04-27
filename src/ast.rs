@@ -2,30 +2,31 @@ use crate::tokenizer::Token;
 
 pub enum AstNode {
     Program(Program),
-    TopLevelStatement(TopLevelStatement),
-    FunctionDefinition(Function),
+    FunctionDefinition(FunctionDefinition),
     Statement(Statement),
     ExecutorHost(ExecutorHost),
     Executor(Executor),
     Expression(Expression),
+    Type(Type),
 }
 
 #[derive(Clone, Debug)]
 pub struct Program {
-    pub toplevel_statements: Vec<TopLevelStatement>,
+    pub functions: Vec<FunctionDefinition>,
 }
 
 #[derive(Clone, Debug)]
-pub enum TopLevelStatement {
-    FunctionDefinition(Function),
-    LooseStatement(Statement),
-}
-
-#[derive(Clone, Debug)]
-pub struct Function {
+pub struct FunctionDefinition {
     pub name: String,
-    pub name_token: Option<Token>,
+    pub let_token: Token,
+    pub name_token: Token,
+    pub return_type: Type,
     pub body: Statement,
+}
+
+#[derive(Clone, Debug)]
+pub enum Type {
+    I32 { token: Token },
 }
 
 #[derive(Clone, Debug)]
