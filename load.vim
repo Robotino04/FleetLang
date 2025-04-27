@@ -5,13 +5,25 @@ endif
 
 let g:fleetls_loaded = 1
 
-au BufEnter,BufRead,BufNewFile *.fl     setfiletype fleet
-au BufEnter,BufRead,BufNewFile *.fleet  setfiletype fleet
+
+"au BufEnter,BufRead,BufNewFile *.fl     setfiletype fleet
+"au BufEnter,BufRead,BufNewFile *.fleet  setfiletype fleet
 "au BufEnter,BufRead,BufNewFile *.fl     source highlight.vim
 "au BufEnter,BufRead,BufNewFile *.fleet  source highlight.vim
 
 
 lua << EOF
+vim.filetype.add({
+    extension = {
+        fleet = "fleet",
+        fl = "fleet",
+    },
+})
+
+if vim.fn.expand('%:e') == "fl" or vim.fn.expand('%:e')  == 'fleet' then
+    vim.cmd[[:setfiletype fleet]]
+end
+
 local lspconfig = require('lspconfig')
 local configs = require 'lspconfig.configs'
 
