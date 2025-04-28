@@ -117,6 +117,24 @@ impl<'a> IrGenerator<'a> {
                     self.generate_statement_ir(substmt);
                 }
             }
+            Statement::Return {
+                return_token: _,
+                value,
+            } => {
+                let ir_value = self.generate_expression_ir(value);
+
+                self.builder
+                    .build_return(match &ir_value {
+                        Some(BasicValueEnum::ArrayValue(array_value)) => Some(array_value),
+                        Some(BasicValueEnum::IntValue(int_value)) => Some(int_value),
+                        Some(BasicValueEnum::FloatValue(float_value)) => Some(float_value),
+                        Some(BasicValueEnum::PointerValue(pointer_value)) => Some(pointer_value),
+                        Some(BasicValueEnum::StructValue(struct_value)) => Some(struct_value),
+                        Some(BasicValueEnum::VectorValue(vector_value)) => Some(vector_value),
+                        None => None,
+                    })
+                    .unwrap();
+            }
         }
     }
     fn generate_expression_ir(&mut self, expr: &Expression) -> Option<BasicValueEnum<'a>> {

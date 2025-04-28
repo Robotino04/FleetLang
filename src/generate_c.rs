@@ -67,6 +67,12 @@ pub fn generate_c(node: AstNode) -> String {
                 .as_str()
                 + "\n}";
         }
+        AstNode::Statement(Statement::Return {
+            return_token: _,
+            value,
+        }) => {
+            return "return ".to_string() + generate_c(AstNode::Expression(value)).as_str() + ";";
+        }
         AstNode::ExecutorHost(ExecutorHost::Self_ { token: _ }) => "self".to_string(),
         AstNode::Executor(Executor::Thread {
             thread_token: _,

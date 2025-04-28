@@ -145,6 +145,18 @@ impl Backend {
                     self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(stmt));
                 }
             }
+            AstNode::Statement(Statement::Return {
+                return_token,
+                value,
+            }) => {
+                tokens.push(self.build_semantic_token(
+                    previous_token,
+                    &return_token,
+                    SemanticTokenType::KEYWORD,
+                    vec![],
+                ));
+                self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(value));
+            }
             AstNode::ExecutorHost(ExecutorHost::Self_ { token }) => {
                 tokens.push(self.build_semantic_token(
                     previous_token,

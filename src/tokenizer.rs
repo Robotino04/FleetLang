@@ -30,6 +30,7 @@ pub enum Keyword {
     Self_,
     Let,
     I32,
+    Return,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -211,7 +212,10 @@ impl Tokenizer {
                         type_: match lexeme.as_str() {
                             "on" => TokenType::Keyword(Keyword::On),
                             "self" => TokenType::Keyword(Keyword::Self_),
+
                             "let" => TokenType::Keyword(Keyword::Let),
+                            "return" => TokenType::Keyword(Keyword::Return),
+
                             "i32" => TokenType::Keyword(Keyword::I32),
                             _ => TokenType::Identifier(lexeme.to_string()),
                         },

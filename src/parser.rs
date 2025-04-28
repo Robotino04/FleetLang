@@ -178,7 +178,7 @@ impl Parser {
                             self,
                             recovery_start,
                             TokenType::Semicolon,
-                            TokenType::CloseBracket
+                            TokenType::CloseBrace
                         );
                         if let Some(TokenType::Semicolon) = self.current_token_type() {
                             expect!(self, TokenType::Semicolon)?;
@@ -188,6 +188,18 @@ impl Parser {
                 expect!(self, TokenType::CloseBrace)?;
 
                 return Ok(Statement::Block(body));
+            }
+            Some(TokenType::Keyword(Keyword::Return)) => {
+                let return_token = expect!(self, TokenType::Keyword(Keyword::Return))?;
+                if let Ok(value) = self.parse_expression() {
+                    expect!(self, TokenType::Semicolon)?;
+                    return Ok(Statement::Return {
+                        return_token,
+                        value,
+                    });
+                } else {
+                    return Err(());
+                }
             }
             _ => {
                 if let Ok(exp) = self.parse_expression() {

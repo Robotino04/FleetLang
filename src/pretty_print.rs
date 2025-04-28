@@ -51,6 +51,12 @@ pub fn pretty_print(node: AstNode) -> String {
                 .as_str()
                 + "\n}";
         }
+        AstNode::Statement(Statement::Return {
+            return_token: _,
+            value,
+        }) => {
+            return "return ".to_string() + pretty_print(AstNode::Expression(value)).as_str() + ";";
+        }
         AstNode::ExecutorHost(ExecutorHost::Self_ { token: _ }) => "self".to_string(),
         AstNode::Executor(Executor::Thread {
             thread_token: _,

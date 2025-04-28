@@ -38,6 +38,10 @@ pub enum Statement {
         body: Box<Statement>,
     },
     Block(Vec<Statement>),
+    Return{
+        return_token: Token,
+        value: Expression,
+    },
 }
 
 #[derive(Clone, Debug)]
