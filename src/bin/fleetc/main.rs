@@ -6,7 +6,7 @@ use fleet::{
     ir_generator::IrGenerator,
     parser::{ParseError, Parser},
     pretty_print::pretty_print,
-    tokenizer::Tokenizer,
+    tokenizer::{TokenType, Tokenizer},
 };
 use inkwell::{
     OptimizationLevel,
@@ -39,7 +39,27 @@ fn print_error_message(source: &String, error: &ParseError) {
         .skip(error.start.line - 1)
         .take(error.end.line - error.start.line + 1)
         .map(|(line, text)| {
-            pad_with_line_number((line, format!("\x1B[31m{}\x1B[0m", text).as_str()))
+            let start_col = if line == error.start.line {
+                error.start.column
+            } else {
+                0
+            };
+            let end_col = if line == error.end.line {
+                (error.end.column + 1).min(text.len())
+            } else {
+                text.len()
+            };
+
+            pad_with_line_number((
+                line,
+                format!(
+                    "{}\x1B[31m{}\x1B[0m{}",
+                    &text[..start_col],
+                    &text[start_col..end_col],
+                    &text[end_col..]
+                )
+                .as_str(),
+            ))
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -83,8 +103,39 @@ fn main() {
 
     println!("{}", generate_header("Errors", 50));
 
+    let unknown_tokens = tokens
+        .iter()
+        .filter_map(|x| {
+            if matches!(x.type_, TokenType::UnknownCharacters(_)) {
+                Some(x)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    for tok in &unknown_tokens {
+        print_error_message(
+            &src.to_string(),
+            &ParseError {
+                start: tok.start,
+                end: tok.end,
+                message: "Unrecognized characters".to_string(),
+            },
+        );
+    }
+
     for error in parser.errors() {
         print_error_message(&src.to_string(), error);
+    }
+
+    if !unknown_tokens.is_empty() {
+        println!("\x1B[31m[FLEETC: ERROR] Exiting because there are unknown characters.\x1B[0m");
+        return;
+    }
+    if !parser.errors().is_empty() {
+        println!("\x1B[31m[FLEETC: ERROR] Exiting because there are syntax errors.\x1B[0m");
+        return;
     }
 
     println!("{}", generate_header("C Code", 50));
