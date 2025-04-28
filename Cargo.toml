@@ -18,6 +18,7 @@ path = "src/bin/fleetls/main.rs"
 
 [dependencies]
 indent = "0.1.1"
+indoc = "2.0.6"
 inkwell = { version = "0.5.0", features = ["llvm18-0-force-static"] }
 tokio = { version = "1.44.2", features = ["full"] }
 tower-lsp = "0.20.0"

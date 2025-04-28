@@ -83,6 +83,26 @@ macro_rules! recover_until {
     };
 }
 
+macro_rules! unable_to_parse {
+    ($self:ident, $fmt_string:expr $(, $($param:expr)+)?) => {
+        if let Some(token) = $self.current_token() {
+            $self.errors.push(FleetError {
+                start: token.start,
+                end: token.end,
+                message: format!("Unable to parse an expected {}", format!($fmt_string $(, $($param),+)?)),
+            });
+            return Err(());
+        } else {
+            $self.errors.push(FleetError {
+                start: $self.tokens.last().unwrap().start,
+                end: $self.tokens.last().unwrap().end,
+                message: format!("Hit EOF while parsing an expected {}", format!($fmt_string $(, $($param),+)?)),
+            });
+            return Err(());
+        }
+    };
+}
+
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Parser {
         Parser {
@@ -185,23 +205,17 @@ impl Parser {
             }
             Some(TokenType::Keyword(Keyword::Return)) => {
                 let return_token = expect!(self, TokenType::Keyword(Keyword::Return))?;
-                if let Ok(value) = self.parse_expression() {
-                    expect!(self, TokenType::Semicolon)?;
-                    return Ok(Statement::Return {
-                        return_token,
-                        value,
-                    });
-                } else {
-                    return Err(());
-                }
+                let value = self.parse_expression()?;
+                expect!(self, TokenType::Semicolon)?;
+                return Ok(Statement::Return {
+                    return_token,
+                    value,
+                });
             }
             _ => {
-                if let Ok(exp) = self.parse_expression() {
-                    expect!(self, TokenType::Semicolon)?;
-                    return Ok(Statement::Expression(exp));
-                } else {
-                    return Err(());
-                }
+                let exp = self.parse_expression()?;
+                expect!(self, TokenType::Semicolon)?;
+                return Ok(Statement::Expression(exp));
             }
         }
     }
@@ -229,7 +243,7 @@ impl Parser {
                     arguments,
                 });
             }
-            _ => Err(()),
+            _ => unable_to_parse!(self, "expression"),
         }
     }
 
@@ -239,17 +253,14 @@ impl Parser {
         let thread_token = expect!(self, = TokenType::Identifier("threads".to_string()))?;
         expect!(self, TokenType::OpenBracket)?;
 
-        if let Ok(exp) = self.parse_expression() {
-            let res = Ok(Executor::Thread {
-                thread_token,
-                index: exp,
-                host: ExecutorHost::Self_ { token: self_token },
-            });
-            expect!(self, TokenType::CloseBracket)?;
-            return res;
-        } else {
-            return Err(());
-        }
+        let exp = self.parse_expression()?;
+        let res = Ok(Executor::Thread {
+            thread_token,
+            index: exp,
+            host: ExecutorHost::Self_ { token: self_token },
+        });
+        expect!(self, TokenType::CloseBracket)?;
+        return res;
     }
     pub fn parse_function_definition(&mut self) -> Result<FunctionDefinition> {
         let let_token = expect!(self, TokenType::Keyword(Keyword::Let))?;
@@ -286,7 +297,7 @@ impl Parser {
             Some(TokenType::Keyword(Keyword::I32)) => Ok(Type::I32 {
                 token: expect!(self, TokenType::Keyword(Keyword::I32))?,
             }),
-            _ => Err(()),
+            _ => unable_to_parse!(self, "type"),
         }
     }
 }
