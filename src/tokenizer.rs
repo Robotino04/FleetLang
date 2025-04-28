@@ -1,3 +1,5 @@
+use crate::infra::FleetError;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Token {
     pub type_: TokenType,
@@ -41,11 +43,19 @@ pub struct SourceLocation {
 }
 
 impl SourceLocation {
-    fn start() -> SourceLocation {
+    pub fn start() -> SourceLocation {
         SourceLocation {
             index: 0,
             line: 1,
             column: 0,
+        }
+    }
+
+    pub fn end(src: impl AsRef<str>) -> SourceLocation {
+        SourceLocation {
+            index: src.as_ref().len() - 1,
+            line: src.as_ref().chars().filter(|c| *c == '\n').count() + 1,
+            column: src.as_ref().split("\n").last().unwrap_or("").len(),
         }
     }
 }
@@ -55,6 +65,7 @@ pub struct Tokenizer {
     current_location: SourceLocation,
 
     tokens: Vec<Token>,
+    errors: Vec<FleetError>,
 
     unk_char_accumulator: String,
     unk_char_token: Token,
@@ -67,6 +78,7 @@ impl Tokenizer {
             current_location: SourceLocation::start(),
 
             tokens: vec![],
+            errors: vec![],
 
             unk_char_accumulator: "".to_string(),
             unk_char_token: Token {
@@ -75,6 +87,10 @@ impl Tokenizer {
                 end: SourceLocation::start(),
             },
         }
+    }
+
+    pub fn errors(&self) -> &Vec<FleetError> {
+        &self.errors
     }
 
     fn advance(&mut self) {
@@ -107,6 +123,11 @@ impl Tokenizer {
             self.unk_char_token.type_ =
                 TokenType::UnknownCharacters(self.unk_char_accumulator.clone());
             self.tokens.push(self.unk_char_token.clone());
+            self.errors.push(FleetError {
+                start: self.unk_char_token.start,
+                end: self.unk_char_token.end,
+                message: "Unrecognized characters".to_string(),
+            });
 
             self.unk_char_token.start = self.current_location;
             self.advance();
@@ -262,6 +283,11 @@ impl Tokenizer {
             self.unk_char_token.type_ =
                 TokenType::UnknownCharacters(self.unk_char_accumulator.clone());
             self.tokens.push(self.unk_char_token.clone());
+            self.errors.push(FleetError {
+                start: self.unk_char_token.start,
+                end: self.unk_char_token.end,
+                message: "Unrecognized characters".to_string(),
+            });
         }
 
         return Ok(&self.tokens);

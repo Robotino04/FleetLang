@@ -6,9 +6,10 @@ use std::sync::LazyLock;
 use fleet::ast::{
     AstNode, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
 };
-use fleet::parser::{ParseError, Parser};
+use fleet::infra::compile;
 use fleet::pretty_print::pretty_print;
-use fleet::tokenizer::{SourceLocation, Token, TokenType, Tokenizer};
+use fleet::tokenizer::{SourceLocation, Token, TokenType};
+use inkwell::context::Context;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::{Client, LspService, Server};
 use tower_lsp::{LanguageServer, lsp_types::*};
@@ -44,7 +45,6 @@ static SEMANTIC_TOKEN_TYPES: LazyLock<Vec<SemanticTokenType>> = std::sync::LazyL
         SemanticTokenType::REGEXP,
         SemanticTokenType::OPERATOR,
         SemanticTokenType::DECORATOR,
-        SemanticTokenType::new("brace"),
     ]
 });
 static SEMANTIC_TOKEN_MODIFIERS: LazyLock<Vec<SemanticTokenModifier>> =
@@ -311,19 +311,13 @@ impl LanguageServer for Backend {
             .unwrap()
             .clone();
 
-        let mut tokenizer = Tokenizer::new(text);
-        let tokens = tokenizer
-            .tokenize()
-            .map_err(|_| tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
-                message: "Tokenization failed".into(),
-                data: None,
-            })?;
+        let context = Context::create();
+        let res = compile(&context, text.as_str());
 
-        let mut parser = Parser::new(tokens.clone());
-        let _program = parser
-            .parse_program()
-            .map_err(|_| tower_lsp::jsonrpc::Error {
+        let _program = res
+            .status
+            .program()
+            .ok_or_else(|| tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
                 message: "Parsing failed completely".into(),
                 data: None,
@@ -334,18 +328,9 @@ impl LanguageServer for Backend {
                 related_documents: None,
                 full_document_diagnostic_report: FullDocumentDiagnosticReport {
                     result_id: None,
-                    items: parser
-                        .errors()
+                    items: res
+                        .errors
                         .iter()
-                        .cloned()
-                        .chain(tokens.iter().filter_map(|tok| match tok.type_.clone() {
-                            TokenType::UnknownCharacters(_) => Some(ParseError {
-                                start: tok.start,
-                                end: tok.end,
-                                message: "Unrecognozed characters".to_string(),
-                            }),
-                            _ => None,
-                        }))
                         .map(|error| Diagnostic {
                             range: Range {
                                 start: Position {
@@ -414,23 +399,17 @@ impl LanguageServer for Backend {
             .unwrap()
             .clone();
 
-        let mut tokenizer = Tokenizer::new(text);
-        let tokens = tokenizer
-            .tokenize()
-            .map_err(|_| tower_lsp::jsonrpc::Error {
+        let context = Context::create();
+        let res = compile(&context, text.as_str());
+
+        let program = res
+            .status
+            .program()
+            .ok_or_else(|| tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
-                message: "Tokenization failed".into(),
+                message: "Parsing failed completely".into(),
                 data: None,
             })?;
-
-        let program =
-            Parser::new(tokens.clone())
-                .parse_program()
-                .map_err(|_| tower_lsp::jsonrpc::Error {
-                    code: tower_lsp::jsonrpc::ErrorCode::ParseError,
-                    message: "Parsing failed completely".into(),
-                    data: None,
-                })?;
 
         let mut prev_token = Token {
             type_: TokenType::Semicolon,
@@ -448,7 +427,7 @@ impl LanguageServer for Backend {
 
         let mut lsp_tokens = vec![];
 
-        self.get_lsp_tokens(&mut prev_token, &mut lsp_tokens, AstNode::Program(program));
+        self.get_lsp_tokens(&mut prev_token, &mut lsp_tokens, AstNode::Program(program.clone()));
 
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             result_id: None,
@@ -469,42 +448,25 @@ impl LanguageServer for Backend {
             .unwrap()
             .clone();
 
-        let mut tokenizer = Tokenizer::new(text.clone());
-        let tokens = tokenizer
-            .tokenize()
-            .map_err(|_| tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
-                message: "Tokenization failed".into(),
-                data: None,
-            })?;
+        let context = Context::create();
+        let res = compile(&context, text.as_str());
 
-        if tokens
-            .iter()
-            .any(|tok| matches!(tok.type_, TokenType::UnknownCharacters(_)))
-        {
-            return Err(tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
-                message: "Code has token errors. Not formatting.".into(),
-                data: None,
-            });
-        }
-
-        let mut parser = Parser::new(tokens.clone());
-        let program = parser
-            .parse_program()
-            .map_err(|_| tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
-                message: "Parsing failed completely".into(),
-                data: None,
-            })?;
-
-        if !parser.errors().is_empty() {
+        if !res.errors.is_empty() {
             return Err(tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
                 message: "Code has parse errors. Not formatting.".into(),
                 data: None,
             });
         }
+
+        let program = res
+            .status
+            .program()
+            .ok_or_else(|| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: "Parsing failed completely".into(),
+                data: None,
+            })?;
 
         return Ok(Some(vec![TextEdit {
             range: Range {
@@ -517,7 +479,7 @@ impl LanguageServer for Backend {
                     character: text.split('\n').last().unwrap().chars().count() as u32,
                 },
             },
-            new_text: pretty_print(AstNode::Program(program)),
+            new_text: pretty_print(AstNode::Program(program.clone())),
         }]));
     }
 }

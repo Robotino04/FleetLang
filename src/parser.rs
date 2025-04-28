@@ -1,22 +1,16 @@
 use crate::{
     ast::{Executor, ExecutorHost, Expression, FunctionDefinition, Program, Statement, Type},
-    tokenizer::{Keyword, SourceLocation, Token, TokenType},
+    infra::FleetError,
+    tokenizer::{Keyword, Token, TokenType},
 };
 
 type Result<T> = ::core::result::Result<T, ()>;
 
 #[derive(Clone, Debug)]
-pub struct ParseError {
-    pub start: SourceLocation,
-    pub end: SourceLocation,
-    pub message: String,
-}
-
-#[derive(Clone, Debug)]
 pub struct Parser {
     tokens: Vec<Token>,
     index: usize,
-    errors: Vec<ParseError>,
+    errors: Vec<FleetError>,
 }
 
 macro_rules! expect {
@@ -36,14 +30,14 @@ macro_rules! expect {
                 },
                 _ => {
                     if let Some(token) = $self.current_token() {
-                        $self.errors.push(ParseError {
+                        $self.errors.push(FleetError {
                             start: token.start,
                             end: token.end,
                             message: format!("Expected {}, but found {:?}", stringify!($main_type), token.type_),
                         });
                         Err(())
                     } else {
-                        $self.errors.push(ParseError {
+                        $self.errors.push(FleetError {
                             start: $self.tokens.last().unwrap().start,
                             end: $self.tokens.last().unwrap().end,
                             message: format!("Expected {}, but found End of file", stringify!($main_type)),
@@ -75,7 +69,7 @@ macro_rules! recover_until {
             let recovery_end = $self.current_token();
             if $start_of_recovery != recovery_end {
                 if let (Some(start), Some(end)) = ($start_of_recovery, recovery_end) {
-                    $self.errors.push(ParseError {
+                    $self.errors.push(FleetError {
                         start: start.start,
                         end: end.end,
                         message: format!(
@@ -102,7 +96,7 @@ impl Parser {
         }
     }
 
-    pub fn errors(&self) -> &Vec<ParseError> {
+    pub fn errors(&self) -> &Vec<FleetError> {
         return &self.errors;
     }
 
