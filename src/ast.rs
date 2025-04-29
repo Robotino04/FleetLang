@@ -38,7 +38,7 @@ pub enum Statement {
         body: Box<Statement>,
     },
     Block(Vec<Statement>),
-    Return{
+    Return {
         return_token: Token,
         value: Expression,
     },
@@ -58,6 +58,13 @@ pub enum Executor {
     },
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum UnaryOperation {
+    BitwiseNot,
+    LogicalNot,
+    Negate,
+}
+
 #[derive(Clone, Debug)]
 pub enum Expression {
     Number {
@@ -68,5 +75,10 @@ pub enum Expression {
         name: String,
         name_token: Token,
         arguments: Vec<Expression>,
+    },
+    Unary {
+        operator_token: Token,
+        operation: UnaryOperation,
+        operand: Box<Expression>,
     },
 }

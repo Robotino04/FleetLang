@@ -202,6 +202,19 @@ impl Backend {
                     self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(arg));
                 }
             }
+            AstNode::Expression(Expression::Unary {
+                operator_token,
+                operation: _,
+                operand,
+            }) => {
+                tokens.push(self.build_semantic_token(
+                    previous_token,
+                    &operator_token,
+                    SemanticTokenType::OPERATOR,
+                    vec![],
+                ));
+                self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(*operand));
+            }
         }
     }
 
@@ -427,7 +440,11 @@ impl LanguageServer for Backend {
 
         let mut lsp_tokens = vec![];
 
-        self.get_lsp_tokens(&mut prev_token, &mut lsp_tokens, AstNode::Program(program.clone()));
+        self.get_lsp_tokens(
+            &mut prev_token,
+            &mut lsp_tokens,
+            AstNode::Program(program.clone()),
+        );
 
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             result_id: None,

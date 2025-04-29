@@ -23,6 +23,10 @@ pub enum TokenType {
     SingleRightArrow,
     Number(i64),
 
+    ExclamationMark,
+    Tilde,
+    Minus,
+
     UnknownCharacters(String),
 }
 
@@ -186,6 +190,14 @@ impl Tokenizer {
                     let tok = self.single_char_token(TokenType::EqualSign);
                     self.tokens.push(tok);
                 }
+                '!' => {
+                    let tok = self.single_char_token(TokenType::ExclamationMark);
+                    self.tokens.push(tok);
+                }
+                '~' => {
+                    let tok = self.single_char_token(TokenType::Tilde);
+                    self.tokens.push(tok);
+                }
 
                 '-' => {
                     let start = self.current_location;
@@ -200,12 +212,9 @@ impl Tokenizer {
                                 end: self.current_location,
                             });
                         }
-                        None => {
-                            eprintln!("Hit EOF while tokenizing '-'");
-                            break;
-                        }
-                        Some(c) => {
-                            self.unknown_character(*c);
+                        _ => {
+                            let tok = self.single_char_token(TokenType::Minus);
+                            self.tokens.push(tok);
                         }
                     }
                 }

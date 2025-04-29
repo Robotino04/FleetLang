@@ -7,10 +7,10 @@ use crate::common::assert_parser_or_tokenizer_error;
 fn missing_let() {
     assert_parser_or_tokenizer_error(
         indoc! {r##"
-                main = () -> i32 {
-                    return 0;
-                }
-            "##},
+            main = () -> i32 {
+                return 0;
+            }
+        "##},
         SourceLocation {
             index: 0,
             line: 1,
@@ -23,10 +23,10 @@ fn missing_let() {
 fn missing_name() {
     assert_parser_or_tokenizer_error(
         indoc! {r##"
-                let = () -> i32 {
-                    return 0;
-                }
-            "##},
+            let = () -> i32 {
+                return 0;
+            }
+        "##},
         SourceLocation {
             index: 4,
             line: 1,
@@ -39,10 +39,10 @@ fn missing_name() {
 fn missing_equal() {
     assert_parser_or_tokenizer_error(
         indoc! {r##"
-                let main () -> i32 {
-                    return 0;
-                }
-            "##},
+            let main () -> i32 {
+                return 0;
+            }
+        "##},
         SourceLocation {
             index: 9,
             line: 1,
@@ -55,10 +55,10 @@ fn missing_equal() {
 fn missing_open_paren() {
     assert_parser_or_tokenizer_error(
         indoc! {r##"
-                let main = ) -> i32 {
-                    return 0;
-                }
-            "##},
+            let main = ) -> i32 {
+                return 0;
+            }
+        "##},
         SourceLocation {
             index: 11,
             line: 1,
@@ -71,10 +71,10 @@ fn missing_open_paren() {
 fn missing_close_paren() {
     assert_parser_or_tokenizer_error(
         indoc! {r##"
-                let main = ( -> i32 {
-                    return 0;
-                }
-            "##},
+            let main = ( -> i32 {
+                return 0;
+            }
+        "##},
         SourceLocation {
             index: 13,
             line: 1,
@@ -87,10 +87,10 @@ fn missing_close_paren() {
 fn missing_right_arrow() {
     assert_parser_or_tokenizer_error(
         indoc! {r##"
-                let main = () i32 {
-                    return 0;
-                }
-            "##},
+            let main = () i32 {
+                return 0;
+            }
+        "##},
         SourceLocation {
             index: 14,
             line: 1,
@@ -103,10 +103,10 @@ fn missing_right_arrow() {
 fn missing_return_type() {
     assert_parser_or_tokenizer_error(
         indoc! {r##"
-                let main = () -> {
-                    return 0;
-                }
-            "##},
+            let main = () -> {
+                return 0;
+            }
+        "##},
         SourceLocation {
             index: 17,
             line: 1,
@@ -120,10 +120,10 @@ fn missing_open_brace() {
     // Parsing fails at the closing brace because a statement is also a valid function body
     assert_parser_or_tokenizer_error(
         indoc! {r##"
-                let main = () -> i32
-                    return 0;
-                }
-            "##},
+            let main = () -> i32
+                return 0;
+            }
+        "##},
         SourceLocation {
             index: 35,
             line: 3,
@@ -136,9 +136,9 @@ fn missing_open_brace() {
 fn missing_close_brace() {
     assert_parser_or_tokenizer_error(
         indoc! {r##"
-                let main = () -> i32 {
-                    return 0;
-            "##},
+            let main = () -> i32 {
+                return 0;
+        "##},
         SourceLocation {
             index: 35,
             line: 2,
@@ -151,8 +151,8 @@ fn missing_close_brace() {
 fn unknown_characters_1() {
     assert_parser_or_tokenizer_error(
         indoc! {r##"
-                let §§§
-            "##},
+            let §§§
+        "##},
         SourceLocation {
             index: 4,
             line: 1,
@@ -165,9 +165,9 @@ fn unknown_characters_1() {
 fn unknown_characters_2() {
     assert_parser_or_tokenizer_error(
         indoc! {r##"
-                let §§§
-                `
-            "##},
+            let §§§
+            `
+        "##},
         SourceLocation {
             index: 8,
             line: 2,

@@ -1,5 +1,6 @@
 use crate::ast::{
     AstNode, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
+    UnaryOperation,
 };
 
 pub fn pretty_print(node: AstNode) -> String {
@@ -83,6 +84,19 @@ pub fn pretty_print(node: AstNode) -> String {
                     .join(", ")
                     .as_str()
                 + ")";
+        }
+        AstNode::Expression(Expression::Unary {
+            operation,
+            operand,
+            operator_token: _,
+        }) => {
+            return match operation {
+                UnaryOperation::BitwiseNot => "~",
+                UnaryOperation::LogicalNot => "!",
+                UnaryOperation::Negate => "-",
+            }
+            .to_string()
+                + pretty_print(AstNode::Expression(*operand)).as_str();
         }
     }
 }

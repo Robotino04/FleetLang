@@ -219,8 +219,11 @@ impl Parser {
             }
         }
     }
+    fn parse_expression(&mut self) -> Result<Expression> {
+        return self.parse_unary_expression();
+    }
 
-    pub fn parse_expression(&mut self) -> Result<Expression> {
+    fn parse_primary_expression(&mut self) -> Result<Expression> {
         match self.current_token_type() {
             Some(TokenType::Number(value)) => {
                 return Ok(Expression::Number {
@@ -243,7 +246,29 @@ impl Parser {
                     arguments,
                 });
             }
-            _ => unable_to_parse!(self, "expression"),
+            _ => unable_to_parse!(self, "primary expression"),
+        }
+    }
+    fn parse_unary_expression(&mut self) -> Result<Expression> {
+        match self.current_token_type() {
+            Some(TokenType::Tilde) => Ok(Expression::Unary {
+                operator_token: expect!(self, TokenType::Tilde)?,
+                operation: crate::ast::UnaryOperation::BitwiseNot,
+                operand: Box::new(self.parse_unary_expression()?),
+            }),
+            Some(TokenType::Minus) => Ok(Expression::Unary {
+                operator_token: expect!(self, TokenType::Minus)?,
+                operation: crate::ast::UnaryOperation::Negate,
+                operand: Box::new(self.parse_unary_expression()?),
+            }),
+            Some(TokenType::ExclamationMark) => Ok(Expression::Unary {
+                operator_token: expect!(self, TokenType::ExclamationMark)?,
+                operation: crate::ast::UnaryOperation::LogicalNot,
+                operand: Box::new(self.parse_unary_expression()?),
+            }),
+
+            Some(_) => return self.parse_primary_expression(),
+            None => unable_to_parse!(self, "unary expression"),
         }
     }
 

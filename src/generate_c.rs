@@ -1,5 +1,6 @@
 use crate::ast::{
     AstNode, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
+    UnaryOperation,
 };
 
 fn generate_function_declaration(function: &FunctionDefinition) -> String {
@@ -99,6 +100,19 @@ pub fn generate_c(node: AstNode) -> String {
                     .join(", ")
                     .as_str()
                 + ")";
+        }
+        AstNode::Expression(Expression::Unary {
+            operation,
+            operand,
+            operator_token: _,
+        }) => {
+            return match operation {
+                UnaryOperation::BitwiseNot => "~",
+                UnaryOperation::LogicalNot => "!",
+                UnaryOperation::Negate => "-",
+            }
+            .to_string()
+                + generate_c(AstNode::Expression(*operand)).as_str();
         }
     }
 }

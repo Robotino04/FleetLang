@@ -5,11 +5,11 @@ use inkwell::{
     context::Context,
     module::Module,
     types::{AnyTypeEnum, BasicMetadataTypeEnum, FunctionType},
-    values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue},
+    values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue},
 };
 
 use crate::{
-    ast::{Expression, FunctionDefinition, Program, Statement, Type},
+    ast::{Expression, FunctionDefinition, Program, Statement, Type, UnaryOperation},
     escape::unescape,
 };
 
@@ -186,6 +186,43 @@ impl<'a> IrGenerator<'a> {
                     .try_as_basic_value()
                     .left()
                     .map(|l| l.as_basic_value_enum()));
+            }
+            Expression::Unary {
+                operation,
+                operand,
+                operator_token: _,
+            } => {
+                let value = self.generate_expression_ir(operand)?.ok_or(format!(
+                    "Somehow passed a Unit value as an operand to {:?}",
+                    operation
+                ))?;
+
+                return match operation {
+                    UnaryOperation::BitwiseNot => Ok(Some(
+                        self.builder
+                            .build_not::<IntValue>(value.into_int_value(), "bitwise_not")?
+                            .into(),
+                    )),
+                    UnaryOperation::LogicalNot => Ok(Some(
+                        self.builder
+                            .build_int_z_extend(
+                                self.builder.build_int_compare::<IntValue>(
+                                    inkwell::IntPredicate::EQ,
+                                    value.into_int_value(),
+                                    value.get_type().into_int_type().const_zero(),
+                                    "logical_not",
+                                )?,
+                                value.get_type().into_int_type(),
+                                "cast",
+                            )?
+                            .into(),
+                    )),
+                    UnaryOperation::Negate => Ok(Some(
+                        self.builder
+                            .build_int_neg::<IntValue>(value.into_int_value(), "negate")?
+                            .into(),
+                    )),
+                };
             }
         }
     }

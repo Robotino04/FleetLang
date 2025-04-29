@@ -2,7 +2,6 @@ use indoc::indoc;
 
 use crate::common::assert_formatting;
 
-
 #[test]
 fn empty_file() {
     assert_formatting("", "");
@@ -12,12 +11,13 @@ fn empty_file() {
 fn expand() {
     assert_formatting(
         indoc! {r##"
-                let a=()->i32{return 0;}
-            "##},
+            let a=()->i32{return 0;}
+            "##
+        },
         indoc! {r##"
-                let a = () -> i32 {
-                    return 0;
-                }"##
+            let a = () -> i32 {
+                return 0;
+            }"##
         },
     );
 }
@@ -26,23 +26,24 @@ fn expand() {
 fn collapse() {
     assert_formatting(
         indoc! {r##"
-                let     a
+            let     a
 
-                = 
-                (    
-                    )
+            = 
+            (    
+                )
 
-                ->   i32
-                  {
-                return
-                        0
-                ;
-                }
-            "##},
+            ->   i32
+              {
+            return
+                    0
+            ;
+            }
+            "##
+        },
         indoc! {r##"
-                let a = () -> i32 {
-                    return 0;
-                }"##
+            let a = () -> i32 {
+                return 0;
+            }"##
         },
     );
 }
@@ -51,15 +52,16 @@ fn collapse() {
 fn expand_2() {
     assert_formatting(
         indoc! {r##"
-                let a=()->i32{return 0;}let b=()->i32{return 0;}
-            "##},
+            let a=()->i32{return 0;}let b=()->i32{return 0;}
+            "##
+        },
         indoc! {r##"
-                let a = () -> i32 {
-                    return 0;
-                }
-                let b = () -> i32 {
-                    return 0;
-                }"##
+            let a = () -> i32 {
+                return 0;
+            }
+            let b = () -> i32 {
+                return 0;
+            }"##
         },
     );
 }
@@ -68,29 +70,29 @@ fn expand_2() {
 fn collapse_2() {
     assert_formatting(
         indoc! {r##"
-                let         a=
-                ()
-                  ->
-                i32
-                    {
-                    return
-                0;}
+            let         a=
+            ()
+              ->
+            i32
+                {
+                return
+            0;}
 
-                let
-                b =
+            let
+            b =
 
-                (    )
-                ->  i32 {
-                return 0
-                ;}
-            "##},
+            (    )
+            ->  i32 {
+            return 0
+            ;}  "##
+        },
         indoc! {r##"
-                let a = () -> i32 {
-                    return 0;
-                }
-                let b = () -> i32 {
-                    return 0;
-                }"##
+            let a = () -> i32 {
+                return 0;
+            }
+            let b = () -> i32 {
+                return 0;
+            }"##
         },
     );
 }
