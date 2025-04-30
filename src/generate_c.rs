@@ -1,6 +1,6 @@
 use crate::ast::{
-    AstNode, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
-    UnaryOperation,
+    AstNode, BinaryOperation, Executor, ExecutorHost, Expression, FunctionDefinition, Statement,
+    Type, UnaryOperation,
 };
 
 fn generate_function_declaration(function: &FunctionDefinition) -> String {
@@ -113,6 +113,28 @@ pub fn generate_c(node: AstNode) -> String {
             }
             .to_string()
                 + generate_c(AstNode::Expression(*operand)).as_str();
+        }
+        AstNode::Expression(Expression::Binary {
+            left,
+            operator_token: _,
+            operation,
+            right,
+        }) => {
+            return format!(
+                "{} {} {}",
+                generate_c(AstNode::Expression(*left)),
+                match operation {
+                    BinaryOperation::Add => "+",
+                    BinaryOperation::Subtract => "-",
+                    BinaryOperation::Multiply => "*",
+                    BinaryOperation::Divide => "/",
+                    BinaryOperation::Modulo => "%",
+                },
+                generate_c(AstNode::Expression(*right))
+            );
+        }
+        AstNode::Expression(Expression::Grouping { subexpression }) => {
+            return format!("({})", generate_c(AstNode::Expression(*subexpression)),);
         }
     }
 }

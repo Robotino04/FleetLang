@@ -4,6 +4,7 @@ use crate::{
     ast::Program,
     ir_generator::IrGenerator,
     parser::Parser,
+    passes::{ast_pass::AstPass, remove_parens::RemoveParensPass},
     tokenizer::{SourceLocation, Token, Tokenizer},
 };
 
@@ -187,7 +188,7 @@ pub fn compile<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
             errors,
         };
     }
-    let program = program.unwrap();
+    let mut program = program.unwrap();
     if !errors.is_empty() {
         return CompileResult {
             status: CompileStatus::TokenizerOrParserErrors {
@@ -197,6 +198,8 @@ pub fn compile<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
             errors,
         };
     }
+
+    program = RemoveParensPass::new().run(program.into()).unwrap_program();
 
     let mut ir_generator = IrGenerator::new(&context);
     let module = ir_generator.generate_program_ir(&program);

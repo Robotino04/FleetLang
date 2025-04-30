@@ -1,5 +1,8 @@
 use crate::{
-    ast::{Executor, ExecutorHost, Expression, FunctionDefinition, Program, Statement, Type},
+    ast::{
+        BinaryOperation, Executor, ExecutorHost, Expression, FunctionDefinition, Program,
+        Statement, Type,
+    },
     infra::FleetError,
     tokenizer::{Keyword, Token, TokenType},
 };
@@ -220,7 +223,7 @@ impl Parser {
         }
     }
     fn parse_expression(&mut self) -> Result<Expression> {
-        return self.parse_unary_expression();
+        return self.parse_sum_expression();
     }
 
     fn parse_primary_expression(&mut self) -> Result<Expression> {
@@ -244,6 +247,15 @@ impl Parser {
                     name,
                     name_token,
                     arguments,
+                });
+            }
+            Some(TokenType::OpenParen) => {
+                expect!(self, TokenType::OpenParen)?;
+                let subexpression = self.parse_expression()?;
+                expect!(self, TokenType::CloseParen)?;
+
+                return Ok(Expression::Grouping {
+                    subexpression: Box::new(subexpression),
                 });
             }
             _ => unable_to_parse!(self, "primary expression"),
@@ -270,6 +282,79 @@ impl Parser {
             Some(_) => return self.parse_primary_expression(),
             None => unable_to_parse!(self, "unary expression"),
         }
+    }
+    fn parse_sum_expression(&mut self) -> Result<Expression> {
+        let mut left = self.parse_product_expression()?;
+
+        while match self.current_token_type() {
+            Some(TokenType::Plus) => {
+                let operator_token = expect!(self, TokenType::Plus)?;
+                let right = self.parse_product_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::Add,
+                    right: Box::new(right),
+                };
+                true
+            }
+            Some(TokenType::Minus) => {
+                let operator_token = expect!(self, TokenType::Minus)?;
+                let right = self.parse_product_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::Subtract,
+                    right: Box::new(right),
+                };
+                true
+            }
+            _ => false,
+        } {}
+
+        return Ok(left);
+    }
+    fn parse_product_expression(&mut self) -> Result<Expression> {
+        let mut left = self.parse_unary_expression()?;
+
+        while match self.current_token_type() {
+            Some(TokenType::Star) => {
+                let operator_token = expect!(self, TokenType::Star)?;
+                let right = self.parse_unary_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::Multiply,
+                    right: Box::new(right),
+                };
+                true
+            }
+            Some(TokenType::Slash) => {
+                let operator_token = expect!(self, TokenType::Slash)?;
+                let right = self.parse_unary_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::Divide,
+                    right: Box::new(right),
+                };
+                true
+            }
+            Some(TokenType::Percent) => {
+                let operator_token = expect!(self, TokenType::Percent)?;
+                let right = self.parse_unary_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::Modulo,
+                    right: Box::new(right),
+                };
+                true
+            }
+            _ => false,
+        } {}
+
+        return Ok(left);
     }
 
     pub fn parse_executor(&mut self) -> Result<Executor> {

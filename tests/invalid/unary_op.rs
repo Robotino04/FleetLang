@@ -58,9 +58,9 @@ fn minus_after_operand() {
             }
         "##},
         SourceLocation {
-            index: 35,
+            index: 36,
             line: 2,
-            column: 12,
+            column: 13,
         },
     );
 }

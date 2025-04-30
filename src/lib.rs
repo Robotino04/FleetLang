@@ -6,3 +6,4 @@ pub mod ir_generator;
 pub mod parser;
 pub mod pretty_print;
 pub mod tokenizer;
+pub mod passes;

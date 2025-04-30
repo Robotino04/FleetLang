@@ -1,5 +1,4 @@
 #[cfg(test)]
-
 use std::fmt::Debug;
 
 use inkwell::{
@@ -123,7 +122,7 @@ pub fn assert_formatting(src: &str, expected_fmt: &str) {
     let result = assert_successful_compilation_context(&context, src);
     let formatted_src = pretty_print(AstNode::Program(result.status.program().unwrap().clone()));
     assert_eq!(
-        expected_fmt, formatted_src,
+        formatted_src, expected_fmt,
         "expected left to format as right"
     );
     assert_is_formatted(formatted_src.as_str());

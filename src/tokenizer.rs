@@ -27,6 +27,11 @@ pub enum TokenType {
     Tilde,
     Minus,
 
+    Plus,
+    Star,
+    Slash,
+    Percent,
+
     UnknownCharacters(String),
 }
 
@@ -217,6 +222,23 @@ impl Tokenizer {
                             self.tokens.push(tok);
                         }
                     }
+                }
+
+                '+' => {
+                    let tok = self.single_char_token(TokenType::Plus);
+                    self.tokens.push(tok);
+                }
+                '*' => {
+                    let tok = self.single_char_token(TokenType::Star);
+                    self.tokens.push(tok);
+                }
+                '/' => {
+                    let tok = self.single_char_token(TokenType::Slash);
+                    self.tokens.push(tok);
+                }
+                '%' => {
+                    let tok = self.single_char_token(TokenType::Percent);
+                    self.tokens.push(tok);
                 }
 
                 'a'..='z' | 'A'..='Z' | '_' => {

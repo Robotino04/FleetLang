@@ -9,7 +9,9 @@ use inkwell::{
 };
 
 use crate::{
-    ast::{Expression, FunctionDefinition, Program, Statement, Type, UnaryOperation},
+    ast::{
+        BinaryOperation, Expression, FunctionDefinition, Program, Statement, Type, UnaryOperation,
+    },
     escape::unescape,
 };
 
@@ -224,6 +226,70 @@ impl<'a> IrGenerator<'a> {
                     )),
                 };
             }
+            Expression::Binary {
+                left,
+                operator_token: _,
+                operation,
+                right,
+            } => {
+                let left_value = self.generate_expression_ir(&left)?.ok_or(format!(
+                    "Somehow passed a Unit value as an operand to {:?}",
+                    operation
+                ))?;
+                let right_value = self.generate_expression_ir(&right)?.ok_or(format!(
+                    "Somehow passed a Unit value as an operand to {:?}",
+                    operation
+                ))?;
+
+                return match operation {
+                    BinaryOperation::Add => Ok(Some(
+                        self.builder
+                            .build_int_add::<IntValue>(
+                                left_value.into_int_value(),
+                                right_value.into_int_value(),
+                                "add",
+                            )?
+                            .into(),
+                    )),
+                    BinaryOperation::Subtract => Ok(Some(
+                        self.builder
+                            .build_int_sub(
+                                left_value.into_int_value(),
+                                right_value.into_int_value(),
+                                "sub",
+                            )?
+                            .into(),
+                    )),
+                    BinaryOperation::Multiply => Ok(Some(
+                        self.builder
+                            .build_int_mul(
+                                left_value.into_int_value(),
+                                right_value.into_int_value(),
+                                "mul",
+                            )?
+                            .into(),
+                    )),
+                    BinaryOperation::Divide => Ok(Some(
+                        self.builder
+                            .build_int_signed_div(
+                                left_value.into_int_value(),
+                                right_value.into_int_value(),
+                                "div",
+                            )?
+                            .into(),
+                    )),
+                    BinaryOperation::Modulo => Ok(Some(
+                        self.builder
+                            .build_int_signed_rem(
+                                left_value.into_int_value(),
+                                right_value.into_int_value(),
+                                "mod",
+                            )?
+                            .into(),
+                    )),
+                };
+            }
+            Expression::Grouping { subexpression } => self.generate_expression_ir(subexpression),
         }
     }
 }

@@ -70,7 +70,7 @@ fn main() {
             println!("{}", generate_header("AST", 50));
             println!("{:#?}", program);
             println!("{}", generate_header("LLVM IR", 50));
-            println!("{:#?}", module.print_to_string());
+            println!("{}", module.print_to_string().to_str().unwrap());
             assert!(res.errors.is_empty());
         }
     }

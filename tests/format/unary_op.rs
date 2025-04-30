@@ -129,3 +129,19 @@ fn expand_mixed() {
         },
     );
 }
+
+#[test]
+fn remove_paren_nested() {
+    assert_formatting(
+        indoc! {r##"
+            let a = () -> i32 {
+                return ~(-(5));
+            }"##
+        },
+        indoc! {r##"
+            let a = () -> i32 {
+                return ~-5;
+            }"##
+        },
+    );
+}

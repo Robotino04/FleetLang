@@ -7,6 +7,7 @@ use fleet::ast::{
     AstNode, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
 };
 use fleet::infra::compile;
+use fleet::passes::ast_pass::AstPass;
 use fleet::pretty_print::pretty_print;
 use fleet::tokenizer::{SourceLocation, Token, TokenType};
 use inkwell::context::Context;
@@ -77,162 +78,25 @@ fn token_length(a: &Token) -> u32 {
     (a.end.index - a.start.index) as u32
 }
 
-impl Backend {
-    fn get_lsp_tokens(
-        &self,
-        previous_token: &mut Token,
-        tokens: &mut Vec<SemanticToken>,
-        node: AstNode,
-    ) {
-        match node {
-            AstNode::Program(program) => {
-                for f in program.functions {
-                    self.get_lsp_tokens(previous_token, tokens, AstNode::FunctionDefinition(f));
-                }
-            }
-            AstNode::FunctionDefinition(FunctionDefinition {
-                name: _,
-                let_token,
-                name_token,
-                return_type,
-                body,
-            }) => {
-                tokens.push(self.build_semantic_token(
-                    previous_token,
-                    &let_token,
-                    SemanticTokenType::KEYWORD,
-                    vec![],
-                ));
-                tokens.push(self.build_semantic_token(
-                    previous_token,
-                    &name_token,
-                    SemanticTokenType::FUNCTION,
-                    vec![
-                        SemanticTokenModifier::DEFINITION,
-                        SemanticTokenModifier::DECLARATION,
-                    ],
-                ));
-                self.get_lsp_tokens(previous_token, tokens, AstNode::Type(return_type));
-                self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(body));
-            }
-            AstNode::Type(Type::I32 { token }) => {
-                tokens.push(self.build_semantic_token(
-                    previous_token,
-                    &token,
-                    SemanticTokenType::TYPE,
-                    vec![],
-                ));
-            }
-            AstNode::Statement(Statement::Expression(expression)) => {
-                self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(expression))
-            }
-            AstNode::Statement(Statement::On {
-                on_token,
-                executor,
-                body,
-            }) => {
-                tokens.push(self.build_semantic_token(
-                    previous_token,
-                    &on_token,
-                    SemanticTokenType::KEYWORD,
-                    vec![],
-                ));
-                self.get_lsp_tokens(previous_token, tokens, AstNode::Executor(executor));
-                self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(*body));
-            }
-            AstNode::Statement(Statement::Block(body)) => {
-                for stmt in body {
-                    self.get_lsp_tokens(previous_token, tokens, AstNode::Statement(stmt));
-                }
-            }
-            AstNode::Statement(Statement::Return {
-                return_token,
-                value,
-            }) => {
-                tokens.push(self.build_semantic_token(
-                    previous_token,
-                    &return_token,
-                    SemanticTokenType::KEYWORD,
-                    vec![],
-                ));
-                self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(value));
-            }
-            AstNode::ExecutorHost(ExecutorHost::Self_ { token }) => {
-                tokens.push(self.build_semantic_token(
-                    previous_token,
-                    &token,
-                    SemanticTokenType::KEYWORD,
-                    vec![],
-                ));
-            }
-            AstNode::Executor(Executor::Thread {
-                thread_token,
-                index,
-                host,
-            }) => {
-                self.get_lsp_tokens(previous_token, tokens, AstNode::ExecutorHost(host));
-                tokens.push(self.build_semantic_token(
-                    previous_token,
-                    &thread_token,
-                    SemanticTokenType::VARIABLE,
-                    vec![],
-                ));
-                self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(index));
-            }
-            AstNode::Expression(Expression::Number { value: _, token }) => {
-                tokens.push(self.build_semantic_token(
-                    previous_token,
-                    &token,
-                    SemanticTokenType::NUMBER,
-                    vec![],
-                ));
-            }
-            AstNode::Expression(Expression::FunctionCall {
-                name: _,
-                name_token,
-                arguments,
-            }) => {
-                tokens.push(self.build_semantic_token(
-                    previous_token,
-                    &name_token,
-                    SemanticTokenType::FUNCTION,
-                    vec![],
-                ));
-                for arg in arguments {
-                    self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(arg));
-                }
-            }
-            AstNode::Expression(Expression::Unary {
-                operator_token,
-                operation: _,
-                operand,
-            }) => {
-                tokens.push(self.build_semantic_token(
-                    previous_token,
-                    &operator_token,
-                    SemanticTokenType::OPERATOR,
-                    vec![],
-                ));
-                self.get_lsp_tokens(previous_token, tokens, AstNode::Expression(*operand));
-            }
-        }
-    }
+struct ExtractSemanticTokensPass {
+    previous_token: Token,
+}
 
+impl ExtractSemanticTokensPass {
     fn build_semantic_token(
-        &self,
-        previous_token: &mut Token,
+        &mut self,
         token: &Token,
         token_type: SemanticTokenType,
         token_modifiers: Vec<SemanticTokenModifier>,
     ) -> SemanticToken {
         let res = SemanticToken {
-            delta_line: token_delta_line(previous_token, token),
-            delta_start: token_delta_start(previous_token, token),
+            delta_line: token_delta_line(&self.previous_token, token),
+            delta_start: token_delta_start(&self.previous_token, token),
             length: token_length(token),
             token_type: self.find_token_type_index(token_type),
             token_modifiers_bitset: self.build_token_modifier_bitset(token_modifiers),
         };
-        *previous_token = token.clone();
+        self.previous_token = token.clone();
         return res;
     }
 
@@ -253,6 +117,147 @@ impl Backend {
             })
             .reduce(|a, b| a | b)
             .unwrap_or(0)
+    }
+}
+
+impl AstPass for ExtractSemanticTokensPass {
+    type Output = Vec<SemanticToken>;
+
+    fn run(&mut self, node: AstNode) -> Self::Output {
+        match node {
+            AstNode::Program(program) => program
+                .functions
+                .iter()
+                .map(|f| self.run(f.clone().into()))
+                .flatten()
+                .collect(),
+            AstNode::FunctionDefinition(FunctionDefinition {
+                name: _,
+                let_token,
+                name_token,
+                return_type,
+                body,
+            }) => {
+                let mut tokens = vec![
+                    self.build_semantic_token(&let_token, SemanticTokenType::KEYWORD, vec![]),
+                    self.build_semantic_token(
+                        &name_token,
+                        SemanticTokenType::FUNCTION,
+                        vec![
+                            SemanticTokenModifier::DEFINITION,
+                            SemanticTokenModifier::DECLARATION,
+                        ],
+                    ),
+                ];
+                tokens.extend(self.run(return_type.into()));
+                tokens.extend(self.run(body.into()));
+                return tokens;
+            }
+            AstNode::Type(Type::I32 { token }) => {
+                vec![self.build_semantic_token(&token, SemanticTokenType::TYPE, vec![])]
+            }
+            AstNode::Statement(Statement::Expression(expression)) => {
+                self.run(AstNode::Expression(expression))
+            }
+
+            AstNode::Statement(Statement::On {
+                on_token,
+                executor,
+                body,
+            }) => {
+                let mut tokens =
+                    vec![self.build_semantic_token(&on_token, SemanticTokenType::KEYWORD, vec![])];
+                tokens.extend(self.run(executor.into()));
+                tokens.extend(self.run((*body).into()));
+                return tokens;
+            }
+            AstNode::Statement(Statement::Block(body)) => body
+                .iter()
+                .map(|stmt| self.run(stmt.clone().into()))
+                .flatten()
+                .collect(),
+            AstNode::Statement(Statement::Return {
+                return_token,
+                value,
+            }) => {
+                let mut tokens = vec![self.build_semantic_token(
+                    &return_token,
+                    SemanticTokenType::KEYWORD,
+                    vec![],
+                )];
+                tokens.extend(self.run(value.into()));
+                return tokens;
+            }
+            AstNode::ExecutorHost(ExecutorHost::Self_ { token }) => {
+                vec![self.build_semantic_token(&token, SemanticTokenType::KEYWORD, vec![])]
+            }
+            AstNode::Executor(Executor::Thread {
+                thread_token,
+                index,
+                host,
+            }) => {
+                let mut tokens = self.run(host.into());
+                tokens.push(self.build_semantic_token(
+                    &thread_token,
+                    SemanticTokenType::VARIABLE,
+                    vec![],
+                ));
+                tokens.extend(self.run(index.into()));
+                return tokens;
+            }
+            AstNode::Expression(Expression::Number { value: _, token }) => {
+                vec![self.build_semantic_token(&token, SemanticTokenType::NUMBER, vec![])]
+            }
+            AstNode::Expression(Expression::FunctionCall {
+                name: _,
+                name_token,
+                arguments,
+            }) => {
+                let mut tokens = vec![self.build_semantic_token(
+                    &name_token,
+                    SemanticTokenType::FUNCTION,
+                    vec![],
+                )];
+                tokens.extend(
+                    arguments
+                        .iter()
+                        .map(|arg| self.run(arg.clone().into()))
+                        .flatten(),
+                );
+                return tokens;
+            }
+            AstNode::Expression(Expression::Unary {
+                operator_token,
+                operation: _,
+                operand,
+            }) => {
+                let mut tokens = vec![self.build_semantic_token(
+                    &operator_token,
+                    SemanticTokenType::FUNCTION,
+                    vec![],
+                )];
+                tokens.extend(self.run((*operand).into()));
+                return tokens;
+            }
+            AstNode::Expression(Expression::Binary {
+                left,
+                operator_token,
+                operation: _,
+                right,
+            }) => {
+                let mut tokens = self.run((*left).into());
+                tokens.push(self.build_semantic_token(
+                    &operator_token,
+                    SemanticTokenType::OPERATOR,
+                    vec![],
+                ));
+                tokens.extend(self.run((*right).into()));
+                return tokens;
+            }
+            AstNode::Expression(Expression::Grouping { subexpression }) => {
+                self.run((*subexpression).into())
+            }
+        }
     }
 }
 
@@ -424,27 +429,24 @@ impl LanguageServer for Backend {
                 data: None,
             })?;
 
-        let mut prev_token = Token {
-            type_: TokenType::Semicolon,
-            start: SourceLocation {
-                index: 0,
-                line: 1,
-                column: 0,
+        let lsp_tokens = ExtractSemanticTokensPass {
+            // a fake token to guarantee correct character counts if the first real token
+            // isn't at index 0
+            previous_token: Token {
+                type_: TokenType::Semicolon,
+                start: SourceLocation {
+                    index: 0,
+                    line: 1,
+                    column: 0,
+                },
+                end: SourceLocation {
+                    index: 0,
+                    line: 1,
+                    column: 0,
+                },
             },
-            end: SourceLocation {
-                index: 0,
-                line: 1,
-                column: 0,
-            },
-        };
-
-        let mut lsp_tokens = vec![];
-
-        self.get_lsp_tokens(
-            &mut prev_token,
-            &mut lsp_tokens,
-            AstNode::Program(program.clone()),
-        );
+        }
+        .run(program.clone().into());
 
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             result_id: None,
