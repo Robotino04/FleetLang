@@ -62,7 +62,7 @@ macro_rules! recover_until {
                     $(Some($recovery_stops) => break),+,
                     _ => {
                         $self.consume();
-                        println!(
+                        eprintln!(
                             "Recovering from error until one of [{}]",
                             concat!($(stringify!($recovery_stops)), +)
                         );
@@ -190,7 +190,7 @@ impl Parser {
                     if let Ok(stmt) = self.parse_statement() {
                         body.push(stmt);
                     } else {
-                        println!("failed to parse statement");
+                        eprintln!("failed to parse statement");
                         recover_until!(
                             self,
                             recovery_start,

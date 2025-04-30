@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env::args;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::process::exit;
 use std::sync::LazyLock;
@@ -408,7 +409,7 @@ impl LanguageServer for Backend {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        println!("---------------------------------------");
+        eprintln!("---------------------------------------");
         let text = self
             .documents
             .read()
@@ -505,23 +506,34 @@ impl LanguageServer for Backend {
 
 #[tokio::main]
 async fn main() {
-    let socket = tokio::net::TcpSocket::new_v4().unwrap();
-    socket.set_reuseaddr(true).unwrap();
-    socket
-        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234))
-        .unwrap();
-    let listener = socket.listen(5).unwrap();
-
-    loop {
-        let (mut client_connection, _client_addr) = listener.accept().await.unwrap();
+    if args().any(|arg| arg == "--stdio") {
         let (service, loopback_socket) = LspService::new(|client| Backend {
             client,
             documents: Default::default(),
         });
 
-        let (read_half, write_half) = client_connection.split();
-        Server::new(read_half, write_half, loopback_socket)
+        Server::new(tokio::io::stdin(), tokio::io::stdout(), loopback_socket)
             .serve(service)
             .await;
+    } else {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.set_reuseaddr(true).unwrap();
+        socket
+            .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234))
+            .unwrap();
+        let listener = socket.listen(5).unwrap();
+
+        loop {
+            let (mut client_connection, _client_addr) = listener.accept().await.unwrap();
+            let (service, loopback_socket) = LspService::new(|client| Backend {
+                client,
+                documents: Default::default(),
+            });
+
+            let (read_half, write_half) = client_connection.split();
+            Server::new(read_half, write_half, loopback_socket)
+                .serve(service)
+                .await;
+        }
     }
 }
