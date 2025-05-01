@@ -111,6 +111,17 @@ pub fn assert_compile_and_return_value<ReturnType>(
 ) where
     ReturnType: Debug + PartialEq,
 {
+    assert_compile_and_return_value_unformatted(src, function_name, expected_return_value);
+    assert_is_formatted(src.trim());
+}
+
+pub fn assert_compile_and_return_value_unformatted<ReturnType>(
+    src: &str,
+    function_name: &str,
+    expected_return_value: ReturnType,
+) where
+    ReturnType: Debug + PartialEq,
+{
     let context = Context::create();
     let result = assert_successful_compilation_context(&context, src);
     let module = result.status.module().unwrap();

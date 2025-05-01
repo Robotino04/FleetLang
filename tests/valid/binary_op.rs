@@ -1,6 +1,6 @@
 use indoc::indoc;
 
-use crate::common::assert_compile_and_return_value;
+use crate::common::{assert_compile_and_return_value, assert_compile_and_return_value_unformatted};
 
 #[test]
 fn add_1_2() {
@@ -43,7 +43,7 @@ fn sub_1_2() {
 
 #[test]
 fn sub_2_minus1() {
-    assert_compile_and_return_value(
+    assert_compile_and_return_value_unformatted(
         indoc! {r##"
             let main = () -> i32 {
                 return 2 - -1;
@@ -82,7 +82,7 @@ fn mul_2_3() {
 
 #[test]
 fn mul_minus2_3() {
-    assert_compile_and_return_value(
+    assert_compile_and_return_value_unformatted(
         indoc! {r##"
             let main = () -> i32 {
                 return (-2) * 3;
@@ -95,7 +95,7 @@ fn mul_minus2_3() {
 
 #[test]
 fn mul_2_minus3() {
-    assert_compile_and_return_value(
+    assert_compile_and_return_value_unformatted(
         indoc! {r##"
             let main = () -> i32 {
                 return 2 * (-3);
@@ -108,7 +108,7 @@ fn mul_2_minus3() {
 
 #[test]
 fn mul_minus2_minus3() {
-    assert_compile_and_return_value(
+    assert_compile_and_return_value_unformatted(
         indoc! {r##"
             let main = () -> i32 {
                 return (-2) * (-3);
@@ -134,7 +134,7 @@ fn div_4_2() {
 
 #[test]
 fn div_negative1() {
-    assert_compile_and_return_value(
+    assert_compile_and_return_value_unformatted(
         indoc! {r##"
             let main = () -> i32 {
                 return (-12) / 5;
@@ -147,7 +147,7 @@ fn div_negative1() {
 
 #[test]
 fn div_negative2() {
-    assert_compile_and_return_value(
+    assert_compile_and_return_value_unformatted(
         indoc! {r##"
             let main = () -> i32 {
                 return 12 / (-5);
@@ -186,7 +186,7 @@ fn mod_6_5() {
 
 #[test]
 fn mod_negative1() {
-    assert_compile_and_return_value(
+    assert_compile_and_return_value_unformatted(
         indoc! {r##"
             let main = () -> i32 {
                 return (-12) % 7;
@@ -199,7 +199,7 @@ fn mod_negative1() {
 
 #[test]
 fn mod_negative2() {
-    assert_compile_and_return_value(
+    assert_compile_and_return_value_unformatted(
         indoc! {r##"
             let main = () -> i32 {
                 return 12 % (-7);
@@ -212,7 +212,7 @@ fn mod_negative2() {
 
 #[test]
 fn mod_negative3() {
-    assert_compile_and_return_value(
+    assert_compile_and_return_value_unformatted(
         indoc! {r##"
             let main = () -> i32 {
                 return (-12) % (-7);
