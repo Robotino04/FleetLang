@@ -5,12 +5,11 @@ use std::process::exit;
 use std::sync::LazyLock;
 
 use fleet::ast::{
-    AstNode, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
+    AstNode, AstVisitor, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
 };
 use fleet::infra::compile;
-use fleet::passes::ast_pass::AstPass;
 use fleet::pretty_print::pretty_print;
-use fleet::tokenizer::{SourceLocation, Token, TokenType};
+use fleet::tokenizer::{SourceLocation, Token, Trivia, TriviaKind};
 use inkwell::context::Context;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::{Client, LspService, Server};
@@ -65,22 +64,32 @@ static SEMANTIC_TOKEN_MODIFIERS: LazyLock<Vec<SemanticTokenModifier>> =
         ]
     });
 
-fn token_delta_line(a: &Token, b: &Token) -> u32 {
-    (b.start.line - a.start.line) as u32
+fn token_delta_line(prev_start: SourceLocation, start: SourceLocation) -> u32 {
+    (start.line - prev_start.line) as u32
 }
-fn token_delta_start(a: &Token, b: &Token) -> u32 {
-    if b.start.line == a.start.line {
-        (b.start.column - a.start.column) as u32
+fn token_delta_start(prev_start: SourceLocation, start: SourceLocation) -> u32 {
+    if start.line == prev_start.line {
+        (start.column - prev_start.column) as u32
     } else {
-        b.start.column as u32
+        start.column as u32
     }
 }
-fn token_length(a: &Token) -> u32 {
-    (a.end.index - a.start.index) as u32
+fn token_length(start: SourceLocation, end: SourceLocation) -> u32 {
+    (end.index - start.index) as u32
 }
 
 struct ExtractSemanticTokensPass {
-    previous_token: Token,
+    previous_token_start: SourceLocation,
+    semantic_tokens: Vec<SemanticToken>,
+}
+
+impl ExtractSemanticTokensPass {
+    pub fn new() -> Self {
+        Self {
+            previous_token_start: SourceLocation::start(),
+            semantic_tokens: vec![],
+        }
+    }
 }
 
 impl ExtractSemanticTokensPass {
@@ -89,16 +98,42 @@ impl ExtractSemanticTokensPass {
         token: &Token,
         token_type: SemanticTokenType,
         token_modifiers: Vec<SemanticTokenModifier>,
-    ) -> SemanticToken {
-        let res = SemanticToken {
-            delta_line: token_delta_line(&self.previous_token, token),
-            delta_start: token_delta_start(&self.previous_token, token),
-            length: token_length(token),
+    ) {
+        self.build_comment_tokens_from_trivia(&token.leading_trivia);
+        self.semantic_tokens.push(SemanticToken {
+            delta_line: token_delta_line(self.previous_token_start, token.start),
+            delta_start: token_delta_start(self.previous_token_start, token.start),
+            length: token_length(token.start, token.end),
             token_type: self.find_token_type_index(token_type),
             token_modifiers_bitset: self.build_token_modifier_bitset(token_modifiers),
-        };
-        self.previous_token = token.clone();
-        return res;
+        });
+        self.previous_token_start = token.start.clone();
+        self.build_comment_tokens_from_trivia(&token.trailing_trivia);
+    }
+
+    fn build_comment_tokens_from_trivia(&mut self, trivia: &Vec<Trivia>) {
+        for Trivia { kind, start, end } in trivia {
+            if !matches!(
+                kind,
+                TriviaKind::LineComment(_) | TriviaKind::BlockComment(_)
+            ) {
+                continue;
+            }
+
+            self.semantic_tokens.push(SemanticToken {
+                delta_line: token_delta_line(self.previous_token_start, *start),
+                delta_start: token_delta_start(self.previous_token_start, *start),
+                length: token_length(*start, *end),
+                token_type: self.find_token_type_index(SemanticTokenType::COMMENT),
+                token_modifiers_bitset: 0,
+            });
+            self.previous_token_start = *start;
+        }
+    }
+
+    fn build_comment_tokens_only(&mut self, token: &Token) {
+        self.build_comment_tokens_from_trivia(&token.leading_trivia);
+        self.build_comment_tokens_from_trivia(&token.trailing_trivia);
     }
 
     fn find_token_type_index(&self, token_type: SemanticTokenType) -> u32 {
@@ -121,142 +156,170 @@ impl ExtractSemanticTokensPass {
     }
 }
 
-impl AstPass for ExtractSemanticTokensPass {
-    type Output = Vec<SemanticToken>;
+impl AstVisitor for ExtractSemanticTokensPass {
+    fn visit_program(&mut self, program: &mut fleet::ast::Program) {
+        for f in &mut program.functions {
+            self.visit_function_definition(f);
+        }
+    }
 
-    fn run(&mut self, node: AstNode) -> Self::Output {
-        match node {
-            AstNode::Program(program) => program
-                .functions
-                .iter()
-                .map(|f| self.run(f.clone().into()))
-                .flatten()
-                .collect(),
-            AstNode::FunctionDefinition(FunctionDefinition {
-                name: _,
-                let_token,
-                name_token,
-                return_type,
-                body,
-            }) => {
-                let mut tokens = vec![
-                    self.build_semantic_token(&let_token, SemanticTokenType::KEYWORD, vec![]),
-                    self.build_semantic_token(
-                        &name_token,
-                        SemanticTokenType::FUNCTION,
-                        vec![
-                            SemanticTokenModifier::DEFINITION,
-                            SemanticTokenModifier::DECLARATION,
-                        ],
-                    ),
-                ];
-                tokens.extend(self.run(return_type.into()));
-                tokens.extend(self.run(body.into()));
-                return tokens;
-            }
-            AstNode::Type(Type::I32 { token }) => {
-                vec![self.build_semantic_token(&token, SemanticTokenType::TYPE, vec![])]
-            }
-            AstNode::Statement(Statement::Expression(expression)) => {
-                self.run(AstNode::Expression(expression))
-            }
+    fn visit_function_definition(
+        &mut self,
+        FunctionDefinition {
+            let_token,
+            name: _,
+            name_token,
+            equal_token,
+            open_paren_token,
+            close_paren_token,
+            right_arrow_token,
+            return_type,
+            body,
+        }: &mut FunctionDefinition,
+    ) {
+        self.build_semantic_token(let_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(
+            name_token,
+            SemanticTokenType::FUNCTION,
+            vec![
+                SemanticTokenModifier::DEFINITION,
+                SemanticTokenModifier::DECLARATION,
+            ],
+        );
+        self.build_comment_tokens_only(equal_token);
+        self.build_comment_tokens_only(open_paren_token);
+        self.build_comment_tokens_only(close_paren_token);
+        self.build_comment_tokens_only(right_arrow_token);
+        self.visit_type(return_type);
+        self.visit_statement(body);
+    }
 
-            AstNode::Statement(Statement::On {
+    fn visit_statement(&mut self, statement: &mut Statement) {
+        match statement {
+            Statement::Expression {
+                expression,
+                semicolon_token,
+            } => {
+                self.visit_expression(expression);
+                self.build_comment_tokens_only(semicolon_token);
+            }
+            Statement::On {
                 on_token,
+                open_paren_token,
                 executor,
+                close_paren_token,
                 body,
-            }) => {
-                let mut tokens =
-                    vec![self.build_semantic_token(&on_token, SemanticTokenType::KEYWORD, vec![])];
-                tokens.extend(self.run(executor.into()));
-                tokens.extend(self.run((*body).into()));
-                return tokens;
+            } => {
+                self.build_semantic_token(on_token, SemanticTokenType::KEYWORD, vec![]);
+                self.build_comment_tokens_only(open_paren_token);
+                self.visit_executor(executor);
+                self.build_comment_tokens_only(close_paren_token);
+                self.visit_statement(body);
             }
-            AstNode::Statement(Statement::Block(body)) => body
-                .iter()
-                .map(|stmt| self.run(stmt.clone().into()))
-                .flatten()
-                .collect(),
-            AstNode::Statement(Statement::Return {
+            Statement::Block {
+                open_brace_token,
+                body,
+                close_brace_token,
+            } => {
+                self.build_comment_tokens_only(open_brace_token);
+                for stmt in body {
+                    self.visit_statement(stmt);
+                }
+                self.build_comment_tokens_only(close_brace_token);
+            }
+            Statement::Return {
                 return_token,
                 value,
-            }) => {
-                let mut tokens = vec![self.build_semantic_token(
-                    &return_token,
-                    SemanticTokenType::KEYWORD,
-                    vec![],
-                )];
-                tokens.extend(self.run(value.into()));
-                return tokens;
+                semicolon_token,
+            } => {
+                self.build_semantic_token(return_token, SemanticTokenType::KEYWORD, vec![]);
+                self.visit_expression(value);
+                self.build_comment_tokens_only(semicolon_token);
             }
-            AstNode::ExecutorHost(ExecutorHost::Self_ { token }) => {
-                vec![self.build_semantic_token(&token, SemanticTokenType::KEYWORD, vec![])]
+        }
+    }
+
+    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) {
+        match executor_host {
+            ExecutorHost::Self_ { token } => {
+                self.build_comment_tokens_only(token);
             }
-            AstNode::Executor(Executor::Thread {
-                thread_token,
-                index,
+        }
+    }
+
+    fn visit_executor(&mut self, executor: &mut Executor) {
+        match executor {
+            Executor::Thread {
                 host,
-            }) => {
-                let mut tokens = self.run(host.into());
-                tokens.push(self.build_semantic_token(
-                    &thread_token,
-                    SemanticTokenType::VARIABLE,
-                    vec![],
-                ));
-                tokens.extend(self.run(index.into()));
-                return tokens;
+                dot_token,
+                thread_token,
+                open_bracket_token,
+                index,
+                close_bracket_token,
+            } => {
+                self.visit_executor_host(host);
+                self.build_comment_tokens_only(dot_token);
+                self.build_semantic_token(thread_token, SemanticTokenType::VARIABLE, vec![]);
+                self.build_comment_tokens_only(open_bracket_token);
+                self.visit_expression(index);
+                self.build_comment_tokens_only(close_bracket_token);
             }
-            AstNode::Expression(Expression::Number { value: _, token }) => {
-                vec![self.build_semantic_token(&token, SemanticTokenType::NUMBER, vec![])]
+        }
+    }
+
+    fn visit_expression(&mut self, expression: &mut Expression) {
+        match expression {
+            Expression::Number { value: _, token } => {
+                self.build_semantic_token(token, SemanticTokenType::NUMBER, vec![]);
             }
-            AstNode::Expression(Expression::FunctionCall {
+            Expression::FunctionCall {
                 name: _,
                 name_token,
+                open_paren_token,
                 arguments,
-            }) => {
-                let mut tokens = vec![self.build_semantic_token(
-                    &name_token,
-                    SemanticTokenType::FUNCTION,
-                    vec![],
-                )];
-                tokens.extend(
-                    arguments
-                        .iter()
-                        .map(|arg| self.run(arg.clone().into()))
-                        .flatten(),
-                );
-                return tokens;
+                close_paren_token,
+            } => {
+                self.build_semantic_token(name_token, SemanticTokenType::FUNCTION, vec![]);
+                self.build_comment_tokens_only(open_paren_token);
+                for arg in arguments {
+                    self.visit_expression(arg);
+                }
+                self.build_comment_tokens_only(close_paren_token);
             }
-            AstNode::Expression(Expression::Unary {
+            Expression::Grouping {
+                open_paren_token,
+                subexpression,
+                close_paren_token,
+            } => {
+                self.build_comment_tokens_only(open_paren_token);
+                self.visit_expression(subexpression);
+                self.build_comment_tokens_only(close_paren_token);
+            }
+            Expression::Unary {
                 operator_token,
                 operation: _,
                 operand,
-            }) => {
-                let mut tokens = vec![self.build_semantic_token(
-                    &operator_token,
-                    SemanticTokenType::FUNCTION,
-                    vec![],
-                )];
-                tokens.extend(self.run((*operand).into()));
-                return tokens;
+            } => {
+                self.build_comment_tokens_only(operator_token);
+                self.visit_expression(operand);
             }
-            AstNode::Expression(Expression::Binary {
+            Expression::Binary {
                 left,
                 operator_token,
                 operation: _,
                 right,
-            }) => {
-                let mut tokens = self.run((*left).into());
-                tokens.push(self.build_semantic_token(
-                    &operator_token,
-                    SemanticTokenType::OPERATOR,
-                    vec![],
-                ));
-                tokens.extend(self.run((*right).into()));
-                return tokens;
+            } => {
+                self.visit_expression(left);
+                self.build_comment_tokens_only(operator_token);
+                self.visit_expression(right);
             }
-            AstNode::Expression(Expression::Grouping { subexpression }) => {
-                self.run((*subexpression).into())
+        }
+    }
+
+    fn visit_type(&mut self, type_: &mut Type) {
+        match type_ {
+            Type::I32 { token } => {
+                self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
             }
         }
     }
@@ -421,37 +484,22 @@ impl LanguageServer for Backend {
         let context = Context::create();
         let res = compile(&context, text.as_str());
 
-        let program = res
+        let mut program = res
             .status
             .program()
             .ok_or_else(|| tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
                 message: "Parsing failed completely".into(),
                 data: None,
-            })?;
+            })?
+            .clone();
 
-        let lsp_tokens = ExtractSemanticTokensPass {
-            // a fake token to guarantee correct character counts if the first real token
-            // isn't at index 0
-            previous_token: Token {
-                type_: TokenType::Semicolon,
-                start: SourceLocation {
-                    index: 0,
-                    line: 1,
-                    column: 0,
-                },
-                end: SourceLocation {
-                    index: 0,
-                    line: 1,
-                    column: 0,
-                },
-            },
-        }
-        .run(program.clone().into());
+        let mut extract_tokens_pass = ExtractSemanticTokensPass::new();
+        extract_tokens_pass.visit_program(&mut program);
 
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             result_id: None,
-            data: lsp_tokens,
+            data: extract_tokens_pass.semantic_tokens,
         })))
     }
 

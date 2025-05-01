@@ -168,19 +168,16 @@ impl Parser {
     pub fn parse_statement(&mut self) -> Result<Statement> {
         match self.current_token_type() {
             Some(TokenType::Keyword(Keyword::On)) => {
-                let on_token = expect!(self, TokenType::Keyword(Keyword::On))?;
-                expect!(self, TokenType::OpenParen)?;
-                let executor = self.parse_executor()?;
-                expect!(self, TokenType::CloseParen)?;
-
                 return Ok(Statement::On {
-                    on_token,
-                    executor,
+                    on_token: expect!(self, TokenType::Keyword(Keyword::On))?,
+                    open_paren_token: expect!(self, TokenType::OpenParen)?,
+                    executor: self.parse_executor()?,
+                    close_paren_token: expect!(self, TokenType::CloseParen)?,
                     body: Box::new(self.parse_statement()?),
                 });
             }
             Some(TokenType::OpenBrace) => {
-                expect!(self, TokenType::OpenBrace)?;
+                let open_brace_token = expect!(self, TokenType::OpenBrace)?;
 
                 let mut body = vec![];
                 while self.current_token_type() != Some(TokenType::CloseBrace)
@@ -202,23 +199,26 @@ impl Parser {
                         }
                     }
                 }
-                expect!(self, TokenType::CloseBrace)?;
+                let close_brace_token = expect!(self, TokenType::CloseBrace)?;
 
-                return Ok(Statement::Block(body));
+                return Ok(Statement::Block {
+                    open_brace_token,
+                    body,
+                    close_brace_token,
+                });
             }
             Some(TokenType::Keyword(Keyword::Return)) => {
-                let return_token = expect!(self, TokenType::Keyword(Keyword::Return))?;
-                let value = self.parse_expression()?;
-                expect!(self, TokenType::Semicolon)?;
                 return Ok(Statement::Return {
-                    return_token,
-                    value,
+                    return_token: expect!(self, TokenType::Keyword(Keyword::Return))?,
+                    value: self.parse_expression()?,
+                    semicolon_token: expect!(self, TokenType::Semicolon)?,
                 });
             }
             _ => {
-                let exp = self.parse_expression()?;
-                expect!(self, TokenType::Semicolon)?;
-                return Ok(Statement::Expression(exp));
+                return Ok(Statement::Expression {
+                    expression: self.parse_expression()?,
+                    semicolon_token: expect!(self, TokenType::Semicolon)?,
+                });
             }
         }
     }
@@ -237,25 +237,25 @@ impl Parser {
 
             Some(TokenType::Identifier(name)) => {
                 let name_token = expect!(self, TokenType::Identifier(_))?;
-                expect!(self, TokenType::OpenParen)?;
+                let open_paren_token = expect!(self, TokenType::OpenParen)?;
                 let mut arguments = vec![];
                 while self.current_token_type() != Some(TokenType::CloseParen) {
                     arguments.push(self.parse_expression()?);
                 }
-                expect!(self, TokenType::CloseParen)?;
+                let close_paren_token = expect!(self, TokenType::CloseParen)?;
                 return Ok(Expression::FunctionCall {
                     name,
                     name_token,
                     arguments,
+                    open_paren_token,
+                    close_paren_token,
                 });
             }
             Some(TokenType::OpenParen) => {
-                expect!(self, TokenType::OpenParen)?;
-                let subexpression = self.parse_expression()?;
-                expect!(self, TokenType::CloseParen)?;
-
                 return Ok(Expression::Grouping {
-                    subexpression: Box::new(subexpression),
+                    open_paren_token: expect!(self, TokenType::OpenParen)?,
+                    subexpression: Box::new(self.parse_expression()?),
+                    close_paren_token: expect!(self, TokenType::CloseParen)?,
                 });
             }
             _ => unable_to_parse!(self, "primary expression"),
@@ -358,18 +358,16 @@ impl Parser {
     }
 
     pub fn parse_executor(&mut self) -> Result<Executor> {
-        let self_token = expect!(self, TokenType::Keyword(Keyword::Self_))?;
-        expect!(self, TokenType::Dot)?;
-        let thread_token = expect!(self, = TokenType::Identifier("threads".to_string()))?;
-        expect!(self, TokenType::OpenBracket)?;
-
-        let exp = self.parse_expression()?;
         let res = Ok(Executor::Thread {
-            thread_token,
-            index: exp,
-            host: ExecutorHost::Self_ { token: self_token },
+            host: ExecutorHost::Self_ {
+                token: expect!(self, TokenType::Keyword(Keyword::Self_))?,
+            },
+            dot_token: expect!(self, TokenType::Dot)?,
+            thread_token: expect!(self, = TokenType::Identifier("threads".to_string()))?,
+            open_bracket_token: expect!(self, TokenType::OpenBracket)?,
+            index: self.parse_expression()?,
+            close_bracket_token: expect!(self, TokenType::CloseBracket)?,
         });
-        expect!(self, TokenType::CloseBracket)?;
         return res;
     }
     pub fn parse_function_definition(&mut self) -> Result<FunctionDefinition> {
@@ -377,8 +375,8 @@ impl Parser {
         let (name_token, name) =
             expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
 
-        expect!(self, TokenType::EqualSign)?;
-        expect!(self, TokenType::OpenParen)?;
+        let equal_token = expect!(self, TokenType::EqualSign)?;
+        let open_paren_token = expect!(self, TokenType::OpenParen)?;
 
         /*
         let mut params = vec![];
@@ -388,15 +386,19 @@ impl Parser {
         }
         */
 
-        expect!(self, TokenType::CloseParen)?;
-        expect!(self, TokenType::SingleRightArrow)?;
+        let close_paren_token = expect!(self, TokenType::CloseParen)?;
+        let right_arrow_token = expect!(self, TokenType::SingleRightArrow)?;
         let return_type = self.parse_type()?;
         let body = self.parse_statement()?;
 
         Ok(FunctionDefinition {
+            let_token,
             name,
             name_token,
-            let_token,
+            equal_token,
+            open_paren_token,
+            close_paren_token,
+            right_arrow_token,
             return_type,
             body,
         })

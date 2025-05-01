@@ -5,6 +5,24 @@ pub struct Token {
     pub type_: TokenType,
     pub start: SourceLocation,
     pub end: SourceLocation,
+
+    // https://langdev.stackexchange.com/questions/2289/preserving-comments-in-ast
+    pub leading_trivia: Vec<Trivia>,
+    pub trailing_trivia: Vec<Trivia>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TriviaKind {
+    LineComment(String),
+    BlockComment(String),
+    EmptyLine,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Trivia {
+    pub kind: TriviaKind,
+    pub start: SourceLocation,
+    pub end: SourceLocation,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,6 +69,17 @@ pub struct SourceLocation {
     pub column: usize,
 }
 
+impl Ord for SourceLocation {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        return self.index.cmp(&other.index);
+    }
+}
+impl PartialOrd for SourceLocation {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl SourceLocation {
     pub fn start() -> SourceLocation {
         SourceLocation {
@@ -78,6 +107,8 @@ pub struct Tokenizer {
 
     unk_char_accumulator: String,
     unk_char_token: Token,
+
+    trivia_accumulator: Vec<Trivia>,
 }
 
 impl Tokenizer {
@@ -94,7 +125,12 @@ impl Tokenizer {
                 type_: TokenType::UnknownCharacters("".to_string()),
                 start: SourceLocation::start(),
                 end: SourceLocation::start(),
+
+                leading_trivia: vec![],
+                trailing_trivia: vec![],
             },
+
+            trivia_accumulator: vec![],
         }
     }
 
@@ -150,7 +186,11 @@ impl Tokenizer {
             start: self.current_location,
             end: self.current_location,
             type_: t,
+
+            leading_trivia: self.trivia_accumulator.clone(),
+            trailing_trivia: vec![],
         };
+        self.trivia_accumulator.clear();
         self.advance();
         return token;
     }
@@ -215,7 +255,11 @@ impl Tokenizer {
                                 type_: TokenType::SingleRightArrow,
                                 start,
                                 end: self.current_location,
+
+                                leading_trivia: self.trivia_accumulator.clone(),
+                                trailing_trivia: vec![],
                             });
+                            self.trivia_accumulator.clear();
                         }
                         _ => {
                             let tok = self.single_char_token(TokenType::Minus);
@@ -233,8 +277,81 @@ impl Tokenizer {
                     self.tokens.push(tok);
                 }
                 '/' => {
-                    let tok = self.single_char_token(TokenType::Slash);
-                    self.tokens.push(tok);
+                    match self.chars.get(self.current_location.index + 1) {
+                        Some('/') => {
+                            let start_location = self.current_location;
+                            self.advance();
+                            self.advance();
+                            let content_start_location = self.current_location;
+
+                            while self.chars[self.current_location.index] != '\n' {
+                                self.advance();
+
+                                if self.current_location.index >= self.chars.len() {
+                                    break;
+                                }
+                            }
+
+                            let content_end_location = self.current_location;
+                            self.advance(); // \n
+                            let end_location = self.current_location;
+
+                            let content = &self.chars
+                                [content_start_location.index..content_end_location.index]
+                                .iter()
+                                .collect::<String>();
+
+                            self.trivia_accumulator.push(Trivia {
+                                kind: TriviaKind::LineComment(content.clone()),
+                                start: start_location,
+                                end: end_location,
+                            });
+                            self.flush_trailing_trivia();
+                        }
+                        Some('*') => {
+                            let start_location = self.current_location;
+                            self.advance();
+                            self.advance();
+                            let content_start_location = self.current_location;
+
+                            while self.current_location.index + 1 < self.chars.len()
+                                && self.chars
+                                    [self.current_location.index..self.current_location.index + 2]
+                                    != ['*', '/']
+                            {
+                                self.advance();
+                            }
+                            let content_end_location = self.current_location;
+
+                            if self.current_location.index + 1 >= self.chars.len() {
+                                self.errors.push(FleetError {
+                                    start: start_location,
+                                    end: content_end_location,
+                                    message: "Unclosed block comment".to_string(),
+                                });
+                            } else {
+                                self.advance(); // *
+                                self.advance(); // /
+                            }
+                            let end_location = self.current_location;
+
+                            let content = &self.chars
+                                [content_start_location.index..content_end_location.index]
+                                .iter()
+                                .collect::<String>();
+
+                            self.trivia_accumulator.push(Trivia {
+                                kind: TriviaKind::BlockComment(content.clone()),
+                                start: start_location,
+                                end: end_location,
+                            });
+                            self.flush_trailing_trivia();
+                        }
+                        _ => {
+                            let tok = self.single_char_token(TokenType::Slash);
+                            self.tokens.push(tok);
+                        }
+                    }
                 }
                 '%' => {
                     let tok = self.single_char_token(TokenType::Percent);
@@ -271,7 +388,11 @@ impl Tokenizer {
                             "i32" => TokenType::Keyword(Keyword::I32),
                             _ => TokenType::Identifier(lexeme.to_string()),
                         },
-                    })
+
+                        leading_trivia: self.trivia_accumulator.clone(),
+                        trailing_trivia: vec![],
+                    });
+                    self.trivia_accumulator.clear();
                 }
 
                 '0'..='9' => {
@@ -296,11 +417,25 @@ impl Tokenizer {
                             eprintln!("Unable to parse {:?} as a number", lexeme);
                             return 0;
                         })),
-                    })
+
+                        leading_trivia: self.trivia_accumulator.clone(),
+                        trailing_trivia: vec![],
+                    });
+                    self.trivia_accumulator.clear();
                 }
 
-                ' ' | '\t' | '\n' => {
+                ' ' | '\t' => {
                     self.advance();
+                }
+                '\n' => {
+                    let start = self.current_location;
+                    self.flush_trailing_trivia();
+                    self.advance();
+                    self.trivia_accumulator.push(Trivia {
+                        kind: TriviaKind::EmptyLine,
+                        start,
+                        end: self.current_location,
+                    });
                 }
 
                 c => {
@@ -321,6 +456,28 @@ impl Tokenizer {
             });
         }
 
+        if let Some(token) = self.tokens.last_mut() {
+            token
+                .trailing_trivia
+                .extend(self.trivia_accumulator.clone());
+            self.trivia_accumulator.clear();
+        }
+
         return Ok(&self.tokens);
+    }
+    fn flush_trailing_trivia(&mut self) {
+        if let (Some(last_token), Some(trivia)) =
+            (self.tokens.last_mut(), self.trivia_accumulator.last())
+        {
+            if last_token.end.line == trivia.end.line
+                || (last_token.end.line + 1 == trivia.end.line && trivia.end.column == 0)
+            {
+                eprintln!("Flushing {:?} to {:#?}", trivia, last_token);
+                last_token
+                    .trailing_trivia
+                    .extend(self.trivia_accumulator.clone());
+                self.trivia_accumulator.clear();
+            }
+        }
     }
 }

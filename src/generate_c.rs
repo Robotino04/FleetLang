@@ -23,9 +23,9 @@ pub fn generate_c(node: AstNode) -> String {
             let function_declarations = program
                 .functions
                 .iter()
-                .map(|f| generate_function_declaration(&f))
+                .map(|f| generate_function_declaration(&f) + ";")
                 .collect::<Vec<_>>()
-                .join(";\n");
+                .join("\n");
 
             return format!(
                 r##"#include <stdio.h>
@@ -46,17 +46,24 @@ pub fn generate_c(node: AstNode) -> String {
                 + generate_c(AstNode::Statement(function.body)).as_str();
         }
         AstNode::Type(Type::I32 { token: _ }) => "int32_t".to_string(),
-        AstNode::Statement(Statement::Expression(expression)) => {
-            generate_c(AstNode::Expression(expression)) + ";"
-        }
+        AstNode::Statement(Statement::Expression {
+            expression,
+            semicolon_token: _,
+        }) => generate_c(AstNode::Expression(expression)) + ";",
         AstNode::Statement(Statement::On {
             on_token: _,
+            open_paren_token: _,
             executor: _,
+            close_paren_token: _,
             body: _,
         }) => {
             todo!();
         }
-        AstNode::Statement(Statement::Block(body)) => {
+        AstNode::Statement(Statement::Block {
+            open_brace_token: _,
+            body,
+            close_brace_token: _,
+        }) => {
             return "{\n".to_string()
                 + indent::indent_all_by(
                     4,
@@ -71,14 +78,18 @@ pub fn generate_c(node: AstNode) -> String {
         AstNode::Statement(Statement::Return {
             return_token: _,
             value,
+            semicolon_token: _,
         }) => {
             return "return ".to_string() + generate_c(AstNode::Expression(value)).as_str() + ";";
         }
         AstNode::ExecutorHost(ExecutorHost::Self_ { token: _ }) => "self".to_string(),
         AstNode::Executor(Executor::Thread {
-            thread_token: _,
-            index,
             host,
+            dot_token: _,
+            thread_token: _,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
         }) => {
             return generate_c(AstNode::ExecutorHost(host))
                 + ".threads["
@@ -89,7 +100,9 @@ pub fn generate_c(node: AstNode) -> String {
         AstNode::Expression(Expression::FunctionCall {
             name,
             name_token: _,
+            open_paren_token: _,
             arguments,
+            close_paren_token: _,
         }) => {
             return name.clone()
                 + "("
@@ -133,7 +146,11 @@ pub fn generate_c(node: AstNode) -> String {
                 generate_c(AstNode::Expression(*right))
             );
         }
-        AstNode::Expression(Expression::Grouping { subexpression }) => {
+        AstNode::Expression(Expression::Grouping {
+            open_paren_token: _,
+            subexpression,
+            close_paren_token: _,
+        }) => {
             return format!("({})", generate_c(AstNode::Expression(*subexpression)),);
         }
     }

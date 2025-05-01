@@ -33,6 +33,16 @@ impl AstNode {
     generate_unwrap!(Type, unwrap_type);
 }
 
+pub trait AstVisitor {
+    fn visit_program(&mut self, program: &mut Program);
+    fn visit_function_definition(&mut self, function_definition: &mut FunctionDefinition);
+    fn visit_statement(&mut self, statement: &mut Statement);
+    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost);
+    fn visit_executor(&mut self, executor: &mut Executor);
+    fn visit_expression(&mut self, expression: &mut Expression);
+    fn visit_type(&mut self, type_: &mut Type);
+}
+
 #[derive(Clone, Debug)]
 pub struct Program {
     pub functions: Vec<FunctionDefinition>,
@@ -46,9 +56,13 @@ impl From<Program> for AstNode {
 
 #[derive(Clone, Debug)]
 pub struct FunctionDefinition {
-    pub name: String,
     pub let_token: Token,
+    pub name: String,
     pub name_token: Token,
+    pub equal_token: Token,
+    pub open_paren_token: Token,
+    pub close_paren_token: Token,
+    pub right_arrow_token: Token,
     pub return_type: Type,
     pub body: Statement,
 }
@@ -71,16 +85,26 @@ impl From<Type> for AstNode {
 
 #[derive(Clone, Debug)]
 pub enum Statement {
-    Expression(Expression),
+    Expression {
+        expression: Expression,
+        semicolon_token: Token,
+    },
     On {
         on_token: Token,
+        open_paren_token: Token,
         executor: Executor,
+        close_paren_token: Token,
         body: Box<Statement>,
     },
-    Block(Vec<Statement>),
+    Block {
+        open_brace_token: Token,
+        body: Vec<Statement>,
+        close_brace_token: Token,
+    },
     Return {
         return_token: Token,
         value: Expression,
+        semicolon_token: Token,
     },
 }
 
@@ -104,9 +128,12 @@ impl From<ExecutorHost> for AstNode {
 #[derive(Clone, Debug)]
 pub enum Executor {
     Thread {
-        thread_token: Token,
-        index: Expression,
         host: ExecutorHost,
+        dot_token: Token,
+        thread_token: Token,
+        open_bracket_token: Token,
+        index: Expression,
+        close_bracket_token: Token,
     },
 }
 
@@ -141,10 +168,14 @@ pub enum Expression {
     FunctionCall {
         name: String,
         name_token: Token,
+        open_paren_token: Token,
         arguments: Vec<Expression>,
+        close_paren_token: Token,
     },
     Grouping {
+        open_paren_token: Token,
         subexpression: Box<Expression>,
+        close_paren_token: Token,
     },
     Unary {
         operator_token: Token,
@@ -157,6 +188,28 @@ pub enum Expression {
         operation: BinaryOperation,
         right: Box<Expression>,
     },
+}
+
+impl Expression {
+    pub const TOP_PRECEDENCE: usize = usize::MAX;
+    pub fn get_precedence(&self) -> usize {
+        match self {
+            Expression::Number { .. } => 0,
+            Expression::FunctionCall { .. } => 0,
+            Expression::Grouping { .. } => 0,
+
+            Expression::Unary { .. } => 1,
+            Expression::Binary {
+                operation:
+                    BinaryOperation::Multiply | BinaryOperation::Divide | BinaryOperation::Modulo,
+                ..
+            } => 2,
+            Expression::Binary {
+                operation: BinaryOperation::Add | BinaryOperation::Subtract,
+                ..
+            } => 3,
+        }
+    }
 }
 
 impl From<Expression> for AstNode {

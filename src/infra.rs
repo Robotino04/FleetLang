@@ -1,10 +1,10 @@
 use inkwell::{context::Context, module::Module};
 
 use crate::{
-    ast::Program,
+    ast::{AstVisitor, Program},
     ir_generator::IrGenerator,
     parser::Parser,
-    passes::{ast_pass::AstPass, remove_parens::RemoveParensPass},
+    passes::remove_parens::RemoveParensPass,
     tokenizer::{SourceLocation, Token, Tokenizer},
 };
 
@@ -199,7 +199,7 @@ pub fn compile<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
         };
     }
 
-    program = RemoveParensPass::new().run(program.into()).unwrap_program();
+    RemoveParensPass::new().visit_program(&mut program);
 
     let mut ir_generator = IrGenerator::new(&context);
     let module = ir_generator.generate_program_ir(&program);

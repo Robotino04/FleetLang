@@ -113,19 +113,28 @@ impl<'a> IrGenerator<'a> {
     }
 
     fn generate_statement_ir(&mut self, stmt: &Statement) -> Result<()> {
-        eprintln!("Generating statement {:#?}", stmt);
+        eprintln!("Generating statement");
         match stmt {
-            Statement::Expression(expression) => {
+            Statement::Expression {
+                expression,
+                semicolon_token: _,
+            } => {
                 self.generate_expression_ir(expression)?;
                 Ok(())
             }
             Statement::On {
                 on_token: _,
+                open_paren_token: _,
                 executor: _,
+                close_paren_token: _,
                 body: _,
             } => todo!(),
-            Statement::Block(statements) => {
-                for substmt in statements {
+            Statement::Block {
+                open_brace_token: _,
+                body,
+                close_brace_token: _,
+            } => {
+                for substmt in body {
                     self.generate_statement_ir(substmt)?;
                 }
                 Ok(())
@@ -133,6 +142,7 @@ impl<'a> IrGenerator<'a> {
             Statement::Return {
                 return_token: _,
                 value,
+                semicolon_token: _,
             } => {
                 let ir_value = self.generate_expression_ir(value)?;
 
@@ -150,7 +160,7 @@ impl<'a> IrGenerator<'a> {
         }
     }
     fn generate_expression_ir(&mut self, expr: &Expression) -> Result<Option<BasicValueEnum<'a>>> {
-        eprintln!("Generating expression {:#?}", expr);
+        eprintln!("Generating expression");
         match expr {
             Expression::Number { value, token: _ } => {
                 return Ok(Some(
@@ -163,7 +173,9 @@ impl<'a> IrGenerator<'a> {
             Expression::FunctionCall {
                 name,
                 name_token,
+                open_paren_token: _,
                 arguments,
+                close_paren_token: _,
             } => {
                 let mut args: Vec<BasicMetadataValueEnum> = vec![];
                 for arg in arguments {
@@ -289,7 +301,11 @@ impl<'a> IrGenerator<'a> {
                     )),
                 };
             }
-            Expression::Grouping { subexpression } => self.generate_expression_ir(subexpression),
+            Expression::Grouping {
+                open_paren_token: _,
+                subexpression,
+                close_paren_token: _,
+            } => self.generate_expression_ir(subexpression),
         }
     }
 }
