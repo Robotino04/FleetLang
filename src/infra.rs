@@ -1,10 +1,9 @@
 use inkwell::{context::Context, module::Module};
 
 use crate::{
-    ast::{AstVisitor, Program},
+    ast::Program,
     ir_generator::IrGenerator,
     parser::Parser,
-    passes::remove_parens::RemoveParensPass,
     tokenizer::{SourceLocation, Token, Tokenizer},
 };
 
@@ -188,7 +187,7 @@ pub fn compile<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
             errors,
         };
     }
-    let mut program = program.unwrap();
+    let program = program.unwrap();
     if !errors.is_empty() {
         return CompileResult {
             status: CompileStatus::TokenizerOrParserErrors {
@@ -198,8 +197,6 @@ pub fn compile<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
             errors,
         };
     }
-
-    RemoveParensPass::new().visit_program(&mut program);
 
     let mut ir_generator = IrGenerator::new(&context);
     let module = ir_generator.generate_program_ir(&program);

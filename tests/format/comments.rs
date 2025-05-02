@@ -1,10 +1,10 @@
 use indoc::indoc;
 
-use crate::common::assert_formatting;
+use crate::common::assert_formatting_and_same_behaviour;
 
 #[test]
 fn complex_1() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let /* asd */ main = () -> i32 {
             /* asd */
@@ -25,12 +25,13 @@ fn complex_1() {
             } // 213
             /*asd*/"##
         },
+        "main",
     );
 }
 
 #[test]
 fn expand_multiple_comments() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = () -> i32 {
                 /*asd*//*Hello, World!*/// Bye
@@ -43,12 +44,13 @@ fn expand_multiple_comments() {
                 return 5;
             }"##
         },
+        "main",
     );
 }
 
 #[test]
 fn collapse_multiple_comments() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = () -> i32 {
                 /*asd*/    /*Hello, World!*/      // Bye
@@ -61,12 +63,13 @@ fn collapse_multiple_comments() {
                 return 5;
             }"##
         },
+        "main",
     );
 }
 
 #[test]
 fn collapse_function_parameter() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = (   /*asdasd*/  /*abcd*/ ) -> i32 {
                 return 4;
@@ -77,12 +80,13 @@ fn collapse_function_parameter() {
                 return 4;
             }"##
         },
+        "main",
     );
 }
 
 #[test]
 fn expand_function_parameter() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = (/*1234*//*abcd*/) -> i32 {
                 return 4;
@@ -93,12 +97,13 @@ fn expand_function_parameter() {
                 return 4;
             }"##
         },
+        "main",
     );
 }
 
 #[test]
 fn parentheses() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = () -> i32 {
                 return /*a*/(/*b*/1/*c*/+/*d*/2/*e*/)/*f*/*/*g*/3;
@@ -109,12 +114,13 @@ fn parentheses() {
                 return /*a*/ (/*b*/ 1 /*c*/ + /*d*/ 2 /*e*/) /*f*/ * /*g*/ 3;
             }"##
         },
+        "main",
     );
 }
 
 #[test]
 fn function_definition() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let/**/main/**/=/**/(/**/)/**/->/**/i32/**/{/**/
                 return 0;
@@ -125,12 +131,13 @@ fn function_definition() {
                 return 0;
             }"##
         },
+        "main",
     );
 }
 
 #[test]
 fn open_brace() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = () -> i32 {
                 /*a*/{/*b*/
@@ -147,12 +154,13 @@ fn open_brace() {
                 }
             }"##
         },
+        "main",
     );
 }
 
 #[test]
 fn close_brace() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = () -> i32 {
                 {
@@ -170,12 +178,13 @@ fn close_brace() {
                 /*c*/
             }"##
         },
+        "main",
     );
 }
 
 #[test]
 fn close_brace_and_trailing() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = () -> i32 {
                 return 0; // test
@@ -187,12 +196,13 @@ fn close_brace_and_trailing() {
                 /* asd */
             }"##
         },
+        "main",
     );
 }
 
 #[test]
 fn expand_line_comment() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = () -> i32 {
                 return 0; //Hi :3
@@ -203,12 +213,13 @@ fn expand_line_comment() {
                 return 0; // Hi :3
             }"##
         },
+        "main",
     );
 }
 
 #[test]
 fn collapse_line_comment() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = () -> i32 {
                 return 0; //         Hi :3
@@ -219,12 +230,13 @@ fn collapse_line_comment() {
                 return 0; // Hi :3
             }"##
         },
+        "main",
     );
 }
 
 #[test]
 fn align_block_comment() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = () -> i32 {
                 /* Line 1
@@ -241,12 +253,13 @@ fn align_block_comment() {
                 return 0;
             }"##
         },
+        "main",
     );
 }
 
 #[test]
 fn dont_trim_single_line_block_comment() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = () -> i32 {
                 /* Line 1 */
@@ -261,5 +274,6 @@ fn dont_trim_single_line_block_comment() {
                 return 0;
             }"##
         },
+        "main",
     );
 }

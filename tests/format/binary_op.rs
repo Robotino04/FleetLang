@@ -1,10 +1,10 @@
 use indoc::indoc;
 
-use crate::common::assert_formatting;
+use crate::common::assert_formatting_and_same_behaviour;
 
 #[test]
 fn collapse_add() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 12   +
@@ -16,12 +16,13 @@ fn collapse_add() {
                 return 12 + 34;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_add() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 12+34;
@@ -32,12 +33,13 @@ fn expand_add() {
                 return 12 + 34;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_sub() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 12   -
@@ -49,12 +51,13 @@ fn collapse_sub() {
                 return 12 - 34;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_sub() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 12-34;
@@ -65,12 +68,13 @@ fn expand_sub() {
                 return 12 - 34;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_mul() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 12   *
@@ -82,12 +86,13 @@ fn collapse_mul() {
                 return 12 * 34;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_mul() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 12*34;
@@ -98,12 +103,13 @@ fn expand_mul() {
                 return 12 * 34;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_div() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 12   /
@@ -115,12 +121,13 @@ fn collapse_div() {
                 return 12 / 34;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_div() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 12/34;
@@ -131,12 +138,13 @@ fn expand_div() {
                 return 12 / 34;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_mod() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 12   %
@@ -148,12 +156,13 @@ fn collapse_mod() {
                 return 12 % 34;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_mod() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 12%34;
@@ -164,12 +173,13 @@ fn expand_mod() {
                 return 12 % 34;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_paren() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return    1   *    
@@ -181,12 +191,13 @@ fn collapse_paren() {
                 return 1 * (2 - 4);
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_nested_paren() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return !  (  (  1  +  2   )    *   4 )  ;
@@ -197,12 +208,13 @@ fn collapse_nested_paren() {
                 return !((1 + 2) * 4);
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_paren() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 1*(2-4);
@@ -213,12 +225,13 @@ fn expand_paren() {
                 return 1 * (2 - 4);
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn remove_paren_lower_inner_precedence() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return (1 * 2) - 4;
@@ -229,12 +242,13 @@ fn remove_paren_lower_inner_precedence() {
                 return 1 * 2 - 4;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn remove_paren_higher_inner_precedence() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return (1 + 2) % 4;
@@ -245,12 +259,13 @@ fn remove_paren_higher_inner_precedence() {
                 return (1 + 2) % 4;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn remove_paren_top() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return (1 * 2);
@@ -261,12 +276,13 @@ fn remove_paren_top() {
                 return 1 * 2;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn remove_paren_bottom() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 1 + (1);
@@ -277,12 +293,13 @@ fn remove_paren_bottom() {
                 return 1 + 1;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn remove_paren_only_one() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return (1) * (2 - 4);
@@ -293,12 +310,13 @@ fn remove_paren_only_one() {
                 return 1 * (2 - 4);
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn remove_paren_nested_simple() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return (((((99)))));
@@ -309,12 +327,13 @@ fn remove_paren_nested_simple() {
                 return 99;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn remove_paren_nested_complex() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return (((5 + (5 * 2)) + 3)/2);
@@ -325,5 +344,125 @@ fn remove_paren_nested_complex() {
                 return (5 + 5 * 2 + 3) / 2;
             }"##
         },
+        "a",
+    );
+}
+
+#[test]
+fn keep_paren_associativity_sub() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                return 1 - (2 - 3);
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return 1 - (2 - 3);
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn remove_paren_associativity_sub() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                return (1 - 2) - 3;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return 1 - 2 - 3;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn remove_paren_associativity_add_left() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                return (1 + 2) + 3;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return 1 + 2 + 3;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn remove_paren_associativity_add_right() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                return 1 + (2 + 3);
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return 1 + 2 + 3;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn remove_paren_associativity_add_sub() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                return 1 + (2 - 3);
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return 1 + 2 - 3;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn keep_paren_associativity_nested() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                return 1 - (((2 - 3)));
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return 1 - (2 - 3);
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn keep_and_remove_paren_associativity_nested() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                return ((1 - (((2 - 3)))) + 7) - 3;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return 1 - (2 - 3) + 7 - 3;
+            }"##
+        },
+        "main",
     );
 }

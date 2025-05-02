@@ -46,62 +46,9 @@ pub fn assert_parser_or_tokenizer_error<'a>(src: &str, error_start: SourceLocati
     );
 }
 
-fn assert_successful_compilation_context<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
-    let result = compile(context, src);
-
-    assert!(result.errors.is_empty(), "{:#?}", result.errors);
-    assert!(
-        matches!(
-            result.status,
-            CompileStatus::Success {
-                tokens: _,
-                program: _,
-                module: _
-            }
-        ),
-        "result.status = {:#?}",
-        result.status
-    );
-
-    assert!(result.status.tokens().is_some());
-    assert!(result.status.program().is_some());
-    assert!(result.status.module().is_some());
-
-    let module = result.status.module().unwrap();
-
-    module.verify().unwrap();
-    return result;
-}
-
-fn assert_function_return_value<ReturnType>(
-    module: &Module,
-    function_name: &str,
-    expected_return_value: ReturnType,
-) where
-    ReturnType: Debug + PartialEq,
-{
-    Target::initialize_native(&InitializationConfig::default())
-        .expect("Failed to initialize native LLVM target");
-
-    let execution_engine = module
-        .create_jit_execution_engine(inkwell::OptimizationLevel::None)
-        .unwrap();
-    let main_function = unsafe {
-        execution_engine
-            .get_function::<unsafe extern "C" fn() -> ReturnType>(function_name)
-            .unwrap()
-    };
-
-    let actual_return_value: ReturnType = unsafe { main_function.call() };
-    assert_eq!(
-        actual_return_value, expected_return_value,
-        "expected {function_name:?} to return {expected_return_value:?} instead of {actual_return_value:?}"
-    );
-}
-
 pub fn assert_successful_compilation(src: &str) {
     let context = Context::create();
-    assert_successful_compilation_context(&context, src);
+    compile_or_panic(&context, src);
 }
 
 pub fn assert_compile_and_return_value<ReturnType>(
@@ -123,25 +70,96 @@ pub fn assert_compile_and_return_value_unformatted<ReturnType>(
     ReturnType: Debug + PartialEq,
 {
     let context = Context::create();
-    let result = assert_successful_compilation_context(&context, src);
+    let result = compile_or_panic(&context, src);
     let module = result.status.module().unwrap();
-    assert_function_return_value(module, function_name, expected_return_value);
+
+    let actual_return_value: ReturnType = execute_function(module, function_name);
+    assert_eq!(
+        actual_return_value, expected_return_value,
+        "expected {function_name:?} to return {expected_return_value:?} instead of {actual_return_value:?}"
+    );
 }
 
-pub fn assert_formatting(src: &str, expected_fmt: &str) {
-    let context = Context::create();
-    let result = assert_successful_compilation_context(&context, src);
-    let formatted_src = pretty_print(AstNode::Program(result.status.program().unwrap().clone()));
+pub fn assert_formatting<'a>(src: &str, expected_fmt: &'a str) -> &'a str {
+    let formatted_src = format_or_panic(src);
     assert_eq!(
         formatted_src, expected_fmt,
-        "expected left to format as right"
+        "expected left to be formatted like right"
     );
     assert_is_formatted(formatted_src.as_str());
+    return expected_fmt;
 }
 
-fn assert_is_formatted(src: &str) {
+pub fn assert_formatting_and_same_behaviour<ReturnType>(
+    src: &str,
+    expected_fmt: &str,
+    function_name: &str,
+) where
+    ReturnType: Debug + PartialEq,
+{
+    let formatted_src = assert_formatting(src, expected_fmt);
+
+    let unformatted_retvalue = execute_or_panic::<ReturnType>(src, function_name);
+    let formatted_retvalue = execute_or_panic::<ReturnType>(&formatted_src, function_name);
+
+    assert_eq!(
+        unformatted_retvalue, formatted_retvalue,
+        "formatting changed behaviour from returning left to right"
+    );
+}
+
+fn compile_or_panic<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
+    let result = compile(context, src);
+
+    assert!(result.errors.is_empty(), "{:#?}", result.errors);
+    assert!(
+        matches!(result.status, CompileStatus::Success { .. }),
+        "result.status = {:#?}",
+        result.status
+    );
+
+    assert!(result.status.tokens().is_some());
+    assert!(result.status.program().is_some());
+    assert!(result.status.module().is_some());
+
+    let module = result.status.module().unwrap();
+
+    module.verify().unwrap();
+    return result;
+}
+
+fn format_or_panic(src: &str) -> String {
     let context = Context::create();
-    let result = assert_successful_compilation_context(&context, src);
+    let result = compile_or_panic(&context, src);
     let formatted_src = pretty_print(AstNode::Program(result.status.program().unwrap().clone()));
+    return formatted_src;
+}
+
+fn execute_or_panic<ReturnType>(src: &str, function_name: &str) -> ReturnType {
+    let context = Context::create();
+    let result = compile_or_panic(&context, src);
+    let retval: ReturnType = execute_function(result.status.module().unwrap(), function_name);
+    return retval;
+}
+
+fn execute_function<ReturnType>(module: &Module, function_name: &str) -> ReturnType {
+    Target::initialize_native(&InitializationConfig::default())
+        .expect("Failed to initialize native LLVM target");
+
+    let execution_engine = module
+        .create_jit_execution_engine(inkwell::OptimizationLevel::None)
+        .unwrap();
+    let main_function = unsafe {
+        execution_engine
+            .get_function::<unsafe extern "C" fn() -> ReturnType>(function_name)
+            .unwrap()
+    };
+
+    return unsafe { main_function.call() };
+}
+
+
+fn assert_is_formatted(src: &str) {
+    let formatted_src = format_or_panic(src);
     assert_eq!(src, formatted_src, "Expected left to be formatted");
 }

@@ -1,10 +1,10 @@
 use indoc::indoc;
 
-use crate::common::assert_formatting;
+use crate::common::assert_formatting_and_same_behaviour;
 
 #[test]
 fn expand_eq() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0==0;
@@ -15,12 +15,13 @@ fn expand_eq() {
                 return 0 == 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_eq() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0   ==   0;
@@ -31,12 +32,13 @@ fn collapse_eq() {
                 return 0 == 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_ge() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0>=0;
@@ -47,12 +49,13 @@ fn expand_ge() {
                 return 0 >= 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_qe() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0   >=   0;
@@ -63,12 +66,13 @@ fn collapse_qe() {
                 return 0 >= 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_gt() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0>0;
@@ -79,12 +83,13 @@ fn expand_gt() {
                 return 0 > 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_qt() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0   >   0;
@@ -95,12 +100,13 @@ fn collapse_qt() {
                 return 0 > 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_le() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0<=0;
@@ -111,12 +117,13 @@ fn expand_le() {
                 return 0 <= 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_le() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0   <=   0;
@@ -127,12 +134,13 @@ fn collapse_le() {
                 return 0 <= 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_lt() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0<0;
@@ -143,12 +151,13 @@ fn expand_lt() {
                 return 0 < 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_lt() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0   <   0;
@@ -159,12 +168,13 @@ fn collapse_lt() {
                 return 0 < 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_ne() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0!=0;
@@ -175,12 +185,13 @@ fn expand_ne() {
                 return 0 != 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_ne() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0   !=   0;
@@ -191,12 +202,13 @@ fn collapse_ne() {
                 return 0 != 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_and() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0&&0;
@@ -207,12 +219,13 @@ fn expand_and() {
                 return 0 && 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_and() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0   &&   0;
@@ -223,12 +236,13 @@ fn collapse_and() {
                 return 0 && 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_or() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0||0;
@@ -239,12 +253,13 @@ fn expand_or() {
                 return 0 || 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_or() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 0   ||   0;
@@ -255,12 +270,13 @@ fn collapse_or() {
                 return 0 || 0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn remove_parens_1() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return (0 && 3) || 7;
@@ -271,12 +287,13 @@ fn remove_parens_1() {
                 return 0 && 3 || 7;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn remove_parens_2() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return (3 + 2) <= (9 || 2);
@@ -287,12 +304,13 @@ fn remove_parens_2() {
                 return 3 + 2 <= (9 || 2);
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn remove_parens_3() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return 3 || (1 == 7 - 8) && (2 != 9);
@@ -303,5 +321,6 @@ fn remove_parens_3() {
                 return 3 || 1 == 7 - 8 && 2 != 9;
             }"##
         },
+        "a",
     );
 }

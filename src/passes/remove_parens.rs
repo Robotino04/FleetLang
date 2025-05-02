@@ -1,19 +1,30 @@
 use crate::ast::{
-    AstVisitor, Executor, ExecutorHost, Expression, FunctionDefinition, Program, Statement, Type,
+    Associativity, AstVisitor, Executor, ExecutorHost, Expression, FunctionDefinition, Program,
+    Statement, Type,
 };
 
 use super::{
     add_leading_trivia_pass::AddLeadingTriviaPass, add_trailing_trivia_pass::AddTrailingTriviaPass,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OperandSide {
+    Left,
+    Right,
+}
+
 pub struct RemoveParensPass {
     parent_precedence: usize,
+    parent_associativity: Associativity,
+    current_side: OperandSide,
 }
 
 impl RemoveParensPass {
     pub fn new() -> Self {
         Self {
             parent_precedence: Expression::TOP_PRECEDENCE,
+            parent_associativity: Associativity::Both,
+            current_side: OperandSide::Left,
         }
     }
 }
@@ -92,6 +103,7 @@ impl AstVisitor for RemoveParensPass {
 
     fn visit_expression(&mut self, expression: &mut Expression) {
         let this_precedence = expression.get_precedence();
+        let this_associativity = expression.get_associativity();
 
         match expression {
             Expression::Number { value: _, token: _ } => {}
@@ -104,6 +116,7 @@ impl AstVisitor for RemoveParensPass {
             } => {
                 for arg in arguments {
                     self.parent_precedence = Expression::TOP_PRECEDENCE;
+                    self.parent_associativity = Associativity::Both;
                     self.visit_expression(arg);
                 }
             }
@@ -113,10 +126,33 @@ impl AstVisitor for RemoveParensPass {
                 close_paren_token,
             } => {
                 let old_parent_precedence = self.parent_precedence;
+                let old_parent_associativity = self.parent_associativity;
+                let old_side = self.current_side;
                 self.parent_precedence = Expression::TOP_PRECEDENCE;
                 self.visit_expression(&mut *subexpression);
 
-                if old_parent_precedence >= subexpression.get_precedence() {
+                let child_precedence = subexpression.get_precedence();
+                let child_associativity = subexpression.get_associativity();
+
+                let assiciativity_compatible = old_parent_associativity == child_associativity
+                    || old_parent_associativity == Associativity::Both
+                    || child_associativity == Associativity::Both;
+                let can_remove_associativity = match old_side {
+                    OperandSide::Left => {
+                        old_parent_associativity == Associativity::Both
+                            || old_parent_associativity == Associativity::Left
+                    }
+                    OperandSide::Right => {
+                        old_parent_associativity == Associativity::Both
+                            || old_parent_associativity == Associativity::Right
+                    }
+                };
+
+                if old_parent_precedence > child_precedence
+                    || (old_parent_precedence == child_precedence
+                        && assiciativity_compatible
+                        && can_remove_associativity)
+                {
                     let leading_trivia = vec![
                         open_paren_token.leading_trivia.clone(),
                         open_paren_token.trailing_trivia.clone(),
@@ -141,6 +177,7 @@ impl AstVisitor for RemoveParensPass {
                 operand,
             } => {
                 self.parent_precedence = this_precedence;
+                self.current_side = OperandSide::Left;
                 self.visit_expression(&mut *operand);
             }
             Expression::Binary {
@@ -150,8 +187,13 @@ impl AstVisitor for RemoveParensPass {
                 right,
             } => {
                 self.parent_precedence = this_precedence;
+                self.parent_associativity = this_associativity;
+                self.current_side = OperandSide::Left;
                 self.visit_expression(&mut *left);
+
                 self.parent_precedence = this_precedence;
+                self.parent_associativity = this_associativity;
+                self.current_side = OperandSide::Right;
                 self.visit_expression(&mut *right);
             }
         }

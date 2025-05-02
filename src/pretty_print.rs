@@ -1,5 +1,9 @@
 use crate::{
-    ast::{AstNode, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type},
+    ast::{
+        AstNode, AstVisitor, Executor, ExecutorHost, Expression, FunctionDefinition, Statement,
+        Type,
+    },
+    passes::remove_parens::RemoveParensPass,
     tokenizer::{Keyword, Token, TokenType, Trivia, TriviaKind},
 };
 
@@ -206,7 +210,9 @@ fn pretty_print_token(token: &Token) -> String {
 
 pub fn pretty_print(node: AstNode) -> String {
     match node {
-        AstNode::Program(program) => {
+        AstNode::Program(mut program) => {
+            RemoveParensPass::new().visit_program(&mut program);
+
             return program
                 .functions
                 .iter()

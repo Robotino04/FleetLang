@@ -1,10 +1,10 @@
 use indoc::indoc;
 
-use crate::common::assert_formatting;
+use crate::common::assert_formatting_and_same_behaviour;
 
 #[test]
 fn collapse_minus() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return -   0;
@@ -15,12 +15,13 @@ fn collapse_minus() {
                 return -0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_minus() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return-0;
@@ -31,12 +32,13 @@ fn expand_minus() {
                 return -0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_binary_not() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return ~   0;
@@ -47,12 +49,13 @@ fn collapse_binary_not() {
                 return ~0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_binary_not() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return~0;
@@ -63,12 +66,13 @@ fn expand_binary_not() {
                 return ~0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_logical_not() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return !   0;
@@ -79,12 +83,13 @@ fn collapse_logical_not() {
                 return !0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_logical_not() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return!0;
@@ -95,12 +100,13 @@ fn expand_logical_not() {
                 return !0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn collapse_mixed() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return ! ~    -  0;
@@ -111,12 +117,13 @@ fn collapse_mixed() {
                 return !~-0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn expand_mixed() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return!-~0;
@@ -127,12 +134,13 @@ fn expand_mixed() {
                 return !-~0;
             }"##
         },
+        "a",
     );
 }
 
 #[test]
 fn remove_paren_nested() {
-    assert_formatting(
+    assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let a = () -> i32 {
                 return ~(-(5));
@@ -143,5 +151,6 @@ fn remove_paren_nested() {
                 return ~-5;
             }"##
         },
+        "a",
     );
 }

@@ -170,6 +170,13 @@ pub enum BinaryOperation {
     LogicalOr,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Associativity {
+    Left,
+    Right,
+    Both,
+}
+
 #[derive(Clone, Debug)]
 pub enum Expression {
     Number {
@@ -204,6 +211,7 @@ pub enum Expression {
 impl Expression {
     pub const TOP_PRECEDENCE: usize = usize::MAX;
     pub fn get_precedence(&self) -> usize {
+        use BinaryOperation::*;
         match self {
             Expression::Number { .. } => 0,
             Expression::FunctionCall { .. } => 0,
@@ -211,34 +219,48 @@ impl Expression {
 
             Expression::Unary { .. } => 1,
             Expression::Binary {
-                operation:
-                    BinaryOperation::Multiply | BinaryOperation::Divide | BinaryOperation::Modulo,
+                operation: Multiply | Divide | Modulo,
                 ..
             } => 2,
             Expression::Binary {
-                operation: BinaryOperation::Add | BinaryOperation::Subtract,
+                operation: Add | Subtract,
                 ..
             } => 3,
             Expression::Binary {
-                operation:
-                    BinaryOperation::LessThan
-                    | BinaryOperation::LessThanOrEqual
-                    | BinaryOperation::GreaterThan
-                    | BinaryOperation::GreaterThanOrEqual,
+                operation: LessThan | LessThanOrEqual | GreaterThan | GreaterThanOrEqual,
                 ..
             } => 4,
             Expression::Binary {
-                operation: BinaryOperation::Equal | BinaryOperation::NotEqual,
+                operation: Equal | NotEqual,
                 ..
             } => 5,
             Expression::Binary {
-                operation: BinaryOperation::LogicalAnd,
+                operation: LogicalAnd,
                 ..
             } => 6,
             Expression::Binary {
-                operation: BinaryOperation::LogicalOr,
+                operation: LogicalOr,
                 ..
             } => 7,
+        }
+    }
+    pub fn get_associativity(&self) -> Associativity {
+        use BinaryOperation::*;
+        match self {
+            Expression::Number { .. } => Associativity::Both,
+            Expression::FunctionCall { .. } => Associativity::Both,
+            Expression::Grouping { .. } => Associativity::Both,
+            Expression::Unary { .. } => Associativity::Left,
+            Expression::Binary {
+                operation: Add | Multiply,
+                ..
+            } => Associativity::Both,
+            Expression::Binary {
+                operation:
+                    Subtract | Divide | Modulo | GreaterThan | GreaterThanOrEqual | LessThan
+                    | LessThanOrEqual | Equal | NotEqual | LogicalAnd | LogicalOr,
+                ..
+            } => Associativity::Left,
         }
     }
 }
