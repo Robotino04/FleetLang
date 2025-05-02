@@ -1,6 +1,7 @@
 use std::{collections::HashMap, error::Error};
 
 use inkwell::{
+    IntPredicate,
     builder::Builder,
     context::Context,
     module::Module,
@@ -45,8 +46,9 @@ impl<'a> IrGenerator<'a> {
 
         self.module.verify().map_err(|err| {
             format!(
-                "LLVM module is invalid: {}",
-                unescape(err.to_str().unwrap())
+                "LLVM module is invalid: {}\nModule dump:\n{}",
+                unescape(err.to_str().unwrap()),
+                self.module.print_to_string().to_str().unwrap()
             )
         })?;
 
@@ -221,7 +223,7 @@ impl<'a> IrGenerator<'a> {
                         self.builder
                             .build_int_z_extend(
                                 self.builder.build_int_compare::<IntValue>(
-                                    inkwell::IntPredicate::EQ,
+                                    IntPredicate::EQ,
                                     value.into_int_value(),
                                     value.get_type().into_int_type().const_zero(),
                                     "logical_not",
@@ -248,57 +250,299 @@ impl<'a> IrGenerator<'a> {
                     "Somehow passed a Unit value as an operand to {:?}",
                     operation
                 ))?;
-                let right_value = self.generate_expression_ir(&right)?.ok_or(format!(
-                    "Somehow passed a Unit value as an operand to {:?}",
-                    operation
-                ))?;
+                let right_value_gen = |self_: &mut Self| -> Result<BasicValueEnum<'a>> {
+                    Ok(self_.generate_expression_ir(&right)?.ok_or(format!(
+                        "Somehow passed a Unit value as an operand to {:?}",
+                        operation
+                    ))?)
+                };
 
                 return match operation {
-                    BinaryOperation::Add => Ok(Some(
-                        self.builder
-                            .build_int_add::<IntValue>(
+                    BinaryOperation::Add => {
+                        let right_value = right_value_gen(self)?;
+                        Ok(Some(
+                            self.builder
+                                .build_int_add::<IntValue>(
+                                    left_value.into_int_value(),
+                                    right_value.into_int_value(),
+                                    "add",
+                                )?
+                                .into(),
+                        ))
+                    }
+                    BinaryOperation::Subtract => {
+                        let right_value = right_value_gen(self)?;
+                        Ok(Some(
+                            self.builder
+                                .build_int_sub(
+                                    left_value.into_int_value(),
+                                    right_value.into_int_value(),
+                                    "sub",
+                                )?
+                                .into(),
+                        ))
+                    }
+
+                    BinaryOperation::Multiply => {
+                        let right_value = right_value_gen(self)?;
+                        Ok(Some(
+                            self.builder
+                                .build_int_mul(
+                                    left_value.into_int_value(),
+                                    right_value.into_int_value(),
+                                    "mul",
+                                )?
+                                .into(),
+                        ))
+                    }
+                    BinaryOperation::Divide => {
+                        let right_value = right_value_gen(self)?;
+                        Ok(Some(
+                            self.builder
+                                .build_int_signed_div(
+                                    left_value.into_int_value(),
+                                    right_value.into_int_value(),
+                                    "div",
+                                )?
+                                .into(),
+                        ))
+                    }
+                    BinaryOperation::Modulo => {
+                        let right_value = right_value_gen(self)?;
+                        Ok(Some(
+                            self.builder
+                                .build_int_signed_rem(
+                                    left_value.into_int_value(),
+                                    right_value.into_int_value(),
+                                    "mod",
+                                )?
+                                .into(),
+                        ))
+                    }
+
+                    BinaryOperation::LessThan => {
+                        let right_value = right_value_gen(self)?;
+                        Ok(Some(
+                            self.builder
+                                .build_int_z_extend(
+                                    self.builder.build_int_compare::<IntValue>(
+                                        IntPredicate::SLT,
+                                        left_value.into_int_value(),
+                                        right_value.into_int_value(),
+                                        "less_than",
+                                    )?,
+                                    left_value.get_type().into_int_type(),
+                                    "extent_from_i1",
+                                )?
+                                .into(),
+                        ))
+                    }
+                    BinaryOperation::LessThanOrEqual => {
+                        let right_value = right_value_gen(self)?;
+                        Ok(Some(
+                            self.builder
+                                .build_int_z_extend(
+                                    self.builder.build_int_compare::<IntValue>(
+                                        IntPredicate::SLE,
+                                        left_value.into_int_value(),
+                                        right_value.into_int_value(),
+                                        "less_than_or_equal",
+                                    )?,
+                                    left_value.get_type().into_int_type(),
+                                    "extent_from_i1",
+                                )?
+                                .into(),
+                        ))
+                    }
+                    BinaryOperation::GreaterThan => {
+                        let right_value = right_value_gen(self)?;
+                        Ok(Some(
+                            self.builder
+                                .build_int_z_extend(
+                                    self.builder.build_int_compare::<IntValue>(
+                                        IntPredicate::SGT,
+                                        left_value.into_int_value(),
+                                        right_value.into_int_value(),
+                                        "greater_than",
+                                    )?,
+                                    left_value.get_type().into_int_type(),
+                                    "extent_from_i1",
+                                )?
+                                .into(),
+                        ))
+                    }
+                    BinaryOperation::GreaterThanOrEqual => {
+                        let right_value = right_value_gen(self)?;
+                        Ok(Some(
+                            self.builder
+                                .build_int_z_extend(
+                                    self.builder.build_int_compare::<IntValue>(
+                                        IntPredicate::SGE,
+                                        left_value.into_int_value(),
+                                        right_value.into_int_value(),
+                                        "greater_than_or_equal",
+                                    )?,
+                                    left_value.get_type().into_int_type(),
+                                    "extent_from_i1",
+                                )?
+                                .into(),
+                        ))
+                    }
+                    BinaryOperation::Equal => {
+                        let right_value = right_value_gen(self)?;
+                        Ok(Some(
+                            self.builder
+                                .build_int_z_extend(
+                                    self.builder.build_int_compare::<IntValue>(
+                                        IntPredicate::EQ,
+                                        left_value.into_int_value(),
+                                        right_value.into_int_value(),
+                                        "equal",
+                                    )?,
+                                    left_value.get_type().into_int_type(),
+                                    "extent_from_i1",
+                                )?
+                                .into(),
+                        ))
+                    }
+                    BinaryOperation::NotEqual => {
+                        let right_value = right_value_gen(self)?;
+                        Ok(Some(
+                            self.builder
+                                .build_int_z_extend(
+                                    self.builder.build_int_compare::<IntValue>(
+                                        IntPredicate::NE,
+                                        left_value.into_int_value(),
+                                        right_value.into_int_value(),
+                                        "not_equal",
+                                    )?,
+                                    left_value.get_type().into_int_type(),
+                                    "extent_from_i1",
+                                )?
+                                .into(),
+                        ))
+                    }
+
+                    BinaryOperation::LogicalAnd => {
+                        let current_block = self
+                            .builder
+                            .get_insert_block()
+                            .expect("expected builder to be in a block");
+                        let right_block = self
+                            .context
+                            .insert_basic_block_after(current_block, "logical_and_rhs");
+                        let end_block = self
+                            .context
+                            .insert_basic_block_after(right_block, "logical_and_end");
+
+                        self.builder.position_at_end(current_block);
+                        self.builder.build_conditional_branch(
+                            self.builder.build_int_compare::<IntValue>(
+                                IntPredicate::EQ,
                                 left_value.into_int_value(),
+                                left_value.get_type().into_int_type().const_zero(),
+                                "is_zero",
+                            )?,
+                            end_block,
+                            right_block,
+                        )?;
+
+                        self.builder.position_at_end(right_block);
+                        let right_value = right_value_gen(self)?;
+                        let bool_right_value = self.builder.build_int_z_extend(
+                            self.builder.build_int_compare(
+                                IntPredicate::NE,
+                                right_value.get_type().into_int_type().const_zero(),
                                 right_value.into_int_value(),
-                                "add",
-                            )?
-                            .into(),
-                    )),
-                    BinaryOperation::Subtract => Ok(Some(
-                        self.builder
-                            .build_int_sub(
+                                "downcast_i1",
+                            )?,
+                            right_value.get_type().into_int_type(),
+                            "upcast",
+                        )?;
+                        self.builder.build_unconditional_branch(end_block)?;
+                        // needed because right_value may have generated new basic blocks and
+                        // right_block isn't the branch source anymore
+                        let last_right_block = self
+                            .builder
+                            .get_insert_block()
+                            .expect("expected builder to be in a block");
+
+                        self.builder.position_at_end(end_block);
+                        let result = self.builder.build_phi(
+                            left_value.get_type().into_int_type(),
+                            "logical_and_result",
+                        )?;
+
+                        result.add_incoming(&[
+                            (
+                                &left_value.get_type().into_int_type().const_zero(),
+                                current_block,
+                            ),
+                            (&bool_right_value, last_right_block),
+                        ]);
+
+                        Ok(Some(result.as_basic_value()))
+                    }
+                    BinaryOperation::LogicalOr => {
+                        let current_block = self
+                            .builder
+                            .get_insert_block()
+                            .expect("expected builder to be in a block");
+                        let right_block = self
+                            .context
+                            .insert_basic_block_after(current_block, "logical_or_rhs");
+                        let end_block = self
+                            .context
+                            .insert_basic_block_after(right_block, "logical_or_end");
+
+                        self.builder.position_at_end(current_block);
+                        self.builder.build_conditional_branch(
+                            self.builder.build_int_compare::<IntValue>(
+                                IntPredicate::EQ,
                                 left_value.into_int_value(),
+                                left_value.get_type().into_int_type().const_zero(),
+                                "is_zero",
+                            )?,
+                            right_block,
+                            end_block,
+                        )?;
+
+                        self.builder.position_at_end(right_block);
+                        let right_value = right_value_gen(self)?;
+                        let bool_right_value = self.builder.build_int_z_extend(
+                            self.builder.build_int_compare(
+                                IntPredicate::NE,
+                                right_value.get_type().into_int_type().const_zero(),
                                 right_value.into_int_value(),
-                                "sub",
-                            )?
-                            .into(),
-                    )),
-                    BinaryOperation::Multiply => Ok(Some(
-                        self.builder
-                            .build_int_mul(
-                                left_value.into_int_value(),
-                                right_value.into_int_value(),
-                                "mul",
-                            )?
-                            .into(),
-                    )),
-                    BinaryOperation::Divide => Ok(Some(
-                        self.builder
-                            .build_int_signed_div(
-                                left_value.into_int_value(),
-                                right_value.into_int_value(),
-                                "div",
-                            )?
-                            .into(),
-                    )),
-                    BinaryOperation::Modulo => Ok(Some(
-                        self.builder
-                            .build_int_signed_rem(
-                                left_value.into_int_value(),
-                                right_value.into_int_value(),
-                                "mod",
-                            )?
-                            .into(),
-                    )),
+                                "downcast_i1",
+                            )?,
+                            right_value.get_type().into_int_type(),
+                            "upcast",
+                        )?;
+                        self.builder.build_unconditional_branch(end_block)?;
+                        // needed because right_value may have generated new basic blocks and
+                        // right_block isn't the branch source anymore
+                        let last_right_block = self
+                            .builder
+                            .get_insert_block()
+                            .expect("expected builder to be in a block");
+
+                        self.builder.position_at_end(end_block);
+                        let result = self.builder.build_phi(
+                            left_value.get_type().into_int_type(),
+                            "logical_or_result",
+                        )?;
+
+                        result.add_incoming(&[
+                            (
+                                &left_value.get_type().into_int_type().const_int(1, false),
+                                current_block,
+                            ),
+                            (&bool_right_value, last_right_block),
+                        ]);
+
+                        Ok(Some(result.as_basic_value()))
+                    }
                 };
             }
             Expression::Grouping {

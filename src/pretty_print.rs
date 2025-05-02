@@ -63,7 +63,7 @@ fn pretty_print_keyword(keyword: Keyword) -> String {
         Keyword::I32 => "i32",
         Keyword::Return => "return",
     }
-    .into()
+    .to_string()
 }
 
 enum IndentationChange {
@@ -78,28 +78,45 @@ enum IndentationChange {
 fn pretty_print_token_full(token: &Token, indentation_change: IndentationChange) -> String {
     let lead = pretty_print_trivia(&token.leading_trivia);
     let trail = pretty_print_trivia(&token.trailing_trivia);
+    #[rustfmt::skip]
     let actual_token = match token.type_ {
-        TokenType::Keyword(keyword) => pretty_print_keyword(keyword),
-        TokenType::Identifier(ref id) => id.clone(),
-        TokenType::OpenBrace => "{".to_string(),
-        TokenType::CloseBrace => "}".to_string(),
-        TokenType::OpenParen => "(".to_string(),
-        TokenType::CloseParen => ")".to_string(),
-        TokenType::OpenBracket => "{".to_string(),
-        TokenType::CloseBracket => "}".to_string(),
-        TokenType::Semicolon => ";".to_string(),
-        TokenType::Dot => ".".to_string(),
-        TokenType::EqualSign => "=".to_string(),
-        TokenType::SingleRightArrow => "->".to_string(),
-        TokenType::Number(n) => n.to_string(),
-        TokenType::ExclamationMark => "!".to_string(),
-        TokenType::Tilde => "~".to_string(),
-        TokenType::Minus => "-".to_string(),
-        TokenType::Plus => "+".to_string(),
-        TokenType::Star => "*".to_string(),
-        TokenType::Slash => "/".to_string(),
-        TokenType::Percent => "%".to_string(),
-        TokenType::UnknownCharacters(ref chars) => chars.clone(),
+        TokenType::Keyword(keyword) => &pretty_print_keyword(keyword),
+        TokenType::Identifier(ref id) => id.as_str(),
+        TokenType::Number(n) => &n.to_string(),
+        TokenType::UnknownCharacters(ref chars) => chars,
+
+        TokenType::OpenBrace        => "{",
+        TokenType::CloseBrace       => "}",
+        TokenType::OpenParen        => "(",
+        TokenType::CloseParen       => ")",
+        TokenType::OpenBracket      => "{",
+        TokenType::CloseBracket     => "}",
+
+        TokenType::Semicolon        => ";",
+        TokenType::Dot              => ".",
+
+        TokenType::EqualSign        => "=",
+        TokenType::SingleRightArrow => "->",
+
+        TokenType::ExclamationMark  => "!",
+        TokenType::Tilde            => "~",
+
+        TokenType::Minus            => "-",
+        TokenType::Plus             => "+",
+        TokenType::Star             => "*",
+        TokenType::Slash            => "/",
+        TokenType::Percent          => "%",
+
+        TokenType::GreaterThan      => ">",
+        TokenType::GreaterThanEqual => ">=",
+        TokenType::LessThan         => "<",
+        TokenType::LessThanEqual    => "<=",
+
+        TokenType::DoubleEqual      => "==",
+        TokenType::NotEqual         => "!=",
+
+        TokenType::DoubleAmpersand  => "&&",
+        TokenType::DoublePipe       => "||",
     };
 
     let mut result = "".to_string();
@@ -113,7 +130,7 @@ fn pretty_print_token_full(token: &Token, indentation_change: IndentationChange)
             if !lead.is_empty() && !lead.ends_with("\n") {
                 result += " ";
             }
-            result += actual_token.as_str();
+            result += actual_token;
             if !trail.is_empty() && !trail.starts_with("\n") {
                 result += " ";
             }
@@ -134,7 +151,7 @@ fn pretty_print_token_full(token: &Token, indentation_change: IndentationChange)
             if !lead.ends_with("\n") {
                 result += "\n";
             }
-            result += actual_token.as_str();
+            result += actual_token;
             if !trail.is_empty() && !trail.starts_with("\n") {
                 result += " "
             }
@@ -145,7 +162,7 @@ fn pretty_print_token_full(token: &Token, indentation_change: IndentationChange)
             if !lead.is_empty() && !lead.ends_with("\n") {
                 result += " ";
             }
-            result += actual_token.as_str();
+            result += actual_token;
             if !trail.is_empty() && !trail.starts_with("\n") {
                 result += " "
             }
@@ -156,7 +173,7 @@ fn pretty_print_token_full(token: &Token, indentation_change: IndentationChange)
             if !lead.is_empty() && !lead.ends_with("\n") {
                 result += " ";
             }
-            result += actual_token.as_str();
+            result += actual_token;
             result += trail.as_str();
         }
         IndentationChange::SpaceTokenNoneTriviaSpace => {
@@ -164,7 +181,7 @@ fn pretty_print_token_full(token: &Token, indentation_change: IndentationChange)
             if !lead.is_empty() && !lead.ends_with("\n") {
                 result += " ";
             }
-            result += actual_token.as_str();
+            result += actual_token;
             result += trail.as_str();
             if !trail.is_empty() {
                 result += " ";
@@ -172,7 +189,7 @@ fn pretty_print_token_full(token: &Token, indentation_change: IndentationChange)
         }
         IndentationChange::NoneTokenSpace => {
             result += lead.as_str();
-            result += actual_token.as_str();
+            result += actual_token;
             if !trail.is_empty() && !trail.starts_with("\n") {
                 result += " "
             }

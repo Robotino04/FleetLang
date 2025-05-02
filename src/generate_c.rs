@@ -134,7 +134,7 @@ pub fn generate_c(node: AstNode) -> String {
             right,
         }) => {
             return format!(
-                "{} {} {}",
+                "({} {} {})",
                 generate_c(AstNode::Expression(*left)),
                 match operation {
                     BinaryOperation::Add => "+",
@@ -142,6 +142,14 @@ pub fn generate_c(node: AstNode) -> String {
                     BinaryOperation::Multiply => "*",
                     BinaryOperation::Divide => "/",
                     BinaryOperation::Modulo => "%",
+                    BinaryOperation::GreaterThan => ">",
+                    BinaryOperation::GreaterThanOrEqual => ">=",
+                    BinaryOperation::LessThan => "<",
+                    BinaryOperation::LessThanOrEqual => "<=",
+                    BinaryOperation::Equal => "==",
+                    BinaryOperation::NotEqual => "!=",
+                    BinaryOperation::LogicalAnd => "&&",
+                    BinaryOperation::LogicalOr => "||",
                 },
                 generate_c(AstNode::Expression(*right))
             );

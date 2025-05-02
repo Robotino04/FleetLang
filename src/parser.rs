@@ -223,7 +223,7 @@ impl Parser {
         }
     }
     fn parse_expression(&mut self) -> Result<Expression> {
-        return self.parse_sum_expression();
+        return self.parse_logical_or_expression();
     }
 
     fn parse_primary_expression(&mut self) -> Result<Expression> {
@@ -283,37 +283,6 @@ impl Parser {
             None => unable_to_parse!(self, "unary expression"),
         }
     }
-    fn parse_sum_expression(&mut self) -> Result<Expression> {
-        let mut left = self.parse_product_expression()?;
-
-        while match self.current_token_type() {
-            Some(TokenType::Plus) => {
-                let operator_token = expect!(self, TokenType::Plus)?;
-                let right = self.parse_product_expression()?;
-                left = Expression::Binary {
-                    left: Box::new(left),
-                    operator_token,
-                    operation: BinaryOperation::Add,
-                    right: Box::new(right),
-                };
-                true
-            }
-            Some(TokenType::Minus) => {
-                let operator_token = expect!(self, TokenType::Minus)?;
-                let right = self.parse_product_expression()?;
-                left = Expression::Binary {
-                    left: Box::new(left),
-                    operator_token,
-                    operation: BinaryOperation::Subtract,
-                    right: Box::new(right),
-                };
-                true
-            }
-            _ => false,
-        } {}
-
-        return Ok(left);
-    }
     fn parse_product_expression(&mut self) -> Result<Expression> {
         let mut left = self.parse_unary_expression()?;
 
@@ -347,6 +316,161 @@ impl Parser {
                     left: Box::new(left),
                     operator_token,
                     operation: BinaryOperation::Modulo,
+                    right: Box::new(right),
+                };
+                true
+            }
+            _ => false,
+        } {}
+
+        return Ok(left);
+    }
+    fn parse_sum_expression(&mut self) -> Result<Expression> {
+        let mut left = self.parse_product_expression()?;
+
+        while match self.current_token_type() {
+            Some(TokenType::Plus) => {
+                let operator_token = expect!(self, TokenType::Plus)?;
+                let right = self.parse_product_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::Add,
+                    right: Box::new(right),
+                };
+                true
+            }
+            Some(TokenType::Minus) => {
+                let operator_token = expect!(self, TokenType::Minus)?;
+                let right = self.parse_product_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::Subtract,
+                    right: Box::new(right),
+                };
+                true
+            }
+            _ => false,
+        } {}
+
+        return Ok(left);
+    }
+    fn parse_comparison_expression(&mut self) -> Result<Expression> {
+        let mut left = self.parse_sum_expression()?;
+
+        while match self.current_token_type() {
+            Some(TokenType::LessThan) => {
+                let operator_token = expect!(self, TokenType::LessThan)?;
+                let right = self.parse_sum_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::LessThan,
+                    right: Box::new(right),
+                };
+                true
+            }
+            Some(TokenType::LessThanEqual) => {
+                let operator_token = expect!(self, TokenType::LessThanEqual)?;
+                let right = self.parse_sum_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::LessThanOrEqual,
+                    right: Box::new(right),
+                };
+                true
+            }
+            Some(TokenType::GreaterThan) => {
+                let operator_token = expect!(self, TokenType::GreaterThan)?;
+                let right = self.parse_sum_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::GreaterThan,
+                    right: Box::new(right),
+                };
+                true
+            }
+            Some(TokenType::GreaterThanEqual) => {
+                let operator_token = expect!(self, TokenType::GreaterThanEqual)?;
+                let right = self.parse_sum_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::GreaterThanOrEqual,
+                    right: Box::new(right),
+                };
+                true
+            }
+            _ => false,
+        } {}
+
+        return Ok(left);
+    }
+    fn parse_equality_expression(&mut self) -> Result<Expression> {
+        let mut left = self.parse_comparison_expression()?;
+
+        while match self.current_token_type() {
+            Some(TokenType::DoubleEqual) => {
+                let operator_token = expect!(self, TokenType::DoubleEqual)?;
+                let right = self.parse_comparison_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::Equal,
+                    right: Box::new(right),
+                };
+                true
+            }
+            Some(TokenType::NotEqual) => {
+                let operator_token = expect!(self, TokenType::NotEqual)?;
+                let right = self.parse_comparison_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::NotEqual,
+                    right: Box::new(right),
+                };
+                true
+            }
+            _ => false,
+        } {}
+
+        return Ok(left);
+    }
+    fn parse_logical_and_expression(&mut self) -> Result<Expression> {
+        let mut left = self.parse_equality_expression()?;
+
+        while match self.current_token_type() {
+            Some(TokenType::DoubleAmpersand) => {
+                let operator_token = expect!(self, TokenType::DoubleAmpersand)?;
+                let right = self.parse_equality_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::LogicalAnd,
+                    right: Box::new(right),
+                };
+                true
+            }
+            _ => false,
+        } {}
+
+        return Ok(left);
+    }
+    fn parse_logical_or_expression(&mut self) -> Result<Expression> {
+        let mut left = self.parse_logical_and_expression()?;
+
+        while match self.current_token_type() {
+            Some(TokenType::DoublePipe) => {
+                let operator_token = expect!(self, TokenType::DoublePipe)?;
+                let right = self.parse_logical_and_expression()?;
+                left = Expression::Binary {
+                    left: Box::new(left),
+                    operator_token,
+                    operation: BinaryOperation::LogicalOr,
                     right: Box::new(right),
                 };
                 true

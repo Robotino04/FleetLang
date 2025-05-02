@@ -50,6 +50,15 @@ pub enum TokenType {
     Slash,
     Percent,
 
+    GreaterThan,
+    GreaterThanEqual,
+    LessThan,
+    LessThanEqual,
+    DoubleEqual,
+    NotEqual,
+    DoubleAmpersand,
+    DoublePipe,
+
     UnknownCharacters(String),
 }
 
@@ -182,8 +191,15 @@ impl Tokenizer {
         eprintln!("Unexpected character {:?}", c);
     }
     fn single_char_token(&mut self, t: TokenType) -> Token {
+        self.multi_char_token(1, t)
+    }
+    fn multi_char_token(&mut self, n: usize, t: TokenType) -> Token {
+        let start = self.current_location;
+        for _ in 0..n {
+            self.advance();
+        }
         let token = Token {
-            start: self.current_location,
+            start,
             end: self.current_location,
             type_: t,
 
@@ -191,7 +207,6 @@ impl Tokenizer {
             trailing_trivia: vec![],
         };
         self.trivia_accumulator.clear();
-        self.advance();
         return token;
     }
 
@@ -231,42 +246,41 @@ impl Tokenizer {
                     let tok = self.single_char_token(TokenType::Semicolon);
                     self.tokens.push(tok);
                 }
-                '=' => {
-                    let tok = self.single_char_token(TokenType::EqualSign);
-                    self.tokens.push(tok);
-                }
-                '!' => {
-                    let tok = self.single_char_token(TokenType::ExclamationMark);
-                    self.tokens.push(tok);
-                }
+                '=' => match self.chars.get(self.current_location.index + 1) {
+                    Some('=') => {
+                        let tok = self.multi_char_token(2, TokenType::DoubleEqual);
+                        self.tokens.push(tok);
+                    }
+                    _ => {
+                        let tok = self.single_char_token(TokenType::EqualSign);
+                        self.tokens.push(tok);
+                    }
+                },
+                '!' => match self.chars.get(self.current_location.index + 1) {
+                    Some('=') => {
+                        let tok = self.multi_char_token(2, TokenType::NotEqual);
+                        self.tokens.push(tok);
+                    }
+                    _ => {
+                        let tok = self.single_char_token(TokenType::ExclamationMark);
+                        self.tokens.push(tok);
+                    }
+                },
                 '~' => {
                     let tok = self.single_char_token(TokenType::Tilde);
                     self.tokens.push(tok);
                 }
 
-                '-' => {
-                    let start = self.current_location;
-                    match self.chars.get(self.current_location.index + 1) {
-                        Some('>') => {
-                            self.advance();
-                            self.advance();
-
-                            self.tokens.push(Token {
-                                type_: TokenType::SingleRightArrow,
-                                start,
-                                end: self.current_location,
-
-                                leading_trivia: self.trivia_accumulator.clone(),
-                                trailing_trivia: vec![],
-                            });
-                            self.trivia_accumulator.clear();
-                        }
-                        _ => {
-                            let tok = self.single_char_token(TokenType::Minus);
-                            self.tokens.push(tok);
-                        }
+                '-' => match self.chars.get(self.current_location.index + 1) {
+                    Some('>') => {
+                        let tok = self.multi_char_token(2, TokenType::SingleRightArrow);
+                        self.tokens.push(tok);
                     }
-                }
+                    _ => {
+                        let tok = self.single_char_token(TokenType::Minus);
+                        self.tokens.push(tok);
+                    }
+                },
 
                 '+' => {
                     let tok = self.single_char_token(TokenType::Plus);
@@ -276,6 +290,46 @@ impl Tokenizer {
                     let tok = self.single_char_token(TokenType::Star);
                     self.tokens.push(tok);
                 }
+                '<' => match self.chars.get(self.current_location.index + 1) {
+                    Some('=') => {
+                        let tok = self.multi_char_token(2, TokenType::LessThanEqual);
+                        self.tokens.push(tok);
+                    }
+                    _ => {
+                        let tok = self.single_char_token(TokenType::LessThan);
+                        self.tokens.push(tok);
+                    }
+                },
+                '>' => match self.chars.get(self.current_location.index + 1) {
+                    Some('=') => {
+                        let tok = self.multi_char_token(2, TokenType::GreaterThanEqual);
+                        self.tokens.push(tok);
+                    }
+                    _ => {
+                        let tok = self.single_char_token(TokenType::GreaterThan);
+                        self.tokens.push(tok);
+                    }
+                },
+                '|' => match self.chars.get(self.current_location.index + 1) {
+                    Some('|') => {
+                        let tok = self.multi_char_token(2, TokenType::DoublePipe);
+                        self.tokens.push(tok);
+                    }
+                    Some(c) => {
+                        self.unknown_character(*c);
+                    }
+                    None => {}
+                },
+                '&' => match self.chars.get(self.current_location.index + 1) {
+                    Some('&') => {
+                        let tok = self.multi_char_token(2, TokenType::DoubleAmpersand);
+                        self.tokens.push(tok);
+                    }
+                    Some(c) => {
+                        self.unknown_character(*c);
+                    }
+                    None => {}
+                },
                 '/' => {
                     match self.chars.get(self.current_location.index + 1) {
                         Some('/') => {

@@ -157,6 +157,17 @@ pub enum BinaryOperation {
     Multiply,
     Divide,
     Modulo,
+
+    GreaterThan,
+    GreaterThanOrEqual,
+    LessThan,
+    LessThanOrEqual,
+
+    Equal,
+    NotEqual,
+
+    LogicalAnd,
+    LogicalOr,
 }
 
 #[derive(Clone, Debug)]
@@ -208,6 +219,26 @@ impl Expression {
                 operation: BinaryOperation::Add | BinaryOperation::Subtract,
                 ..
             } => 3,
+            Expression::Binary {
+                operation:
+                    BinaryOperation::LessThan
+                    | BinaryOperation::LessThanOrEqual
+                    | BinaryOperation::GreaterThan
+                    | BinaryOperation::GreaterThanOrEqual,
+                ..
+            } => 4,
+            Expression::Binary {
+                operation: BinaryOperation::Equal | BinaryOperation::NotEqual,
+                ..
+            } => 5,
+            Expression::Binary {
+                operation: BinaryOperation::LogicalAnd,
+                ..
+            } => 6,
+            Expression::Binary {
+                operation: BinaryOperation::LogicalOr,
+                ..
+            } => 7,
         }
     }
 }
