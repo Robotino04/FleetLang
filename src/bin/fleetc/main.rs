@@ -1,4 +1,4 @@
-use std::{path::Path, process::exit};
+use std::{env::args, fs::read_to_string, path::Path, process::exit};
 
 use fleet::{
     ast::AstNode,
@@ -17,15 +17,22 @@ fn generate_header(text: impl AsRef<str>, length: usize) -> String {
 }
 
 fn main() {
-    let src = include_str!("../../../test.fl");
+    let input_path = args().nth(1).unwrap_or_else(|| {
+        eprintln!("No input file was given.");
+        exit(1);
+    });
+    let src = read_to_string(&input_path).unwrap_or_else(|_| {
+        eprintln!("Input file {input_path:?} doesn't exist or isn't readable");
+        exit(1);
+    });
 
     let context = Context::create();
-    let res = compile(&context, src);
+    let res = compile(&context, &src);
 
     let print_all_errors_and_message = |msg| {
         println!("{}", generate_header("Errors", 50));
         for error in &res.errors {
-            print_error_message(&src.to_string(), error);
+            print_error_message(&src, error);
         }
         fleet_error(msg);
     };
