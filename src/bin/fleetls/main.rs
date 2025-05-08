@@ -112,21 +112,29 @@ impl ExtractSemanticTokensPass {
 
     fn build_comment_tokens_from_trivia(&mut self, trivia: &Vec<Trivia>) {
         for Trivia { kind, start, end } in trivia {
-            if !matches!(
-                kind,
-                TriviaKind::LineComment(_) | TriviaKind::BlockComment(_)
-            ) {
-                continue;
+            if let TriviaKind::LineComment(content) | TriviaKind::BlockComment(content) = kind {
+                let mut mod_start = start.clone();
+                for line in content.split("\n") {
+                    let mut length = line.chars().count();
+                    if mod_start.line == end.line {
+                        length += 2 // the comment end
+                    }
+                    if mod_start.line == start.line {
+                        length += 2 // the comment start
+                    }
+                    self.semantic_tokens.push(SemanticToken {
+                        delta_line: token_delta_line(self.previous_token_start, mod_start),
+                        delta_start: token_delta_start(self.previous_token_start, mod_start),
+                        length: length as u32,
+                        token_type: self.find_token_type_index(SemanticTokenType::COMMENT),
+                        token_modifiers_bitset: 0,
+                    });
+                    self.previous_token_start = mod_start;
+                    mod_start.line += 1;
+                    mod_start.column = 0;
+                    mod_start.index += length + 1; // the newline
+                }
             }
-
-            self.semantic_tokens.push(SemanticToken {
-                delta_line: token_delta_line(self.previous_token_start, *start),
-                delta_start: token_delta_start(self.previous_token_start, *start),
-                length: token_length(*start, *end),
-                token_type: self.find_token_type_index(SemanticTokenType::COMMENT),
-                token_modifiers_bitset: 0,
-            });
-            self.previous_token_start = *start;
         }
     }
 
