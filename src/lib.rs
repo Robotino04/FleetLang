@@ -1,9 +1,10 @@
 pub mod ast;
+pub mod ast_to_dm;
+pub mod document_model;
 pub mod escape;
 pub mod generate_c;
 pub mod infra;
 pub mod ir_generator;
 pub mod parser;
-pub mod pretty_print;
-pub mod tokenizer;
 pub mod passes;
+pub mod tokenizer;

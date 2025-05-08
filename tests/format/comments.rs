@@ -240,7 +240,7 @@ fn align_block_comment() {
         indoc! {r##"
             let main = () -> i32 {
                 /* Line 1
-        Line 2
+                        Line 2
                     Line 3 */
                 return 0;
             }"##
@@ -248,7 +248,7 @@ fn align_block_comment() {
         indoc! {r##"
             let main = () -> i32 {
                 /* Line 1
-                Line 2
+                    Line 2
                 Line 3 */
                 return 0;
             }"##

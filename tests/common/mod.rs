@@ -8,15 +8,13 @@ use inkwell::{
 };
 
 use fleet::{
-    ast::AstNode,
-    infra::{CompileResult, CompileStatus, compile},
-    pretty_print::pretty_print,
+    infra::{CompileResult, CompileStatus, compile_program, format_program},
     tokenizer::SourceLocation,
 };
 
 pub fn assert_parser_or_tokenizer_error<'a>(src: &str, error_start: SourceLocation) {
     let context = Context::create();
-    let result = compile(&context, src);
+    let result = compile_program(&context, src);
 
     assert!(
         match result.status {
@@ -109,7 +107,7 @@ pub fn assert_formatting_and_same_behaviour<ReturnType>(
 }
 
 fn compile_or_panic<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
-    let result = compile(context, src);
+    let result = compile_program(context, src);
 
     assert!(result.errors.is_empty(), "{:#?}", result.errors);
     assert!(
@@ -131,8 +129,7 @@ fn compile_or_panic<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
 fn format_or_panic(src: &str) -> String {
     let context = Context::create();
     let result = compile_or_panic(&context, src);
-    let formatted_src = pretty_print(AstNode::Program(result.status.program().unwrap().clone()));
-    return formatted_src;
+    return format_program(result.status.program().unwrap().clone());
 }
 
 fn execute_or_panic<ReturnType>(src: &str, function_name: &str) -> ReturnType {
@@ -157,7 +154,6 @@ fn execute_function<ReturnType>(module: &Module, function_name: &str) -> ReturnT
 
     return unsafe { main_function.call() };
 }
-
 
 fn assert_is_formatted(src: &str) {
     let formatted_src = format_or_panic(src);

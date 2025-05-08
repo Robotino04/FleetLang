@@ -1,9 +1,12 @@
 use inkwell::{context::Context, module::Module};
 
 use crate::{
-    ast::Program,
+    ast::{AstVisitor, Program},
+    ast_to_dm::convert_program_to_document_model,
+    document_model::{fully_flatten_document, stringify_document},
     ir_generator::IrGenerator,
     parser::Parser,
+    passes::remove_parens::RemoveParensPass,
     tokenizer::{SourceLocation, Token, Tokenizer},
 };
 
@@ -163,7 +166,7 @@ pub struct CompileResult<'a> {
     pub errors: Vec<FleetError>,
 }
 
-pub fn compile<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
+pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
     let mut tokenizer = Tokenizer::new(src.to_string());
 
     let tokens = tokenizer.tokenize();
@@ -224,4 +227,11 @@ pub fn compile<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
         },
         errors,
     };
+}
+
+pub fn format_program(mut program: Program) -> String {
+    RemoveParensPass::new().visit_program(&mut program);
+    let document = convert_program_to_document_model(&program);
+    let formatted_src = stringify_document(&fully_flatten_document(document));
+    return formatted_src;
 }

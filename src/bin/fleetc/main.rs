@@ -1,10 +1,10 @@
 use std::{env::args, fs::read_to_string, path::Path, process::exit};
 
+use fleet::infra::format_program;
 use fleet::{
     ast::AstNode,
     generate_c::generate_c,
-    infra::{CompileStatus, compile, fleet_error, print_error_message},
-    pretty_print::pretty_print,
+    infra::{CompileStatus, compile_program, fleet_error, print_error_message},
 };
 use inkwell::{
     OptimizationLevel,
@@ -27,7 +27,7 @@ fn main() {
     });
 
     let context = Context::create();
-    let res = compile(&context, &src);
+    let res = compile_program(&context, &src);
 
     let print_all_errors_and_message = |msg| {
         println!("{}", generate_header("Errors", 50));
@@ -81,13 +81,26 @@ fn main() {
             assert!(res.errors.is_empty());
         }
     }
-    let program = res.status.program().unwrap();
+    let program = res.status.program().unwrap().clone();
     let module = res.status.module().unwrap();
 
-    println!("{}", generate_header("Pretty-Printed", 50));
-    println!("{}", pretty_print(AstNode::Program(program.clone())));
     println!("{}", generate_header("C Code", 50));
     println!("{}", generate_c(AstNode::Program(program.clone())));
+
+    /*
+    println!("{}", generate_header("Document Model", 50));
+    RemoveParensPass::new().visit_program(&mut program);
+    let document = convert_program_to_document_model(&program);
+    println!("{:#?}", document.clone());
+
+    println!("{}", generate_header("Flattened Document Model", 50));
+    let document = fully_flatten_document(document);
+    println!("{:#?}", document.clone());
+    */
+
+    println!("{}", generate_header("Pretty-Printed", 50));
+    println!("{}", format_program(program));
+    println!("{}", generate_header("", 50));
 
     Target::initialize_all(&inkwell::targets::InitializationConfig::default());
 

@@ -36,7 +36,7 @@ fn big_block_comment() {
         indoc! {r##"
             /*
             let main = () -> i32 {
-            return 7;
+                return 7;
             }
             */
 

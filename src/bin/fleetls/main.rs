@@ -5,10 +5,9 @@ use std::process::exit;
 use std::sync::LazyLock;
 
 use fleet::ast::{
-    AstNode, AstVisitor, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
+    AstVisitor, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
 };
-use fleet::infra::compile;
-use fleet::pretty_print::pretty_print;
+use fleet::infra::{compile_program, format_program};
 use fleet::tokenizer::{SourceLocation, Token, Trivia, TriviaKind};
 use inkwell::context::Context;
 use tower_lsp::jsonrpc::Result;
@@ -394,7 +393,7 @@ impl LanguageServer for Backend {
             .clone();
 
         let context = Context::create();
-        let res = compile(&context, text.as_str());
+        let res = compile_program(&context, text.as_str());
 
         let _program = res
             .status
@@ -482,7 +481,7 @@ impl LanguageServer for Backend {
             .clone();
 
         let context = Context::create();
-        let res = compile(&context, text.as_str());
+        let res = compile_program(&context, text.as_str());
 
         let mut program = res
             .status
@@ -517,7 +516,7 @@ impl LanguageServer for Backend {
             .clone();
 
         let context = Context::create();
-        let res = compile(&context, text.as_str());
+        let res = compile_program(&context, text.as_str());
 
         if !res.errors.is_empty() {
             return Err(tower_lsp::jsonrpc::Error {
@@ -547,7 +546,7 @@ impl LanguageServer for Backend {
                     character: text.split('\n').last().unwrap().chars().count() as u32,
                 },
             },
-            new_text: pretty_print(AstNode::Program(program.clone())),
+            new_text: format_program(program.clone()),
         }]));
     }
 }
