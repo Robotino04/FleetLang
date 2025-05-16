@@ -243,6 +243,28 @@ impl AstVisitor for ExtractSemanticTokensPass {
                 self.visit_expression(value);
                 self.build_comment_tokens_only(semicolon_token);
             }
+            Statement::VariableDefinition {
+                let_token,
+                name_token,
+                name: _,
+                colon_token,
+                type_,
+                equals_token,
+                value,
+                semicolon_token,
+            } => {
+                self.build_semantic_token(let_token, SemanticTokenType::KEYWORD, vec![]);
+                self.build_semantic_token(
+                    &name_token,
+                    SemanticTokenType::VARIABLE,
+                    vec![SemanticTokenModifier::DEFINITION],
+                );
+                self.build_comment_tokens_only(colon_token);
+                self.visit_type(type_);
+                self.build_comment_tokens_only(equals_token);
+                self.visit_expression(value);
+                self.build_comment_tokens_only(semicolon_token);
+            }
         }
     }
 
@@ -302,6 +324,12 @@ impl AstVisitor for ExtractSemanticTokensPass {
                 self.visit_expression(subexpression);
                 self.build_comment_tokens_only(close_paren_token);
             }
+            Expression::VariableAccess {
+                name: _,
+                name_token,
+            } => {
+                self.build_semantic_token(name_token, SemanticTokenType::VARIABLE, vec![]);
+            }
             Expression::Unary {
                 operator_token,
                 operation: _,
@@ -318,6 +346,20 @@ impl AstVisitor for ExtractSemanticTokensPass {
             } => {
                 self.visit_expression(left);
                 self.build_comment_tokens_only(operator_token);
+                self.visit_expression(right);
+            }
+            Expression::VariableAssignment {
+                name: _,
+                name_token,
+                equal_token,
+                right,
+            } => {
+                self.build_semantic_token(
+                    name_token,
+                    SemanticTokenType::VARIABLE,
+                    vec![SemanticTokenModifier::MODIFICATION],
+                );
+                self.build_comment_tokens_only(equal_token);
                 self.visit_expression(right);
             }
         }

@@ -82,6 +82,23 @@ pub fn generate_c(node: AstNode) -> String {
         }) => {
             return "return ".to_string() + generate_c(AstNode::Expression(value)).as_str() + ";";
         }
+        AstNode::Statement(Statement::VariableDefinition {
+            let_token: _,
+            name_token: _,
+            name,
+            colon_token: _,
+            type_,
+            equals_token: _,
+            value,
+            semicolon_token: _,
+        }) => {
+            return generate_c(type_.into())
+                + " "
+                + &name
+                + " = "
+                + &generate_c(value.into())
+                + ";";
+        }
         AstNode::ExecutorHost(ExecutorHost::Self_ { token: _ }) => "self".to_string(),
         AstNode::Executor(Executor::Thread {
             host,
@@ -160,6 +177,20 @@ pub fn generate_c(node: AstNode) -> String {
             close_paren_token: _,
         }) => {
             return format!("({})", generate_c(AstNode::Expression(*subexpression)),);
+        }
+        AstNode::Expression(Expression::VariableAccess {
+            name,
+            name_token: _,
+        }) => {
+            return name;
+        }
+        AstNode::Expression(Expression::VariableAssignment {
+            name,
+            name_token: _,
+            equal_token: _,
+            right,
+        }) => {
+            return format!("({name} = {})", generate_c(AstNode::Expression(*right)),);
         }
     }
 }

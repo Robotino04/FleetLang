@@ -100,3 +100,49 @@ fn collapse_2() {
         "a",
     );
 }
+
+#[test]
+fn expand_multiple_statements() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let a = () -> i32 {
+                4 + 5;4 + 5;4 + 5;return 0;
+            }"##
+        },
+        indoc! {r##"
+            let a = () -> i32 {
+                4 + 5;
+                4 + 5;
+                4 + 5;
+                return 0;
+            }"##
+        },
+        "a",
+    );
+}
+
+#[ignore = "Not sure how to do this yet"]
+#[test]
+fn preserve_newlines_without_comments() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let a = () -> i32 {
+                4 + 5;
+                4 + 5;
+
+                4 + 5;
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let a = () -> i32 {
+                4 + 5;
+                4 + 5;
+
+                4 + 5;
+                return 0;
+            }"##
+        },
+        "a",
+    );
+}

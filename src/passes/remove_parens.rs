@@ -76,6 +76,19 @@ impl AstVisitor for RemoveParensPass {
             } => {
                 self.visit_expression(value);
             }
+            Statement::VariableDefinition {
+                let_token: _,
+                name_token: _,
+                name: _,
+                colon_token: _,
+                type_,
+                equals_token: _,
+                value,
+                semicolon_token: _,
+            } => {
+                self.visit_type(type_);
+                self.visit_expression(value);
+            }
         }
     }
 
@@ -107,6 +120,10 @@ impl AstVisitor for RemoveParensPass {
 
         match expression {
             Expression::Number { value: _, token: _ } => {}
+            Expression::VariableAccess {
+                name: _,
+                name_token: _,
+            } => {}
             Expression::FunctionCall {
                 name: _,
                 name_token: _,
@@ -191,6 +208,17 @@ impl AstVisitor for RemoveParensPass {
                 self.current_side = OperandSide::Left;
                 self.visit_expression(&mut *left);
 
+                self.parent_precedence = this_precedence;
+                self.parent_associativity = this_associativity;
+                self.current_side = OperandSide::Right;
+                self.visit_expression(&mut *right);
+            }
+            Expression::VariableAssignment {
+                name: _,
+                name_token: _,
+                equal_token: _,
+                right,
+            } => {
                 self.parent_precedence = this_precedence;
                 self.parent_associativity = this_associativity;
                 self.current_side = OperandSide::Right;

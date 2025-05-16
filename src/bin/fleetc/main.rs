@@ -6,6 +6,7 @@ use fleet::{
     generate_c::generate_c,
     infra::{CompileStatus, compile_program, fleet_error, print_error_message},
 };
+use inkwell::passes::PassBuilderOptions;
 use inkwell::{
     OptimizationLevel,
     context::Context,
@@ -67,6 +68,27 @@ fn main() {
             print_all_errors_and_message("The ir generator failed completely");
             exit(1);
         }
+        CompileStatus::IrGeneratorErrors {
+            tokens,
+            program,
+            partial_module,
+        } => {
+            println!("{}", generate_header("Tokens", 50));
+            println!("{:#?}", tokens);
+            println!("{}", generate_header("AST", 50));
+            println!("{:#?}", program);
+            println!("{}", generate_header("Partial LLVM IR (unoptimized)", 50));
+            println!(
+                "{}",
+                partial_module
+                    .clone()
+                    .map(|module| module.print_to_string().to_str().unwrap().to_string())
+                    .unwrap_or("<Module is invalid>".to_string())
+            );
+
+            print_all_errors_and_message("The ir generator failed partially");
+            exit(1);
+        }
         CompileStatus::Success {
             tokens,
             program,
@@ -74,10 +96,13 @@ fn main() {
         } => {
             println!("{}", generate_header("Tokens", 50));
             println!("{:#?}", tokens);
+
             println!("{}", generate_header("AST", 50));
             println!("{:#?}", program);
-            println!("{}", generate_header("LLVM IR", 50));
+
+            println!("{}", generate_header("LLVM IR (unoptimized)", 50));
             println!("{}", module.print_to_string().to_str().unwrap());
+
             assert!(res.errors.is_empty());
         }
     }
@@ -111,12 +136,18 @@ fn main() {
             &triple,
             "x86-64",
             "+avx2",
-            OptimizationLevel::Default,
+            OptimizationLevel::Aggressive,
             RelocMode::Default,
             CodeModel::Default,
         )
         .unwrap();
-    println!("target created");
+
+    println!("{}", generate_header("LLVM IR (optimized)", 50));
+    module
+        .run_passes("default<O1>", &target_machine, PassBuilderOptions::create())
+        .unwrap();
+
+    println!("{}", module.print_to_string().to_str().unwrap());
 
     let output_path = Path::new("output.o");
     target_machine

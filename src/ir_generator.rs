@@ -5,8 +5,10 @@ use inkwell::{
     builder::Builder,
     context::Context,
     module::Module,
-    types::{AnyTypeEnum, BasicMetadataTypeEnum, FunctionType},
-    values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue},
+    types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, FunctionType},
+    values::{
+        BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue,
+    },
 };
 
 use crate::{
@@ -14,15 +16,55 @@ use crate::{
         BinaryOperation, Expression, FunctionDefinition, Program, Statement, Type, UnaryOperation,
     },
     escape::unescape,
+    infra::FleetError,
+    tokenizer::SourceLocation,
 };
 
 type Result<T> = ::core::result::Result<T, Box<dyn Error>>;
+
+struct VariableScope<'a, 'b> {
+    variables: HashMap<String, (BasicTypeEnum<'a>, PointerValue<'a>)>,
+    parent: Option<&'b VariableScope<'a, 'b>>,
+}
+
+impl<'a> VariableScope<'a, '_> {
+    fn new() -> Self {
+        Self {
+            variables: HashMap::new(),
+            parent: None,
+        }
+    }
+
+    pub fn get<'b>(&'b self, name: &String) -> Option<&'b (BasicTypeEnum<'a>, PointerValue<'a>)> {
+        return self.variables.get(name).or_else(|| self.parent?.get(name));
+    }
+    pub fn try_insert(
+        &mut self,
+        name: &String,
+        value: PointerValue<'a>,
+        type_: BasicTypeEnum<'a>,
+    ) -> Result<()> {
+        if self.variables.contains_key(name) {
+            return Err("variable already exists".into());
+        } else {
+            self.variables.insert(name.clone(), (type_, value));
+            return Ok(());
+        }
+    }
+    pub fn new_child<'b>(&'b self) -> VariableScope<'a, 'b> {
+        VariableScope {
+            variables: HashMap::new(),
+            parent: Some(self),
+        }
+    }
+}
 
 pub struct IrGenerator<'a> {
     context: &'a Context,
     module: Module<'a>,
     builder: Builder<'a>,
     functions: HashMap<String, FunctionValue<'a>>,
+    errors: Vec<FleetError>,
 }
 impl<'a> IrGenerator<'a> {
     pub fn new(context: &'a Context) -> Self {
@@ -34,7 +76,15 @@ impl<'a> IrGenerator<'a> {
             module,
             builder,
             functions: HashMap::new(),
+            errors: vec![],
         }
+    }
+
+    pub fn errors(&self) -> &Vec<FleetError> {
+        &self.errors
+    }
+    pub fn module(&self) -> &Module<'a> {
+        &self.module
     }
 
     pub fn generate_program_ir(&mut self, program: &Program) -> Result<&Module<'a>> {
@@ -44,13 +94,20 @@ impl<'a> IrGenerator<'a> {
             self.generate_function_ir(f)?;
         }
 
-        self.module.verify().map_err(|err| {
-            format!(
-                "LLVM module is invalid: {}\nModule dump:\n{}",
-                unescape(err.to_str().unwrap()),
-                self.module.print_to_string().to_str().unwrap()
-            )
-        })?;
+        if let Err(err) = self.module.verify() {
+            self.errors.push(FleetError {
+                start: SourceLocation::start(),
+                end: program
+                    .functions
+                    .last()
+                    .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
+                message: format!(
+                    "LLVM module is invalid: {}\nModule dump:\n{}",
+                    unescape(err.to_str().unwrap()),
+                    self.module.print_to_string().to_str().unwrap()
+                ),
+            });
+        }
 
         return Ok(&self.module);
     }
@@ -100,7 +157,9 @@ impl<'a> IrGenerator<'a> {
         let entry = self.context.append_basic_block(ir_function, "entry");
         self.builder.position_at_end(entry);
 
-        self.generate_statement_ir(&function.body)?;
+        let mut parameter_scope = VariableScope::new();
+
+        self.generate_statement_ir(&function.body, &mut parameter_scope)?;
 
         /*
         match function.return_type {
@@ -114,14 +173,18 @@ impl<'a> IrGenerator<'a> {
         return Ok(ir_function);
     }
 
-    fn generate_statement_ir(&mut self, stmt: &Statement) -> Result<()> {
+    fn generate_statement_ir(
+        &mut self,
+        stmt: &Statement,
+        variable_scope: &mut VariableScope<'a, '_>,
+    ) -> Result<()> {
         eprintln!("Generating statement");
         match stmt {
             Statement::Expression {
                 expression,
                 semicolon_token: _,
             } => {
-                self.generate_expression_ir(expression)?;
+                self.generate_expression_ir(expression, variable_scope)?;
                 Ok(())
             }
             Statement::On {
@@ -136,8 +199,9 @@ impl<'a> IrGenerator<'a> {
                 body,
                 close_brace_token: _,
             } => {
+                let mut new_scope = variable_scope.new_child();
                 for substmt in body {
-                    self.generate_statement_ir(substmt)?;
+                    self.generate_statement_ir(substmt, &mut new_scope)?;
                 }
                 Ok(())
             }
@@ -146,7 +210,7 @@ impl<'a> IrGenerator<'a> {
                 value,
                 semicolon_token: _,
             } => {
-                let ir_value = self.generate_expression_ir(value)?;
+                let ir_value = self.generate_expression_ir(value, variable_scope)?;
 
                 self.builder.build_return(match &ir_value {
                     Some(BasicValueEnum::ArrayValue(array_value)) => Some(array_value),
@@ -159,9 +223,41 @@ impl<'a> IrGenerator<'a> {
                 })?;
                 Ok(())
             }
+            Statement::VariableDefinition {
+                let_token: _,
+                name_token,
+                name,
+                colon_token: _,
+                type_: _,
+                equals_token: _,
+                value,
+                semicolon_token: _,
+            } => {
+                let eval_value =
+                    self.generate_expression_ir(value, variable_scope)?
+                        .ok_or(format!(
+                            "Somehow passed using a void value as a variable initializer"
+                        ))?;
+                let ptr = self
+                    .builder
+                    .build_alloca(eval_value.get_type().into_int_type(), name)?;
+                self.builder.build_store(ptr, eval_value)?;
+                if let Err(_) = variable_scope.try_insert(name, ptr, eval_value.get_type()) {
+                    self.errors.push(FleetError::from_token(
+                        name_token,
+                        format!("Variable {name:?} was already defined in this scope"),
+                    ));
+                }
+
+                Ok(())
+            }
         }
     }
-    fn generate_expression_ir(&mut self, expr: &Expression) -> Result<Option<BasicValueEnum<'a>>> {
+    fn generate_expression_ir(
+        &mut self,
+        expr: &Expression,
+        variable_scope: &mut VariableScope<'a, '_>,
+    ) -> Result<Option<BasicValueEnum<'a>>> {
         eprintln!("Generating expression");
         match expr {
             Expression::Number { value, token: _ } => {
@@ -172,6 +268,27 @@ impl<'a> IrGenerator<'a> {
                         .into(),
                 ));
             }
+            Expression::VariableAccess { name, name_token } => {
+                if let Some((type_, ptr)) = variable_scope.get(name) {
+                    return Ok(Some(self.builder.build_load(
+                        type_.clone(),
+                        ptr.clone(),
+                        name,
+                    )?));
+                } else {
+                    self.errors.push(FleetError::from_token(
+                        name_token,
+                        format!("Variable {name:?} is accessed, but not defined"),
+                    ));
+                    return Ok(Some(
+                        self.context
+                            .i32_type()
+                            .const_all_ones()
+                            .as_basic_value_enum(),
+                    ));
+                }
+            }
+
             Expression::FunctionCall {
                 name,
                 name_token,
@@ -182,7 +299,7 @@ impl<'a> IrGenerator<'a> {
                 let mut args: Vec<BasicMetadataValueEnum> = vec![];
                 for arg in arguments {
                     args.push(
-                        self.generate_expression_ir(arg)?
+                        self.generate_expression_ir(arg, variable_scope)?
                             .ok_or(format!(
                                 "Somehow passed a Unit value as a function parameter near {:#?}",
                                 name_token
@@ -191,27 +308,37 @@ impl<'a> IrGenerator<'a> {
                     );
                 }
 
-                let f = self
-                    .functions
-                    .get(name)
-                    .ok_or(format!("Function {name:?} isn't defined, but called"))?;
-
-                return Ok(self
-                    .builder
-                    .build_call(*f, &args[..], name)?
-                    .try_as_basic_value()
-                    .left()
-                    .map(|l| l.as_basic_value_enum()));
+                if let Some(f) = self.functions.get(name) {
+                    return Ok(self
+                        .builder
+                        .build_call(*f, &args[..], name)?
+                        .try_as_basic_value()
+                        .left()
+                        .map(|l| l.as_basic_value_enum()));
+                } else {
+                    self.errors.push(FleetError::from_token(
+                        name_token,
+                        format!("Function {name:?} called but not defined"),
+                    ));
+                    return Ok(Some(
+                        self.context
+                            .i32_type()
+                            .const_all_ones()
+                            .as_basic_value_enum(),
+                    ));
+                }
             }
             Expression::Unary {
                 operation,
                 operand,
                 operator_token: _,
             } => {
-                let value = self.generate_expression_ir(operand)?.ok_or(format!(
-                    "Somehow passed a Unit value as an operand to {:?}",
-                    operation
-                ))?;
+                let value = self
+                    .generate_expression_ir(operand, variable_scope)?
+                    .ok_or(format!(
+                        "Somehow passed a Unit value as an operand to {:?}",
+                        operation
+                    ))?;
 
                 return match operation {
                     UnaryOperation::BitwiseNot => Ok(Some(
@@ -246,20 +373,26 @@ impl<'a> IrGenerator<'a> {
                 operation,
                 right,
             } => {
-                let left_value = self.generate_expression_ir(&left)?.ok_or(format!(
-                    "Somehow passed a Unit value as an operand to {:?}",
-                    operation
-                ))?;
-                let right_value_gen = |self_: &mut Self| -> Result<BasicValueEnum<'a>> {
-                    Ok(self_.generate_expression_ir(&right)?.ok_or(format!(
-                        "Somehow passed a Unit value as an operand to {:?}",
-                        operation
-                    ))?)
+                let left_value =
+                    self.generate_expression_ir(&left, variable_scope)?
+                        .ok_or(format!(
+                            "Somehow passed a Unit value as an operand to {:?}",
+                            operation
+                        ))?;
+                let right_value_gen = |self_: &mut Self,
+                                       variable_scope: &mut VariableScope<'a, '_>|
+                 -> Result<BasicValueEnum<'a>> {
+                    Ok(self_
+                        .generate_expression_ir(&right, variable_scope)?
+                        .ok_or(format!(
+                            "Somehow passed a Unit value as an operand to {:?}",
+                            operation
+                        ))?)
                 };
 
                 return match operation {
                     BinaryOperation::Add => {
-                        let right_value = right_value_gen(self)?;
+                        let right_value = right_value_gen(self, variable_scope)?;
                         Ok(Some(
                             self.builder
                                 .build_int_add::<IntValue>(
@@ -271,7 +404,7 @@ impl<'a> IrGenerator<'a> {
                         ))
                     }
                     BinaryOperation::Subtract => {
-                        let right_value = right_value_gen(self)?;
+                        let right_value = right_value_gen(self, variable_scope)?;
                         Ok(Some(
                             self.builder
                                 .build_int_sub(
@@ -284,7 +417,7 @@ impl<'a> IrGenerator<'a> {
                     }
 
                     BinaryOperation::Multiply => {
-                        let right_value = right_value_gen(self)?;
+                        let right_value = right_value_gen(self, variable_scope)?;
                         Ok(Some(
                             self.builder
                                 .build_int_mul(
@@ -296,7 +429,7 @@ impl<'a> IrGenerator<'a> {
                         ))
                     }
                     BinaryOperation::Divide => {
-                        let right_value = right_value_gen(self)?;
+                        let right_value = right_value_gen(self, variable_scope)?;
                         Ok(Some(
                             self.builder
                                 .build_int_signed_div(
@@ -308,7 +441,7 @@ impl<'a> IrGenerator<'a> {
                         ))
                     }
                     BinaryOperation::Modulo => {
-                        let right_value = right_value_gen(self)?;
+                        let right_value = right_value_gen(self, variable_scope)?;
                         Ok(Some(
                             self.builder
                                 .build_int_signed_rem(
@@ -321,7 +454,7 @@ impl<'a> IrGenerator<'a> {
                     }
 
                     BinaryOperation::LessThan => {
-                        let right_value = right_value_gen(self)?;
+                        let right_value = right_value_gen(self, variable_scope)?;
                         Ok(Some(
                             self.builder
                                 .build_int_z_extend(
@@ -338,7 +471,7 @@ impl<'a> IrGenerator<'a> {
                         ))
                     }
                     BinaryOperation::LessThanOrEqual => {
-                        let right_value = right_value_gen(self)?;
+                        let right_value = right_value_gen(self, variable_scope)?;
                         Ok(Some(
                             self.builder
                                 .build_int_z_extend(
@@ -355,7 +488,7 @@ impl<'a> IrGenerator<'a> {
                         ))
                     }
                     BinaryOperation::GreaterThan => {
-                        let right_value = right_value_gen(self)?;
+                        let right_value = right_value_gen(self, variable_scope)?;
                         Ok(Some(
                             self.builder
                                 .build_int_z_extend(
@@ -372,7 +505,7 @@ impl<'a> IrGenerator<'a> {
                         ))
                     }
                     BinaryOperation::GreaterThanOrEqual => {
-                        let right_value = right_value_gen(self)?;
+                        let right_value = right_value_gen(self, variable_scope)?;
                         Ok(Some(
                             self.builder
                                 .build_int_z_extend(
@@ -389,7 +522,7 @@ impl<'a> IrGenerator<'a> {
                         ))
                     }
                     BinaryOperation::Equal => {
-                        let right_value = right_value_gen(self)?;
+                        let right_value = right_value_gen(self, variable_scope)?;
                         Ok(Some(
                             self.builder
                                 .build_int_z_extend(
@@ -406,7 +539,7 @@ impl<'a> IrGenerator<'a> {
                         ))
                     }
                     BinaryOperation::NotEqual => {
-                        let right_value = right_value_gen(self)?;
+                        let right_value = right_value_gen(self, variable_scope)?;
                         Ok(Some(
                             self.builder
                                 .build_int_z_extend(
@@ -448,7 +581,7 @@ impl<'a> IrGenerator<'a> {
                         )?;
 
                         self.builder.position_at_end(right_block);
-                        let right_value = right_value_gen(self)?;
+                        let right_value = right_value_gen(self, variable_scope)?;
                         let bool_right_value = self.builder.build_int_z_extend(
                             self.builder.build_int_compare(
                                 IntPredicate::NE,
@@ -508,7 +641,7 @@ impl<'a> IrGenerator<'a> {
                         )?;
 
                         self.builder.position_at_end(right_block);
-                        let right_value = right_value_gen(self)?;
+                        let right_value = right_value_gen(self, variable_scope)?;
                         let bool_right_value = self.builder.build_int_z_extend(
                             self.builder.build_int_compare(
                                 IntPredicate::NE,
@@ -549,7 +682,36 @@ impl<'a> IrGenerator<'a> {
                 open_paren_token: _,
                 subexpression,
                 close_paren_token: _,
-            } => self.generate_expression_ir(subexpression),
+            } => self.generate_expression_ir(subexpression, variable_scope),
+
+            Expression::VariableAssignment {
+                name,
+                name_token,
+                equal_token: _,
+                right,
+            } => {
+                let right_value =
+                    self.generate_expression_ir(right, variable_scope)?
+                        .ok_or(format!(
+                            "Somehow tried assigning a Unit value to variable {name:?}",
+                        ))?;
+
+                if let Some((_type, ptr)) = variable_scope.get(name) {
+                    self.builder.build_store(ptr.clone(), right_value)?;
+                    return Ok(Some(right_value));
+                } else {
+                    self.errors.push(FleetError::from_token(
+                        name_token,
+                        format!("Variable {name:?} is assigned, but not defined"),
+                    ));
+                    return Ok(Some(
+                        self.context
+                            .i32_type()
+                            .const_all_ones()
+                            .as_basic_value_enum(),
+                    ));
+                }
+            }
         }
     }
 }

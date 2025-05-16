@@ -8,7 +8,7 @@ use inkwell::{
 };
 
 use fleet::{
-    infra::{CompileResult, CompileStatus, compile_program, format_program},
+    infra::{CompileResult, CompileStatus, FleetError, compile_program, format_program},
     tokenizer::SourceLocation,
 };
 
@@ -19,29 +19,44 @@ pub fn assert_parser_or_tokenizer_error<'a>(src: &str, error_start: SourceLocati
     assert!(
         match result.status {
             CompileStatus::TokenizerFailure {} => false,
-            CompileStatus::ParserFailure { tokens: _ } => false,
-            CompileStatus::TokenizerOrParserErrors {
-                tokens: _,
-                partial_program: _,
-            } => true,
-            CompileStatus::IrGeneratorFailure {
-                tokens: _,
-                program: _,
-            } => false,
-            CompileStatus::Success {
-                tokens: _,
-                program: _,
-                module: _,
-            } => false,
+            CompileStatus::ParserFailure { .. } => false,
+            CompileStatus::TokenizerOrParserErrors { .. } => true,
+            CompileStatus::IrGeneratorFailure { .. } => false,
+            CompileStatus::IrGeneratorErrors { .. } => false,
+            CompileStatus::Success { .. } => false,
         },
         "Expected compilation to error at tokenizer or parser. Got {:#?}",
         result.status
     );
+
+    assert_error_at_position(&result.errors, error_start);
+}
+
+fn assert_error_at_position(errors: &Vec<FleetError>, error_start: SourceLocation) {
     assert!(
-        result.errors.iter().any(|err| err.start == error_start),
+        errors.iter().any(|err| err.start == error_start),
         "Expected an error at {error_start:?}. Got {:#?}",
-        result.errors
+        errors
     );
+}
+
+pub fn assert_compile_error<'a>(src: &str, error_start: SourceLocation) {
+    let context = Context::create();
+    let result = compile_program(&context, src);
+
+    assert!(
+        match result.status {
+            CompileStatus::TokenizerFailure {} => false,
+            CompileStatus::ParserFailure { .. } => false,
+            CompileStatus::TokenizerOrParserErrors { .. } => false,
+            CompileStatus::IrGeneratorFailure { .. } => false,
+            CompileStatus::IrGeneratorErrors { .. } => true,
+            CompileStatus::Success { .. } => false,
+        },
+        "Expected compilation to error after parsing. Got {:#?}",
+        result.status
+    );
+    assert_error_at_position(&result.errors, error_start);
 }
 
 pub fn assert_successful_compilation(src: &str) {

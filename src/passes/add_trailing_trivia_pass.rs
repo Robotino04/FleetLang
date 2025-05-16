@@ -59,6 +59,11 @@ impl AstVisitor for AddTrailingTriviaPass {
             } => {
                 self.add_trailing_trivia_to_token(semicolon_token);
             }
+            Statement::VariableDefinition {
+                semicolon_token, ..
+            } => {
+                self.add_trailing_trivia_to_token(semicolon_token);
+            }
         }
     }
 
@@ -90,6 +95,9 @@ impl AstVisitor for AddTrailingTriviaPass {
             Expression::Number { token, .. } => {
                 self.add_trailing_trivia_to_token(token);
             }
+            Expression::VariableAccess { name_token, .. } => {
+                self.add_trailing_trivia_to_token(name_token);
+            }
             Expression::FunctionCall {
                 name: _,
                 name_token: _,
@@ -112,6 +120,9 @@ impl AstVisitor for AddTrailingTriviaPass {
                 self.visit_expression(&mut *operand);
             }
             Expression::Binary { right, .. } => {
+                self.visit_expression(&mut *right);
+            }
+            Expression::VariableAssignment { right, .. } => {
                 self.visit_expression(&mut *right);
             }
         }

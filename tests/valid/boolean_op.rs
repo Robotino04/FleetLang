@@ -249,7 +249,6 @@ fn precedence_4() {
     );
 }
 
-#[ignore = "Variables aren't implemented yet"]
 #[test]
 fn and_short_circuit() {
     assert_compile_and_return_value(
@@ -266,7 +265,6 @@ fn and_short_circuit() {
     );
 }
 
-#[ignore = "Variables aren't implemented yet"]
 #[test]
 fn or_short_circuit() {
     assert_compile_and_return_value(
@@ -283,7 +281,6 @@ fn or_short_circuit() {
     );
 }
 
-#[ignore = "Variables aren't implemented yet"]
 #[test]
 fn multi_short_circuit() {
     assert_compile_and_return_value(
@@ -291,6 +288,7 @@ fn multi_short_circuit() {
             let main = () -> i32 {
                 let a: i32 = 0;
                 a || (a = 3) || (a = 4);
+                return a;
             }
         "##},
         "main",

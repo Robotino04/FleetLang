@@ -49,6 +49,9 @@ impl AstVisitor for AddLeadingTriviaPass {
             Statement::Return { return_token, .. } => {
                 self.add_leading_trivia_to_token(return_token);
             }
+            Statement::VariableDefinition { let_token, .. } => {
+                self.add_leading_trivia_to_token(let_token);
+            }
         }
     }
 
@@ -81,11 +84,17 @@ impl AstVisitor for AddLeadingTriviaPass {
             } => {
                 self.add_leading_trivia_to_token(open_paren_token);
             }
+            Expression::VariableAccess { name_token, .. } => {
+                self.add_leading_trivia_to_token(name_token);
+            }
             Expression::Unary { operator_token, .. } => {
                 self.add_leading_trivia_to_token(operator_token);
             }
             Expression::Binary { left, .. } => {
                 self.visit_expression(&mut *left);
+            }
+            Expression::VariableAssignment { name_token, .. } => {
+                self.add_leading_trivia_to_token(name_token);
             }
         }
     }

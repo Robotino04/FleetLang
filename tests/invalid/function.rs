@@ -1,7 +1,7 @@
 use fleet::tokenizer::SourceLocation;
 use indoc::indoc;
 
-use crate::common::assert_parser_or_tokenizer_error;
+use crate::common::{assert_compile_error, assert_parser_or_tokenizer_error};
 
 #[test]
 fn missing_let() {
@@ -172,6 +172,36 @@ fn unknown_characters_2() {
             index: 8,
             line: 2,
             column: 0,
+        },
+    );
+}
+
+#[test]
+fn missing_return() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {}
+        "##},
+        SourceLocation {
+            index: 0,
+            line: 1,
+            column: 0,
+        },
+    );
+}
+
+#[test]
+fn undefined_function() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                return nonexistent();
+            }
+        "##},
+        SourceLocation {
+            index: 34,
+            line: 2,
+            column: 11,
         },
     );
 }

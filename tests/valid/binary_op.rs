@@ -274,3 +274,17 @@ fn unary_parens() {
         -3,
     );
 }
+
+#[test]
+fn unused_exp() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                2 + 2;
+                return 0;
+            }
+        "##},
+        "main",
+        0,
+    );
+}

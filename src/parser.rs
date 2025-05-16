@@ -33,18 +33,16 @@ macro_rules! expect {
                 },
                 _ => {
                     if let Some(token) = $self.current_token() {
-                        $self.errors.push(FleetError {
-                            start: token.start,
-                            end: token.end,
-                            message: format!("Expected {}, but found {:?}", stringify!($main_type), token.type_),
-                        });
+                        $self.errors.push(FleetError::from_token(
+                            &token,
+                            format!("Expected {}, but found {:?}", stringify!($main_type), token.type_),
+                        ));
                         Err(())
                     } else {
-                        $self.errors.push(FleetError {
-                            start: $self.tokens.last().unwrap().start,
-                            end: $self.tokens.last().unwrap().end,
-                            message: format!("Expected {}, but found End of file", stringify!($main_type)),
-                        });
+                        $self.errors.push(FleetError::from_token(
+                            $self.tokens.last().unwrap(),
+                            format!("Expected {}, but found End of file", stringify!($main_type)),
+                        ));
                         Err(())
                     }
                 }
@@ -89,18 +87,16 @@ macro_rules! recover_until {
 macro_rules! unable_to_parse {
     ($self:ident, $fmt_string:expr $(, $($param:expr)+)?) => {
         if let Some(token) = $self.current_token() {
-            $self.errors.push(FleetError {
-                start: token.start,
-                end: token.end,
-                message: format!("Unable to parse an expected {}", format!($fmt_string $(, $($param),+)?)),
-            });
+            $self.errors.push(FleetError::from_token(
+                &token,
+                format!("Unable to parse an expected {}", format!($fmt_string $(, $($param),+)?)),
+            ));
             return Err(());
         } else {
-            $self.errors.push(FleetError {
-                start: $self.tokens.last().unwrap().start,
-                end: $self.tokens.last().unwrap().end,
-                message: format!("Hit EOF while parsing an expected {}", format!($fmt_string $(, $($param),+)?)),
-            });
+            $self.errors.push(FleetError::from_token(
+                $self.tokens.last().unwrap(),
+                format!("Hit EOF while parsing an expected {}", format!($fmt_string $(, $($param),+)?)),
+            ));
             return Err(());
         }
     };
@@ -214,6 +210,21 @@ impl Parser {
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
                 });
             }
+            Some(TokenType::Keyword(Keyword::Let)) => {
+                let let_token = expect!(self, TokenType::Keyword(Keyword::Let))?;
+                let (name_token, name) = expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
+
+                return Ok(Statement::VariableDefinition {
+                    let_token,
+                    name_token,
+                    name,
+                    colon_token: expect!(self, TokenType::Colon)?,
+                    type_: self.parse_type()?,
+                    equals_token: expect!(self, TokenType::EqualSign)?,
+                    value: self.parse_expression()?,
+                    semicolon_token: expect!(self, TokenType::Semicolon)?,
+                });
+            }
             _ => {
                 return Ok(Statement::Expression {
                     expression: self.parse_expression()?,
@@ -223,7 +234,7 @@ impl Parser {
         }
     }
     fn parse_expression(&mut self) -> Result<Expression> {
-        return self.parse_logical_or_expression();
+        return self.parse_assignment_expression();
     }
 
     fn parse_primary_expression(&mut self) -> Result<Expression> {
@@ -237,19 +248,24 @@ impl Parser {
 
             Some(TokenType::Identifier(name)) => {
                 let name_token = expect!(self, TokenType::Identifier(_))?;
-                let open_paren_token = expect!(self, TokenType::OpenParen)?;
-                let mut arguments = vec![];
-                while self.current_token_type() != Some(TokenType::CloseParen) {
-                    arguments.push(self.parse_expression()?);
+                match self.current_token_type() {
+                    Some(TokenType::OpenParen) => {
+                        let open_paren_token = expect!(self, TokenType::OpenParen)?;
+                        let mut arguments = vec![];
+                        while self.current_token_type() != Some(TokenType::CloseParen) {
+                            arguments.push(self.parse_expression()?);
+                        }
+                        let close_paren_token = expect!(self, TokenType::CloseParen)?;
+                        return Ok(Expression::FunctionCall {
+                            name,
+                            name_token,
+                            arguments,
+                            open_paren_token,
+                            close_paren_token,
+                        });
+                    }
+                    _ => return Ok(Expression::VariableAccess { name, name_token }),
                 }
-                let close_paren_token = expect!(self, TokenType::CloseParen)?;
-                return Ok(Expression::FunctionCall {
-                    name,
-                    name_token,
-                    arguments,
-                    open_paren_token,
-                    close_paren_token,
-                });
             }
             Some(TokenType::OpenParen) => {
                 return Ok(Expression::Grouping {
@@ -479,6 +495,30 @@ impl Parser {
         } {}
 
         return Ok(left);
+    }
+    fn parse_assignment_expression(&mut self) -> Result<Expression> {
+        let left = self.parse_logical_or_expression()?;
+
+        match left {
+            Expression::VariableAccess { name, name_token } => {
+                if let Some(TokenType::EqualSign) = self.current_token_type() {
+                    let equal_token = expect!(self, TokenType::EqualSign)?;
+                    let value = self.parse_assignment_expression()?;
+
+                    return Ok(Expression::VariableAssignment {
+                        name,
+                        name_token,
+                        equal_token,
+                        right: Box::new(value),
+                    });
+                } else {
+                    return Ok(Expression::VariableAccess { name, name_token });
+                }
+            }
+            _ => {
+                return Ok(left);
+            }
+        };
     }
 
     pub fn parse_executor(&mut self) -> Result<Executor> {

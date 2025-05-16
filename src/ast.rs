@@ -106,6 +106,16 @@ pub enum Statement {
         value: Expression,
         semicolon_token: Token,
     },
+    VariableDefinition {
+        let_token: Token,
+        name_token: Token,
+        name: String,
+        colon_token: Token,
+        type_: Type,
+        equals_token: Token,
+        value: Expression,
+        semicolon_token: Token,
+    },
 }
 
 impl From<Statement> for AstNode {
@@ -195,6 +205,10 @@ pub enum Expression {
         subexpression: Box<Expression>,
         close_paren_token: Token,
     },
+    VariableAccess {
+        name: String,
+        name_token: Token,
+    },
     Unary {
         operator_token: Token,
         operation: UnaryOperation,
@@ -204,6 +218,12 @@ pub enum Expression {
         left: Box<Expression>,
         operator_token: Token,
         operation: BinaryOperation,
+        right: Box<Expression>,
+    },
+    VariableAssignment {
+        name: String,
+        name_token: Token,
+        equal_token: Token,
         right: Box<Expression>,
     },
 }
@@ -216,6 +236,7 @@ impl Expression {
             Expression::Number { .. } => 0,
             Expression::FunctionCall { .. } => 0,
             Expression::Grouping { .. } => 0,
+            Expression::VariableAccess { .. } => 0,
 
             Expression::Unary { .. } => 1,
             Expression::Binary {
@@ -242,6 +263,8 @@ impl Expression {
                 operation: LogicalOr,
                 ..
             } => 7,
+
+            Expression::VariableAssignment { .. } => 8,
         }
     }
     pub fn get_associativity(&self) -> Associativity {
@@ -250,6 +273,8 @@ impl Expression {
             Expression::Number { .. } => Associativity::Both,
             Expression::FunctionCall { .. } => Associativity::Both,
             Expression::Grouping { .. } => Associativity::Both,
+            Expression::VariableAccess { .. } => Associativity::Both,
+
             Expression::Unary { .. } => Associativity::Left,
             Expression::Binary {
                 operation: Add | Multiply,
@@ -261,6 +286,8 @@ impl Expression {
                     | LessThanOrEqual | Equal | NotEqual | LogicalAnd | LogicalOr,
                 ..
             } => Associativity::Left,
+
+            Expression::VariableAssignment { .. } => Associativity::Right,
         }
     }
 }

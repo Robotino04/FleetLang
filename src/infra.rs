@@ -17,6 +17,16 @@ pub struct FleetError {
     pub message: String,
 }
 
+impl FleetError {
+    pub fn from_token(token: &Token, msg: impl ToString) -> Self {
+        Self {
+            start: token.start,
+            end: token.end,
+            message: msg.to_string(),
+        }
+    }
+}
+
 pub fn fleet_error(msg: impl AsRef<str>) {
     println!("\x1B[31m[FLEETC: ERROR] {}.\x1B[0m", msg.as_ref());
 }
@@ -47,7 +57,7 @@ pub fn print_error_message(source: &String, error: &FleetError) {
                 0
             };
             let end_col = if line == error.end.line {
-                (error.end.column + 1).min(text.len())
+                error.end.column.min(text.len())
             } else {
                 text.len()
             };
@@ -99,6 +109,11 @@ pub enum CompileStatus<'a> {
         tokens: Vec<Token>,
         program: Program,
     },
+    IrGeneratorErrors {
+        tokens: Vec<Token>,
+        program: Program,
+        partial_module: Option<Module<'a>>,
+    },
     Success {
         tokens: Vec<Token>,
         program: Program,
@@ -119,6 +134,11 @@ impl<'a> CompileStatus<'a> {
                 tokens: _,
                 program: _,
             } => None,
+            CompileStatus::IrGeneratorErrors {
+                tokens: _,
+                program: _,
+                partial_module,
+            } => partial_module.as_ref(),
             CompileStatus::Success {
                 tokens: _,
                 program: _,
@@ -135,6 +155,11 @@ impl<'a> CompileStatus<'a> {
                 partial_program: _,
             } => Some(tokens),
             CompileStatus::IrGeneratorFailure { tokens, program: _ } => Some(tokens),
+            CompileStatus::IrGeneratorErrors {
+                tokens,
+                program: _,
+                partial_module: _,
+            } => Some(tokens),
             CompileStatus::Success {
                 tokens,
                 program: _,
@@ -151,6 +176,11 @@ impl<'a> CompileStatus<'a> {
                 partial_program,
             } => Some(partial_program),
             CompileStatus::IrGeneratorFailure { tokens: _, program } => Some(program),
+            CompileStatus::IrGeneratorErrors {
+                tokens: _,
+                program,
+                partial_module: _,
+            } => Some(program),
             CompileStatus::Success {
                 tokens: _,
                 program,
@@ -202,8 +232,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
     }
 
     let mut ir_generator = IrGenerator::new(&context);
-    let module = ir_generator.generate_program_ir(&program);
-    if let Err(error) = module {
+    if let Err(error) = ir_generator.generate_program_ir(&program) {
         errors.push(FleetError {
             start: SourceLocation::start(),
             end: SourceLocation::end(src),
@@ -217,13 +246,27 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
             errors,
         };
     }
-    let module = module.unwrap();
+    if !ir_generator.errors().is_empty() {
+        errors.append(&mut ir_generator.errors().clone());
+        return CompileResult {
+            status: CompileStatus::IrGeneratorErrors {
+                tokens,
+                program,
+                partial_module: if ir_generator.module().verify().is_ok() {
+                    Some(ir_generator.module().clone())
+                } else {
+                    None
+                },
+            },
+            errors,
+        };
+    }
 
     return CompileResult {
         status: CompileStatus::Success {
             tokens,
             program,
-            module: module.clone(),
+            module: ir_generator.module().clone(),
         },
         errors,
     };

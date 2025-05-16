@@ -86,6 +86,7 @@ fn token_type_to_element(token: &Token) -> DocumentElement {
 
         TokenType::Semicolon        => ";",
         TokenType::Dot              => ".",
+        TokenType::Colon            => ":",
 
         TokenType::EqualSign        => "=",
         TokenType::SingleRightArrow => "->",
@@ -230,7 +231,7 @@ fn convert_statement(statement: &Statement) -> DocumentElement {
                     DocumentElement::CollapsableLineBreak,
                     vec![
                         DocumentElement::spaced_concatentation(
-                            DocumentElement::CollapsableSpace,
+                            DocumentElement::CollapsableLineBreak,
                             body.iter().map(|s| convert_statement(s)).collect(),
                         ),
                         trivia_to_element(&close_brace_token.leading_trivia),
@@ -253,6 +254,32 @@ fn convert_statement(statement: &Statement) -> DocumentElement {
             DocumentElement::spaced_concatentation(
                 DocumentElement::CollapsableSpace,
                 vec![token_to_element(return_token), convert_expression(value)],
+            ),
+            DocumentElement::double_space_eater(),
+            DocumentElement::double_space_eater(),
+            token_to_element(semicolon_token),
+        ]),
+        Statement::VariableDefinition {
+            let_token,
+            name_token,
+            name: _,
+            colon_token,
+            type_,
+            equals_token,
+            value,
+            semicolon_token,
+        } => DocumentElement::Concatenation(vec![
+            DocumentElement::spaced_concatentation(
+                DocumentElement::CollapsableSpace,
+                vec![
+                    token_to_element(let_token),
+                    token_to_element(name_token),
+                    DocumentElement::double_space_eater(),
+                    token_to_element(colon_token),
+                    convert_type(type_),
+                    token_to_element(equals_token),
+                    convert_expression(value),
+                ],
             ),
             DocumentElement::double_space_eater(),
             DocumentElement::double_space_eater(),
@@ -311,6 +338,10 @@ fn convert_expression(expression: &Expression) -> DocumentElement {
                 token_to_element(close_paren_token),
             ]),
         ]),
+        Expression::VariableAccess {
+            name: _,
+            name_token,
+        } => token_to_element(name_token),
         Expression::Grouping {
             open_paren_token,
             subexpression,
@@ -351,6 +382,19 @@ fn convert_expression(expression: &Expression) -> DocumentElement {
             vec![
                 convert_expression(left),
                 token_to_element(operator_token),
+                convert_expression(right),
+            ],
+        ),
+        Expression::VariableAssignment {
+            name: _,
+            name_token,
+            equal_token,
+            right,
+        } => DocumentElement::spaced_concatentation(
+            DocumentElement::CollapsableSpace,
+            vec![
+                token_to_element(name_token),
+                token_to_element(equal_token),
                 convert_expression(right),
             ],
         ),

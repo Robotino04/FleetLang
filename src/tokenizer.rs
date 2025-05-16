@@ -36,7 +36,9 @@ pub enum TokenType {
     CloseParen,
     OpenBracket,
     CloseBracket,
+
     Semicolon,
+    Colon,
     Dot,
     EqualSign,
     SingleRightArrow,
@@ -178,11 +180,10 @@ impl Tokenizer {
             self.unk_char_token.type_ =
                 TokenType::UnknownCharacters(self.unk_char_accumulator.clone());
             self.tokens.push(self.unk_char_token.clone());
-            self.errors.push(FleetError {
-                start: self.unk_char_token.start,
-                end: self.unk_char_token.end,
-                message: "Unrecognized characters".to_string(),
-            });
+            self.errors.push(FleetError::from_token(
+                &self.unk_char_token,
+                "Unrecognized characters",
+            ));
 
             self.unk_char_token.start = self.current_location;
             self.advance();
@@ -245,6 +246,10 @@ impl Tokenizer {
                 }
                 ';' => {
                     let tok = self.single_char_token(TokenType::Semicolon);
+                    self.tokens.push(tok);
+                }
+                ':' => {
+                    let tok = self.single_char_token(TokenType::Colon);
                     self.tokens.push(tok);
                 }
                 '=' => match self.chars.get(self.current_location.index + 1) {
@@ -504,11 +509,10 @@ impl Tokenizer {
             self.unk_char_token.type_ =
                 TokenType::UnknownCharacters(self.unk_char_accumulator.clone());
             self.tokens.push(self.unk_char_token.clone());
-            self.errors.push(FleetError {
-                start: self.unk_char_token.start,
-                end: self.unk_char_token.end,
-                message: "Unrecognized characters".to_string(),
-            });
+            self.errors.push(FleetError::from_token(
+                &self.unk_char_token,
+                "Unrecognized characters",
+            ));
         }
 
         if let Some(token) = self.tokens.last_mut() {
