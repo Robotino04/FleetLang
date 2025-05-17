@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use fleet::ast::{
     AstVisitor, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
 };
-use fleet::infra::{compile_program, format_program};
+use fleet::infra::{CompileStatus, compile_program, format_program};
 use fleet::tokenizer::{SourceLocation, Token, Trivia, TriviaKind};
 use inkwell::context::Context;
 use tower_lsp::jsonrpc::Result;
@@ -568,7 +568,14 @@ impl LanguageServer for Backend {
         let context = Context::create();
         let res = compile_program(&context, text.as_str());
 
-        if !res.errors.is_empty() {
+        if match res.status {
+            CompileStatus::TokenizerFailure { .. } => true,
+            CompileStatus::ParserFailure { .. } => true,
+            CompileStatus::TokenizerOrParserErrors { .. } => true,
+            CompileStatus::IrGeneratorFailure { .. } => false,
+            CompileStatus::IrGeneratorErrors { .. } => false,
+            CompileStatus::Success { .. } => false,
+        } {
             return Err(tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
                 message: "Code has parse errors. Not formatting.".into(),
