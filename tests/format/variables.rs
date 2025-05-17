@@ -124,3 +124,45 @@ fn keep_params_assign_expr() {
         "main",
     );
 }
+
+#[test]
+fn remove_parens_multiple_definition() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a: i32 = (2 + 2 * 2);
+                let b: i32 = (2 + 2 * 2);
+                return a;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                let a: i32 = 2 + 2 * 2;
+                let b: i32 = 2 + 2 * 2;
+                return a;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn remove_parens_multiple_assignments() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a: i32 = (2 + 2 * 2);
+                let b: i32 = (2 + 2 * 2);
+                return a;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                let a: i32 = 2 + 2 * 2;
+                let b: i32 = 2 + 2 * 2;
+                return a;
+            }"##
+        },
+        "main",
+    );
+}

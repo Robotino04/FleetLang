@@ -48,6 +48,8 @@ impl AstVisitor for RemoveParensPass {
                 expression,
                 semicolon_token: _,
             } => {
+                self.parent_precedence = Expression::TOP_PRECEDENCE;
+                self.parent_associativity = Associativity::Both;
                 self.visit_expression(expression);
             }
             Statement::On {
@@ -74,6 +76,8 @@ impl AstVisitor for RemoveParensPass {
                 value,
                 semicolon_token: _,
             } => {
+                self.parent_precedence = Expression::TOP_PRECEDENCE;
+                self.parent_associativity = Associativity::Both;
                 self.visit_expression(value);
             }
             Statement::VariableDefinition {
@@ -87,6 +91,8 @@ impl AstVisitor for RemoveParensPass {
                 semicolon_token: _,
             } => {
                 self.visit_type(type_);
+                self.parent_precedence = Expression::TOP_PRECEDENCE;
+                self.parent_associativity = Associativity::Both;
                 self.visit_expression(value);
             }
         }
@@ -109,6 +115,8 @@ impl AstVisitor for RemoveParensPass {
                 close_bracket_token: _,
             } => {
                 self.visit_executor_host(host);
+                self.parent_precedence = Expression::TOP_PRECEDENCE;
+                self.parent_associativity = Associativity::Both;
                 self.visit_expression(index);
             }
         }

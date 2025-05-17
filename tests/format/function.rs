@@ -146,3 +146,47 @@ fn preserve_newlines_without_comments() {
         "a",
     );
 }
+
+#[test]
+fn remove_parens_multiple_statements() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                (1 * 2);
+                (1 + 1);
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                1 * 2;
+                1 + 1;
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn remove_parens_multiple_returns() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let a = () -> i32 {
+                return (1 * 2);
+            }
+            let main = () -> i32 {
+                return (1 + 1);
+            }"##
+        },
+        indoc! {r##"
+            let a = () -> i32 {
+                return 1 * 2;
+            }
+            let main = () -> i32 {
+                return 1 + 1;
+            }"##
+        },
+        "main",
+    );
+}
