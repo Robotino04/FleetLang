@@ -1,4 +1,4 @@
-use crate::infra::FleetError;
+use crate::infra::{ErrorSeverity, FleetError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Token {
@@ -183,6 +183,7 @@ impl Tokenizer {
             self.errors.push(FleetError::from_token(
                 &self.unk_char_token,
                 "Unrecognized characters",
+                ErrorSeverity::Error,
             ));
 
             self.unk_char_token.start = self.current_location;
@@ -388,6 +389,7 @@ impl Tokenizer {
                                     start: start_location,
                                     end: content_end_location,
                                     message: "Unclosed block comment".to_string(),
+                                    severity: ErrorSeverity::Error,
                                 });
                             } else {
                                 self.advance(); // *
@@ -512,6 +514,7 @@ impl Tokenizer {
             self.errors.push(FleetError::from_token(
                 &self.unk_char_token,
                 "Unrecognized characters",
+                ErrorSeverity::Error,
             ));
         }
 

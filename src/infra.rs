@@ -10,27 +10,37 @@ use crate::{
     tokenizer::{SourceLocation, Token, Tokenizer},
 };
 
+#[derive(Copy, Clone, Debug)]
+pub enum ErrorSeverity {
+    Error,
+    Warning,
+}
+
 #[derive(Clone, Debug)]
 pub struct FleetError {
     pub start: SourceLocation,
     pub end: SourceLocation,
     pub message: String,
+    pub severity: ErrorSeverity,
 }
 
 impl FleetError {
-    pub fn from_token(token: &Token, msg: impl ToString) -> Self {
+    pub fn from_token(token: &Token, msg: impl ToString, severity: ErrorSeverity) -> Self {
         Self {
             start: token.start,
             end: token.end,
             message: msg.to_string(),
+            severity,
         }
     }
 }
 
-pub fn fleet_error(msg: impl AsRef<str>) {
-    println!("\x1B[31m[FLEETC: ERROR] {}.\x1B[0m", msg.as_ref());
-}
 pub fn print_error_message(source: &String, error: &FleetError) {
+    let ansi_color = match error.severity {
+        ErrorSeverity::Error => "31",
+        ErrorSeverity::Warning => "33",
+    };
+
     let num_before_error_lines = 3;
     let num_after_error_lines = 3;
 
@@ -65,7 +75,7 @@ pub fn print_error_message(source: &String, error: &FleetError) {
             pad_with_line_number((
                 line,
                 format!(
-                    "{}\x1B[31m{}\x1B[0m{}",
+                    "{}\x1B[{ansi_color}m{}\x1B[0m{}",
                     &text[..start_col],
                     &text[start_col..end_col],
                     &text[end_col..]
@@ -89,7 +99,7 @@ pub fn print_error_message(source: &String, error: &FleetError) {
         .collect::<Vec<_>>()
         .join("\n");
 
-    fleet_error(format!("\x1B[31m[FLEETC: ERROR] {}\x1B[0m", error.message));
+    println!("\x1B[{ansi_color}m[FLEETC: ERROR] {}\x1B[0m", error.message);
     println!("{}", before_err_trunc);
     println!("{}", err);
     println!("{}\n", after_err_trunc);
@@ -240,6 +250,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
                 Some(source) => format!("{} ({:?})", error.to_string(), source),
                 None => error.to_string(),
             },
+            severity: ErrorSeverity::Error,
         });
         return CompileResult {
             status: CompileStatus::IrGeneratorFailure { tokens, program },

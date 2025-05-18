@@ -16,7 +16,7 @@ use crate::{
         BinaryOperation, Expression, FunctionDefinition, Program, Statement, Type, UnaryOperation,
     },
     escape::unescape,
-    infra::FleetError,
+    infra::{ErrorSeverity, FleetError},
     tokenizer::SourceLocation,
 };
 
@@ -106,6 +106,7 @@ impl<'a> IrGenerator<'a> {
                     unescape(err.to_str().unwrap()),
                     self.module.print_to_string().to_str().unwrap()
                 ),
+                severity: ErrorSeverity::Error,
             });
         }
 
@@ -246,6 +247,7 @@ impl<'a> IrGenerator<'a> {
                     self.errors.push(FleetError::from_token(
                         name_token,
                         format!("Variable {name:?} was already defined in this scope"),
+                        ErrorSeverity::Error,
                     ));
                 }
 
@@ -279,6 +281,7 @@ impl<'a> IrGenerator<'a> {
                     self.errors.push(FleetError::from_token(
                         name_token,
                         format!("Variable {name:?} is accessed, but not defined"),
+                        ErrorSeverity::Error,
                     ));
                     return Ok(Some(
                         self.context
@@ -319,6 +322,7 @@ impl<'a> IrGenerator<'a> {
                     self.errors.push(FleetError::from_token(
                         name_token,
                         format!("Function {name:?} called but not defined"),
+                        ErrorSeverity::Error,
                     ));
                     return Ok(Some(
                         self.context
@@ -703,6 +707,7 @@ impl<'a> IrGenerator<'a> {
                     self.errors.push(FleetError::from_token(
                         name_token,
                         format!("Variable {name:?} is assigned, but not defined"),
+                        ErrorSeverity::Error,
                     ));
                     return Ok(Some(
                         self.context

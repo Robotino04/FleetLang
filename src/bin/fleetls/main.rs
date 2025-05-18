@@ -8,7 +8,7 @@ use fleet::ast::{
     AstNode, AstVisitor, BinaryOperation, Executor, ExecutorHost, Expression, FunctionDefinition,
     Statement, Type, UnaryOperation,
 };
-use fleet::infra::{CompileStatus, compile_program, format_program};
+use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
 use fleet::passes::find_containing_node::FindContainingNodePass;
 use fleet::tokenizer::{SourceLocation, Token, Trivia, TriviaKind};
 use indoc::indoc;
@@ -614,7 +614,10 @@ impl LanguageServer for Backend {
                                     character: error.end.column as u32,
                                 },
                             },
-                            severity: Some(DiagnosticSeverity::ERROR),
+                            severity: Some(match error.severity {
+                                ErrorSeverity::Error => DiagnosticSeverity::ERROR,
+                                ErrorSeverity::Warning => DiagnosticSeverity::WARNING,
+                            }),
                             code: None,
                             code_description: None,
                             source: Some("FleetLS".to_string()),

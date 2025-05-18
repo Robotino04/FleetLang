@@ -4,7 +4,7 @@ use fleet::infra::format_program;
 use fleet::{
     ast::AstNode,
     generate_c::generate_c,
-    infra::{CompileStatus, compile_program, fleet_error, print_error_message},
+    infra::{CompileStatus, compile_program, print_error_message},
 };
 use inkwell::passes::PassBuilderOptions;
 use inkwell::{
@@ -35,7 +35,7 @@ fn main() {
         for error in &res.errors {
             print_error_message(&src, error);
         }
-        fleet_error(msg);
+        println!("\x1B[31m{msg}\x1B[0m");
     };
 
     match &res.status {

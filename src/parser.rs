@@ -3,7 +3,7 @@ use crate::{
         BinaryOperation, Executor, ExecutorHost, Expression, FunctionDefinition, Program,
         Statement, Type,
     },
-    infra::FleetError,
+    infra::{ErrorSeverity, FleetError},
     tokenizer::{Keyword, Token, TokenType},
 };
 
@@ -36,12 +36,14 @@ macro_rules! expect {
                         $self.errors.push(FleetError::from_token(
                             &token,
                             format!("Expected {}, but found {:?}", stringify!($main_type), token.type_),
+                            ErrorSeverity::Error,
                         ));
                         Err(())
                     } else {
                         $self.errors.push(FleetError::from_token(
                             $self.tokens.last().unwrap(),
                             format!("Expected {}, but found End of file", stringify!($main_type)),
+                            ErrorSeverity::Error,
                         ));
                         Err(())
                     }
@@ -77,6 +79,7 @@ macro_rules! recover_until {
                             "Recovered by skipping until one of [{}]",
                             stringify!($($recovery_stops), +)
                         ),
+                        severity: ErrorSeverity::Warning,
                     })
                 }
             }
@@ -90,12 +93,14 @@ macro_rules! unable_to_parse {
             $self.errors.push(FleetError::from_token(
                 &token,
                 format!("Unable to parse an expected {}", format!($fmt_string $(, $($param),+)?)),
+                ErrorSeverity::Error,
             ));
             return Err(());
         } else {
             $self.errors.push(FleetError::from_token(
                 $self.tokens.last().unwrap(),
                 format!("Hit EOF while parsing an expected {}", format!($fmt_string $(, $($param),+)?)),
+                ErrorSeverity::Error,
             ));
             return Err(());
         }
