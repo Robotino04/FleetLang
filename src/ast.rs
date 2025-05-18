@@ -34,13 +34,18 @@ impl AstNode {
 }
 
 pub trait AstVisitor {
-    fn visit_program(&mut self, program: &mut Program);
-    fn visit_function_definition(&mut self, function_definition: &mut FunctionDefinition);
-    fn visit_statement(&mut self, statement: &mut Statement);
-    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost);
-    fn visit_executor(&mut self, executor: &mut Executor);
-    fn visit_expression(&mut self, expression: &mut Expression);
-    fn visit_type(&mut self, type_: &mut Type);
+    type Output;
+
+    fn visit_program(&mut self, program: &mut Program) -> Self::Output;
+    fn visit_function_definition(
+        &mut self,
+        function_definition: &mut FunctionDefinition,
+    ) -> Self::Output;
+    fn visit_statement(&mut self, statement: &mut Statement) -> Self::Output;
+    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) -> Self::Output;
+    fn visit_executor(&mut self, executor: &mut Executor) -> Self::Output;
+    fn visit_expression(&mut self, expression: &mut Expression) -> Self::Output;
+    fn visit_type(&mut self, type_: &mut Type) -> Self::Output;
 }
 
 #[derive(Clone, Debug)]
@@ -61,6 +66,7 @@ pub struct FunctionDefinition {
     pub name_token: Token,
     pub equal_token: Token,
     pub open_paren_token: Token,
+    // TODO: maybe store comma tokens too, once we have arguments
     pub close_paren_token: Token,
     pub right_arrow_token: Token,
     pub return_type: Type,
@@ -197,6 +203,7 @@ pub enum Expression {
         name: String,
         name_token: Token,
         open_paren_token: Token,
+        // TODO: maybe store comma tokens too
         arguments: Vec<Expression>,
         close_paren_token: Token,
     },

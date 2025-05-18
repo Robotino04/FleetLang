@@ -5,10 +5,13 @@ use std::process::exit;
 use std::sync::LazyLock;
 
 use fleet::ast::{
-    AstVisitor, Executor, ExecutorHost, Expression, FunctionDefinition, Statement, Type,
+    AstNode, AstVisitor, BinaryOperation, Executor, ExecutorHost, Expression, FunctionDefinition,
+    Statement, Type, UnaryOperation,
 };
 use fleet::infra::{CompileStatus, compile_program, format_program};
+use fleet::passes::find_containing_node::FindContainingNodePass;
 use fleet::tokenizer::{SourceLocation, Token, Trivia, TriviaKind};
+use indoc::indoc;
 use inkwell::context::Context;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::{Client, LspService, Server};
@@ -75,6 +78,142 @@ fn token_delta_start(prev_start: SourceLocation, start: SourceLocation) -> u32 {
 }
 fn token_length(start: SourceLocation, end: SourceLocation) -> u32 {
     (end.index - start.index) as u32
+}
+
+impl Backend {
+    fn generate_node_hover(&self, node: AstNode) -> String {
+        match node {
+            AstNode::Program(_) => "".to_string(),
+            AstNode::FunctionDefinition(FunctionDefinition {
+                let_token: _,
+                name,
+                name_token: _,
+                equal_token: _,
+                open_paren_token: _,
+                close_paren_token: _,
+                right_arrow_token: _,
+                return_type,
+                body: _,
+            }) => format!(
+                "{name} = () -> {}",
+                self.generate_node_hover(return_type.into()),
+            ),
+            AstNode::Statement(Statement::Expression {
+                expression,
+                semicolon_token: _,
+            }) => self.generate_node_hover(expression.into()),
+            AstNode::Statement(Statement::On {
+                on_token: _,
+                open_paren_token: _,
+                executor,
+                close_paren_token: _,
+                body: _,
+            }) => format!("on ({})", self.generate_node_hover(executor.into())),
+            AstNode::Statement(Statement::Block { .. }) => "".to_string(),
+            // TODO: once we have type inference, show the value type here
+            AstNode::Statement(Statement::Return { .. }) => "return".to_string(),
+            AstNode::Statement(Statement::VariableDefinition {
+                let_token: _,
+                name_token: _,
+                name,
+                colon_token: _,
+                type_,
+                equals_token: _,
+                value: _,
+                semicolon_token: _,
+            }) => format!(
+                "let {name}: {} = ...", // TODO: once we have consteval, display that here
+                self.generate_node_hover(type_.into())
+            ),
+
+            AstNode::ExecutorHost(ExecutorHost::Self_ { .. }) => "self".to_string(),
+            AstNode::Executor(Executor::Thread {
+                host,
+                dot_token: _,
+                thread_token: _,
+                open_bracket_token: _,
+                index,
+                close_bracket_token: _,
+            }) => format!(
+                "{}.threads[{}]",
+                self.generate_node_hover(host.into()),
+                self.generate_node_hover(index.into())
+            ),
+            AstNode::Expression(Expression::Unary {
+                operator_token: _,
+                operation,
+                operand: _,
+            }) => {
+                // TODO: once we have type inference, display operand type here
+                match operation {
+                    UnaryOperation::BitwiseNot => "bitwise negation (~)",
+                    UnaryOperation::LogicalNot => "logical negation (!)",
+                    UnaryOperation::Negate => "arithmetic negation (-)",
+                }
+                .to_string()
+            }
+            // TODO: once we have type inference, display type here
+            AstNode::Expression(Expression::Number { value, token: _ }) => value.to_string(),
+            AstNode::Expression(Expression::Binary {
+                left: _,
+                operator_token: _,
+                operation,
+                right: _,
+            }) => {
+                // TODO: once we have type inference, display operand types here
+                match operation {
+                    BinaryOperation::Add => "addition (+)",
+                    BinaryOperation::Subtract => "subtraction (-)",
+                    BinaryOperation::Multiply => "multiplication (*)",
+                    BinaryOperation::Divide => "division (/)",
+                    BinaryOperation::Modulo => "module (%)",
+                    BinaryOperation::GreaterThan => "greater than (>)",
+                    BinaryOperation::GreaterThanOrEqual => "greater than or equal (>=)",
+                    BinaryOperation::LessThan => "less than (<)",
+                    BinaryOperation::LessThanOrEqual => "less than or equal (<=)",
+                    BinaryOperation::Equal => "equal (==)",
+                    BinaryOperation::NotEqual => "not equal (!=)",
+                    BinaryOperation::LogicalAnd => "logical and (&&)",
+                    BinaryOperation::LogicalOr => "logical or (||)",
+                }
+                .to_string()
+            }
+            AstNode::Expression(Expression::Grouping {
+                open_paren_token: _,
+                subexpression,
+                close_paren_token: _,
+            }) => format!("({})", self.generate_node_hover((*subexpression).into())),
+
+            AstNode::Expression(Expression::FunctionCall {
+                name,
+                name_token: _,
+                open_paren_token: _,
+                arguments: _,
+                close_paren_token: _,
+            }) => {
+                // TODO: once we have proper semantic analysis, display the function types here
+                format!("let {name} = () -> ...")
+            }
+            AstNode::Expression(Expression::VariableAccess {
+                name,
+                name_token: _,
+            }) => {
+                // TODO: once we have proper semantic analysis, display the variable types here
+                // TODO: once we have consteval, display the value here
+                format!("let {name}: ... = ...")
+            }
+            AstNode::Expression(Expression::VariableAssignment {
+                name,
+                name_token: _,
+                equal_token: _,
+                right: _,
+            }) => {
+                // TODO: once we have proper semantic analysis, display the variable types here
+                format!("let {name}: ...")
+            }
+            AstNode::Type(Type::I32 { token: _ }) => "i32".to_string(),
+        }
+    }
 }
 
 struct ExtractSemanticTokensPass {
@@ -164,6 +303,8 @@ impl ExtractSemanticTokensPass {
 }
 
 impl AstVisitor for ExtractSemanticTokensPass {
+    type Output = ();
+
     fn visit_program(&mut self, program: &mut fleet::ast::Program) {
         for f in &mut program.functions {
             self.visit_function_definition(f);
@@ -507,14 +648,71 @@ impl LanguageServer for Backend {
             .remove(&params.text_document.uri);
     }
 
-    async fn hover(&self, _params: HoverParams) -> Result<Option<Hover>> {
-        Ok(Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: "Test 3".to_string(),
-            }),
-            range: None,
-        }))
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let text = self
+            .documents
+            .read()
+            .unwrap()
+            .get(&params.text_document_position_params.text_document.uri)
+            .unwrap()
+            .clone();
+
+        let context = Context::create();
+        let res = compile_program(&context, text.as_str());
+
+        let mut program = res
+            .status
+            .program()
+            .ok_or_else(|| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: "Parsing failed completely".into(),
+                data: None,
+            })?
+            .clone();
+
+        let cpos = params.text_document_position_params.position;
+        let mut find_pass = FindContainingNodePass::new(SourceLocation {
+            index: 0,
+            line: cpos.line as usize + 1,
+            column: cpos.character as usize,
+        });
+
+        if let (Ok(()), Some(hovered_token)) =
+            (find_pass.visit_program(&mut program), find_pass.token)
+        {
+            Ok(Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!(
+                        indoc! {r##"
+                        {}
+
+                        ```rust
+                        {:#?}
+                        ```
+                    "##},
+                        find_pass
+                            .node_hierarchy
+                            .last()
+                            .map(|node| self.generate_node_hover(node.clone()))
+                            .unwrap_or("".to_string()),
+                        hovered_token
+                    ),
+                }),
+                range: Some(Range {
+                    start: Position {
+                        line: hovered_token.start.line as u32 - 1,
+                        character: hovered_token.start.column as u32,
+                    },
+                    end: Position {
+                        line: hovered_token.end.line as u32 - 1,
+                        character: hovered_token.end.column as u32,
+                    },
+                }),
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn semantic_tokens_full(

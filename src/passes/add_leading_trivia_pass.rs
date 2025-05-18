@@ -23,6 +23,8 @@ impl AddLeadingTriviaPass {
 }
 
 impl AstVisitor for AddLeadingTriviaPass {
+    type Output = ();
+
     fn visit_program(&mut self, program: &mut Program) {
         if let Some(f) = program.functions.first_mut() {
             self.visit_function_definition(f);
