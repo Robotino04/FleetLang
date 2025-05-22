@@ -277,3 +277,129 @@ fn dont_trim_single_line_block_comment() {
         "main",
     );
 }
+#[test]
+fn dedent() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                   /*
+                   a
+                   */
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                /*
+                a
+                */
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn empty_line_in_block() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                /*
+                a
+                b
+
+                c
+                */
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                /*
+                a
+                b
+
+                c
+                */
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn empty_line_with_spaces_in_block() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                /*
+                a
+                b
+                
+                c
+                */
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                /*
+                a
+                b
+
+                c
+                */
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn empty_line_only() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                /*
+
+                */
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                /*
+
+                */
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn empty_line_with_spaces_only() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                /*
+                
+                */
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                /*
+
+                */
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}

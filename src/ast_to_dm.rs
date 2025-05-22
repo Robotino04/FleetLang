@@ -20,9 +20,13 @@ fn trivia_to_element(trivia: &Vec<Trivia>) -> DocumentElement {
                         .split("\n")
                         .skip(1)
                         .map(|line| {
-                            line.chars()
-                                .take_while(|c| matches!(*c, ' ' | '\t'))
-                                .count()
+                            if line.trim() == "" {
+                                usize::MAX
+                            } else {
+                                line.chars()
+                                    .take_while(|c| matches!(*c, ' ' | '\t'))
+                                    .count()
+                            }
                         })
                         .min()
                         .unwrap_or(0);
@@ -37,7 +41,12 @@ fn trivia_to_element(trivia: &Vec<Trivia>) -> DocumentElement {
                         if i != 0 {
                             line = &line[min_space.min(line.len().saturating_sub(1))..];
                         }
-                        line
+
+                        if line.trim() == "" {
+                            return "";
+                        } else {
+                            return line;
+                        }
                     });
 
                     DocumentElement::Concatenation(vec![
