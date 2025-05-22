@@ -829,16 +829,19 @@ async fn main() {
         let listener = socket.listen(5).unwrap();
 
         loop {
-            let (mut client_connection, _client_addr) = listener.accept().await.unwrap();
-            let (service, loopback_socket) = LspService::new(|client| Backend {
-                client,
-                documents: Default::default(),
-            });
+            let (client_connection, _client_addr) = listener.accept().await.unwrap();
 
-            let (read_half, write_half) = client_connection.split();
-            Server::new(read_half, write_half, loopback_socket)
-                .serve(service)
-                .await;
+            tokio::spawn(async move {
+                let (service, loopback_socket) = LspService::new(|client| Backend {
+                    client,
+                    documents: Default::default(),
+                });
+
+                let (read_half, write_half) = tokio::io::split(client_connection);
+                Server::new(read_half, write_half, loopback_socket)
+                    .serve(service)
+                    .await;
+            });
         }
     }
 }

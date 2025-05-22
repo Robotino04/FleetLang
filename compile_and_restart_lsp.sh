@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 
-cargo run --bin fleetls --color=always 2>&1 | while IFS= read -r line; do
+function restart_lsp() {
+    for file in "$XDG_RUNTIME_DIR/nvim."*; do
+        echo "restarting instance $file"
+        nvim --server $file --remote-send "<Esc><Esc>:source load.vim | LspStop fleetls<CR>" --headless
+        nvim --server $file --remote-send "<Esc><Esc>:LspStart fleetls<CR>" --headless
+    done
+}
+
+(cargo run --bin fleetls --color=always 2>&1 || (echo "\033[31m!!Starting last successful build!!\033[0m" && ./target/debug/fleetls & restart_lsp)) | while IFS= read -r line; do
     echo -e "$line"
     if [[ "$line" == *"Running"* ]]; then
-        nvim --server $XDG_RUNTIME_DIR/nvim.* --remote-send "<Esc><Esc>:source load.vim | LspStop fleetls<CR>" --headless
-        nvim --server $XDG_RUNTIME_DIR/nvim.* --remote-send "<Esc><Esc>:LspStart fleetls<CR>" --headless
+        restart_lsp
     fi
-done
+done && echo "FleetLS exited"
 
