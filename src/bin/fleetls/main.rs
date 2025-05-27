@@ -81,8 +81,8 @@ fn token_length(start: SourceLocation, end: SourceLocation) -> u32 {
 }
 
 impl Backend {
-    fn generate_node_hover(&self, node: AstNode) -> (String, String) {
-        match node {
+    fn generate_node_hover(&self, node: impl Into<AstNode>) -> (String, String) {
+        match node.into() {
             AstNode::Program(_) => ("".to_string(), "program".to_string()),
             AstNode::FunctionDefinition(FunctionDefinition {
                 let_token: _,
@@ -98,7 +98,7 @@ impl Backend {
             }) => (
                 format!(
                     "{name} = () -> {}",
-                    self.generate_node_hover(return_type.into()).0,
+                    self.generate_node_hover(return_type).0,
                 ),
                 "function definition".to_string(),
             ),
@@ -107,7 +107,7 @@ impl Backend {
                 semicolon_token: _,
                 id: _,
             }) => (
-                self.generate_node_hover(expression.into()).0,
+                self.generate_node_hover(expression).0,
                 "expression statement".to_string(),
             ),
             AstNode::Statement(Statement::On {
@@ -118,7 +118,7 @@ impl Backend {
                 body: _,
                 id: _,
             }) => (
-                format!("on ({})", self.generate_node_hover(executor.into()).0),
+                format!("on ({})", self.generate_node_hover(executor).0),
                 "`on` statement".to_string(),
             ),
             AstNode::Statement(Statement::Block { .. }) => ("".to_string(), "block".to_string()),
@@ -139,7 +139,7 @@ impl Backend {
             }) => (
                 format!(
                     "let {name}: {} = ...", // TODO: once we have consteval, display that here
-                    self.generate_node_hover(type_.into()).0
+                    self.generate_node_hover(type_).0
                 ),
                 "variable definition".to_string(),
             ),
@@ -161,8 +161,8 @@ impl Backend {
             }) => (
                 format!(
                     "{}.threads[{}]",
-                    self.generate_node_hover(host.into()).0,
-                    self.generate_node_hover(index.into()).0
+                    self.generate_node_hover(host).0,
+                    self.generate_node_hover(index).0
                 ),
                 "thread executor".to_string(),
             ),
@@ -223,7 +223,7 @@ impl Backend {
                 close_paren_token: _,
                 id: _,
             }) => (
-                format!("({})", self.generate_node_hover((*subexpression).into()).0),
+                format!("({})", self.generate_node_hover(*subexpression).0),
                 "expression grouping".to_string(),
             ),
 

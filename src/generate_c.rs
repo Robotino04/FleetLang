@@ -10,8 +10,8 @@ fn generate_function_declaration(function: &FunctionDefinition) -> String {
         + "(void)";
 }
 
-pub fn generate_c(node: AstNode) -> String {
-    match node {
+pub fn generate_c(node: impl Into<AstNode>) -> String {
+    match node.into() {
         AstNode::Program(program) => {
             let function_definitions = program
                 .functions
@@ -97,12 +97,7 @@ pub fn generate_c(node: AstNode) -> String {
             semicolon_token: _,
             id: _,
         }) => {
-            return generate_c(type_.into())
-                + " "
-                + &name
-                + " = "
-                + &generate_c(value.into())
-                + ";";
+            return generate_c(type_) + " " + &name + " = " + &generate_c(value) + ";";
         }
         AstNode::Statement(Statement::If {
             if_token: _,
@@ -113,22 +108,22 @@ pub fn generate_c(node: AstNode) -> String {
             id: _,
         }) => {
             return "if (".to_string()
-                + &generate_c(condition.into())
+                + &generate_c(condition)
                 + ") {"
-                + &generate_c((*if_body).into())
+                + &generate_c(*if_body)
                 + "}"
                 + &elifs
                     .iter()
                     .map(|(_token, condition, body)| {
                         "else if (".to_string()
-                            + &generate_c(condition.clone().into())
+                            + &generate_c(condition.clone())
                             + ") {"
-                            + &generate_c((*body).clone().into())
+                            + &generate_c(body.clone())
                             + "}"
                     })
                     .collect::<String>()
                 + &else_
-                    .map(|(_token, body)| " else {".to_string() + &generate_c((*body).into()) + "}")
+                    .map(|(_token, body)| " else {".to_string() + &generate_c(*body) + "}")
                     .unwrap_or("".to_string());
         }
         AstNode::ExecutorHost(ExecutorHost::Self_ { token: _, id: _ }) => "self".to_string(),

@@ -37,7 +37,11 @@ impl FleetError {
             severity,
         }
     }
-    pub fn from_node(node: AstNode, msg: impl ToString, severity: ErrorSeverity) -> Self {
+    pub fn from_node(
+        node: impl Into<AstNode>,
+        msg: impl ToString,
+        severity: ErrorSeverity,
+    ) -> Self {
         let (start, end) = find_node_bounds(node);
         Self {
             start,

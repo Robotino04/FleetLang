@@ -190,7 +190,7 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
             }
         } else {
             self.errors.push(FleetError::from_node(
-                function.body.clone().into(),
+                function.body.clone(),
                 "All code paths must return.",
                 ErrorSeverity::Error,
             ));

@@ -247,7 +247,7 @@ impl<'errors> Parser<'errors> {
                 let if_body = self.parse_statement()?;
                 if !matches!(if_body, Statement::Block { .. }) {
                     self.errors.push(FleetError::from_node(
-                        if_body.clone().into(),
+                        if_body.clone(),
                         "If statements must always have a block as the body.",
                         ErrorSeverity::Error,
                     ));
