@@ -9,11 +9,11 @@ use crate::{
 
 type Result<T> = ::core::result::Result<T, ()>;
 
-#[derive(Clone, Debug)]
-pub struct Parser {
+#[derive(Debug)]
+pub struct Parser<'errors> {
     tokens: Vec<Token>,
     index: usize,
-    errors: Vec<FleetError>,
+    errors: &'errors mut Vec<FleetError>,
     id_counter: NodeID,
 }
 
@@ -108,22 +108,18 @@ macro_rules! unable_to_parse {
     };
 }
 
-impl Parser {
-    pub fn new(tokens: Vec<Token>) -> Parser {
-        Parser {
+impl<'errors> Parser<'errors> {
+    pub fn new(tokens: Vec<Token>, errors: &'errors mut Vec<FleetError>) -> Self {
+        Self {
             tokens: tokens
                 .iter()
                 .cloned()
                 .filter(|tok| !matches!(tok.type_, TokenType::UnknownCharacters(_)))
                 .collect(),
             index: 0,
-            errors: vec![],
+            errors,
             id_counter: NodeID(0),
         }
-    }
-
-    pub fn errors(&self) -> &Vec<FleetError> {
-        return &self.errors;
     }
 
     fn current_token(&self) -> Option<Token> {

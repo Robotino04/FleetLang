@@ -265,7 +265,9 @@ pub struct CompileResult<'a> {
 }
 
 pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
-    let mut tokenizer = Tokenizer::new(src.to_string());
+    let mut errors = vec![];
+
+    let mut tokenizer = Tokenizer::new(src.to_string(), &mut errors);
 
     let tokens = tokenizer.tokenize();
     if tokens.is_err() {
@@ -276,11 +278,8 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
     }
     let tokens = tokens.unwrap().clone();
 
-    let mut parser = Parser::new(tokens.clone());
+    let mut parser = Parser::new(tokens.clone(), &mut errors);
     let program = parser.parse_program();
-
-    let mut errors = tokenizer.errors().clone();
-    errors.append(&mut parser.errors().clone());
 
     if program.is_err() {
         return CompileResult {

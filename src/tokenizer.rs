@@ -113,12 +113,12 @@ impl SourceLocation {
     }
 }
 
-pub struct Tokenizer {
+pub struct Tokenizer<'errors> {
     chars: Vec<char>,
     current_location: SourceLocation,
 
     tokens: Vec<Token>,
-    errors: Vec<FleetError>,
+    errors: &'errors mut Vec<FleetError>,
 
     unk_char_accumulator: String,
     unk_char_token: Token,
@@ -126,14 +126,14 @@ pub struct Tokenizer {
     trivia_accumulator: Vec<Trivia>,
 }
 
-impl Tokenizer {
-    pub fn new(src: String) -> Tokenizer {
-        Tokenizer {
+impl<'errors> Tokenizer<'errors> {
+    pub fn new(src: String, errors: &'errors mut Vec<FleetError>) -> Self {
+        Self {
             chars: src.chars().collect::<Vec<_>>(),
             current_location: SourceLocation::start(),
 
             tokens: vec![],
-            errors: vec![],
+            errors,
 
             unk_char_accumulator: "".to_string(),
             unk_char_token: Token {
@@ -147,10 +147,6 @@ impl Tokenizer {
 
             trivia_accumulator: vec![],
         }
-    }
-
-    pub fn errors(&self) -> &Vec<FleetError> {
-        &self.errors
     }
 
     fn advance(&mut self) {
