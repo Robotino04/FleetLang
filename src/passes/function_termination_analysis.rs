@@ -49,27 +49,25 @@ impl<'errors> FunctionTerminationAnalyzer<'errors> {
             errors: error_output,
         }
     }
-
-    // TODO: remove once visit_program is consuming
-    pub fn get_terminations(self) -> PerNodeData<FunctionTermination> {
-        self.termination
-    }
 }
 
 impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
-    type Output = FunctionTermination;
+    type SubOutput = FunctionTermination;
+    type Output = PerNodeData<FunctionTermination>;
 
-    fn visit_program(&mut self, program: &mut Program) -> Self::Output {
+    fn visit_program(mut self, program: &mut Program) -> Self::Output {
         for f in &mut program.functions {
             self.visit_function_definition(f);
         }
 
         if let Some(main_function) = program.functions.iter().find(|f| f.name == "main") {
-            return self
-                .termination
-                .get(main_function)
-                .expect("All functions should have been analyzed by now")
-                .clone();
+            self.termination.insert(
+                program,
+                *self
+                    .termination
+                    .get(main_function)
+                    .expect("All functions should have been analyzed by now"),
+            );
         } else {
             self.errors.push(FleetError {
                 start: SourceLocation::start(),
@@ -80,11 +78,11 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
                 message: format!("No main function was found."),
                 severity: ErrorSeverity::Error,
             });
-            return FunctionTermination::MaybeTerminates;
         }
+        return self.termination;
     }
 
-    fn visit_function_definition(&mut self, function: &mut FunctionDefinition) -> Self::Output {
+    fn visit_function_definition(&mut self, function: &mut FunctionDefinition) -> Self::SubOutput {
         let FunctionDefinition {
             return_type, body, ..
         } = function;
@@ -94,7 +92,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         return body_termination;
     }
 
-    fn visit_statement(&mut self, statement: &mut Statement) -> Self::Output {
+    fn visit_statement(&mut self, statement: &mut Statement) -> Self::SubOutput {
         match statement {
             Statement::Expression { expression, .. } => {
                 let exp_term = self.visit_expression(expression);
@@ -158,7 +156,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         }
     }
 
-    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) -> Self::Output {
+    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) -> Self::SubOutput {
         match executor_host {
             ExecutorHost::Self_ { .. } => {
                 self.termination
@@ -168,7 +166,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         }
     }
 
-    fn visit_executor(&mut self, executor: &mut Executor) -> Self::Output {
+    fn visit_executor(&mut self, executor: &mut Executor) -> Self::SubOutput {
         match executor {
             Executor::Thread { host, index, .. } => {
                 let host_term = self.visit_executor_host(host);
@@ -180,7 +178,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         }
     }
 
-    fn visit_expression(&mut self, expression: &mut Expression) -> Self::Output {
+    fn visit_expression(&mut self, expression: &mut Expression) -> Self::SubOutput {
         match expression {
             Expression::Number { value: _, .. } => {
                 self.termination
@@ -225,7 +223,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         }
     }
 
-    fn visit_type(&mut self, type_: &mut Type) -> Self::Output {
+    fn visit_type(&mut self, type_: &mut Type) -> Self::SubOutput {
         match type_ {
             Type::I32 { .. } => {
                 self.termination

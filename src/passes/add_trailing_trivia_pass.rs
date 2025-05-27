@@ -22,9 +22,10 @@ impl AddTrailingTriviaPass {
 }
 
 impl AstVisitor for AddTrailingTriviaPass {
+    type SubOutput = ();
     type Output = ();
 
-    fn visit_program(&mut self, program: &mut Program) {
+    fn visit_program(mut self, program: &mut Program) {
         if let Some(f) = program.functions.last_mut() {
             self.visit_function_definition(f);
         }

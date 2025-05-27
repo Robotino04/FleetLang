@@ -7,8 +7,8 @@ use crate::{
 };
 
 pub struct FindContainingNodePass {
-    pub node_hierarchy: Vec<AstNode>,
-    pub token: Option<Token>,
+    node_hierarchy: Vec<AstNode>,
+    token: Option<Token>,
     search_position: SourceLocation,
 }
 
@@ -33,20 +33,21 @@ impl FindContainingNodePass {
 }
 
 impl AstVisitor for FindContainingNodePass {
-    type Output = Result<(), ()>;
+    type SubOutput = Result<(), ()>;
+    type Output = Result<(Vec<AstNode>, Token), ()>;
 
-    fn visit_program(&mut self, program: &mut Program) -> Self::Output {
+    fn visit_program(mut self, program: &mut Program) -> Self::Output {
         self.node_hierarchy.push(program.clone().into());
 
         for f in &mut program.functions {
             if let Err(()) = self.visit_function_definition(f) {
-                return Ok(());
+                return Ok((self.node_hierarchy, self.token.expect("a token should have been found if visit_function_definition returns Err(())")));
             }
         }
         return Err(());
     }
 
-    fn visit_function_definition(&mut self, function: &mut FunctionDefinition) -> Self::Output {
+    fn visit_function_definition(&mut self, function: &mut FunctionDefinition) -> Self::SubOutput {
         self.node_hierarchy.push(function.clone().into());
 
         let FunctionDefinition {
@@ -76,7 +77,7 @@ impl AstVisitor for FindContainingNodePass {
         return Ok(());
     }
 
-    fn visit_statement(&mut self, statement: &mut Statement) -> Self::Output {
+    fn visit_statement(&mut self, statement: &mut Statement) -> Self::SubOutput {
         self.node_hierarchy.push(statement.clone().into());
 
         match statement {
@@ -171,7 +172,7 @@ impl AstVisitor for FindContainingNodePass {
         return Ok(());
     }
 
-    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) -> Self::Output {
+    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) -> Self::SubOutput {
         self.node_hierarchy.push(executor_host.clone().into());
 
         match executor_host {
@@ -184,7 +185,7 @@ impl AstVisitor for FindContainingNodePass {
         return Ok(());
     }
 
-    fn visit_executor(&mut self, executor: &mut Executor) -> Self::Output {
+    fn visit_executor(&mut self, executor: &mut Executor) -> Self::SubOutput {
         self.node_hierarchy.push(executor.clone().into());
 
         match executor {
@@ -211,7 +212,7 @@ impl AstVisitor for FindContainingNodePass {
         return Ok(());
     }
 
-    fn visit_expression(&mut self, expression: &mut Expression) -> Self::Output {
+    fn visit_expression(&mut self, expression: &mut Expression) -> Self::SubOutput {
         self.node_hierarchy.push(expression.clone().into());
 
         match expression {
@@ -292,7 +293,7 @@ impl AstVisitor for FindContainingNodePass {
         return Ok(());
     }
 
-    fn visit_type(&mut self, type_: &mut Type) -> Self::Output {
+    fn visit_type(&mut self, type_: &mut Type) -> Self::SubOutput {
         self.node_hierarchy.push(type_.clone().into());
 
         match type_ {

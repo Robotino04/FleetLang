@@ -147,7 +147,7 @@ impl<'errors> Parser<'errors> {
         return current_id;
     }
 
-    pub fn parse_program(&mut self) -> Result<Program> {
+    pub fn parse_program(mut self) -> Result<Program> {
         let mut functions = vec![];
 
         while !self.is_done() {

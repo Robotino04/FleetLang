@@ -32,9 +32,10 @@ impl RemoveParensPass {
 impl RemoveParensPass {}
 
 impl AstVisitor for RemoveParensPass {
+    type SubOutput = ();
     type Output = ();
 
-    fn visit_program(&mut self, program: &mut Program) {
+    fn visit_program(mut self, program: &mut Program) {
         for f in &mut program.functions {
             self.visit_function_definition(f);
         }

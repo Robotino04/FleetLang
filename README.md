@@ -13,8 +13,6 @@
 
 ## TODOs
 - warnings for unreachable code
-- use `&mut errors` everywhere, mostly parser and tokenizer for now
-- Add AstPass trait that consumes self for visit_program and returns the output of the pass
 - replace explicit `AstNode` with `impl Into<AstNode>`
 - format if statements without block to ones with block
 - if expressions

@@ -358,12 +358,14 @@ impl ExtractSemanticTokensPass {
 }
 
 impl AstVisitor for ExtractSemanticTokensPass {
-    type Output = ();
+    type SubOutput = ();
+    type Output = Vec<SemanticToken>;
 
-    fn visit_program(&mut self, program: &mut fleet::ast::Program) {
+    fn visit_program(mut self, program: &mut fleet::ast::Program) -> Self::Output {
         for f in &mut program.functions {
             self.visit_function_definition(f);
         }
+        return self.semantic_tokens;
     }
 
     fn visit_function_definition(
@@ -767,7 +769,7 @@ impl LanguageServer for Backend {
             .clone();
 
         let cpos = params.text_document_position_params.position;
-        let mut find_pass = FindContainingNodePass::new(SourceLocation {
+        let find_pass = FindContainingNodePass::new(SourceLocation {
             index: 0,
             line: cpos.line as usize + 1,
             column: cpos.character as usize,
@@ -775,9 +777,7 @@ impl LanguageServer for Backend {
 
         let terminations = res.status.function_terminations().cloned();
 
-        if let (Ok(()), Some(hovered_token)) =
-            (find_pass.visit_program(&mut program), find_pass.token)
-        {
+        if let Ok((node_hierarchy, hovered_token)) = find_pass.visit_program(&mut program) {
             Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -793,15 +793,14 @@ impl LanguageServer for Backend {
                         {:#?}
                         ```
                     "##},
-                        find_pass
-                            .node_hierarchy
+                        node_hierarchy
                             .last()
                             .map(|node| self.generate_node_hover(node.clone()))
                             .map_or("No AST Node".to_string(), |(info, debug)| format!(
                                 "{info} // {debug}"
                             )),
                         terminations
-                            .map(|ts| ts.get(find_pass.node_hierarchy.last()?).cloned())
+                            .map(|ts| ts.get(node_hierarchy.last()?).cloned())
                             .flatten()
                             .map_or("No termination info available".to_string(), |t| format!(
                                 "{t:?}"
@@ -851,12 +850,11 @@ impl LanguageServer for Backend {
             })?
             .clone();
 
-        let mut extract_tokens_pass = ExtractSemanticTokensPass::new();
-        extract_tokens_pass.visit_program(&mut program);
+        let semantic_tokens = ExtractSemanticTokensPass::new().visit_program(&mut program);
 
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             result_id: None,
-            data: extract_tokens_pass.semantic_tokens,
+            data: semantic_tokens,
         })))
     }
 

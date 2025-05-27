@@ -212,7 +212,7 @@ impl<'errors> Tokenizer<'errors> {
         return token;
     }
 
-    pub fn tokenize(&mut self) -> Result<&Vec<Token>, ()> {
+    pub fn tokenize(mut self) -> Result<Vec<Token>, ()> {
         while self.current_location.index < self.chars.len() {
             match self.chars[self.current_location.index] {
                 '(' => {
@@ -574,7 +574,7 @@ impl<'errors> Tokenizer<'errors> {
             }
         }
 
-        return Ok(&self.tokens);
+        return Ok(self.tokens);
     }
     fn flush_trailing_trivia(&mut self) {
         if let (Some(last_token), Some(trivia)) =

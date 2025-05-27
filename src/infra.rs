@@ -267,19 +267,16 @@ pub struct CompileResult<'a> {
 pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
     let mut errors = vec![];
 
-    let mut tokenizer = Tokenizer::new(src.to_string(), &mut errors);
-
-    let tokens = tokenizer.tokenize();
+    let tokens = Tokenizer::new(src.to_string(), &mut errors).tokenize();
     if tokens.is_err() {
         return CompileResult {
             status: CompileStatus::TokenizerFailure {},
-            errors: vec![],
+            errors,
         };
     }
-    let tokens = tokens.unwrap().clone();
+    let tokens = tokens.unwrap();
 
-    let mut parser = Parser::new(tokens.clone(), &mut errors);
-    let program = parser.parse_program();
+    let program = Parser::new(tokens.clone(), &mut errors).parse_program();
 
     if program.is_err() {
         return CompileResult {
@@ -288,6 +285,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
         };
     }
     let mut program = program.unwrap();
+
     if !errors.is_empty() {
         return CompileResult {
             status: CompileStatus::TokenizerOrParserErrors {
@@ -298,9 +296,8 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
         };
     }
 
-    let mut term_analyzer = FunctionTerminationAnalyzer::new(&mut errors);
-    term_analyzer.visit_program(&mut program);
-    let function_terminations = term_analyzer.get_terminations();
+    let term_analyzer = FunctionTerminationAnalyzer::new(&mut errors);
+    let function_terminations = term_analyzer.visit_program(&mut program);
 
     let mut ir_generator = IrGenerator::new(&context, &mut errors, function_terminations.clone());
     if let Err(error) = ir_generator.generate_program_ir(&program) {

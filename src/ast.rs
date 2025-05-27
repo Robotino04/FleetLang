@@ -50,18 +50,19 @@ impl AstNode {
 }
 
 pub trait AstVisitor {
+    type SubOutput;
     type Output;
 
-    fn visit_program(&mut self, program: &mut Program) -> Self::Output;
+    fn visit_program(self, program: &mut Program) -> Self::Output;
     fn visit_function_definition(
         &mut self,
         function_definition: &mut FunctionDefinition,
-    ) -> Self::Output;
-    fn visit_statement(&mut self, statement: &mut Statement) -> Self::Output;
-    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) -> Self::Output;
-    fn visit_executor(&mut self, executor: &mut Executor) -> Self::Output;
-    fn visit_expression(&mut self, expression: &mut Expression) -> Self::Output;
-    fn visit_type(&mut self, type_: &mut Type) -> Self::Output;
+    ) -> Self::SubOutput;
+    fn visit_statement(&mut self, statement: &mut Statement) -> Self::SubOutput;
+    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) -> Self::SubOutput;
+    fn visit_executor(&mut self, executor: &mut Executor) -> Self::SubOutput;
+    fn visit_expression(&mut self, expression: &mut Expression) -> Self::SubOutput;
+    fn visit_type(&mut self, type_: &mut Type) -> Self::SubOutput;
 }
 
 pub trait HasID {
