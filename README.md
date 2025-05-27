@@ -16,7 +16,6 @@
 - format if statements without block to ones with block
 - if expressions
 - allow single manual newlines. Maybe add newline eaters after {\n and before \n} and print trivia newlines as long as they are inside a statement
-- make FleetLS not terminate after the first connection drops
 - type system (at least the other iX and f32)
 
 

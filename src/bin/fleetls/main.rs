@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::env::args;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::process::exit;
 use std::sync::LazyLock;
 
 use fleet::ast::{
@@ -96,10 +95,7 @@ impl Backend {
                 body: _,
                 id: _,
             }) => (
-                format!(
-                    "{name} = () -> {}",
-                    self.generate_node_hover(return_type).0,
-                ),
+                format!("{name} = () -> {}", self.generate_node_hover(return_type).0),
                 "function definition".to_string(),
             ),
             AstNode::Statement(Statement::Expression {
@@ -859,7 +855,7 @@ impl LanguageServer for Backend {
     }
 
     async fn shutdown(&self) -> Result<()> {
-        exit(0);
+        Ok(())
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
