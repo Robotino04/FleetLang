@@ -59,6 +59,7 @@ impl AstVisitor for FindContainingNodePass {
             right_arrow_token,
             return_type,
             body,
+            id: _,
         } = function;
 
         self.visit_statement(body)?;
@@ -82,6 +83,7 @@ impl AstVisitor for FindContainingNodePass {
             Statement::Expression {
                 expression,
                 semicolon_token,
+                id: _,
             } => {
                 self.visit_expression(expression)?;
                 self.visit_token(semicolon_token)?;
@@ -92,6 +94,7 @@ impl AstVisitor for FindContainingNodePass {
                 executor,
                 close_paren_token,
                 body,
+                id: _,
             } => {
                 self.visit_token(on_token)?;
                 self.visit_token(open_paren_token)?;
@@ -103,6 +106,7 @@ impl AstVisitor for FindContainingNodePass {
                 open_brace_token,
                 body,
                 close_brace_token,
+                id: _,
             } => {
                 self.visit_token(open_brace_token)?;
                 for stmt in body {
@@ -114,6 +118,7 @@ impl AstVisitor for FindContainingNodePass {
                 return_token,
                 value,
                 semicolon_token,
+                id: _,
             } => {
                 self.visit_token(return_token)?;
                 self.visit_expression(value)?;
@@ -128,6 +133,7 @@ impl AstVisitor for FindContainingNodePass {
                 equals_token,
                 value,
                 semicolon_token,
+                id: _,
             } => {
                 self.visit_token(let_token)?;
                 self.visit_token(name_token)?;
@@ -136,6 +142,27 @@ impl AstVisitor for FindContainingNodePass {
                 self.visit_token(equals_token)?;
                 self.visit_expression(value)?;
                 self.visit_token(semicolon_token)?;
+            }
+            Statement::If {
+                if_token,
+                condition,
+                if_body,
+                elifs,
+                else_,
+                id: _,
+            } => {
+                self.visit_token(if_token)?;
+                self.visit_expression(condition)?;
+                self.visit_statement(if_body)?;
+                for (elif_token, elif_condition, elif_body) in elifs {
+                    self.visit_token(elif_token)?;
+                    self.visit_expression(elif_condition)?;
+                    self.visit_statement(elif_body)?;
+                }
+                if let Some((else_token, else_body)) = else_ {
+                    self.visit_token(else_token)?;
+                    self.visit_statement(else_body)?;
+                }
             }
         }
 
@@ -148,7 +175,7 @@ impl AstVisitor for FindContainingNodePass {
         self.node_hierarchy.push(executor_host.clone().into());
 
         match executor_host {
-            ExecutorHost::Self_ { token } => {
+            ExecutorHost::Self_ { token, id: _ } => {
                 self.visit_token(token)?;
             }
         }
@@ -168,6 +195,7 @@ impl AstVisitor for FindContainingNodePass {
                 open_bracket_token,
                 index,
                 close_bracket_token,
+                id: _,
             } => {
                 self.visit_executor_host(host)?;
                 self.visit_token(dot_token)?;
@@ -187,12 +215,17 @@ impl AstVisitor for FindContainingNodePass {
         self.node_hierarchy.push(expression.clone().into());
 
         match expression {
-            Expression::Number { value: _, token } => {
+            Expression::Number {
+                value: _,
+                token,
+                id: _,
+            } => {
                 self.visit_token(token)?;
             }
             Expression::VariableAccess {
                 name: _,
                 name_token,
+                id: _,
             } => {
                 self.visit_token(name_token)?;
             }
@@ -202,6 +235,7 @@ impl AstVisitor for FindContainingNodePass {
                 open_paren_token,
                 arguments,
                 close_paren_token,
+                id: _,
             } => {
                 self.visit_token(name_token)?;
                 self.visit_token(open_paren_token)?;
@@ -214,6 +248,7 @@ impl AstVisitor for FindContainingNodePass {
                 open_paren_token,
                 subexpression,
                 close_paren_token,
+                id: _,
             } => {
                 self.visit_token(open_paren_token)?;
                 self.visit_expression(subexpression)?;
@@ -223,6 +258,7 @@ impl AstVisitor for FindContainingNodePass {
                 operator_token,
                 operation: _,
                 operand,
+                id: _,
             } => {
                 self.visit_token(operator_token)?;
                 self.visit_expression(operand)?;
@@ -232,6 +268,7 @@ impl AstVisitor for FindContainingNodePass {
                 operator_token,
                 operation: _,
                 right,
+                id: _,
             } => {
                 self.visit_expression(&mut *left)?;
                 self.visit_token(operator_token)?;
@@ -242,6 +279,7 @@ impl AstVisitor for FindContainingNodePass {
                 name_token,
                 equal_token,
                 right,
+                id: _,
             } => {
                 self.visit_token(name_token)?;
                 self.visit_token(&equal_token)?;
@@ -258,7 +296,7 @@ impl AstVisitor for FindContainingNodePass {
         self.node_hierarchy.push(type_.clone().into());
 
         match type_ {
-            Type::I32 { token } => {
+            Type::I32 { token, id: _ } => {
                 self.visit_token(token)?;
             }
         }

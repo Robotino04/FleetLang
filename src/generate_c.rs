@@ -45,10 +45,11 @@ pub fn generate_c(node: AstNode) -> String {
                 + " "
                 + generate_c(AstNode::Statement(function.body)).as_str();
         }
-        AstNode::Type(Type::I32 { token: _ }) => "int32_t".to_string(),
+        AstNode::Type(Type::I32 { token: _, id: _ }) => "int32_t".to_string(),
         AstNode::Statement(Statement::Expression {
             expression,
             semicolon_token: _,
+            id: _,
         }) => generate_c(AstNode::Expression(expression)) + ";",
         AstNode::Statement(Statement::On {
             on_token: _,
@@ -56,6 +57,7 @@ pub fn generate_c(node: AstNode) -> String {
             executor: _,
             close_paren_token: _,
             body: _,
+            id: _,
         }) => {
             todo!();
         }
@@ -63,6 +65,7 @@ pub fn generate_c(node: AstNode) -> String {
             open_brace_token: _,
             body,
             close_brace_token: _,
+            id: _,
         }) => {
             return "{\n".to_string()
                 + indent::indent_all_by(
@@ -79,6 +82,7 @@ pub fn generate_c(node: AstNode) -> String {
             return_token: _,
             value,
             semicolon_token: _,
+            id: _,
         }) => {
             return "return ".to_string() + generate_c(AstNode::Expression(value)).as_str() + ";";
         }
@@ -91,6 +95,7 @@ pub fn generate_c(node: AstNode) -> String {
             equals_token: _,
             value,
             semicolon_token: _,
+            id: _,
         }) => {
             return generate_c(type_.into())
                 + " "
@@ -99,7 +104,34 @@ pub fn generate_c(node: AstNode) -> String {
                 + &generate_c(value.into())
                 + ";";
         }
-        AstNode::ExecutorHost(ExecutorHost::Self_ { token: _ }) => "self".to_string(),
+        AstNode::Statement(Statement::If {
+            if_token: _,
+            condition,
+            if_body,
+            elifs,
+            else_,
+            id: _,
+        }) => {
+            return "if (".to_string()
+                + &generate_c(condition.into())
+                + ") {"
+                + &generate_c((*if_body).into())
+                + "}"
+                + &elifs
+                    .iter()
+                    .map(|(_token, condition, body)| {
+                        "else if (".to_string()
+                            + &generate_c(condition.clone().into())
+                            + ") {"
+                            + &generate_c((*body).clone().into())
+                            + "}"
+                    })
+                    .collect::<String>()
+                + &else_
+                    .map(|(_token, body)| " else {".to_string() + &generate_c((*body).into()) + "}")
+                    .unwrap_or("".to_string());
+        }
+        AstNode::ExecutorHost(ExecutorHost::Self_ { token: _, id: _ }) => "self".to_string(),
         AstNode::Executor(Executor::Thread {
             host,
             dot_token: _,
@@ -107,19 +139,25 @@ pub fn generate_c(node: AstNode) -> String {
             open_bracket_token: _,
             index,
             close_bracket_token: _,
+            id: _,
         }) => {
             return generate_c(AstNode::ExecutorHost(host))
                 + ".threads["
                 + generate_c(AstNode::Expression(index)).as_str()
                 + "]";
         }
-        AstNode::Expression(Expression::Number { value, token: _ }) => value.to_string(),
+        AstNode::Expression(Expression::Number {
+            value,
+            token: _,
+            id: _,
+        }) => value.to_string(),
         AstNode::Expression(Expression::FunctionCall {
             name,
             name_token: _,
             open_paren_token: _,
             arguments,
             close_paren_token: _,
+            id: _,
         }) => {
             return name.clone()
                 + "("
@@ -135,6 +173,7 @@ pub fn generate_c(node: AstNode) -> String {
             operation,
             operand,
             operator_token: _,
+            id: _,
         }) => {
             return match operation {
                 UnaryOperation::BitwiseNot => "~",
@@ -149,6 +188,7 @@ pub fn generate_c(node: AstNode) -> String {
             operator_token: _,
             operation,
             right,
+            id: _,
         }) => {
             return format!(
                 "({} {} {})",
@@ -175,12 +215,14 @@ pub fn generate_c(node: AstNode) -> String {
             open_paren_token: _,
             subexpression,
             close_paren_token: _,
+            id: _,
         }) => {
             return format!("({})", generate_c(AstNode::Expression(*subexpression)),);
         }
         AstNode::Expression(Expression::VariableAccess {
             name,
             name_token: _,
+            id: _,
         }) => {
             return name;
         }
@@ -189,6 +231,7 @@ pub fn generate_c(node: AstNode) -> String {
             name_token: _,
             equal_token: _,
             right,
+            id: _,
         }) => {
             return format!("({name} = {})", generate_c(AstNode::Expression(*right)),);
         }

@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        BinaryOperation, Executor, ExecutorHost, Expression, FunctionDefinition, Program,
+        BinaryOperation, Executor, ExecutorHost, Expression, FunctionDefinition, NodeID, Program,
         Statement, Type,
     },
     infra::{ErrorSeverity, FleetError},
@@ -14,6 +14,7 @@ pub struct Parser {
     tokens: Vec<Token>,
     index: usize,
     errors: Vec<FleetError>,
+    id_counter: NodeID,
 }
 
 macro_rules! expect {
@@ -117,6 +118,7 @@ impl Parser {
                 .collect(),
             index: 0,
             errors: vec![],
+            id_counter: NodeID(0),
         }
     }
 
@@ -143,6 +145,12 @@ impl Parser {
         return t;
     }
 
+    fn next_id(&mut self) -> NodeID {
+        let current_id = self.id_counter;
+        self.id_counter.0 += 1;
+        return current_id;
+    }
+
     pub fn parse_program(&mut self) -> Result<Program> {
         let mut functions = vec![];
 
@@ -163,7 +171,10 @@ impl Parser {
             }
         }
 
-        Ok(Program { functions })
+        Ok(Program {
+            functions,
+            id: self.next_id(),
+        })
     }
 
     pub fn parse_statement(&mut self) -> Result<Statement> {
@@ -175,6 +186,7 @@ impl Parser {
                     executor: self.parse_executor()?,
                     close_paren_token: expect!(self, TokenType::CloseParen)?,
                     body: Box::new(self.parse_statement()?),
+                    id: self.next_id(),
                 });
             }
             Some(TokenType::OpenBrace) => {
@@ -206,6 +218,7 @@ impl Parser {
                     open_brace_token,
                     body,
                     close_brace_token,
+                    id: self.next_id(),
                 });
             }
             Some(TokenType::Keyword(Keyword::Return)) => {
@@ -213,6 +226,7 @@ impl Parser {
                     return_token: expect!(self, TokenType::Keyword(Keyword::Return))?,
                     value: self.parse_expression()?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
+                    id: self.next_id(),
                 });
             }
             Some(TokenType::Keyword(Keyword::Let)) => {
@@ -228,12 +242,52 @@ impl Parser {
                     equals_token: expect!(self, TokenType::EqualSign)?,
                     value: self.parse_expression()?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
+                    id: self.next_id(),
+                });
+            }
+            Some(TokenType::Keyword(Keyword::If)) => {
+                let if_token = expect!(self, TokenType::Keyword(Keyword::If))?;
+                let condition = self.parse_expression()?;
+                let if_body = self.parse_statement()?;
+                if !matches!(if_body, Statement::Block { .. }) {
+                    self.errors.push(FleetError::from_node(
+                        if_body.clone().into(),
+                        "If statements must always have a block as the body.",
+                        ErrorSeverity::Error,
+                    ));
+                }
+
+                let mut elifs = vec![];
+
+                while let Some(TokenType::Keyword(Keyword::Elif)) = self.current_token_type() {
+                    let elif_token = expect!(self, TokenType::Keyword(Keyword::Elif))?;
+                    let elif_condition = self.parse_expression()?;
+                    let elif_body = self.parse_statement()?;
+                    elifs.push((elif_token, elif_condition, elif_body));
+                }
+
+                let mut else_ = None;
+                if let Some(TokenType::Keyword(Keyword::Else)) = self.current_token_type() {
+                    else_ = Some((
+                        expect!(self, TokenType::Keyword(Keyword::Else))?,
+                        Box::new(self.parse_statement()?),
+                    ));
+                }
+
+                return Ok(Statement::If {
+                    if_token,
+                    condition,
+                    if_body: Box::new(if_body),
+                    elifs,
+                    else_,
+                    id: self.next_id(),
                 });
             }
             _ => {
                 return Ok(Statement::Expression {
                     expression: self.parse_expression()?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
+                    id: self.next_id(),
                 });
             }
         }
@@ -248,6 +302,7 @@ impl Parser {
                 return Ok(Expression::Number {
                     value,
                     token: expect!(self, TokenType::Number(_))?,
+                    id: self.next_id(),
                 });
             }
 
@@ -267,9 +322,16 @@ impl Parser {
                             arguments,
                             open_paren_token,
                             close_paren_token,
+                            id: self.next_id(),
                         });
                     }
-                    _ => return Ok(Expression::VariableAccess { name, name_token }),
+                    _ => {
+                        return Ok(Expression::VariableAccess {
+                            name,
+                            name_token,
+                            id: self.next_id(),
+                        });
+                    }
                 }
             }
             Some(TokenType::OpenParen) => {
@@ -277,6 +339,7 @@ impl Parser {
                     open_paren_token: expect!(self, TokenType::OpenParen)?,
                     subexpression: Box::new(self.parse_expression()?),
                     close_paren_token: expect!(self, TokenType::CloseParen)?,
+                    id: self.next_id(),
                 });
             }
             _ => unable_to_parse!(self, "primary expression"),
@@ -288,16 +351,19 @@ impl Parser {
                 operator_token: expect!(self, TokenType::Tilde)?,
                 operation: crate::ast::UnaryOperation::BitwiseNot,
                 operand: Box::new(self.parse_unary_expression()?),
+                id: self.next_id(),
             }),
             Some(TokenType::Minus) => Ok(Expression::Unary {
                 operator_token: expect!(self, TokenType::Minus)?,
                 operation: crate::ast::UnaryOperation::Negate,
                 operand: Box::new(self.parse_unary_expression()?),
+                id: self.next_id(),
             }),
             Some(TokenType::ExclamationMark) => Ok(Expression::Unary {
                 operator_token: expect!(self, TokenType::ExclamationMark)?,
                 operation: crate::ast::UnaryOperation::LogicalNot,
                 operand: Box::new(self.parse_unary_expression()?),
+                id: self.next_id(),
             }),
 
             Some(_) => return self.parse_primary_expression(),
@@ -316,6 +382,7 @@ impl Parser {
                     operator_token,
                     operation: BinaryOperation::Multiply,
                     right: Box::new(right),
+                    id: self.next_id(),
                 };
                 true
             }
@@ -327,6 +394,7 @@ impl Parser {
                     operator_token,
                     operation: BinaryOperation::Divide,
                     right: Box::new(right),
+                    id: self.next_id(),
                 };
                 true
             }
@@ -338,6 +406,7 @@ impl Parser {
                     operator_token,
                     operation: BinaryOperation::Modulo,
                     right: Box::new(right),
+                    id: self.next_id(),
                 };
                 true
             }
@@ -358,6 +427,7 @@ impl Parser {
                     operator_token,
                     operation: BinaryOperation::Add,
                     right: Box::new(right),
+                    id: self.next_id(),
                 };
                 true
             }
@@ -369,6 +439,7 @@ impl Parser {
                     operator_token,
                     operation: BinaryOperation::Subtract,
                     right: Box::new(right),
+                    id: self.next_id(),
                 };
                 true
             }
@@ -389,6 +460,7 @@ impl Parser {
                     operator_token,
                     operation: BinaryOperation::LessThan,
                     right: Box::new(right),
+                    id: self.next_id(),
                 };
                 true
             }
@@ -400,6 +472,7 @@ impl Parser {
                     operator_token,
                     operation: BinaryOperation::LessThanOrEqual,
                     right: Box::new(right),
+                    id: self.next_id(),
                 };
                 true
             }
@@ -411,6 +484,7 @@ impl Parser {
                     operator_token,
                     operation: BinaryOperation::GreaterThan,
                     right: Box::new(right),
+                    id: self.next_id(),
                 };
                 true
             }
@@ -422,6 +496,7 @@ impl Parser {
                     operator_token,
                     operation: BinaryOperation::GreaterThanOrEqual,
                     right: Box::new(right),
+                    id: self.next_id(),
                 };
                 true
             }
@@ -442,6 +517,7 @@ impl Parser {
                     operator_token,
                     operation: BinaryOperation::Equal,
                     right: Box::new(right),
+                    id: self.next_id(),
                 };
                 true
             }
@@ -453,6 +529,7 @@ impl Parser {
                     operator_token,
                     operation: BinaryOperation::NotEqual,
                     right: Box::new(right),
+                    id: self.next_id(),
                 };
                 true
             }
@@ -473,6 +550,7 @@ impl Parser {
                     operator_token,
                     operation: BinaryOperation::LogicalAnd,
                     right: Box::new(right),
+                    id: self.next_id(),
                 };
                 true
             }
@@ -493,6 +571,7 @@ impl Parser {
                     operator_token,
                     operation: BinaryOperation::LogicalOr,
                     right: Box::new(right),
+                    id: self.next_id(),
                 };
                 true
             }
@@ -505,20 +584,21 @@ impl Parser {
         let left = self.parse_logical_or_expression()?;
 
         match left {
-            Expression::VariableAccess { name, name_token } => {
-                if let Some(TokenType::EqualSign) = self.current_token_type() {
-                    let equal_token = expect!(self, TokenType::EqualSign)?;
-                    let value = self.parse_assignment_expression()?;
+            Expression::VariableAccess {
+                name,
+                name_token,
+                id: _,
+            } if matches!(self.current_token_type(), Some(TokenType::EqualSign)) => {
+                let equal_token = expect!(self, TokenType::EqualSign)?;
+                let value = self.parse_assignment_expression()?;
 
-                    return Ok(Expression::VariableAssignment {
-                        name,
-                        name_token,
-                        equal_token,
-                        right: Box::new(value),
-                    });
-                } else {
-                    return Ok(Expression::VariableAccess { name, name_token });
-                }
+                return Ok(Expression::VariableAssignment {
+                    name,
+                    name_token,
+                    equal_token,
+                    right: Box::new(value),
+                    id: self.next_id(),
+                });
             }
             _ => {
                 return Ok(left);
@@ -530,12 +610,14 @@ impl Parser {
         let res = Ok(Executor::Thread {
             host: ExecutorHost::Self_ {
                 token: expect!(self, TokenType::Keyword(Keyword::Self_))?,
+                id: self.next_id(),
             },
             dot_token: expect!(self, TokenType::Dot)?,
             thread_token: expect!(self, = TokenType::Identifier("threads".to_string()))?,
             open_bracket_token: expect!(self, TokenType::OpenBracket)?,
             index: self.parse_expression()?,
             close_bracket_token: expect!(self, TokenType::CloseBracket)?,
+            id: self.next_id(),
         });
         return res;
     }
@@ -570,6 +652,7 @@ impl Parser {
             right_arrow_token,
             return_type,
             body,
+            id: self.next_id(),
         })
     }
 
@@ -577,6 +660,7 @@ impl Parser {
         match self.current_token_type() {
             Some(TokenType::Keyword(Keyword::I32)) => Ok(Type::I32 {
                 token: expect!(self, TokenType::Keyword(Keyword::I32))?,
+                id: self.next_id(),
             }),
             _ => unable_to_parse!(self, "type"),
         }

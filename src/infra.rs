@@ -1,12 +1,16 @@
 use inkwell::{context::Context, module::Module};
 
 use crate::{
-    ast::{AstVisitor, Program},
+    ast::{AstNode, AstVisitor, PerNodeData, Program},
     ast_to_dm::convert_program_to_document_model,
     document_model::{fully_flatten_document, stringify_document},
     ir_generator::IrGenerator,
     parser::Parser,
-    passes::remove_parens::RemoveParensPass,
+    passes::{
+        find_node_bonds::find_node_bounds,
+        function_termination_analysis::{FunctionTermination, FunctionTerminationAnalyzer},
+        remove_parens::RemoveParensPass,
+    },
     tokenizer::{SourceLocation, Token, Tokenizer},
 };
 
@@ -29,6 +33,15 @@ impl FleetError {
         Self {
             start: token.start,
             end: token.end,
+            message: msg.to_string(),
+            severity,
+        }
+    }
+    pub fn from_node(node: AstNode, msg: impl ToString, severity: ErrorSeverity) -> Self {
+        let (start, end) = find_node_bounds(node);
+        Self {
+            start,
+            end,
             message: msg.to_string(),
             severity,
         }
@@ -118,15 +131,18 @@ pub enum CompileStatus<'a> {
     IrGeneratorFailure {
         tokens: Vec<Token>,
         program: Program,
+        function_terminations: PerNodeData<FunctionTermination>,
     },
     IrGeneratorErrors {
         tokens: Vec<Token>,
         program: Program,
+        function_terminations: PerNodeData<FunctionTermination>,
         partial_module: Option<Module<'a>>,
     },
     Success {
         tokens: Vec<Token>,
         program: Program,
+        function_terminations: PerNodeData<FunctionTermination>,
         module: Module<'a>,
     },
 }
@@ -143,15 +159,18 @@ impl<'a> CompileStatus<'a> {
             CompileStatus::IrGeneratorFailure {
                 tokens: _,
                 program: _,
+                function_terminations: _,
             } => None,
             CompileStatus::IrGeneratorErrors {
                 tokens: _,
                 program: _,
+                function_terminations: _,
                 partial_module,
             } => partial_module.as_ref(),
             CompileStatus::Success {
                 tokens: _,
                 program: _,
+                function_terminations: _,
                 module,
             } => Some(module),
         }
@@ -164,15 +183,21 @@ impl<'a> CompileStatus<'a> {
                 tokens,
                 partial_program: _,
             } => Some(tokens),
-            CompileStatus::IrGeneratorFailure { tokens, program: _ } => Some(tokens),
+            CompileStatus::IrGeneratorFailure {
+                tokens,
+                program: _,
+                function_terminations: _,
+            } => Some(tokens),
             CompileStatus::IrGeneratorErrors {
                 tokens,
                 program: _,
+                function_terminations: _,
                 partial_module: _,
             } => Some(tokens),
             CompileStatus::Success {
                 tokens,
                 program: _,
+                function_terminations: _,
                 module: _,
             } => Some(tokens),
         }
@@ -185,17 +210,50 @@ impl<'a> CompileStatus<'a> {
                 tokens: _,
                 partial_program,
             } => Some(partial_program),
-            CompileStatus::IrGeneratorFailure { tokens: _, program } => Some(program),
+            CompileStatus::IrGeneratorFailure {
+                tokens: _,
+                program,
+                function_terminations: _,
+            } => Some(program),
             CompileStatus::IrGeneratorErrors {
                 tokens: _,
                 program,
+                function_terminations: _,
                 partial_module: _,
             } => Some(program),
             CompileStatus::Success {
                 tokens: _,
                 program,
+                function_terminations: _,
                 module: _,
             } => Some(program),
+        }
+    }
+    pub fn function_terminations(&self) -> Option<&PerNodeData<FunctionTermination>> {
+        match &self {
+            CompileStatus::TokenizerFailure {} => None,
+            CompileStatus::ParserFailure { tokens: _ } => None,
+            CompileStatus::TokenizerOrParserErrors {
+                tokens: _,
+                partial_program: _,
+            } => None,
+            CompileStatus::IrGeneratorFailure {
+                tokens: _,
+                program: _,
+                function_terminations,
+            } => Some(function_terminations),
+            CompileStatus::IrGeneratorErrors {
+                tokens: _,
+                program: _,
+                function_terminations,
+                partial_module: _,
+            } => Some(function_terminations),
+            CompileStatus::Success {
+                tokens: _,
+                program: _,
+                function_terminations,
+                module: _,
+            } => Some(function_terminations),
         }
     }
 }
@@ -230,7 +288,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
             errors,
         };
     }
-    let program = program.unwrap();
+    let mut program = program.unwrap();
     if !errors.is_empty() {
         return CompileResult {
             status: CompileStatus::TokenizerOrParserErrors {
@@ -241,7 +299,11 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
         };
     }
 
-    let mut ir_generator = IrGenerator::new(&context);
+    let mut term_analyzer = FunctionTerminationAnalyzer::new(&mut errors);
+    term_analyzer.visit_program(&mut program);
+    let function_terminations = term_analyzer.get_terminations();
+
+    let mut ir_generator = IrGenerator::new(&context, &mut errors, function_terminations.clone());
     if let Err(error) = ir_generator.generate_program_ir(&program) {
         errors.push(FleetError {
             start: SourceLocation::start(),
@@ -253,16 +315,20 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
             severity: ErrorSeverity::Error,
         });
         return CompileResult {
-            status: CompileStatus::IrGeneratorFailure { tokens, program },
+            status: CompileStatus::IrGeneratorFailure {
+                tokens,
+                program,
+                function_terminations,
+            },
             errors,
         };
     }
     if !ir_generator.errors().is_empty() {
-        errors.append(&mut ir_generator.errors().clone());
         return CompileResult {
             status: CompileStatus::IrGeneratorErrors {
                 tokens,
                 program,
+                function_terminations,
                 partial_module: if ir_generator.module().verify().is_ok() {
                     Some(ir_generator.module().clone())
                 } else {
@@ -277,6 +343,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
         status: CompileStatus::Success {
             tokens,
             program,
+            function_terminations,
             module: ir_generator.module().clone(),
         },
         errors,

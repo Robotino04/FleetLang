@@ -60,11 +60,17 @@ fn main() {
             print_all_errors_and_message("The parser or tokenizer failed partially");
             exit(1);
         }
-        CompileStatus::IrGeneratorFailure { tokens, program } => {
+        CompileStatus::IrGeneratorFailure {
+            tokens,
+            program,
+            function_terminations,
+        } => {
             println!("{}", generate_header("Tokens", 50));
             println!("{:#?}", tokens);
             println!("{}", generate_header("AST", 50));
             println!("{:#?}", program);
+            println!("{}", generate_header("Function Terminations", 50));
+            println!("{:#?}", function_terminations);
             print_all_errors_and_message("The ir generator failed completely");
             exit(1);
         }
@@ -72,11 +78,17 @@ fn main() {
             tokens,
             program,
             partial_module,
+            function_terminations,
         } => {
             println!("{}", generate_header("Tokens", 50));
             println!("{:#?}", tokens);
+
             println!("{}", generate_header("AST", 50));
             println!("{:#?}", program);
+
+            println!("{}", generate_header("Function Terminations", 50));
+            println!("{:#?}", function_terminations);
+
             println!("{}", generate_header("Partial LLVM IR (unoptimized)", 50));
             println!(
                 "{}",
@@ -93,12 +105,16 @@ fn main() {
             tokens,
             program,
             module,
+            function_terminations,
         } => {
             println!("{}", generate_header("Tokens", 50));
             println!("{:#?}", tokens);
 
             println!("{}", generate_header("AST", 50));
             println!("{:#?}", program);
+
+            println!("{}", generate_header("Function Terminations", 50));
+            println!("{:#?}", function_terminations);
 
             println!("{}", generate_header("LLVM IR (unoptimized)", 50));
             println!("{}", module.print_to_string().to_str().unwrap());

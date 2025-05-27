@@ -13,10 +13,12 @@ use inkwell::{
 
 use crate::{
     ast::{
-        BinaryOperation, Expression, FunctionDefinition, Program, Statement, Type, UnaryOperation,
+        BinaryOperation, Expression, FunctionDefinition, PerNodeData, Program, Statement, Type,
+        UnaryOperation,
     },
     escape::unescape,
     infra::{ErrorSeverity, FleetError},
+    passes::function_termination_analysis::FunctionTermination,
     tokenizer::SourceLocation,
 };
 
@@ -59,15 +61,20 @@ impl<'a> VariableScope<'a, '_> {
     }
 }
 
-pub struct IrGenerator<'a> {
+pub struct IrGenerator<'a, 'errors> {
     context: &'a Context,
     module: Module<'a>,
     builder: Builder<'a>,
     functions: HashMap<String, FunctionValue<'a>>,
-    errors: Vec<FleetError>,
+    errors: &'errors mut Vec<FleetError>,
+    function_termination: PerNodeData<FunctionTermination>,
 }
-impl<'a> IrGenerator<'a> {
-    pub fn new(context: &'a Context) -> Self {
+impl<'a, 'errors> IrGenerator<'a, 'errors> {
+    pub fn new(
+        context: &'a Context,
+        errors: &'errors mut Vec<FleetError>,
+        function_termination: PerNodeData<FunctionTermination>,
+    ) -> Self {
         let module = context.create_module("module");
         let builder = context.create_builder();
 
@@ -76,7 +83,8 @@ impl<'a> IrGenerator<'a> {
             module,
             builder,
             functions: HashMap::new(),
-            errors: vec![],
+            errors,
+            function_termination,
         }
     }
 
@@ -115,7 +123,7 @@ impl<'a> IrGenerator<'a> {
 
     fn generate_type(&mut self, type_: &Type) -> AnyTypeEnum<'a> {
         match type_ {
-            Type::I32 { token: _ } => self.context.i32_type().into(),
+            Type::I32 { token: _, id: _ } => self.context.i32_type().into(),
         }
     }
 
@@ -162,6 +170,32 @@ impl<'a> IrGenerator<'a> {
 
         self.generate_statement_ir(&function.body, &mut parameter_scope)?;
 
+        let current_block = self
+            .builder
+            .get_insert_block()
+            .expect("A function should always have a body");
+
+        if *self
+            .function_termination
+            .get(&function.body)
+            .expect("all function bodies should have been analyzed for termination")
+            == FunctionTermination::Terminates
+        {
+            if current_block.get_terminator() == None {
+                // All code paths have already returned, so just remove this block. It is either empty
+                // or contains unreachable code.
+                current_block
+                    .remove_from_function()
+                    .map_err(|_| "Removing the last, unreachable block from a function failed")?;
+            }
+        } else {
+            self.errors.push(FleetError::from_node(
+                function.body.clone().into(),
+                "All code paths must return.",
+                ErrorSeverity::Error,
+            ));
+        }
+
         /*
         match function.return_type {
             Type::I32 { token: _ } => self
@@ -184,6 +218,7 @@ impl<'a> IrGenerator<'a> {
             Statement::Expression {
                 expression,
                 semicolon_token: _,
+                id: _,
             } => {
                 self.generate_expression_ir(expression, variable_scope)?;
                 Ok(())
@@ -194,11 +229,13 @@ impl<'a> IrGenerator<'a> {
                 executor: _,
                 close_paren_token: _,
                 body: _,
+                id: _,
             } => todo!(),
             Statement::Block {
                 open_brace_token: _,
                 body,
                 close_brace_token: _,
+                id: _,
             } => {
                 let mut new_scope = variable_scope.new_child();
                 for substmt in body {
@@ -210,6 +247,7 @@ impl<'a> IrGenerator<'a> {
                 return_token: _,
                 value,
                 semicolon_token: _,
+                id: _,
             } => {
                 let ir_value = self.generate_expression_ir(value, variable_scope)?;
 
@@ -233,6 +271,7 @@ impl<'a> IrGenerator<'a> {
                 equals_token: _,
                 value,
                 semicolon_token: _,
+                id: _,
             } => {
                 let eval_value =
                     self.generate_expression_ir(value, variable_scope)?
@@ -253,6 +292,118 @@ impl<'a> IrGenerator<'a> {
 
                 Ok(())
             }
+            Statement::If {
+                if_token: _,
+                condition,
+                if_body,
+                elifs,
+                else_,
+                id: _,
+            } => {
+                let current_block = self
+                    .builder
+                    .get_insert_block()
+                    .expect("expected builder to be in a block");
+
+                let body_block = self
+                    .context
+                    .insert_basic_block_after(current_block, "if_body");
+
+                let mut next_block = self.context.insert_basic_block_after(body_block, "elif");
+
+                let end_block = self.context.insert_basic_block_after(next_block, "if_end");
+
+                self.builder.position_at_end(current_block);
+                let condition_value = self
+                    .generate_expression_ir(condition, variable_scope)?
+                    .expect("Somehow passed a Unit value to an if condition");
+                let condition_value = self.builder.build_int_compare(
+                    IntPredicate::NE,
+                    condition_value.into_int_value(),
+                    condition_value.get_type().const_zero().into_int_value(),
+                    "if_condition",
+                )?;
+
+                self.builder
+                    .build_conditional_branch(condition_value, body_block, next_block)?;
+
+                self.builder.position_at_end(body_block);
+                self.generate_statement_ir(if_body, variable_scope)?;
+
+                if *self
+                    .function_termination
+                    .get(&**if_body)
+                    .expect(&format!("{if_body:?} didn't get analyzed for termination"))
+                    != FunctionTermination::Terminates
+                {
+                    self.builder.build_unconditional_branch(end_block)?;
+                }
+
+                self.builder.position_at_end(next_block);
+
+                for (_token, condition, body) in elifs {
+                    next_block.set_name("elif_condition");
+                    self.builder.position_at_end(next_block);
+
+                    let condition_value = self
+                        .generate_expression_ir(condition, variable_scope)?
+                        .expect("Somehow passed a Unit value to an elif condition");
+                    let condition_value = self.builder.build_int_compare(
+                        IntPredicate::NE,
+                        condition_value.into_int_value(),
+                        condition_value.get_type().const_zero().into_int_value(),
+                        "if_condition",
+                    )?;
+
+                    let body_block = self
+                        .context
+                        .insert_basic_block_after(next_block, "elif_body");
+
+                    next_block = self
+                        .context
+                        .insert_basic_block_after(body_block, "elif_or_else");
+
+                    self.builder.build_conditional_branch(
+                        condition_value,
+                        body_block,
+                        next_block,
+                    )?;
+
+                    self.builder.position_at_end(body_block);
+                    self.generate_statement_ir(body, variable_scope)?;
+
+                    if *self
+                        .function_termination
+                        .get(body)
+                        .expect(&format!("{body:?} didn't get analyzed for termination"))
+                        != FunctionTermination::Terminates
+                    {
+                        self.builder.build_unconditional_branch(end_block)?;
+                    }
+                    self.builder.position_at_end(next_block);
+                }
+
+                if let Some((_token, else_body)) = else_ {
+                    next_block.set_name("else_body");
+
+                    self.generate_statement_ir(else_body, variable_scope)?;
+                    if *self.function_termination.get(&**else_body).expect(&format!(
+                        "{else_body:?} didn't get analyzed for termination"
+                    )) != FunctionTermination::Terminates
+                    {
+                        self.builder.build_unconditional_branch(end_block)?;
+                    }
+                } else {
+                    next_block.replace_all_uses_with(&end_block);
+                    next_block
+                        .remove_from_function()
+                        .expect("any block produced for conditionals should be part of a function");
+                }
+
+                self.builder.position_at_end(end_block);
+
+                Ok(())
+            }
         }
     }
     fn generate_expression_ir(
@@ -262,7 +413,11 @@ impl<'a> IrGenerator<'a> {
     ) -> Result<Option<BasicValueEnum<'a>>> {
         eprintln!("Generating expression");
         match expr {
-            Expression::Number { value, token: _ } => {
+            Expression::Number {
+                value,
+                token: _,
+                id: _,
+            } => {
                 return Ok(Some(
                     self.context
                         .i32_type()
@@ -270,7 +425,11 @@ impl<'a> IrGenerator<'a> {
                         .into(),
                 ));
             }
-            Expression::VariableAccess { name, name_token } => {
+            Expression::VariableAccess {
+                name,
+                name_token,
+                id: _,
+            } => {
                 if let Some((type_, ptr)) = variable_scope.get(name) {
                     return Ok(Some(self.builder.build_load(
                         type_.clone(),
@@ -298,6 +457,7 @@ impl<'a> IrGenerator<'a> {
                 open_paren_token: _,
                 arguments,
                 close_paren_token: _,
+                id: _,
             } => {
                 let mut args: Vec<BasicMetadataValueEnum> = vec![];
                 for arg in arguments {
@@ -336,6 +496,7 @@ impl<'a> IrGenerator<'a> {
                 operation,
                 operand,
                 operator_token: _,
+                id: _,
             } => {
                 let value = self
                     .generate_expression_ir(operand, variable_scope)?
@@ -376,6 +537,7 @@ impl<'a> IrGenerator<'a> {
                 operator_token: _,
                 operation,
                 right,
+                id: _,
             } => {
                 let left_value =
                     self.generate_expression_ir(&left, variable_scope)?
@@ -686,6 +848,7 @@ impl<'a> IrGenerator<'a> {
                 open_paren_token: _,
                 subexpression,
                 close_paren_token: _,
+                id: _,
             } => self.generate_expression_ir(subexpression, variable_scope),
 
             Expression::VariableAssignment {
@@ -693,6 +856,7 @@ impl<'a> IrGenerator<'a> {
                 name_token,
                 equal_token: _,
                 right,
+                id: _,
             } => {
                 let right_value =
                     self.generate_expression_ir(right, variable_scope)?

@@ -74,6 +74,9 @@ fn keyword_string(keyword: Keyword) -> String {
         Keyword::Let => "let",
         Keyword::I32 => "i32",
         Keyword::Return => "return",
+        Keyword::If => "if",
+        Keyword::Elif => "elif",
+        Keyword::Else => "else",
     }
     .to_string()
 }
@@ -161,6 +164,7 @@ fn convert_function_definition(
         right_arrow_token,
         return_type,
         body,
+        id: _,
     }: &FunctionDefinition,
 ) -> DocumentElement {
     return DocumentElement::spaced_concatentation(
@@ -189,7 +193,7 @@ fn convert_function_definition(
 
 fn convert_type(type_: &Type) -> DocumentElement {
     match type_ {
-        Type::I32 { token } => token_to_element(token),
+        Type::I32 { token, id: _ } => token_to_element(token),
     }
 }
 
@@ -198,6 +202,7 @@ fn convert_statement(statement: &Statement) -> DocumentElement {
         Statement::Expression {
             expression,
             semicolon_token,
+            id: _,
         } => DocumentElement::Concatenation(vec![
             convert_expression(expression),
             DocumentElement::double_space_eater(),
@@ -209,6 +214,7 @@ fn convert_statement(statement: &Statement) -> DocumentElement {
             executor,
             close_paren_token,
             body,
+            id: _,
         } => DocumentElement::spaced_concatentation(
             DocumentElement::CollapsableSpace,
             vec![
@@ -225,6 +231,7 @@ fn convert_statement(statement: &Statement) -> DocumentElement {
             open_brace_token,
             body,
             close_brace_token,
+            id: _,
         } => DocumentElement::spaced_concatentation(
             DocumentElement::CollapsableLineBreak,
             vec![
@@ -259,6 +266,7 @@ fn convert_statement(statement: &Statement) -> DocumentElement {
             return_token,
             value,
             semicolon_token,
+            id: _,
         } => DocumentElement::Concatenation(vec![
             DocumentElement::spaced_concatentation(
                 DocumentElement::CollapsableSpace,
@@ -277,6 +285,7 @@ fn convert_statement(statement: &Statement) -> DocumentElement {
             equals_token,
             value,
             semicolon_token,
+            id: _,
         } => DocumentElement::Concatenation(vec![
             DocumentElement::spaced_concatentation(
                 DocumentElement::CollapsableSpace,
@@ -294,6 +303,46 @@ fn convert_statement(statement: &Statement) -> DocumentElement {
             DocumentElement::double_space_eater(),
             token_to_element(semicolon_token),
         ]),
+        Statement::If {
+            if_token,
+            condition,
+            if_body,
+            elifs,
+            else_,
+            id: _,
+        } => {
+            let mut elements = vec![DocumentElement::spaced_concatentation(
+                DocumentElement::CollapsableSpace,
+                vec![
+                    token_to_element(if_token),
+                    convert_expression(condition),
+                    convert_statement(if_body),
+                ],
+            )];
+
+            for (token, condition, body) in elifs {
+                elements.push(DocumentElement::spaced_concatentation(
+                    DocumentElement::CollapsableSpace,
+                    vec![
+                        token_to_element(token),
+                        convert_expression(condition),
+                        convert_statement(body),
+                    ],
+                ));
+            }
+
+            if let Some((else_token, else_body)) = else_ {
+                elements.push(DocumentElement::spaced_concatentation(
+                    DocumentElement::CollapsableSpace,
+                    vec![token_to_element(else_token), convert_statement(else_body)],
+                ));
+            }
+
+            return DocumentElement::spaced_concatentation(
+                DocumentElement::CollapsableLineBreak,
+                elements,
+            );
+        }
     }
 }
 fn convert_executor(executor: &Executor) -> DocumentElement {
@@ -305,6 +354,7 @@ fn convert_executor(executor: &Executor) -> DocumentElement {
             open_bracket_token,
             index,
             close_bracket_token,
+            id: _,
         } => DocumentElement::Concatenation(vec![
             convert_executor_host(host),
             token_to_element(dot_token),
@@ -317,19 +367,24 @@ fn convert_executor(executor: &Executor) -> DocumentElement {
 }
 fn convert_executor_host(host: &ExecutorHost) -> DocumentElement {
     match host {
-        ExecutorHost::Self_ { token } => token_to_element(token),
+        ExecutorHost::Self_ { token, id: _ } => token_to_element(token),
     }
 }
 
 fn convert_expression(expression: &Expression) -> DocumentElement {
     match expression {
-        Expression::Number { value: _, token } => token_to_element(token),
+        Expression::Number {
+            value: _,
+            token,
+            id: _,
+        } => token_to_element(token),
         Expression::FunctionCall {
             name: _,
             name_token,
             open_paren_token,
             arguments,
             close_paren_token,
+            id: _,
         } => DocumentElement::Concatenation(vec![
             token_to_element(name_token),
             DocumentElement::Concatenation(vec![
@@ -350,11 +405,13 @@ fn convert_expression(expression: &Expression) -> DocumentElement {
         Expression::VariableAccess {
             name: _,
             name_token,
+            id: _,
         } => token_to_element(name_token),
         Expression::Grouping {
             open_paren_token,
             subexpression,
             close_paren_token,
+            id: _,
         } => DocumentElement::Concatenation(vec![
             DocumentElement::Concatenation(vec![
                 trivia_to_element(&open_paren_token.leading_trivia),
@@ -376,6 +433,7 @@ fn convert_expression(expression: &Expression) -> DocumentElement {
             operator_token,
             operation: _,
             operand,
+            id: _,
         } => DocumentElement::Concatenation(vec![
             token_to_element(operator_token),
             DocumentElement::double_space_eater(),
@@ -386,6 +444,7 @@ fn convert_expression(expression: &Expression) -> DocumentElement {
             operator_token,
             operation: _,
             right,
+            id: _,
         } => DocumentElement::spaced_concatentation(
             DocumentElement::CollapsableSpace,
             vec![
@@ -399,6 +458,7 @@ fn convert_expression(expression: &Expression) -> DocumentElement {
             name_token,
             equal_token,
             right,
+            id: _,
         } => DocumentElement::spaced_concatentation(
             DocumentElement::CollapsableSpace,
             vec![

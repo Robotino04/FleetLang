@@ -81,9 +81,9 @@ fn token_length(start: SourceLocation, end: SourceLocation) -> u32 {
 }
 
 impl Backend {
-    fn generate_node_hover(&self, node: AstNode) -> String {
+    fn generate_node_hover(&self, node: AstNode) -> (String, String) {
         match node {
-            AstNode::Program(_) => "".to_string(),
+            AstNode::Program(_) => ("".to_string(), "program".to_string()),
             AstNode::FunctionDefinition(FunctionDefinition {
                 let_token: _,
                 name,
@@ -94,24 +94,38 @@ impl Backend {
                 right_arrow_token: _,
                 return_type,
                 body: _,
-            }) => format!(
-                "{name} = () -> {}",
-                self.generate_node_hover(return_type.into()),
+                id: _,
+            }) => (
+                format!(
+                    "{name} = () -> {}",
+                    self.generate_node_hover(return_type.into()).0,
+                ),
+                "function definition".to_string(),
             ),
             AstNode::Statement(Statement::Expression {
                 expression,
                 semicolon_token: _,
-            }) => self.generate_node_hover(expression.into()),
+                id: _,
+            }) => (
+                self.generate_node_hover(expression.into()).0,
+                "expression statement".to_string(),
+            ),
             AstNode::Statement(Statement::On {
                 on_token: _,
                 open_paren_token: _,
                 executor,
                 close_paren_token: _,
                 body: _,
-            }) => format!("on ({})", self.generate_node_hover(executor.into())),
-            AstNode::Statement(Statement::Block { .. }) => "".to_string(),
+                id: _,
+            }) => (
+                format!("on ({})", self.generate_node_hover(executor.into()).0),
+                "`on` statement".to_string(),
+            ),
+            AstNode::Statement(Statement::Block { .. }) => ("".to_string(), "block".to_string()),
             // TODO: once we have type inference, show the value type here
-            AstNode::Statement(Statement::Return { .. }) => "return".to_string(),
+            AstNode::Statement(Statement::Return { .. }) => {
+                ("return".to_string(), "`return` statement".to_string())
+            }
             AstNode::Statement(Statement::VariableDefinition {
                 let_token: _,
                 name_token: _,
@@ -121,12 +135,21 @@ impl Backend {
                 equals_token: _,
                 value: _,
                 semicolon_token: _,
-            }) => format!(
-                "let {name}: {} = ...", // TODO: once we have consteval, display that here
-                self.generate_node_hover(type_.into())
+                id: _,
+            }) => (
+                format!(
+                    "let {name}: {} = ...", // TODO: once we have consteval, display that here
+                    self.generate_node_hover(type_.into()).0
+                ),
+                "variable definition".to_string(),
             ),
+            AstNode::Statement(Statement::If { .. }) => {
+                ("".to_string(), "`if` statement".to_string())
+            }
 
-            AstNode::ExecutorHost(ExecutorHost::Self_ { .. }) => "self".to_string(),
+            AstNode::ExecutorHost(ExecutorHost::Self_ { .. }) => {
+                ("self".to_string(), "`self` executor host".to_string())
+            }
             AstNode::Executor(Executor::Thread {
                 host,
                 dot_token: _,
@@ -134,55 +157,75 @@ impl Backend {
                 open_bracket_token: _,
                 index,
                 close_bracket_token: _,
-            }) => format!(
-                "{}.threads[{}]",
-                self.generate_node_hover(host.into()),
-                self.generate_node_hover(index.into())
+                id: _,
+            }) => (
+                format!(
+                    "{}.threads[{}]",
+                    self.generate_node_hover(host.into()).0,
+                    self.generate_node_hover(index.into()).0
+                ),
+                "thread executor".to_string(),
             ),
             AstNode::Expression(Expression::Unary {
                 operator_token: _,
                 operation,
                 operand: _,
+                id: _,
             }) => {
                 // TODO: once we have type inference, display operand type here
-                match operation {
-                    UnaryOperation::BitwiseNot => "bitwise negation (~)",
-                    UnaryOperation::LogicalNot => "logical negation (!)",
-                    UnaryOperation::Negate => "arithmetic negation (-)",
-                }
-                .to_string()
+                (
+                    match operation {
+                        UnaryOperation::BitwiseNot => "bitwise negation (~)",
+                        UnaryOperation::LogicalNot => "logical negation (!)",
+                        UnaryOperation::Negate => "arithmetic negation (-)",
+                    }
+                    .to_string(),
+                    "unary expression".to_string(),
+                )
             }
             // TODO: once we have type inference, display type here
-            AstNode::Expression(Expression::Number { value, token: _ }) => value.to_string(),
+            AstNode::Expression(Expression::Number {
+                value,
+                token: _,
+                id: _,
+            }) => (value.to_string(), "number literal".to_string()),
             AstNode::Expression(Expression::Binary {
                 left: _,
                 operator_token: _,
                 operation,
                 right: _,
+                id: _,
             }) => {
                 // TODO: once we have type inference, display operand types here
-                match operation {
-                    BinaryOperation::Add => "addition (+)",
-                    BinaryOperation::Subtract => "subtraction (-)",
-                    BinaryOperation::Multiply => "multiplication (*)",
-                    BinaryOperation::Divide => "division (/)",
-                    BinaryOperation::Modulo => "module (%)",
-                    BinaryOperation::GreaterThan => "greater than (>)",
-                    BinaryOperation::GreaterThanOrEqual => "greater than or equal (>=)",
-                    BinaryOperation::LessThan => "less than (<)",
-                    BinaryOperation::LessThanOrEqual => "less than or equal (<=)",
-                    BinaryOperation::Equal => "equal (==)",
-                    BinaryOperation::NotEqual => "not equal (!=)",
-                    BinaryOperation::LogicalAnd => "logical and (&&)",
-                    BinaryOperation::LogicalOr => "logical or (||)",
-                }
-                .to_string()
+                (
+                    match operation {
+                        BinaryOperation::Add => "addition (+)",
+                        BinaryOperation::Subtract => "subtraction (-)",
+                        BinaryOperation::Multiply => "multiplication (*)",
+                        BinaryOperation::Divide => "division (/)",
+                        BinaryOperation::Modulo => "module (%)",
+                        BinaryOperation::GreaterThan => "greater than (>)",
+                        BinaryOperation::GreaterThanOrEqual => "greater than or equal (>=)",
+                        BinaryOperation::LessThan => "less than (<)",
+                        BinaryOperation::LessThanOrEqual => "less than or equal (<=)",
+                        BinaryOperation::Equal => "equal (==)",
+                        BinaryOperation::NotEqual => "not equal (!=)",
+                        BinaryOperation::LogicalAnd => "logical and (&&)",
+                        BinaryOperation::LogicalOr => "logical or (||)",
+                    }
+                    .to_string(),
+                    "binary expression".to_string(),
+                )
             }
             AstNode::Expression(Expression::Grouping {
                 open_paren_token: _,
                 subexpression,
                 close_paren_token: _,
-            }) => format!("({})", self.generate_node_hover((*subexpression).into())),
+                id: _,
+            }) => (
+                format!("({})", self.generate_node_hover((*subexpression).into()).0),
+                "expression grouping".to_string(),
+            ),
 
             AstNode::Expression(Expression::FunctionCall {
                 name,
@@ -190,28 +233,40 @@ impl Backend {
                 open_paren_token: _,
                 arguments: _,
                 close_paren_token: _,
+                id: _,
             }) => {
                 // TODO: once we have proper semantic analysis, display the function types here
-                format!("let {name} = () -> ...")
+                (
+                    format!("let {name} = () -> ..."),
+                    "function call".to_string(),
+                )
             }
             AstNode::Expression(Expression::VariableAccess {
                 name,
                 name_token: _,
+                id: _,
             }) => {
                 // TODO: once we have proper semantic analysis, display the variable types here
                 // TODO: once we have consteval, display the value here
-                format!("let {name}: ... = ...")
+                (
+                    format!("let {name}: ... = ..."),
+                    "variable access".to_string(),
+                )
             }
             AstNode::Expression(Expression::VariableAssignment {
                 name,
                 name_token: _,
                 equal_token: _,
                 right: _,
+                id: _,
             }) => {
                 // TODO: once we have proper semantic analysis, display the variable types here
-                format!("let {name}: ...")
+                (
+                    format!("let {name}: ..."),
+                    "variable assignment".to_string(),
+                )
             }
-            AstNode::Type(Type::I32 { token: _ }) => "i32".to_string(),
+            AstNode::Type(Type::I32 { token: _, id: _ }) => (format!("i32"), "type".to_string()),
         }
     }
 }
@@ -323,6 +378,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
             right_arrow_token,
             return_type,
             body,
+            id: _,
         }: &mut FunctionDefinition,
     ) {
         self.build_semantic_token(let_token, SemanticTokenType::KEYWORD, vec![]);
@@ -347,6 +403,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
             Statement::Expression {
                 expression,
                 semicolon_token,
+                id: _,
             } => {
                 self.visit_expression(expression);
                 self.build_comment_tokens_only(semicolon_token);
@@ -357,6 +414,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
                 executor,
                 close_paren_token,
                 body,
+                id: _,
             } => {
                 self.build_semantic_token(on_token, SemanticTokenType::KEYWORD, vec![]);
                 self.build_comment_tokens_only(open_paren_token);
@@ -368,6 +426,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
                 open_brace_token,
                 body,
                 close_brace_token,
+                id: _,
             } => {
                 self.build_comment_tokens_only(open_brace_token);
                 for stmt in body {
@@ -379,6 +438,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
                 return_token,
                 value,
                 semicolon_token,
+                id: _,
             } => {
                 self.build_semantic_token(return_token, SemanticTokenType::KEYWORD, vec![]);
                 self.visit_expression(value);
@@ -393,6 +453,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
                 equals_token,
                 value,
                 semicolon_token,
+                id: _,
             } => {
                 self.build_semantic_token(let_token, SemanticTokenType::KEYWORD, vec![]);
                 self.build_semantic_token(
@@ -406,12 +467,33 @@ impl AstVisitor for ExtractSemanticTokensPass {
                 self.visit_expression(value);
                 self.build_comment_tokens_only(semicolon_token);
             }
+            Statement::If {
+                if_token,
+                condition,
+                if_body,
+                elifs,
+                else_,
+                id: _,
+            } => {
+                self.build_semantic_token(if_token, SemanticTokenType::KEYWORD, vec![]);
+                self.visit_expression(condition);
+                self.visit_statement(if_body);
+                for (token, condition, body) in elifs {
+                    self.build_semantic_token(token, SemanticTokenType::KEYWORD, vec![]);
+                    self.visit_expression(condition);
+                    self.visit_statement(body);
+                }
+                if let Some((token, body)) = else_ {
+                    self.build_semantic_token(token, SemanticTokenType::KEYWORD, vec![]);
+                    self.visit_statement(body);
+                }
+            }
         }
     }
 
     fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) {
         match executor_host {
-            ExecutorHost::Self_ { token } => {
+            ExecutorHost::Self_ { token, id: _ } => {
                 self.build_comment_tokens_only(token);
             }
         }
@@ -426,6 +508,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
                 open_bracket_token,
                 index,
                 close_bracket_token,
+                id: _,
             } => {
                 self.visit_executor_host(host);
                 self.build_comment_tokens_only(dot_token);
@@ -439,7 +522,11 @@ impl AstVisitor for ExtractSemanticTokensPass {
 
     fn visit_expression(&mut self, expression: &mut Expression) {
         match expression {
-            Expression::Number { value: _, token } => {
+            Expression::Number {
+                value: _,
+                token,
+                id: _,
+            } => {
                 self.build_semantic_token(token, SemanticTokenType::NUMBER, vec![]);
             }
             Expression::FunctionCall {
@@ -448,6 +535,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
                 open_paren_token,
                 arguments,
                 close_paren_token,
+                id: _,
             } => {
                 self.build_semantic_token(name_token, SemanticTokenType::FUNCTION, vec![]);
                 self.build_comment_tokens_only(open_paren_token);
@@ -460,6 +548,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
                 open_paren_token,
                 subexpression,
                 close_paren_token,
+                id: _,
             } => {
                 self.build_comment_tokens_only(open_paren_token);
                 self.visit_expression(subexpression);
@@ -468,6 +557,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
             Expression::VariableAccess {
                 name: _,
                 name_token,
+                id: _,
             } => {
                 self.build_semantic_token(name_token, SemanticTokenType::VARIABLE, vec![]);
             }
@@ -475,6 +565,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
                 operator_token,
                 operation: _,
                 operand,
+                id: _,
             } => {
                 self.build_comment_tokens_only(operator_token);
                 self.visit_expression(operand);
@@ -484,6 +575,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
                 operator_token,
                 operation: _,
                 right,
+                id: _,
             } => {
                 self.visit_expression(left);
                 self.build_comment_tokens_only(operator_token);
@@ -494,6 +586,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
                 name_token,
                 equal_token,
                 right,
+                id: _,
             } => {
                 self.build_semantic_token(
                     name_token,
@@ -508,7 +601,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
 
     fn visit_type(&mut self, type_: &mut Type) {
         match type_ {
-            Type::I32 { token } => {
+            Type::I32 { token, id: _ } => {
                 self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
             }
         }
@@ -680,6 +773,8 @@ impl LanguageServer for Backend {
             column: cpos.character as usize,
         });
 
+        let terminations = res.status.function_terminations().cloned();
+
         if let (Ok(()), Some(hovered_token)) =
             (find_pass.visit_program(&mut program), find_pass.token)
         {
@@ -690,6 +785,10 @@ impl LanguageServer for Backend {
                         indoc! {r##"
                         {}
 
+                        ---- Debug Stats ----
+                        {}
+
+                        ---- Token ----
                         ```rust
                         {:#?}
                         ```
@@ -698,8 +797,16 @@ impl LanguageServer for Backend {
                             .node_hierarchy
                             .last()
                             .map(|node| self.generate_node_hover(node.clone()))
-                            .unwrap_or("".to_string()),
-                        hovered_token
+                            .map_or("No AST Node".to_string(), |(info, debug)| format!(
+                                "{info} // {debug}"
+                            )),
+                        terminations
+                            .map(|ts| ts.get(find_pass.node_hierarchy.last()?).cloned())
+                            .flatten()
+                            .map_or("No termination info available".to_string(), |t| format!(
+                                "{t:?}"
+                            )),
+                        hovered_token,
                     ),
                 }),
                 range: Some(Range {

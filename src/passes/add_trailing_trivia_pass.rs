@@ -39,6 +39,7 @@ impl AstVisitor for AddTrailingTriviaPass {
             Statement::Expression {
                 expression: _,
                 semicolon_token,
+                id: _,
             } => {
                 self.add_trailing_trivia_to_token(semicolon_token);
             }
@@ -48,6 +49,7 @@ impl AstVisitor for AddTrailingTriviaPass {
                 executor: _,
                 close_paren_token: _,
                 body,
+                id: _,
             } => {
                 self.visit_statement(body);
             }
@@ -66,12 +68,28 @@ impl AstVisitor for AddTrailingTriviaPass {
             } => {
                 self.add_trailing_trivia_to_token(semicolon_token);
             }
+            Statement::If {
+                if_token: _,
+                condition: _,
+                if_body,
+                elifs,
+                else_,
+                id: _,
+            } => {
+                if let Some((_, else_body)) = else_ {
+                    self.visit_statement(else_body);
+                } else if let Some((_, _, body)) = elifs.last_mut() {
+                    self.visit_statement(body);
+                } else {
+                    self.visit_statement(if_body);
+                }
+            }
         }
     }
 
     fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) {
         match executor_host {
-            ExecutorHost::Self_ { token } => {
+            ExecutorHost::Self_ { token, id: _ } => {
                 self.add_trailing_trivia_to_token(token);
             }
         }
@@ -86,6 +104,7 @@ impl AstVisitor for AddTrailingTriviaPass {
                 open_bracket_token: _,
                 index: _,
                 close_bracket_token,
+                id: _,
             } => {
                 self.add_trailing_trivia_to_token(close_bracket_token);
             }
@@ -101,11 +120,7 @@ impl AstVisitor for AddTrailingTriviaPass {
                 self.add_trailing_trivia_to_token(name_token);
             }
             Expression::FunctionCall {
-                name: _,
-                name_token: _,
-                open_paren_token: _,
-                arguments: _,
-                close_paren_token,
+                close_paren_token, ..
             } => {
                 self.add_trailing_trivia_to_token(close_paren_token);
             }
@@ -114,11 +129,7 @@ impl AstVisitor for AddTrailingTriviaPass {
             } => {
                 self.add_trailing_trivia_to_token(close_paren_token);
             }
-            Expression::Unary {
-                operator_token: _,
-                operation: _,
-                operand,
-            } => {
+            Expression::Unary { operand, .. } => {
                 self.visit_expression(&mut *operand);
             }
             Expression::Binary { right, .. } => {
@@ -132,7 +143,7 @@ impl AstVisitor for AddTrailingTriviaPass {
 
     fn visit_type(&mut self, type_: &mut Type) {
         match type_ {
-            Type::I32 { token } => {
+            Type::I32 { token, id: _ } => {
                 self.add_trailing_trivia_to_token(token);
             }
         }

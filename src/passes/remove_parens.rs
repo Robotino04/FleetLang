@@ -49,6 +49,7 @@ impl AstVisitor for RemoveParensPass {
             Statement::Expression {
                 expression,
                 semicolon_token: _,
+                id: _,
             } => {
                 self.parent_precedence = Expression::TOP_PRECEDENCE;
                 self.parent_associativity = Associativity::Both;
@@ -60,6 +61,7 @@ impl AstVisitor for RemoveParensPass {
                 executor,
                 close_paren_token: _,
                 body,
+                id: _,
             } => {
                 self.visit_executor(executor);
                 self.visit_statement(body);
@@ -68,6 +70,7 @@ impl AstVisitor for RemoveParensPass {
                 open_brace_token: _,
                 body,
                 close_brace_token: _,
+                id: _,
             } => {
                 for stmt in body {
                     self.visit_statement(stmt);
@@ -77,6 +80,7 @@ impl AstVisitor for RemoveParensPass {
                 return_token: _,
                 value,
                 semicolon_token: _,
+                id: _,
             } => {
                 self.parent_precedence = Expression::TOP_PRECEDENCE;
                 self.parent_associativity = Associativity::Both;
@@ -91,18 +95,43 @@ impl AstVisitor for RemoveParensPass {
                 equals_token: _,
                 value,
                 semicolon_token: _,
+                id: _,
             } => {
                 self.visit_type(type_);
                 self.parent_precedence = Expression::TOP_PRECEDENCE;
                 self.parent_associativity = Associativity::Both;
                 self.visit_expression(value);
             }
+            Statement::If {
+                if_token: _,
+                condition,
+                if_body,
+                elifs,
+                else_,
+                id: _,
+            } => {
+                self.parent_precedence = Expression::TOP_PRECEDENCE;
+                self.parent_associativity = Associativity::Both;
+                self.visit_expression(condition);
+                self.visit_statement(&mut *if_body);
+
+                for (_token, condition, body) in elifs {
+                    self.parent_precedence = Expression::TOP_PRECEDENCE;
+                    self.parent_associativity = Associativity::Both;
+                    self.visit_expression(condition);
+                    self.visit_statement(&mut *body);
+                }
+
+                if let Some((_, else_body)) = else_ {
+                    self.visit_statement(&mut *else_body);
+                }
+            }
         }
     }
 
     fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) {
         match executor_host {
-            ExecutorHost::Self_ { token: _ } => {}
+            ExecutorHost::Self_ { .. } => {}
         }
     }
 
@@ -115,6 +144,7 @@ impl AstVisitor for RemoveParensPass {
                 open_bracket_token: _,
                 index,
                 close_bracket_token: _,
+                id: _,
             } => {
                 self.visit_executor_host(host);
                 self.parent_precedence = Expression::TOP_PRECEDENCE;
@@ -129,10 +159,15 @@ impl AstVisitor for RemoveParensPass {
         let this_associativity = expression.get_associativity();
 
         match expression {
-            Expression::Number { value: _, token: _ } => {}
+            Expression::Number {
+                value: _,
+                token: _,
+                id: _,
+            } => {}
             Expression::VariableAccess {
                 name: _,
                 name_token: _,
+                id: _,
             } => {}
             Expression::FunctionCall {
                 name: _,
@@ -140,6 +175,7 @@ impl AstVisitor for RemoveParensPass {
                 open_paren_token: _,
                 arguments,
                 close_paren_token: _,
+                id: _,
             } => {
                 for arg in arguments {
                     self.parent_precedence = Expression::TOP_PRECEDENCE;
@@ -151,6 +187,7 @@ impl AstVisitor for RemoveParensPass {
                 open_paren_token,
                 subexpression,
                 close_paren_token,
+                id: _,
             } => {
                 let old_parent_precedence = self.parent_precedence;
                 let old_parent_associativity = self.parent_associativity;
@@ -202,6 +239,7 @@ impl AstVisitor for RemoveParensPass {
                 operator_token: _,
                 operation: _,
                 operand,
+                id: _,
             } => {
                 self.parent_precedence = this_precedence;
                 self.current_side = OperandSide::Left;
@@ -212,6 +250,7 @@ impl AstVisitor for RemoveParensPass {
                 operator_token: _,
                 operation: _,
                 right,
+                id: _,
             } => {
                 self.parent_precedence = this_precedence;
                 self.parent_associativity = this_associativity;
@@ -228,6 +267,7 @@ impl AstVisitor for RemoveParensPass {
                 name_token: _,
                 equal_token: _,
                 right,
+                id: _,
             } => {
                 self.parent_precedence = this_precedence;
                 self.parent_associativity = this_associativity;
@@ -239,7 +279,7 @@ impl AstVisitor for RemoveParensPass {
 
     fn visit_type(&mut self, type_: &mut Type) {
         match type_ {
-            Type::I32 { token: _ } => {}
+            Type::I32 { .. } => {}
         }
     }
 }

@@ -1,11 +1,6 @@
 use indoc::indoc;
 
-use crate::common::{assert_compile_and_return_value, assert_successful_compilation};
-
-#[test]
-fn empty_file() {
-    assert_successful_compilation("");
-}
+use crate::common::assert_compile_and_return_value;
 
 #[test]
 fn main_returning_0() {

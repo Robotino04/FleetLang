@@ -6,16 +6,16 @@ use crate::common::assert_formatting_and_same_behaviour;
 fn collapse_minus() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return -   0;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return -0;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -23,16 +23,16 @@ fn collapse_minus() {
 fn expand_minus() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return-0;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return -0;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -40,16 +40,16 @@ fn expand_minus() {
 fn collapse_binary_not() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return ~   0;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return ~0;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -57,16 +57,16 @@ fn collapse_binary_not() {
 fn expand_binary_not() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return~0;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return ~0;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -74,16 +74,16 @@ fn expand_binary_not() {
 fn collapse_logical_not() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return !   0;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return !0;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -91,16 +91,16 @@ fn collapse_logical_not() {
 fn expand_logical_not() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return!0;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return !0;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -108,16 +108,16 @@ fn expand_logical_not() {
 fn collapse_mixed() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return ! ~    -  0;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return !~-0;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -125,16 +125,16 @@ fn collapse_mixed() {
 fn expand_mixed() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return!-~0;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return !-~0;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -142,15 +142,15 @@ fn expand_mixed() {
 fn remove_paren_nested() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return ~(-(5));
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return ~-5;
             }"##
         },
-        "a",
+        "main",
     );
 }

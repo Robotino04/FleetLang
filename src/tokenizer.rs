@@ -72,6 +72,9 @@ pub enum Keyword {
     Let,
     I32,
     Return,
+    If,
+    Elif,
+    Else,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -446,6 +449,9 @@ impl Tokenizer {
 
                             "let" => TokenType::Keyword(Keyword::Let),
                             "return" => TokenType::Keyword(Keyword::Return),
+                            "if" => TokenType::Keyword(Keyword::If),
+                            "elif" => TokenType::Keyword(Keyword::Elif),
+                            "else" => TokenType::Keyword(Keyword::Else),
 
                             "i32" => TokenType::Keyword(Keyword::I32),
                             _ => TokenType::Identifier(lexeme.to_string()),

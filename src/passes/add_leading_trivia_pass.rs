@@ -54,12 +54,15 @@ impl AstVisitor for AddLeadingTriviaPass {
             Statement::VariableDefinition { let_token, .. } => {
                 self.add_leading_trivia_to_token(let_token);
             }
+            Statement::If { if_token, .. } => {
+                self.add_leading_trivia_to_token(if_token);
+            }
         }
     }
 
     fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) {
         match executor_host {
-            ExecutorHost::Self_ { token } => {
+            ExecutorHost::Self_ { token, id: _ } => {
                 self.add_leading_trivia_to_token(token);
             }
         }
@@ -103,7 +106,7 @@ impl AstVisitor for AddLeadingTriviaPass {
 
     fn visit_type(&mut self, type_: &mut Type) {
         match type_ {
-            Type::I32 { token } => {
+            Type::I32 { token, id: _ } => {
                 self.add_leading_trivia_to_token(token);
             }
         }

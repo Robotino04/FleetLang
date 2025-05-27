@@ -6,17 +6,17 @@ use crate::common::assert_formatting_and_same_behaviour;
 fn collapse_add() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12   +
                 34;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12 + 34;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -24,16 +24,16 @@ fn collapse_add() {
 fn expand_add() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12+34;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12 + 34;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -41,17 +41,17 @@ fn expand_add() {
 fn collapse_sub() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12   -
                 34;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12 - 34;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -59,16 +59,16 @@ fn collapse_sub() {
 fn expand_sub() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12-34;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12 - 34;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -76,17 +76,17 @@ fn expand_sub() {
 fn collapse_mul() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12   *
                 34;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12 * 34;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -94,16 +94,16 @@ fn collapse_mul() {
 fn expand_mul() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12*34;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12 * 34;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -111,17 +111,17 @@ fn expand_mul() {
 fn collapse_div() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12   /
                 34;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12 / 34;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -129,16 +129,16 @@ fn collapse_div() {
 fn expand_div() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12/34;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12 / 34;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -146,17 +146,17 @@ fn expand_div() {
 fn collapse_mod() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12   %
                 34;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12 % 34;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -164,16 +164,16 @@ fn collapse_mod() {
 fn expand_mod() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12%34;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 12 % 34;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -181,17 +181,17 @@ fn expand_mod() {
 fn collapse_paren() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return    1   *    
                 (2   -      4)    ;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 1 * (2 - 4);
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -199,16 +199,16 @@ fn collapse_paren() {
 fn collapse_nested_paren() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return !  (  (  1  +  2   )    *   4 )  ;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return !((1 + 2) * 4);
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -216,16 +216,16 @@ fn collapse_nested_paren() {
 fn expand_paren() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 1*(2-4);
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 1 * (2 - 4);
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -233,16 +233,16 @@ fn expand_paren() {
 fn remove_paren_lower_inner_precedence() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return (1 * 2) - 4;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 1 * 2 - 4;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -250,16 +250,16 @@ fn remove_paren_lower_inner_precedence() {
 fn remove_paren_higher_inner_precedence() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return (1 + 2) % 4;
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return (1 + 2) % 4;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -267,16 +267,16 @@ fn remove_paren_higher_inner_precedence() {
 fn remove_paren_top() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return (1 * 2);
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 1 * 2;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -284,16 +284,16 @@ fn remove_paren_top() {
 fn remove_paren_bottom() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 1 + (1);
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 1 + 1;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -301,16 +301,16 @@ fn remove_paren_bottom() {
 fn remove_paren_only_one() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return (1) * (2 - 4);
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 1 * (2 - 4);
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -318,16 +318,16 @@ fn remove_paren_only_one() {
 fn remove_paren_nested_simple() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return (((((99)))));
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return 99;
             }"##
         },
-        "a",
+        "main",
     );
 }
 
@@ -335,16 +335,16 @@ fn remove_paren_nested_simple() {
 fn remove_paren_nested_complex() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return (((5 + (5 * 2)) + 3)/2);
             }"##
         },
         indoc! {r##"
-            let a = () -> i32 {
+            let main = () -> i32 {
                 return (5 + 5 * 2 + 3) / 2;
             }"##
         },
-        "a",
+        "main",
     );
 }
 

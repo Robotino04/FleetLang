@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::tokenizer::Token;
 
 #[derive(Clone, Debug)]
@@ -9,6 +11,20 @@ pub enum AstNode {
     Executor(Executor),
     Expression(Expression),
     Type(Type),
+}
+
+impl HasID for AstNode {
+    fn get_id(&self) -> NodeID {
+        match self {
+            AstNode::Program(program) => program.get_id(),
+            AstNode::FunctionDefinition(function_definition) => function_definition.get_id(),
+            AstNode::Statement(statement) => statement.get_id(),
+            AstNode::ExecutorHost(executor_host) => executor_host.get_id(),
+            AstNode::Executor(executor) => executor.get_id(),
+            AstNode::Expression(expression) => expression.get_id(),
+            AstNode::Type(type_) => type_.get_id(),
+        }
+    }
 }
 
 macro_rules! generate_unwrap {
@@ -48,9 +64,23 @@ pub trait AstVisitor {
     fn visit_type(&mut self, type_: &mut Type) -> Self::Output;
 }
 
+pub trait HasID {
+    fn get_id(&self) -> NodeID;
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct NodeID(pub u64);
+
 #[derive(Clone, Debug)]
 pub struct Program {
     pub functions: Vec<FunctionDefinition>,
+    pub id: NodeID,
+}
+
+impl HasID for Program {
+    fn get_id(&self) -> NodeID {
+        self.id
+    }
 }
 
 impl From<Program> for AstNode {
@@ -71,7 +101,15 @@ pub struct FunctionDefinition {
     pub right_arrow_token: Token,
     pub return_type: Type,
     pub body: Statement,
+    pub id: NodeID,
 }
+
+impl HasID for FunctionDefinition {
+    fn get_id(&self) -> NodeID {
+        self.id
+    }
+}
+
 impl From<FunctionDefinition> for AstNode {
     fn from(value: FunctionDefinition) -> Self {
         Self::FunctionDefinition(value)
@@ -80,7 +118,15 @@ impl From<FunctionDefinition> for AstNode {
 
 #[derive(Clone, Debug)]
 pub enum Type {
-    I32 { token: Token },
+    I32 { token: Token, id: NodeID },
+}
+
+impl HasID for Type {
+    fn get_id(&self) -> NodeID {
+        match self {
+            Type::I32 { id, .. } => *id,
+        }
+    }
 }
 
 impl From<Type> for AstNode {
@@ -94,6 +140,7 @@ pub enum Statement {
     Expression {
         expression: Expression,
         semicolon_token: Token,
+        id: NodeID,
     },
     On {
         on_token: Token,
@@ -101,16 +148,19 @@ pub enum Statement {
         executor: Executor,
         close_paren_token: Token,
         body: Box<Statement>,
+        id: NodeID,
     },
     Block {
         open_brace_token: Token,
         body: Vec<Statement>,
         close_brace_token: Token,
+        id: NodeID,
     },
     Return {
         return_token: Token,
         value: Expression,
         semicolon_token: Token,
+        id: NodeID,
     },
     VariableDefinition {
         let_token: Token,
@@ -121,7 +171,29 @@ pub enum Statement {
         equals_token: Token,
         value: Expression,
         semicolon_token: Token,
+        id: NodeID,
     },
+    If {
+        if_token: Token,
+        condition: Expression,
+        if_body: Box<Statement>,
+        elifs: Vec<(Token, Expression, Statement)>,
+        else_: Option<(Token, Box<Statement>)>,
+        id: NodeID,
+    },
+}
+
+impl HasID for Statement {
+    fn get_id(&self) -> NodeID {
+        match self {
+            Statement::Expression { id, .. } => *id,
+            Statement::On { id, .. } => *id,
+            Statement::Block { id, .. } => *id,
+            Statement::Return { id, .. } => *id,
+            Statement::VariableDefinition { id, .. } => *id,
+            Statement::If { id, .. } => *id,
+        }
+    }
 }
 
 impl From<Statement> for AstNode {
@@ -132,7 +204,15 @@ impl From<Statement> for AstNode {
 
 #[derive(Clone, Debug)]
 pub enum ExecutorHost {
-    Self_ { token: Token },
+    Self_ { token: Token, id: NodeID },
+}
+
+impl HasID for ExecutorHost {
+    fn get_id(&self) -> NodeID {
+        match self {
+            ExecutorHost::Self_ { id, .. } => *id,
+        }
+    }
 }
 
 impl From<ExecutorHost> for AstNode {
@@ -150,7 +230,16 @@ pub enum Executor {
         open_bracket_token: Token,
         index: Expression,
         close_bracket_token: Token,
+        id: NodeID,
     },
+}
+
+impl HasID for Executor {
+    fn get_id(&self) -> NodeID {
+        match self {
+            Executor::Thread { id, .. } => *id,
+        }
+    }
 }
 
 impl From<Executor> for AstNode {
@@ -198,6 +287,7 @@ pub enum Expression {
     Number {
         value: i64,
         token: Token,
+        id: NodeID,
     },
     FunctionCall {
         name: String,
@@ -206,32 +296,38 @@ pub enum Expression {
         // TODO: maybe store comma tokens too
         arguments: Vec<Expression>,
         close_paren_token: Token,
+        id: NodeID,
     },
     Grouping {
         open_paren_token: Token,
         subexpression: Box<Expression>,
         close_paren_token: Token,
+        id: NodeID,
     },
     VariableAccess {
         name: String,
         name_token: Token,
+        id: NodeID,
     },
     Unary {
         operator_token: Token,
         operation: UnaryOperation,
         operand: Box<Expression>,
+        id: NodeID,
     },
     Binary {
         left: Box<Expression>,
         operator_token: Token,
         operation: BinaryOperation,
         right: Box<Expression>,
+        id: NodeID,
     },
     VariableAssignment {
         name: String,
         name_token: Token,
         equal_token: Token,
         right: Box<Expression>,
+        id: NodeID,
     },
 }
 
@@ -299,8 +395,48 @@ impl Expression {
     }
 }
 
+impl HasID for Expression {
+    fn get_id(&self) -> NodeID {
+        match self {
+            Expression::Number { id, .. } => *id,
+            Expression::FunctionCall { id, .. } => *id,
+            Expression::Grouping { id, .. } => *id,
+            Expression::VariableAccess { id, .. } => *id,
+            Expression::Unary { id, .. } => *id,
+            Expression::Binary { id, .. } => *id,
+            Expression::VariableAssignment { id, .. } => *id,
+        }
+    }
+}
+
 impl From<Expression> for AstNode {
     fn from(value: Expression) -> Self {
         Self::Expression(value)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PerNodeData<T> {
+    map: HashMap<NodeID, T>,
+}
+
+impl<T> PerNodeData<T> {
+    pub fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+        }
+    }
+
+    pub fn get_id(&self, id: NodeID) -> Option<&T> {
+        self.map.get(&id)
+    }
+    pub fn get(&self, node: &impl HasID) -> Option<&T> {
+        self.map.get(&node.get_id())
+    }
+    pub fn insert_id(&mut self, id: NodeID, value: T) {
+        self.map.insert(id, value);
+    }
+    pub fn insert(&mut self, node: &impl HasID, value: T) {
+        self.map.insert(node.get_id(), value);
     }
 }
