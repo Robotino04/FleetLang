@@ -1,7 +1,8 @@
 use crate::{
     ast::{
-        AstNode, AstVisitor, Executor, ExecutorHost, Expression, FunctionDefinition, Program,
-        Statement, Type,
+        AstNode, AstVisitor, BlockStatement, Executor, ExecutorHost, Expression,
+        ExpressionStatement, FunctionDefinition, IfStatement, OnStatement, Program,
+        ReturnStatement, Type, VariableDefinitionStatement,
     },
     tokenizer::{SourceLocation, Token},
 };
@@ -77,98 +78,91 @@ impl AstVisitor for FindContainingNodePass {
         return Ok(());
     }
 
-    fn visit_statement(&mut self, statement: &mut Statement) -> Self::SubOutput {
-        self.node_hierarchy.push(statement.clone().into());
+    fn visit_expression_statement(
+        &mut self,
+        expr_stmt: &mut ExpressionStatement,
+    ) -> Self::SubOutput {
+        self.node_hierarchy.push(expr_stmt.clone().into());
 
-        match statement {
-            Statement::Expression {
-                expression,
-                semicolon_token,
-                id: _,
-            } => {
-                self.visit_expression(expression)?;
-                self.visit_token(semicolon_token)?;
-            }
-            Statement::On {
-                on_token,
-                open_paren_token,
-                executor,
-                close_paren_token,
-                body,
-                id: _,
-            } => {
-                self.visit_token(on_token)?;
-                self.visit_token(open_paren_token)?;
-                self.visit_executor(executor)?;
-                self.visit_token(close_paren_token)?;
-                self.visit_statement(body)?;
-            }
-            Statement::Block {
-                open_brace_token,
-                body,
-                close_brace_token,
-                id: _,
-            } => {
-                self.visit_token(open_brace_token)?;
-                for stmt in body {
-                    self.visit_statement(stmt)?;
-                }
-                self.visit_token(close_brace_token)?;
-            }
-            Statement::Return {
-                return_token,
-                value,
-                semicolon_token,
-                id: _,
-            } => {
-                self.visit_token(return_token)?;
-                self.visit_expression(value)?;
-                self.visit_token(semicolon_token)?;
-            }
-            Statement::VariableDefinition {
-                let_token,
-                name_token,
-                name: _,
-                colon_token,
-                type_,
-                equals_token,
-                value,
-                semicolon_token,
-                id: _,
-            } => {
-                self.visit_token(let_token)?;
-                self.visit_token(name_token)?;
-                self.visit_token(colon_token)?;
-                self.visit_type(type_)?;
-                self.visit_token(equals_token)?;
-                self.visit_expression(value)?;
-                self.visit_token(semicolon_token)?;
-            }
-            Statement::If {
-                if_token,
-                condition,
-                if_body,
-                elifs,
-                else_,
-                id: _,
-            } => {
-                self.visit_token(if_token)?;
-                self.visit_expression(condition)?;
-                self.visit_statement(if_body)?;
-                for (elif_token, elif_condition, elif_body) in elifs {
-                    self.visit_token(elif_token)?;
-                    self.visit_expression(elif_condition)?;
-                    self.visit_statement(elif_body)?;
-                }
-                if let Some((else_token, else_body)) = else_ {
-                    self.visit_token(else_token)?;
-                    self.visit_statement(else_body)?;
-                }
-            }
+        self.visit_expression(&mut expr_stmt.expression)?;
+        self.visit_token(&mut expr_stmt.semicolon_token)?;
+
+        self.node_hierarchy.pop();
+        return Ok(());
+    }
+
+    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::SubOutput {
+        self.node_hierarchy.push(on_stmt.clone().into());
+
+        self.visit_token(&mut on_stmt.on_token)?;
+        self.visit_token(&mut on_stmt.open_paren_token)?;
+        self.visit_executor(&mut on_stmt.executor)?;
+        self.visit_token(&mut on_stmt.close_paren_token)?;
+        self.visit_statement(&mut on_stmt.body)?;
+
+        self.node_hierarchy.pop();
+        return Ok(());
+    }
+
+    fn visit_block_statement(&mut self, block_stmt: &mut BlockStatement) -> Self::SubOutput {
+        self.node_hierarchy.push(block_stmt.clone().into());
+
+        self.visit_token(&mut block_stmt.open_brace_token)?;
+        for stmt in &mut block_stmt.body {
+            self.visit_statement(stmt)?;
+        }
+        self.visit_token(&mut block_stmt.close_brace_token)?;
+
+        self.node_hierarchy.pop();
+        return Ok(());
+    }
+
+    fn visit_return_statement(&mut self, return_stmt: &mut ReturnStatement) -> Self::SubOutput {
+        self.node_hierarchy.push(return_stmt.clone().into());
+
+        self.visit_token(&mut return_stmt.return_token)?;
+        self.visit_expression(&mut return_stmt.value)?;
+        self.visit_token(&mut return_stmt.semicolon_token)?;
+
+        self.node_hierarchy.pop();
+        return Ok(());
+    }
+
+    fn visit_variable_definition_statement(
+        &mut self,
+        vardef_stmt: &mut VariableDefinitionStatement,
+    ) -> Self::SubOutput {
+        self.node_hierarchy.push(vardef_stmt.clone().into());
+
+        self.visit_token(&mut vardef_stmt.let_token)?;
+        self.visit_token(&mut vardef_stmt.name_token)?;
+        self.visit_token(&mut vardef_stmt.colon_token)?;
+        self.visit_type(&mut vardef_stmt.type_)?;
+        self.visit_token(&mut vardef_stmt.equals_token)?;
+        self.visit_expression(&mut vardef_stmt.value)?;
+        self.visit_token(&mut vardef_stmt.semicolon_token)?;
+
+        self.node_hierarchy.pop();
+        return Ok(());
+    }
+
+    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::SubOutput {
+        self.node_hierarchy.push(if_stmt.clone().into());
+
+        self.visit_token(&mut if_stmt.if_token)?;
+        self.visit_expression(&mut if_stmt.condition)?;
+        self.visit_statement(&mut if_stmt.if_body)?;
+        for (elif_token, elif_condition, elif_body) in &mut if_stmt.elifs {
+            self.visit_token(elif_token)?;
+            self.visit_expression(elif_condition)?;
+            self.visit_statement(elif_body)?;
+        }
+        if let Some((else_token, else_body)) = &mut if_stmt.else_ {
+            self.visit_token(else_token)?;
+            self.visit_statement(else_body)?;
         }
 
         self.node_hierarchy.pop();
-
         return Ok(());
     }
 

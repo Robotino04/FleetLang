@@ -1,7 +1,8 @@
 use crate::{
     ast::{
-        AstVisitor, Executor, ExecutorHost, Expression, FunctionDefinition, Program, Statement,
-        Type,
+        AstVisitor, BlockStatement, Executor, ExecutorHost, Expression, ExpressionStatement,
+        FunctionDefinition, IfStatement, OnStatement, Program, ReturnStatement, Type,
+        VariableDefinitionStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -36,29 +37,48 @@ impl AstVisitor for AddLeadingTriviaPass {
         self.add_leading_trivia_to_token(&mut function_definition.name_token);
     }
 
-    fn visit_statement(&mut self, statement: &mut Statement) {
-        match statement {
-            Statement::Expression { expression, .. } => {
-                self.visit_expression(expression);
-            }
-            Statement::On { on_token, .. } => {
-                self.add_leading_trivia_to_token(on_token);
-            }
-            Statement::Block {
-                open_brace_token, ..
-            } => {
-                self.add_leading_trivia_to_token(open_brace_token);
-            }
-            Statement::Return { return_token, .. } => {
-                self.add_leading_trivia_to_token(return_token);
-            }
-            Statement::VariableDefinition { let_token, .. } => {
-                self.add_leading_trivia_to_token(let_token);
-            }
-            Statement::If { if_token, .. } => {
-                self.add_leading_trivia_to_token(if_token);
-            }
-        }
+    fn visit_expression_statement(
+        &mut self,
+        ExpressionStatement { expression, .. }: &mut ExpressionStatement,
+    ) -> Self::SubOutput {
+        self.visit_expression(expression);
+    }
+
+    fn visit_on_statement(
+        &mut self,
+        OnStatement { on_token, .. }: &mut OnStatement,
+    ) -> Self::SubOutput {
+        self.add_leading_trivia_to_token(on_token);
+    }
+
+    fn visit_block_statement(
+        &mut self,
+        BlockStatement {
+            open_brace_token, ..
+        }: &mut BlockStatement,
+    ) -> Self::SubOutput {
+        self.add_leading_trivia_to_token(open_brace_token);
+    }
+
+    fn visit_return_statement(
+        &mut self,
+        ReturnStatement { return_token, .. }: &mut ReturnStatement,
+    ) -> Self::SubOutput {
+        self.add_leading_trivia_to_token(return_token);
+    }
+
+    fn visit_variable_definition_statement(
+        &mut self,
+        VariableDefinitionStatement { let_token, .. }: &mut VariableDefinitionStatement,
+    ) -> Self::SubOutput {
+        self.add_leading_trivia_to_token(let_token);
+    }
+
+    fn visit_if_statement(
+        &mut self,
+        IfStatement { if_token, .. }: &mut IfStatement,
+    ) -> Self::SubOutput {
+        self.add_leading_trivia_to_token(if_token);
     }
 
     fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) {

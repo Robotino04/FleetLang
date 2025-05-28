@@ -1,7 +1,8 @@
 use crate::{
     ast::{
-        AstVisitor, Executor, ExecutorHost, Expression, FunctionDefinition, Program, Statement,
-        Type,
+        AstVisitor, BlockStatement, Executor, ExecutorHost, Expression, ExpressionStatement,
+        FunctionDefinition, IfStatement, OnStatement, Program, ReturnStatement, Type,
+        VariableDefinitionStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -35,56 +36,64 @@ impl AstVisitor for AddTrailingTriviaPass {
         self.visit_statement(&mut function_definition.body);
     }
 
-    fn visit_statement(&mut self, statement: &mut Statement) {
-        match statement {
-            Statement::Expression {
-                expression: _,
-                semicolon_token,
-                id: _,
-            } => {
-                self.add_trailing_trivia_to_token(semicolon_token);
-            }
-            Statement::On {
-                on_token: _,
-                open_paren_token: _,
-                executor: _,
-                close_paren_token: _,
-                body,
-                id: _,
-            } => {
-                self.visit_statement(body);
-            }
-            Statement::Block {
-                close_brace_token, ..
-            } => {
-                self.add_trailing_trivia_to_token(close_brace_token);
-            }
-            Statement::Return {
-                semicolon_token, ..
-            } => {
-                self.add_trailing_trivia_to_token(semicolon_token);
-            }
-            Statement::VariableDefinition {
-                semicolon_token, ..
-            } => {
-                self.add_trailing_trivia_to_token(semicolon_token);
-            }
-            Statement::If {
-                if_token: _,
-                condition: _,
-                if_body,
-                elifs,
-                else_,
-                id: _,
-            } => {
-                if let Some((_, else_body)) = else_ {
-                    self.visit_statement(else_body);
-                } else if let Some((_, _, body)) = elifs.last_mut() {
-                    self.visit_statement(body);
-                } else {
-                    self.visit_statement(if_body);
-                }
-            }
+    fn visit_expression_statement(
+        &mut self,
+        ExpressionStatement {
+            semicolon_token, ..
+        }: &mut ExpressionStatement,
+    ) -> Self::SubOutput {
+        self.add_trailing_trivia_to_token(semicolon_token);
+    }
+
+    fn visit_on_statement(
+        &mut self,
+        OnStatement { body, .. }: &mut OnStatement,
+    ) -> Self::SubOutput {
+        self.visit_statement(body);
+    }
+
+    fn visit_block_statement(
+        &mut self,
+        BlockStatement {
+            close_brace_token, ..
+        }: &mut BlockStatement,
+    ) -> Self::SubOutput {
+        self.add_trailing_trivia_to_token(close_brace_token);
+    }
+
+    fn visit_return_statement(
+        &mut self,
+        ReturnStatement {
+            semicolon_token, ..
+        }: &mut ReturnStatement,
+    ) -> Self::SubOutput {
+        self.add_trailing_trivia_to_token(semicolon_token);
+    }
+
+    fn visit_variable_definition_statement(
+        &mut self,
+        VariableDefinitionStatement {
+            semicolon_token, ..
+        }: &mut VariableDefinitionStatement,
+    ) -> Self::SubOutput {
+        self.add_trailing_trivia_to_token(semicolon_token);
+    }
+
+    fn visit_if_statement(
+        &mut self,
+        IfStatement {
+            if_body,
+            elifs,
+            else_,
+            ..
+        }: &mut IfStatement,
+    ) -> Self::SubOutput {
+        if let Some((_, else_body)) = else_ {
+            self.visit_statement(else_body);
+        } else if let Some((_, _, body)) = elifs.last_mut() {
+            self.visit_statement(body);
+        } else {
+            self.visit_statement(if_body);
         }
     }
 

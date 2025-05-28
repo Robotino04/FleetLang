@@ -1,10 +1,11 @@
 use crate::ast::{
-    Associativity, AstVisitor, Executor, ExecutorHost, Expression, FunctionDefinition, Program,
-    Statement, Type,
+    Associativity, AstVisitor, Executor, Expression, IfStatement, ReturnStatement,
+    VariableDefinitionStatement,
 };
 
 use super::{
     add_leading_trivia_pass::AddLeadingTriviaPass, add_trailing_trivia_pass::AddTrailingTriviaPass,
+    partial_visitor::PartialAstVisitor,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -31,112 +32,51 @@ impl RemoveParensPass {
 
 impl RemoveParensPass {}
 
-impl AstVisitor for RemoveParensPass {
-    type SubOutput = ();
-    type Output = ();
+impl PartialAstVisitor for RemoveParensPass {
+    fn partial_visit_expression_statement(
+        &mut self,
+        expr_stmt: &mut crate::ast::ExpressionStatement,
+    ) {
+        self.parent_precedence = Expression::TOP_PRECEDENCE;
+        self.parent_associativity = Associativity::Both;
+        self.visit_expression(&mut expr_stmt.expression);
+    }
 
-    fn visit_program(mut self, program: &mut Program) {
-        for f in &mut program.functions {
-            self.visit_function_definition(f);
+    fn partial_visit_return_statement(&mut self, return_stmt: &mut ReturnStatement) {
+        self.parent_precedence = Expression::TOP_PRECEDENCE;
+        self.parent_associativity = Associativity::Both;
+        self.visit_expression(&mut return_stmt.value);
+    }
+
+    fn partial_visit_variable_definition_statement(
+        &mut self,
+        vardef_stmt: &mut VariableDefinitionStatement,
+    ) {
+        self.visit_type(&mut vardef_stmt.type_);
+        self.parent_precedence = Expression::TOP_PRECEDENCE;
+        self.parent_associativity = Associativity::Both;
+        self.visit_expression(&mut vardef_stmt.value);
+    }
+
+    fn partial_visit_if_statement(&mut self, if_stmt: &mut IfStatement) {
+        self.parent_precedence = Expression::TOP_PRECEDENCE;
+        self.parent_associativity = Associativity::Both;
+        self.visit_expression(&mut if_stmt.condition);
+        self.visit_statement(&mut if_stmt.if_body);
+
+        for (_token, condition, body) in &mut if_stmt.elifs {
+            self.parent_precedence = Expression::TOP_PRECEDENCE;
+            self.parent_associativity = Associativity::Both;
+            self.visit_expression(condition);
+            self.visit_statement(&mut *body);
+        }
+
+        if let Some((_, else_body)) = &mut if_stmt.else_ {
+            self.visit_statement(&mut *else_body);
         }
     }
 
-    fn visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
-        self.visit_statement(&mut function_definition.body);
-    }
-
-    fn visit_statement(&mut self, statement: &mut Statement) {
-        match statement {
-            Statement::Expression {
-                expression,
-                semicolon_token: _,
-                id: _,
-            } => {
-                self.parent_precedence = Expression::TOP_PRECEDENCE;
-                self.parent_associativity = Associativity::Both;
-                self.visit_expression(expression);
-            }
-            Statement::On {
-                on_token: _,
-                open_paren_token: _,
-                executor,
-                close_paren_token: _,
-                body,
-                id: _,
-            } => {
-                self.visit_executor(executor);
-                self.visit_statement(body);
-            }
-            Statement::Block {
-                open_brace_token: _,
-                body,
-                close_brace_token: _,
-                id: _,
-            } => {
-                for stmt in body {
-                    self.visit_statement(stmt);
-                }
-            }
-            Statement::Return {
-                return_token: _,
-                value,
-                semicolon_token: _,
-                id: _,
-            } => {
-                self.parent_precedence = Expression::TOP_PRECEDENCE;
-                self.parent_associativity = Associativity::Both;
-                self.visit_expression(value);
-            }
-            Statement::VariableDefinition {
-                let_token: _,
-                name_token: _,
-                name: _,
-                colon_token: _,
-                type_,
-                equals_token: _,
-                value,
-                semicolon_token: _,
-                id: _,
-            } => {
-                self.visit_type(type_);
-                self.parent_precedence = Expression::TOP_PRECEDENCE;
-                self.parent_associativity = Associativity::Both;
-                self.visit_expression(value);
-            }
-            Statement::If {
-                if_token: _,
-                condition,
-                if_body,
-                elifs,
-                else_,
-                id: _,
-            } => {
-                self.parent_precedence = Expression::TOP_PRECEDENCE;
-                self.parent_associativity = Associativity::Both;
-                self.visit_expression(condition);
-                self.visit_statement(&mut *if_body);
-
-                for (_token, condition, body) in elifs {
-                    self.parent_precedence = Expression::TOP_PRECEDENCE;
-                    self.parent_associativity = Associativity::Both;
-                    self.visit_expression(condition);
-                    self.visit_statement(&mut *body);
-                }
-
-                if let Some((_, else_body)) = else_ {
-                    self.visit_statement(&mut *else_body);
-                }
-            }
-        }
-    }
-
-    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) {
-        match executor_host {
-            ExecutorHost::Self_ { .. } => {}
-        }
-    }
-
-    fn visit_executor(&mut self, executor: &mut Executor) {
+    fn partial_visit_executor(&mut self, executor: &mut Executor) {
         match executor {
             Executor::Thread {
                 host,
@@ -155,7 +95,7 @@ impl AstVisitor for RemoveParensPass {
         }
     }
 
-    fn visit_expression(&mut self, expression: &mut Expression) {
+    fn partial_visit_expression(&mut self, expression: &mut Expression) {
         let this_precedence = expression.get_precedence();
         let this_associativity = expression.get_associativity();
 
@@ -275,12 +215,6 @@ impl AstVisitor for RemoveParensPass {
                 self.current_side = OperandSide::Right;
                 self.visit_expression(&mut *right);
             }
-        }
-    }
-
-    fn visit_type(&mut self, type_: &mut Type) {
-        match type_ {
-            Type::I32 { .. } => {}
         }
     }
 }

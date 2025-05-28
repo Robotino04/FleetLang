@@ -1,6 +1,7 @@
 use crate::ast::{
-    AstNode, BinaryOperation, Executor, ExecutorHost, Expression, FunctionDefinition, Statement,
-    Type, UnaryOperation,
+    AstNode, BinaryOperation, BlockStatement, Executor, ExecutorHost, Expression,
+    ExpressionStatement, FunctionDefinition, IfStatement, OnStatement, ReturnStatement, Type,
+    UnaryOperation, VariableDefinitionStatement,
 };
 
 fn generate_function_declaration(function: &FunctionDefinition) -> String {
@@ -16,7 +17,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             let function_definitions = program
                 .functions
                 .iter()
-                .map(|f| generate_c(AstNode::FunctionDefinition(f.clone())))
+                .map(|f| generate_c(f.clone()))
                 .collect::<Vec<_>>()
                 .join("\n");
 
@@ -43,15 +44,15 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
         AstNode::FunctionDefinition(function) => {
             return generate_function_declaration(&function)
                 + " "
-                + generate_c(AstNode::Statement(function.body)).as_str();
+                + generate_c(function.body).as_str();
         }
         AstNode::Type(Type::I32 { token: _, id: _ }) => "int32_t".to_string(),
-        AstNode::Statement(Statement::Expression {
+        AstNode::ExpressionStatement(ExpressionStatement {
             expression,
             semicolon_token: _,
             id: _,
         }) => generate_c(AstNode::Expression(expression)) + ";",
-        AstNode::Statement(Statement::On {
+        AstNode::OnStatement(OnStatement {
             on_token: _,
             open_paren_token: _,
             executor: _,
@@ -61,7 +62,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
         }) => {
             todo!();
         }
-        AstNode::Statement(Statement::Block {
+        AstNode::BlockStatement(BlockStatement {
             open_brace_token: _,
             body,
             close_brace_token: _,
@@ -71,14 +72,14 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
                 + indent::indent_all_by(
                     4,
                     body.iter()
-                        .map(|tls| generate_c(AstNode::Statement(tls.clone())))
+                        .map(|tls| generate_c(tls.clone()))
                         .collect::<Vec<_>>()
                         .join("\n"),
                 )
                 .as_str()
                 + "\n}";
         }
-        AstNode::Statement(Statement::Return {
+        AstNode::ReturnStatement(ReturnStatement {
             return_token: _,
             value,
             semicolon_token: _,
@@ -86,7 +87,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
         }) => {
             return "return ".to_string() + generate_c(AstNode::Expression(value)).as_str() + ";";
         }
-        AstNode::Statement(Statement::VariableDefinition {
+        AstNode::VariableDefinitionStatement(VariableDefinitionStatement {
             let_token: _,
             name_token: _,
             name,
@@ -99,7 +100,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
         }) => {
             return generate_c(type_) + " " + &name + " = " + &generate_c(value) + ";";
         }
-        AstNode::Statement(Statement::If {
+        AstNode::IfStatement(IfStatement {
             if_token: _,
             condition,
             if_body,

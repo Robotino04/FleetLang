@@ -6,11 +6,25 @@ use crate::tokenizer::Token;
 pub enum AstNode {
     Program(Program),
     FunctionDefinition(FunctionDefinition),
-    Statement(Statement),
+
+    ExpressionStatement(ExpressionStatement),
+    OnStatement(OnStatement),
+    BlockStatement(BlockStatement),
+    ReturnStatement(ReturnStatement),
+    VariableDefinitionStatement(VariableDefinitionStatement),
+    IfStatement(IfStatement),
+
     ExecutorHost(ExecutorHost),
     Executor(Executor),
     Expression(Expression),
     Type(Type),
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct NodeID(pub u64);
+
+pub trait HasID {
+    fn get_id(&self) -> NodeID;
 }
 
 impl HasID for AstNode {
@@ -18,35 +32,44 @@ impl HasID for AstNode {
         match self {
             AstNode::Program(program) => program.get_id(),
             AstNode::FunctionDefinition(function_definition) => function_definition.get_id(),
-            AstNode::Statement(statement) => statement.get_id(),
             AstNode::ExecutorHost(executor_host) => executor_host.get_id(),
             AstNode::Executor(executor) => executor.get_id(),
             AstNode::Expression(expression) => expression.get_id(),
             AstNode::Type(type_) => type_.get_id(),
+
+            AstNode::ExpressionStatement(expression_statement) => expression_statement.get_id(),
+            AstNode::OnStatement(on_statement) => on_statement.get_id(),
+            AstNode::BlockStatement(block_statement) => block_statement.get_id(),
+            AstNode::ReturnStatement(return_statement) => return_statement.get_id(),
+            AstNode::VariableDefinitionStatement(vardef) => vardef.get_id(),
+            AstNode::IfStatement(if_statement) => if_statement.get_id(),
         }
     }
 }
+macro_rules! generate_ast_requirements {
+    ($Self:tt, $unwrap_name:ident) => {
+        impl AstNode {
+            pub fn $unwrap_name(self) -> $Self {
+                if let AstNode::$Self(contents) = self {
+                    contents
+                } else {
+                    panic!("Expected AstNode::{}, found {:#?}", stringify!($Self), self)
+                }
+            }
+        }
 
-macro_rules! generate_unwrap {
-    ($type:tt, $name:ident) => {
-        pub fn $name(self) -> $type {
-            if let AstNode::$type(contents) = self {
-                contents
-            } else {
-                panic!("Expected AstNode::{}, found {:#?}", stringify!($type), self)
+        impl HasID for $Self {
+            fn get_id(&self) -> NodeID {
+                self.id
+            }
+        }
+
+        impl From<$Self> for AstNode {
+            fn from(value: $Self) -> Self {
+                Self::$Self(value)
             }
         }
     };
-}
-
-impl AstNode {
-    generate_unwrap!(Program, unwrap_program);
-    generate_unwrap!(FunctionDefinition, unwrap_function_definition);
-    generate_unwrap!(Statement, unwrap_statement);
-    generate_unwrap!(ExecutorHost, unwrap_executor_host);
-    generate_unwrap!(Executor, unwrap_executor);
-    generate_unwrap!(Expression, unwrap_expression);
-    generate_unwrap!(Type, unwrap_type);
 }
 
 pub trait AstVisitor {
@@ -58,37 +81,46 @@ pub trait AstVisitor {
         &mut self,
         function_definition: &mut FunctionDefinition,
     ) -> Self::SubOutput;
-    fn visit_statement(&mut self, statement: &mut Statement) -> Self::SubOutput;
+
+    fn visit_statement(&mut self, statement: &mut Statement) -> Self::SubOutput {
+        match statement {
+            Statement::Expression(expression_statement) => {
+                self.visit_expression_statement(expression_statement)
+            }
+            Statement::On(on_statement) => self.visit_on_statement(on_statement),
+            Statement::Block(block_statement) => self.visit_block_statement(block_statement),
+            Statement::Return(return_statement) => self.visit_return_statement(return_statement),
+            Statement::VariableDefinition(variable_definition_statement) => {
+                self.visit_variable_definition_statement(variable_definition_statement)
+            }
+            Statement::If(if_statement) => self.visit_if_statement(if_statement),
+        }
+    }
+    fn visit_expression_statement(
+        &mut self,
+        expr_stmt: &mut ExpressionStatement,
+    ) -> Self::SubOutput;
+    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::SubOutput;
+    fn visit_block_statement(&mut self, block: &mut BlockStatement) -> Self::SubOutput;
+    fn visit_return_statement(&mut self, return_stmt: &mut ReturnStatement) -> Self::SubOutput;
+    fn visit_variable_definition_statement(
+        &mut self,
+        vardef_stmt: &mut VariableDefinitionStatement,
+    ) -> Self::SubOutput;
+    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::SubOutput;
+
     fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) -> Self::SubOutput;
     fn visit_executor(&mut self, executor: &mut Executor) -> Self::SubOutput;
     fn visit_expression(&mut self, expression: &mut Expression) -> Self::SubOutput;
     fn visit_type(&mut self, type_: &mut Type) -> Self::SubOutput;
 }
 
-pub trait HasID {
-    fn get_id(&self) -> NodeID;
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct NodeID(pub u64);
-
 #[derive(Clone, Debug)]
 pub struct Program {
     pub functions: Vec<FunctionDefinition>,
     pub id: NodeID,
 }
-
-impl HasID for Program {
-    fn get_id(&self) -> NodeID {
-        self.id
-    }
-}
-
-impl From<Program> for AstNode {
-    fn from(value: Program) -> Self {
-        Self::Program(value)
-    }
-}
+generate_ast_requirements!(Program, unwrap_program);
 
 #[derive(Clone, Debug)]
 pub struct FunctionDefinition {
@@ -105,27 +137,19 @@ pub struct FunctionDefinition {
     pub id: NodeID,
 }
 
-impl HasID for FunctionDefinition {
-    fn get_id(&self) -> NodeID {
-        self.id
-    }
-}
-
-impl From<FunctionDefinition> for AstNode {
-    fn from(value: FunctionDefinition) -> Self {
-        Self::FunctionDefinition(value)
-    }
-}
+generate_ast_requirements!(FunctionDefinition, unwrap_function_definition);
 
 #[derive(Clone, Debug)]
 pub enum Type {
     I32 { token: Token, id: NodeID },
 }
-
-impl HasID for Type {
-    fn get_id(&self) -> NodeID {
-        match self {
-            Type::I32 { id, .. } => *id,
+//generate_ast_requirements!(Type, unwrap_type);
+impl AstNode {
+    pub fn unwrap_type(self) -> Type {
+        if let AstNode::Type(contents) = self {
+            contents
+        } else {
+            panic!("Expected AstNode::{}, found {:#?}", stringify!(Type), self)
         }
     }
 }
@@ -136,76 +160,131 @@ impl From<Type> for AstNode {
     }
 }
 
+impl HasID for Type {
+    fn get_id(&self) -> NodeID {
+        match self {
+            Type::I32 { token: _, id } => *id,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ExpressionStatement {
+    pub expression: Expression,
+    pub semicolon_token: Token,
+    pub id: NodeID,
+}
+generate_ast_requirements!(ExpressionStatement, unwrap_expression_statement);
+
+#[derive(Clone, Debug)]
+pub struct OnStatement {
+    pub on_token: Token,
+    pub open_paren_token: Token,
+    pub executor: Executor,
+    pub close_paren_token: Token,
+    pub body: Box<Statement>,
+    pub id: NodeID,
+}
+generate_ast_requirements!(OnStatement, unwrap_or_statement);
+
+#[derive(Clone, Debug)]
+pub struct BlockStatement {
+    pub open_brace_token: Token,
+    pub body: Vec<Statement>,
+    pub close_brace_token: Token,
+    pub id: NodeID,
+}
+generate_ast_requirements!(BlockStatement, unwrap_block_statement);
+
+#[derive(Clone, Debug)]
+pub struct ReturnStatement {
+    pub return_token: Token,
+    pub value: Expression,
+    pub semicolon_token: Token,
+    pub id: NodeID,
+}
+generate_ast_requirements!(ReturnStatement, unwrap_return_statement);
+
+#[derive(Clone, Debug)]
+pub struct VariableDefinitionStatement {
+    pub let_token: Token,
+    pub name_token: Token,
+    pub name: String,
+    pub colon_token: Token,
+    pub type_: Type,
+    pub equals_token: Token,
+    pub value: Expression,
+    pub semicolon_token: Token,
+    pub id: NodeID,
+}
+generate_ast_requirements!(
+    VariableDefinitionStatement,
+    unwrap_variable_definition_statement
+);
+
+#[derive(Clone, Debug)]
+pub struct IfStatement {
+    pub if_token: Token,
+    pub condition: Expression,
+    pub if_body: Box<Statement>,
+    pub elifs: Vec<(Token, Expression, Statement)>,
+    pub else_: Option<(Token, Box<Statement>)>,
+    pub id: NodeID,
+}
+generate_ast_requirements!(IfStatement, unwrap_if_statement);
+
 #[derive(Clone, Debug)]
 pub enum Statement {
-    Expression {
-        expression: Expression,
-        semicolon_token: Token,
-        id: NodeID,
-    },
-    On {
-        on_token: Token,
-        open_paren_token: Token,
-        executor: Executor,
-        close_paren_token: Token,
-        body: Box<Statement>,
-        id: NodeID,
-    },
-    Block {
-        open_brace_token: Token,
-        body: Vec<Statement>,
-        close_brace_token: Token,
-        id: NodeID,
-    },
-    Return {
-        return_token: Token,
-        value: Expression,
-        semicolon_token: Token,
-        id: NodeID,
-    },
-    VariableDefinition {
-        let_token: Token,
-        name_token: Token,
-        name: String,
-        colon_token: Token,
-        type_: Type,
-        equals_token: Token,
-        value: Expression,
-        semicolon_token: Token,
-        id: NodeID,
-    },
-    If {
-        if_token: Token,
-        condition: Expression,
-        if_body: Box<Statement>,
-        elifs: Vec<(Token, Expression, Statement)>,
-        else_: Option<(Token, Box<Statement>)>,
-        id: NodeID,
-    },
+    Expression(ExpressionStatement),
+    On(OnStatement),
+    Block(BlockStatement),
+    Return(ReturnStatement),
+    VariableDefinition(VariableDefinitionStatement),
+    If(IfStatement),
 }
 
 impl HasID for Statement {
     fn get_id(&self) -> NodeID {
         match self {
-            Statement::Expression { id, .. } => *id,
-            Statement::On { id, .. } => *id,
-            Statement::Block { id, .. } => *id,
-            Statement::Return { id, .. } => *id,
-            Statement::VariableDefinition { id, .. } => *id,
-            Statement::If { id, .. } => *id,
+            Statement::Expression(exp) => exp.get_id(),
+            Statement::On(on) => on.get_id(),
+            Statement::Block(block) => block.get_id(),
+            Statement::Return(return_) => return_.get_id(),
+            Statement::VariableDefinition(vardef) => vardef.get_id(),
+            Statement::If(if_) => if_.get_id(),
         }
     }
 }
 
 impl From<Statement> for AstNode {
     fn from(value: Statement) -> Self {
-        Self::Statement(value)
+        match value {
+            Statement::Expression(exp) => exp.into(),
+            Statement::On(on) => on.into(),
+            Statement::Block(block) => block.into(),
+            Statement::Return(return_) => return_.into(),
+            Statement::VariableDefinition(vardef) => vardef.into(),
+            Statement::If(if_) => if_.into(),
+        }
     }
 }
 
 #[derive(Clone, Debug)]
 pub enum ExecutorHost {
     Self_ { token: Token, id: NodeID },
+}
+impl AstNode {
+    pub fn unwrap_executor_host(self) -> ExecutorHost {
+        if let AstNode::ExecutorHost(contents) = self {
+            contents
+        } else {
+            panic!(
+                "Expected AstNode::{}, found {:#?}",
+                stringify!(ExecutorHost),
+                self
+            )
+        }
+    }
 }
 
 impl HasID for ExecutorHost {
@@ -233,6 +312,19 @@ pub enum Executor {
         close_bracket_token: Token,
         id: NodeID,
     },
+}
+impl AstNode {
+    pub fn unwrap_executor(self) -> Executor {
+        if let AstNode::Executor(contents) = self {
+            contents
+        } else {
+            panic!(
+                "Expected AstNode::{}, found {:#?}",
+                stringify!(Executor),
+                self
+            )
+        }
+    }
 }
 
 impl HasID for Executor {
@@ -413,6 +505,19 @@ impl HasID for Expression {
 impl From<Expression> for AstNode {
     fn from(value: Expression) -> Self {
         Self::Expression(value)
+    }
+}
+impl AstNode {
+    pub fn unwrap_expression(self) -> Expression {
+        if let AstNode::Expression(contents) = self {
+            contents
+        } else {
+            panic!(
+                "Expected AstNode::{}, found {:#?}",
+                stringify!(Expression),
+                self
+            )
+        }
     }
 }
 

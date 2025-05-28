@@ -4,3 +4,4 @@ pub mod find_containing_node;
 pub mod find_node_bonds;
 pub mod function_termination_analysis;
 pub mod remove_parens;
+pub mod partial_visitor;

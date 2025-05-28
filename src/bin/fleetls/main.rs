@@ -4,8 +4,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::LazyLock;
 
 use fleet::ast::{
-    AstNode, AstVisitor, BinaryOperation, Executor, ExecutorHost, Expression, FunctionDefinition,
-    Statement, Type, UnaryOperation,
+    AstNode, AstVisitor, BinaryOperation, BlockStatement, Executor, ExecutorHost, Expression,
+    ExpressionStatement, FunctionDefinition, IfStatement, OnStatement, ReturnStatement, Type,
+    UnaryOperation, VariableDefinitionStatement,
 };
 use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
 use fleet::passes::find_containing_node::FindContainingNodePass;
@@ -98,7 +99,7 @@ impl Backend {
                 format!("{name} = () -> {}", self.generate_node_hover(return_type).0),
                 "function definition".to_string(),
             ),
-            AstNode::Statement(Statement::Expression {
+            AstNode::ExpressionStatement(ExpressionStatement {
                 expression,
                 semicolon_token: _,
                 id: _,
@@ -106,7 +107,7 @@ impl Backend {
                 self.generate_node_hover(expression).0,
                 "expression statement".to_string(),
             ),
-            AstNode::Statement(Statement::On {
+            AstNode::OnStatement(OnStatement {
                 on_token: _,
                 open_paren_token: _,
                 executor,
@@ -117,12 +118,12 @@ impl Backend {
                 format!("on ({})", self.generate_node_hover(executor).0),
                 "`on` statement".to_string(),
             ),
-            AstNode::Statement(Statement::Block { .. }) => ("".to_string(), "block".to_string()),
+            AstNode::BlockStatement(BlockStatement { .. }) => ("".to_string(), "block".to_string()),
             // TODO: once we have type inference, show the value type here
-            AstNode::Statement(Statement::Return { .. }) => {
+            AstNode::ReturnStatement(ReturnStatement { .. }) => {
                 ("return".to_string(), "`return` statement".to_string())
             }
-            AstNode::Statement(Statement::VariableDefinition {
+            AstNode::VariableDefinitionStatement(VariableDefinitionStatement {
                 let_token: _,
                 name_token: _,
                 name,
@@ -139,7 +140,7 @@ impl Backend {
                 ),
                 "variable definition".to_string(),
             ),
-            AstNode::Statement(Statement::If { .. }) => {
+            AstNode::IfStatement(IfStatement { .. }) => {
                 ("".to_string(), "`if` statement".to_string())
             }
 
@@ -396,96 +397,73 @@ impl AstVisitor for ExtractSemanticTokensPass {
         self.visit_statement(body);
     }
 
-    fn visit_statement(&mut self, statement: &mut Statement) {
-        match statement {
-            Statement::Expression {
-                expression,
-                semicolon_token,
-                id: _,
-            } => {
-                self.visit_expression(expression);
-                self.build_comment_tokens_only(semicolon_token);
-            }
-            Statement::On {
-                on_token,
-                open_paren_token,
-                executor,
-                close_paren_token,
-                body,
-                id: _,
-            } => {
-                self.build_semantic_token(on_token, SemanticTokenType::KEYWORD, vec![]);
-                self.build_comment_tokens_only(open_paren_token);
-                self.visit_executor(executor);
-                self.build_comment_tokens_only(close_paren_token);
-                self.visit_statement(body);
-            }
-            Statement::Block {
-                open_brace_token,
-                body,
-                close_brace_token,
-                id: _,
-            } => {
-                self.build_comment_tokens_only(open_brace_token);
-                for stmt in body {
-                    self.visit_statement(stmt);
-                }
-                self.build_comment_tokens_only(close_brace_token);
-            }
-            Statement::Return {
-                return_token,
-                value,
-                semicolon_token,
-                id: _,
-            } => {
-                self.build_semantic_token(return_token, SemanticTokenType::KEYWORD, vec![]);
-                self.visit_expression(value);
-                self.build_comment_tokens_only(semicolon_token);
-            }
-            Statement::VariableDefinition {
-                let_token,
-                name_token,
-                name: _,
-                colon_token,
-                type_,
-                equals_token,
-                value,
-                semicolon_token,
-                id: _,
-            } => {
-                self.build_semantic_token(let_token, SemanticTokenType::KEYWORD, vec![]);
-                self.build_semantic_token(
-                    &name_token,
-                    SemanticTokenType::VARIABLE,
-                    vec![SemanticTokenModifier::DEFINITION],
-                );
-                self.build_comment_tokens_only(colon_token);
-                self.visit_type(type_);
-                self.build_comment_tokens_only(equals_token);
-                self.visit_expression(value);
-                self.build_comment_tokens_only(semicolon_token);
-            }
-            Statement::If {
-                if_token,
-                condition,
-                if_body,
-                elifs,
-                else_,
-                id: _,
-            } => {
-                self.build_semantic_token(if_token, SemanticTokenType::KEYWORD, vec![]);
-                self.visit_expression(condition);
-                self.visit_statement(if_body);
-                for (token, condition, body) in elifs {
-                    self.build_semantic_token(token, SemanticTokenType::KEYWORD, vec![]);
-                    self.visit_expression(condition);
-                    self.visit_statement(body);
-                }
-                if let Some((token, body)) = else_ {
-                    self.build_semantic_token(token, SemanticTokenType::KEYWORD, vec![]);
-                    self.visit_statement(body);
-                }
-            }
+    fn visit_expression_statement(
+        &mut self,
+        expr_stmt: &mut ExpressionStatement,
+    ) -> Self::SubOutput {
+        self.visit_expression(&mut expr_stmt.expression);
+        self.build_comment_tokens_only(&mut expr_stmt.semicolon_token);
+    }
+
+    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::SubOutput {
+        self.build_semantic_token(&mut on_stmt.on_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_comment_tokens_only(&mut on_stmt.open_paren_token);
+        self.visit_executor(&mut on_stmt.executor);
+        self.build_comment_tokens_only(&mut on_stmt.close_paren_token);
+        self.visit_statement(&mut on_stmt.body);
+    }
+
+    fn visit_block_statement(&mut self, block: &mut BlockStatement) -> Self::SubOutput {
+        self.build_comment_tokens_only(&mut block.open_brace_token);
+        for stmt in &mut block.body {
+            self.visit_statement(stmt);
+        }
+        self.build_comment_tokens_only(&mut block.close_brace_token);
+    }
+
+    fn visit_return_statement(&mut self, return_stmt: &mut ReturnStatement) -> Self::SubOutput {
+        self.build_semantic_token(
+            &mut return_stmt.return_token,
+            SemanticTokenType::KEYWORD,
+            vec![],
+        );
+        self.visit_expression(&mut return_stmt.value);
+        self.build_comment_tokens_only(&mut return_stmt.semicolon_token);
+    }
+
+    fn visit_variable_definition_statement(
+        &mut self,
+        vardef_stmt: &mut VariableDefinitionStatement,
+    ) -> Self::SubOutput {
+        self.build_semantic_token(
+            &mut vardef_stmt.let_token,
+            SemanticTokenType::KEYWORD,
+            vec![],
+        );
+        self.build_semantic_token(
+            &mut vardef_stmt.name_token,
+            SemanticTokenType::VARIABLE,
+            vec![SemanticTokenModifier::DEFINITION],
+        );
+        self.build_comment_tokens_only(&mut vardef_stmt.colon_token);
+        self.visit_type(&mut vardef_stmt.type_);
+        self.build_comment_tokens_only(&mut vardef_stmt.equals_token);
+        self.visit_expression(&mut vardef_stmt.value);
+        self.build_comment_tokens_only(&mut vardef_stmt.semicolon_token);
+    }
+
+    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::SubOutput {
+        self.build_semantic_token(&mut if_stmt.if_token, SemanticTokenType::KEYWORD, vec![]);
+        self.visit_expression(&mut if_stmt.condition);
+        self.visit_statement(&mut if_stmt.if_body);
+        for (token, condition, body) in &mut if_stmt.elifs {
+            self.build_semantic_token(token, SemanticTokenType::KEYWORD, vec![]);
+            self.visit_expression(condition);
+            self.visit_statement(body);
+        }
+        if let Some((token, body)) = &mut if_stmt.else_ {
+            self.build_semantic_token(token, SemanticTokenType::KEYWORD, vec![]);
+            self.visit_statement(body);
         }
     }
 

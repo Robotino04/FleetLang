@@ -2,7 +2,7 @@ use inkwell::{context::Context, module::Module};
 
 use crate::{
     ast::{AstNode, AstVisitor, PerNodeData, Program},
-    ast_to_dm::convert_program_to_document_model,
+    ast_to_dm::AstToDocumentModelConverter,
     document_model::{fully_flatten_document, stringify_document},
     ir_generator::IrGenerator,
     parser::Parser,
@@ -307,7 +307,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
     let function_terminations = term_analyzer.visit_program(&mut program);
 
     let ir_generator = IrGenerator::new(&context, &mut errors, function_terminations.clone());
-    let module = ir_generator.generate_program_ir(&program);
+    let module = ir_generator.visit_program(&mut program);
 
     if let Err(error) = module {
         errors.push(FleetError {
@@ -362,7 +362,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
 
 pub fn format_program(mut program: Program) -> String {
     RemoveParensPass::new().visit_program(&mut program);
-    let document = convert_program_to_document_model(&program);
+    let document = AstToDocumentModelConverter::new().visit_program(&mut program);
     let formatted_src = stringify_document(&fully_flatten_document(document));
     return formatted_src;
 }

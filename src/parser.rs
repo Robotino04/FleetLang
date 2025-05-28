@@ -1,7 +1,8 @@
 use crate::{
     ast::{
-        BinaryOperation, Executor, ExecutorHost, Expression, FunctionDefinition, NodeID, Program,
-        Statement, Type,
+        BinaryOperation, BlockStatement, Executor, ExecutorHost, Expression, ExpressionStatement,
+        FunctionDefinition, IfStatement, NodeID, OnStatement, Program, ReturnStatement, Statement,
+        Type, VariableDefinitionStatement,
     },
     infra::{ErrorSeverity, FleetError},
     tokenizer::{Keyword, Token, TokenType},
@@ -176,14 +177,14 @@ impl<'errors> Parser<'errors> {
     pub fn parse_statement(&mut self) -> Result<Statement> {
         match self.current_token_type() {
             Some(TokenType::Keyword(Keyword::On)) => {
-                return Ok(Statement::On {
+                return Ok(Statement::On(OnStatement {
                     on_token: expect!(self, TokenType::Keyword(Keyword::On))?,
                     open_paren_token: expect!(self, TokenType::OpenParen)?,
                     executor: self.parse_executor()?,
                     close_paren_token: expect!(self, TokenType::CloseParen)?,
                     body: Box::new(self.parse_statement()?),
                     id: self.next_id(),
-                });
+                }));
             }
             Some(TokenType::OpenBrace) => {
                 let open_brace_token = expect!(self, TokenType::OpenBrace)?;
@@ -210,26 +211,26 @@ impl<'errors> Parser<'errors> {
                 }
                 let close_brace_token = expect!(self, TokenType::CloseBrace)?;
 
-                return Ok(Statement::Block {
+                return Ok(Statement::Block(BlockStatement {
                     open_brace_token,
                     body,
                     close_brace_token,
                     id: self.next_id(),
-                });
+                }));
             }
             Some(TokenType::Keyword(Keyword::Return)) => {
-                return Ok(Statement::Return {
+                return Ok(Statement::Return(ReturnStatement {
                     return_token: expect!(self, TokenType::Keyword(Keyword::Return))?,
                     value: self.parse_expression()?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
                     id: self.next_id(),
-                });
+                }));
             }
             Some(TokenType::Keyword(Keyword::Let)) => {
                 let let_token = expect!(self, TokenType::Keyword(Keyword::Let))?;
                 let (name_token, name) = expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
 
-                return Ok(Statement::VariableDefinition {
+                return Ok(Statement::VariableDefinition(VariableDefinitionStatement {
                     let_token,
                     name_token,
                     name,
@@ -239,7 +240,7 @@ impl<'errors> Parser<'errors> {
                     value: self.parse_expression()?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
                     id: self.next_id(),
-                });
+                }));
             }
             Some(TokenType::Keyword(Keyword::If)) => {
                 let if_token = expect!(self, TokenType::Keyword(Keyword::If))?;
@@ -270,21 +271,21 @@ impl<'errors> Parser<'errors> {
                     ));
                 }
 
-                return Ok(Statement::If {
+                return Ok(Statement::If(IfStatement {
                     if_token,
                     condition,
                     if_body: Box::new(if_body),
                     elifs,
                     else_,
                     id: self.next_id(),
-                });
+                }));
             }
             _ => {
-                return Ok(Statement::Expression {
+                return Ok(Statement::Expression(ExpressionStatement {
                     expression: self.parse_expression()?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
                     id: self.next_id(),
-                });
+                }));
             }
         }
     }

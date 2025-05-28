@@ -1,6 +1,8 @@
 use crate::{
     ast::{
-        AstNode, Executor, ExecutorHost, Expression, FunctionDefinition, Program, Statement, Type,
+        AstNode, BlockStatement, Executor, ExecutorHost, Expression, ExpressionStatement,
+        FunctionDefinition, IfStatement, OnStatement, Program, ReturnStatement, Type,
+        VariableDefinitionStatement,
     },
     tokenizer::SourceLocation,
 };
@@ -24,12 +26,12 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             body,
             id: _,
         }) => (let_token.start, find_node_bounds(body).1),
-        AstNode::Statement(Statement::Expression {
+        AstNode::ExpressionStatement(ExpressionStatement {
             expression,
             semicolon_token,
             id: _,
         }) => (find_node_bounds(expression).0, semicolon_token.end),
-        AstNode::Statement(Statement::On {
+        AstNode::OnStatement(OnStatement {
             on_token,
             open_paren_token: _,
             executor: _,
@@ -39,21 +41,21 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
         }) => {
             return (on_token.start, find_node_bounds(*body).1);
         }
-        AstNode::Statement(Statement::Block {
+        AstNode::BlockStatement(BlockStatement {
             open_brace_token,
             body: _,
             close_brace_token,
             id: _,
         }) => (open_brace_token.start, close_brace_token.end),
         // TODO: once we have type inference, show the value type here
-        AstNode::Statement(Statement::Return {
+        AstNode::ReturnStatement(ReturnStatement {
             return_token,
             value: _,
             semicolon_token,
             id: _,
         }) => (return_token.start, semicolon_token.end),
 
-        AstNode::Statement(Statement::VariableDefinition {
+        AstNode::VariableDefinitionStatement(VariableDefinitionStatement {
             let_token,
             name_token: _,
             name: _,
@@ -64,7 +66,7 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             semicolon_token,
             id: _,
         }) => (let_token.start, semicolon_token.end),
-        AstNode::Statement(Statement::If {
+        AstNode::IfStatement(IfStatement {
             if_token,
             condition: _,
             if_body,
