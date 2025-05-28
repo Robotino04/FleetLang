@@ -1,7 +1,7 @@
 use crate::ast::{
     AstVisitor, BlockStatement, Executor, ExecutorHost, Expression, FunctionDefinition,
-    IfStatement, OnStatement, Program, ReturnStatement, Statement, Type,
-    VariableDefinitionStatement,
+    IfStatement, OnStatement, Program, ReturnStatement, SelfExecutorHost, Statement,
+    ThreadExecutor, Type, VariableDefinitionStatement,
 };
 
 pub trait PartialAstVisitor {
@@ -14,6 +14,7 @@ pub trait PartialAstVisitor {
         }
     }
 
+    // statements
     fn partial_visit_statement(&mut self, statement: &mut Statement) {
         match statement {
             Statement::Expression(expression_statement) => {
@@ -98,27 +99,26 @@ pub trait PartialAstVisitor {
         }
     }
 
+    // executor hosts
     fn partial_visit_executor_host(&mut self, executor_host: &mut ExecutorHost) {
         match executor_host {
-            ExecutorHost::Self_ { .. } => {}
+            ExecutorHost::Self_(self_executor_host) => {
+                self.partial_visit_self_executor_host(self_executor_host)
+            }
         }
     }
+    fn partial_visit_self_executor_host(&mut self, _executor_host: &mut SelfExecutorHost) {}
 
     fn partial_visit_executor(&mut self, executor: &mut Executor) {
         match executor {
-            Executor::Thread {
-                host,
-                dot_token: _,
-                thread_token: _,
-                open_bracket_token: _,
-                index,
-                close_bracket_token: _,
-                id: _,
-            } => {
-                self.partial_visit_executor_host(host);
-                self.partial_visit_expression(index);
+            Executor::Thread(thread_executor) => {
+                self.partial_visit_thread_executor(thread_executor)
             }
         }
+    }
+    fn partial_visit_thread_executor(&mut self, executor: &mut ThreadExecutor) {
+        self.partial_visit_executor_host(&mut executor.host);
+        self.partial_visit_expression(&mut executor.index);
     }
 
     fn partial_visit_expression(&mut self, expression: &mut Expression) {
@@ -238,12 +238,15 @@ where
         self.partial_visit_if_statement(if_stmt);
     }
 
-    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) -> Self::SubOutput {
-        self.partial_visit_executor_host(executor_host);
+    fn visit_self_executor_host(
+        &mut self,
+        executor_host: &mut SelfExecutorHost,
+    ) -> Self::SubOutput {
+        self.partial_visit_self_executor_host(executor_host);
     }
 
-    fn visit_executor(&mut self, executor: &mut Executor) -> Self::SubOutput {
-        self.partial_visit_executor(executor);
+    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::SubOutput {
+        self.partial_visit_thread_executor(executor);
     }
 
     fn visit_expression(&mut self, expression: &mut Expression) -> Self::SubOutput {

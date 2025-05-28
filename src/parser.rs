@@ -1,8 +1,8 @@
 use crate::{
     ast::{
         BinaryOperation, BlockStatement, Executor, ExecutorHost, Expression, ExpressionStatement,
-        FunctionDefinition, IfStatement, NodeID, OnStatement, Program, ReturnStatement, Statement,
-        Type, VariableDefinitionStatement,
+        FunctionDefinition, IfStatement, NodeID, OnStatement, Program, ReturnStatement,
+        SelfExecutorHost, Statement, ThreadExecutor, Type, VariableDefinitionStatement,
     },
     infra::{ErrorSeverity, FleetError},
     tokenizer::{Keyword, Token, TokenType},
@@ -604,18 +604,18 @@ impl<'errors> Parser<'errors> {
     }
 
     pub fn parse_executor(&mut self) -> Result<Executor> {
-        let res = Ok(Executor::Thread {
-            host: ExecutorHost::Self_ {
+        let res = Ok(Executor::Thread(ThreadExecutor {
+            host: ExecutorHost::Self_(SelfExecutorHost {
                 token: expect!(self, TokenType::Keyword(Keyword::Self_))?,
                 id: self.next_id(),
-            },
+            }),
             dot_token: expect!(self, TokenType::Dot)?,
             thread_token: expect!(self, = TokenType::Identifier("threads".to_string()))?,
             open_bracket_token: expect!(self, TokenType::OpenBracket)?,
             index: self.parse_expression()?,
             close_bracket_token: expect!(self, TokenType::CloseBracket)?,
             id: self.next_id(),
-        });
+        }));
         return res;
     }
     pub fn parse_function_definition(&mut self) -> Result<FunctionDefinition> {

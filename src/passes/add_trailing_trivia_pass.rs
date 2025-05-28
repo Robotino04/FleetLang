@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        AstVisitor, BlockStatement, Executor, ExecutorHost, Expression, ExpressionStatement,
-        FunctionDefinition, IfStatement, OnStatement, Program, ReturnStatement, Type,
+        AstVisitor, BlockStatement, Expression, ExpressionStatement, FunctionDefinition,
+        IfStatement, OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type,
         VariableDefinitionStatement,
     },
     tokenizer::{Token, Trivia},
@@ -97,28 +97,12 @@ impl AstVisitor for AddTrailingTriviaPass {
         }
     }
 
-    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) {
-        match executor_host {
-            ExecutorHost::Self_ { token, id: _ } => {
-                self.add_trailing_trivia_to_token(token);
-            }
-        }
+    fn visit_self_executor_host(&mut self, executor_host: &mut SelfExecutorHost) {
+        self.add_trailing_trivia_to_token(&mut executor_host.token);
     }
 
-    fn visit_executor(&mut self, executor: &mut Executor) {
-        match executor {
-            Executor::Thread {
-                host: _,
-                dot_token: _,
-                thread_token: _,
-                open_bracket_token: _,
-                index: _,
-                close_bracket_token,
-                id: _,
-            } => {
-                self.add_trailing_trivia_to_token(close_bracket_token);
-            }
-        }
+    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) {
+        self.add_trailing_trivia_to_token(&mut executor.close_bracket_token);
     }
 
     fn visit_expression(&mut self, expression: &mut Expression) {

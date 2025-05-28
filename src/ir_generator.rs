@@ -14,8 +14,8 @@ use inkwell::{
 use crate::{
     ast::{
         AstVisitor, BinaryOperation, BlockStatement, Expression, ExpressionStatement,
-        FunctionDefinition, IfStatement, OnStatement, PerNodeData, Program, ReturnStatement, Type,
-        UnaryOperation, VariableDefinitionStatement,
+        FunctionDefinition, IfStatement, OnStatement, PerNodeData, Program, ReturnStatement,
+        SelfExecutorHost, ThreadExecutor, Type, UnaryOperation, VariableDefinitionStatement,
     },
     escape::unescape,
     infra::{ErrorSeverity, FleetError},
@@ -429,14 +429,14 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         Ok(None)
     }
 
-    fn visit_executor_host(
+    fn visit_self_executor_host(
         &mut self,
-        _executor_host: &mut crate::ast::ExecutorHost,
+        _executor_host: &mut SelfExecutorHost,
     ) -> Self::SubOutput {
         todo!()
     }
 
-    fn visit_executor(&mut self, _executor: &mut crate::ast::Executor) -> Self::SubOutput {
+    fn visit_thread_executor(&mut self, _executor: &mut ThreadExecutor) -> Self::SubOutput {
         todo!()
     }
 

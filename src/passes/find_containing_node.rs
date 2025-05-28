@@ -1,8 +1,8 @@
 use crate::{
     ast::{
-        AstNode, AstVisitor, BlockStatement, Executor, ExecutorHost, Expression,
-        ExpressionStatement, FunctionDefinition, IfStatement, OnStatement, Program,
-        ReturnStatement, Type, VariableDefinitionStatement,
+        AstNode, AstVisitor, BlockStatement, Expression, ExpressionStatement, FunctionDefinition,
+        IfStatement, OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type,
+        VariableDefinitionStatement,
     },
     tokenizer::{SourceLocation, Token},
 };
@@ -166,40 +166,27 @@ impl AstVisitor for FindContainingNodePass {
         return Ok(());
     }
 
-    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) -> Self::SubOutput {
+    fn visit_self_executor_host(
+        &mut self,
+        executor_host: &mut SelfExecutorHost,
+    ) -> Self::SubOutput {
         self.node_hierarchy.push(executor_host.clone().into());
 
-        match executor_host {
-            ExecutorHost::Self_ { token, id: _ } => {
-                self.visit_token(token)?;
-            }
-        }
-        self.node_hierarchy.pop();
+        self.visit_token(&executor_host.token)?;
 
+        self.node_hierarchy.pop();
         return Ok(());
     }
 
-    fn visit_executor(&mut self, executor: &mut Executor) -> Self::SubOutput {
+    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::SubOutput {
         self.node_hierarchy.push(executor.clone().into());
 
-        match executor {
-            Executor::Thread {
-                host,
-                dot_token,
-                thread_token,
-                open_bracket_token,
-                index,
-                close_bracket_token,
-                id: _,
-            } => {
-                self.visit_executor_host(host)?;
-                self.visit_token(dot_token)?;
-                self.visit_token(thread_token)?;
-                self.visit_token(open_bracket_token)?;
-                self.visit_expression(index)?;
-                self.visit_token(close_bracket_token)?;
-            }
-        }
+        self.visit_executor_host(&mut executor.host)?;
+        self.visit_token(&mut executor.dot_token)?;
+        self.visit_token(&mut executor.thread_token)?;
+        self.visit_token(&mut executor.open_bracket_token)?;
+        self.visit_expression(&mut executor.index)?;
+        self.visit_token(&mut executor.close_bracket_token)?;
 
         self.node_hierarchy.pop();
 

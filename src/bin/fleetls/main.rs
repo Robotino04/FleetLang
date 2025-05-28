@@ -4,9 +4,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::LazyLock;
 
 use fleet::ast::{
-    AstNode, AstVisitor, BinaryOperation, BlockStatement, Executor, ExecutorHost, Expression,
-    ExpressionStatement, FunctionDefinition, IfStatement, OnStatement, ReturnStatement, Type,
-    UnaryOperation, VariableDefinitionStatement,
+    AstNode, AstVisitor, BinaryOperation, BlockStatement, Expression, ExpressionStatement,
+    FunctionDefinition, IfStatement, OnStatement, ReturnStatement, SelfExecutorHost,
+    ThreadExecutor, Type, UnaryOperation, VariableDefinitionStatement,
 };
 use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
 use fleet::passes::find_containing_node::FindContainingNodePass;
@@ -144,10 +144,10 @@ impl Backend {
                 ("".to_string(), "`if` statement".to_string())
             }
 
-            AstNode::ExecutorHost(ExecutorHost::Self_ { .. }) => {
+            AstNode::SelfExecutorHost(SelfExecutorHost { .. }) => {
                 ("self".to_string(), "`self` executor host".to_string())
             }
-            AstNode::Executor(Executor::Thread {
+            AstNode::ThreadExecutor(ThreadExecutor {
                 host,
                 dot_token: _,
                 thread_token: _,
@@ -467,33 +467,21 @@ impl AstVisitor for ExtractSemanticTokensPass {
         }
     }
 
-    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) {
-        match executor_host {
-            ExecutorHost::Self_ { token, id: _ } => {
-                self.build_comment_tokens_only(token);
-            }
-        }
+    fn visit_self_executor_host(&mut self, executor_host: &mut SelfExecutorHost) {
+        self.build_comment_tokens_only(&executor_host.token);
     }
 
-    fn visit_executor(&mut self, executor: &mut Executor) {
-        match executor {
-            Executor::Thread {
-                host,
-                dot_token,
-                thread_token,
-                open_bracket_token,
-                index,
-                close_bracket_token,
-                id: _,
-            } => {
-                self.visit_executor_host(host);
-                self.build_comment_tokens_only(dot_token);
-                self.build_semantic_token(thread_token, SemanticTokenType::VARIABLE, vec![]);
-                self.build_comment_tokens_only(open_bracket_token);
-                self.visit_expression(index);
-                self.build_comment_tokens_only(close_bracket_token);
-            }
-        }
+    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) {
+        self.visit_executor_host(&mut executor.host);
+        self.build_comment_tokens_only(&mut executor.dot_token);
+        self.build_semantic_token(
+            &mut executor.thread_token,
+            SemanticTokenType::VARIABLE,
+            vec![],
+        );
+        self.build_comment_tokens_only(&mut executor.open_bracket_token);
+        self.visit_expression(&mut executor.index);
+        self.build_comment_tokens_only(&mut executor.close_bracket_token);
     }
 
     fn visit_expression(&mut self, expression: &mut Expression) {

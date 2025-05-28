@@ -1,8 +1,8 @@
 use crate::{
     ast::{
-        AstVisitor, BlockStatement, Executor, ExecutorHost, Expression, ExpressionStatement,
-        FunctionDefinition, IfStatement, OnStatement, PerNodeData, Program, ReturnStatement, Type,
-        VariableDefinitionStatement,
+        AstVisitor, BlockStatement, Expression, ExpressionStatement, FunctionDefinition,
+        IfStatement, OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
+        ThreadExecutor, Type, VariableDefinitionStatement,
     },
     infra::{ErrorSeverity, FleetError},
     tokenizer::SourceLocation,
@@ -171,26 +171,21 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         return term;
     }
 
-    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) -> Self::SubOutput {
-        match executor_host {
-            ExecutorHost::Self_ { .. } => {
-                self.termination
-                    .insert(executor_host, FunctionTermination::DoesntTerminate);
-                return FunctionTermination::DoesntTerminate;
-            }
-        }
+    fn visit_self_executor_host(
+        &mut self,
+        executor_host: &mut SelfExecutorHost,
+    ) -> Self::SubOutput {
+        self.termination
+            .insert(executor_host, FunctionTermination::DoesntTerminate);
+        return FunctionTermination::DoesntTerminate;
     }
 
-    fn visit_executor(&mut self, executor: &mut Executor) -> Self::SubOutput {
-        match executor {
-            Executor::Thread { host, index, .. } => {
-                let host_term = self.visit_executor_host(host);
-                let index_term = self.visit_expression(index);
-                let term = host_term.or(index_term);
-                self.termination.insert(executor, term);
-                return term;
-            }
-        }
+    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::SubOutput {
+        let host_term = self.visit_executor_host(&mut executor.host);
+        let index_term = self.visit_expression(&mut executor.index);
+        let term = host_term.or(index_term);
+        self.termination.insert(executor, term);
+        return term;
     }
 
     fn visit_expression(&mut self, expression: &mut Expression) -> Self::SubOutput {

@@ -14,8 +14,10 @@ pub enum AstNode {
     VariableDefinitionStatement(VariableDefinitionStatement),
     IfStatement(IfStatement),
 
-    ExecutorHost(ExecutorHost),
-    Executor(Executor),
+    SelfExecutorHost(SelfExecutorHost),
+
+    ThreadExecutor(ThreadExecutor),
+
     Expression(Expression),
     Type(Type),
 }
@@ -32,8 +34,8 @@ impl HasID for AstNode {
         match self {
             AstNode::Program(program) => program.get_id(),
             AstNode::FunctionDefinition(function_definition) => function_definition.get_id(),
-            AstNode::ExecutorHost(executor_host) => executor_host.get_id(),
-            AstNode::Executor(executor) => executor.get_id(),
+            AstNode::SelfExecutorHost(executor_host) => executor_host.get_id(),
+            AstNode::ThreadExecutor(executor) => executor.get_id(),
             AstNode::Expression(expression) => expression.get_id(),
             AstNode::Type(type_) => type_.get_id(),
 
@@ -82,6 +84,7 @@ pub trait AstVisitor {
         function_definition: &mut FunctionDefinition,
     ) -> Self::SubOutput;
 
+    // statements
     fn visit_statement(&mut self, statement: &mut Statement) -> Self::SubOutput {
         match statement {
             Statement::Expression(expression_statement) => {
@@ -109,8 +112,25 @@ pub trait AstVisitor {
     ) -> Self::SubOutput;
     fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::SubOutput;
 
-    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) -> Self::SubOutput;
-    fn visit_executor(&mut self, executor: &mut Executor) -> Self::SubOutput;
+    // executor hosts
+    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) -> Self::SubOutput {
+        match executor_host {
+            ExecutorHost::Self_(self_executor_host) => {
+                self.visit_self_executor_host(self_executor_host)
+            }
+        }
+    }
+    fn visit_self_executor_host(&mut self, executor_host: &mut SelfExecutorHost)
+    -> Self::SubOutput;
+
+    // executors
+    fn visit_executor(&mut self, executor: &mut Executor) -> Self::SubOutput {
+        match executor {
+            Executor::Thread(thread_executor) => self.visit_thread_executor(thread_executor),
+        }
+    }
+    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::SubOutput;
+
     fn visit_expression(&mut self, expression: &mut Expression) -> Self::SubOutput;
     fn visit_type(&mut self, type_: &mut Type) -> Self::SubOutput;
 }
@@ -270,74 +290,63 @@ impl From<Statement> for AstNode {
 }
 
 #[derive(Clone, Debug)]
-pub enum ExecutorHost {
-    Self_ { token: Token, id: NodeID },
+pub struct SelfExecutorHost {
+    pub token: Token,
+    pub id: NodeID,
 }
-impl AstNode {
-    pub fn unwrap_executor_host(self) -> ExecutorHost {
-        if let AstNode::ExecutorHost(contents) = self {
-            contents
-        } else {
-            panic!(
-                "Expected AstNode::{}, found {:#?}",
-                stringify!(ExecutorHost),
-                self
-            )
-        }
-    }
+generate_ast_requirements!(SelfExecutorHost, unwrap_self_executor_host);
+
+#[derive(Clone, Debug)]
+pub enum ExecutorHost {
+    Self_(SelfExecutorHost),
 }
 
 impl HasID for ExecutorHost {
     fn get_id(&self) -> NodeID {
         match self {
-            ExecutorHost::Self_ { id, .. } => *id,
+            ExecutorHost::Self_(host) => host.get_id(),
         }
     }
 }
 
 impl From<ExecutorHost> for AstNode {
     fn from(value: ExecutorHost) -> Self {
-        Self::ExecutorHost(value)
+        match value {
+            ExecutorHost::Self_(self_executor_host) => self_executor_host.into(),
+        }
     }
 }
 
 #[derive(Clone, Debug)]
-pub enum Executor {
-    Thread {
-        host: ExecutorHost,
-        dot_token: Token,
-        thread_token: Token,
-        open_bracket_token: Token,
-        index: Expression,
-        close_bracket_token: Token,
-        id: NodeID,
-    },
+pub struct ThreadExecutor {
+    pub host: ExecutorHost,
+    pub dot_token: Token,
+    pub thread_token: Token,
+    pub open_bracket_token: Token,
+    pub index: Expression,
+    pub close_bracket_token: Token,
+    pub id: NodeID,
 }
-impl AstNode {
-    pub fn unwrap_executor(self) -> Executor {
-        if let AstNode::Executor(contents) = self {
-            contents
-        } else {
-            panic!(
-                "Expected AstNode::{}, found {:#?}",
-                stringify!(Executor),
-                self
-            )
-        }
-    }
+generate_ast_requirements!(ThreadExecutor, unwrap_thread_executor);
+
+#[derive(Clone, Debug)]
+pub enum Executor {
+    Thread(ThreadExecutor),
 }
 
 impl HasID for Executor {
     fn get_id(&self) -> NodeID {
         match self {
-            Executor::Thread { id, .. } => *id,
+            Executor::Thread(executor) => executor.get_id(),
         }
     }
 }
 
 impl From<Executor> for AstNode {
     fn from(value: Executor) -> Self {
-        Self::Executor(value)
+        match value {
+            Executor::Thread(thread_executor) => thread_executor.into(),
+        }
     }
 }
 

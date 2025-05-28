@@ -1,5 +1,5 @@
 use crate::ast::{
-    Associativity, AstVisitor, Executor, Expression, IfStatement, ReturnStatement,
+    Associativity, AstVisitor, Expression, IfStatement, ReturnStatement, ThreadExecutor,
     VariableDefinitionStatement,
 };
 
@@ -76,23 +76,11 @@ impl PartialAstVisitor for RemoveParensPass {
         }
     }
 
-    fn partial_visit_executor(&mut self, executor: &mut Executor) {
-        match executor {
-            Executor::Thread {
-                host,
-                dot_token: _,
-                thread_token: _,
-                open_bracket_token: _,
-                index,
-                close_bracket_token: _,
-                id: _,
-            } => {
-                self.visit_executor_host(host);
-                self.parent_precedence = Expression::TOP_PRECEDENCE;
-                self.parent_associativity = Associativity::Both;
-                self.visit_expression(index);
-            }
-        }
+    fn partial_visit_thread_executor(&mut self, executor: &mut ThreadExecutor) {
+        self.visit_executor_host(&mut executor.host);
+        self.parent_precedence = Expression::TOP_PRECEDENCE;
+        self.parent_associativity = Associativity::Both;
+        self.visit_expression(&mut executor.index);
     }
 
     fn partial_visit_expression(&mut self, expression: &mut Expression) {

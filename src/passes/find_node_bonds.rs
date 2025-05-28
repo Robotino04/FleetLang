@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        AstNode, BlockStatement, Executor, ExecutorHost, Expression, ExpressionStatement,
-        FunctionDefinition, IfStatement, OnStatement, Program, ReturnStatement, Type,
+        AstNode, BlockStatement, Expression, ExpressionStatement, FunctionDefinition, IfStatement,
+        OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type,
         VariableDefinitionStatement,
     },
     tokenizer::SourceLocation,
@@ -84,8 +84,8 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
                 .unwrap_or(find_node_bounds(*if_body).1),
         ),
 
-        AstNode::ExecutorHost(ExecutorHost::Self_ { token, id: _ }) => (token.start, token.end),
-        AstNode::Executor(Executor::Thread {
+        AstNode::SelfExecutorHost(SelfExecutorHost { token, id: _ }) => (token.start, token.end),
+        AstNode::ThreadExecutor(ThreadExecutor {
             host,
             dot_token: _,
             thread_token: _,

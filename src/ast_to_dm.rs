@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        AstVisitor, BlockStatement, Executor, ExecutorHost, Expression, ExpressionStatement,
-        FunctionDefinition, IfStatement, OnStatement, Program, ReturnStatement, Type,
+        AstVisitor, BlockStatement, Expression, ExpressionStatement, FunctionDefinition,
+        IfStatement, OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type,
         VariableDefinitionStatement,
     },
     document_model::DocumentElement,
@@ -392,31 +392,22 @@ impl AstVisitor for AstToDocumentModelConverter {
         );
     }
 
-    fn visit_executor_host(&mut self, executor_host: &mut ExecutorHost) -> Self::SubOutput {
-        match executor_host {
-            ExecutorHost::Self_ { token, id: _ } => self.token_to_element(token),
-        }
+    fn visit_self_executor_host(
+        &mut self,
+        executor_host: &mut SelfExecutorHost,
+    ) -> Self::SubOutput {
+        self.token_to_element(&executor_host.token)
     }
 
-    fn visit_executor(&mut self, executor: &mut Executor) -> Self::SubOutput {
-        match executor {
-            Executor::Thread {
-                host,
-                dot_token,
-                thread_token,
-                open_bracket_token,
-                index,
-                close_bracket_token,
-                id: _,
-            } => DocumentElement::Concatenation(vec![
-                self.visit_executor_host(host),
-                self.token_to_element(dot_token),
-                self.token_to_element(thread_token),
-                self.token_to_element(open_bracket_token),
-                self.visit_expression(index),
-                self.token_to_element(close_bracket_token),
-            ]),
-        }
+    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::SubOutput {
+        DocumentElement::Concatenation(vec![
+            self.visit_executor_host(&mut executor.host),
+            self.token_to_element(&mut executor.dot_token),
+            self.token_to_element(&mut executor.thread_token),
+            self.token_to_element(&mut executor.open_bracket_token),
+            self.visit_expression(&mut executor.index),
+            self.token_to_element(&mut executor.close_bracket_token),
+        ])
     }
 
     fn visit_expression(&mut self, expression: &mut Expression) -> Self::SubOutput {
