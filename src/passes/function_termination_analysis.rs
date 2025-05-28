@@ -102,7 +102,13 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
             Statement::On { executor, body, .. } => {
                 let exec_term = self.visit_executor(executor);
                 let body_term = self.visit_statement(body);
-                // TODO: mark body as unreachable if executor terminates
+                if exec_term == FunctionTermination::Terminates {
+                    self.errors.push(FleetError::from_node(
+                        *body.clone(),
+                        "This code is unreachable",
+                        ErrorSeverity::Warning,
+                    ));
+                }
 
                 let term = exec_term.or(body_term);
 
@@ -112,6 +118,13 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
             Statement::Block { body, .. } => {
                 let mut body_term = FunctionTermination::DoesntTerminate;
                 for stmt in body {
+                    if body_term == FunctionTermination::Terminates {
+                        self.errors.push(FleetError::from_node(
+                            stmt.clone(),
+                            "This code is unreachable",
+                            ErrorSeverity::Warning,
+                        ));
+                    }
                     body_term = body_term.or(self.visit_statement(stmt));
                 }
                 self.termination.insert(statement, body_term);

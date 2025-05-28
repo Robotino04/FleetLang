@@ -1,6 +1,7 @@
+use fleet::tokenizer::SourceLocation;
 use indoc::indoc;
 
-use crate::common::assert_compile_and_return_value;
+use crate::common::{assert_compile_and_return_value, assert_compile_and_warning};
 
 #[test]
 fn if_else() {
@@ -278,5 +279,28 @@ fn multi_elif_all_paths_terminate() {
         "##},
         "main",
         7,
+    );
+}
+
+#[test]
+fn unreachable_after_if() {
+    assert_compile_and_warning(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a: i32 = 0;
+                if 1 {
+                    return 1;
+                }
+                else {
+                    return 3;
+                }
+                return 2;
+            }
+        "##},
+        SourceLocation {
+            index: 117,
+            line: 9,
+            column: 4,
+        },
     );
 }

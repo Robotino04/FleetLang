@@ -12,7 +12,6 @@
     - Automatically removes unnecessary parentheses in expressions: `((1 * 2) + 3)` → `1 * 2 + 3`
 
 ## TODOs
-- warnings for unreachable code
 - format if statements without block to ones with block
 - if expressions
 - allow single manual newlines. Maybe add newline eaters after {\n and before \n} and print trivia newlines as long as they are inside a statement

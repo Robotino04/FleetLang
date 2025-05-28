@@ -8,7 +8,9 @@ use inkwell::{
 };
 
 use fleet::{
-    infra::{CompileResult, CompileStatus, FleetError, compile_program, format_program},
+    infra::{
+        CompileResult, CompileStatus, ErrorSeverity, FleetError, compile_program, format_program,
+    },
     tokenizer::SourceLocation,
 };
 
@@ -34,8 +36,20 @@ pub fn assert_parser_or_tokenizer_error<'a>(src: &str, error_start: SourceLocati
 
 fn assert_error_at_position(errors: &Vec<FleetError>, error_start: SourceLocation) {
     assert!(
-        errors.iter().any(|err| err.start == error_start),
+        errors
+            .iter()
+            .any(|err| err.start == error_start && err.severity == ErrorSeverity::Error),
         "Expected an error at {error_start:?}. Got {:#?}",
+        errors
+    );
+}
+
+fn assert_warning_at_position(errors: &Vec<FleetError>, warning_start: SourceLocation) {
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.start == warning_start && err.severity == ErrorSeverity::Warning),
+        "Expected a warning at {warning_start:?}. Got {:#?}",
         errors
     );
 }
@@ -57,6 +71,24 @@ pub fn assert_compile_error<'a>(src: &str, error_start: SourceLocation) {
         result.status
     );
     assert_error_at_position(&result.errors, error_start);
+}
+pub fn assert_compile_and_warning<'a>(src: &str, warning_start: SourceLocation) {
+    let context = Context::create();
+    let result = compile_program(&context, src);
+
+    assert!(
+        match result.status {
+            CompileStatus::TokenizerFailure {} => false,
+            CompileStatus::ParserFailure { .. } => false,
+            CompileStatus::TokenizerOrParserErrors { .. } => false,
+            CompileStatus::IrGeneratorFailure { .. } => false,
+            CompileStatus::IrGeneratorErrors { .. } => false,
+            CompileStatus::Success { .. } => true,
+        },
+        "Expected compilation to succeed with warnings. Got {:#?}",
+        result.status
+    );
+    assert_warning_at_position(&result.errors, warning_start);
 }
 
 pub fn assert_successful_compilation(src: &str) {

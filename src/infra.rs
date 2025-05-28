@@ -14,7 +14,7 @@ use crate::{
     tokenizer::{SourceLocation, Token, Tokenizer},
 };
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ErrorSeverity {
     Error,
     Warning,
@@ -290,7 +290,10 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
     }
     let mut program = program.unwrap();
 
-    if !errors.is_empty() {
+    if errors
+        .iter()
+        .any(|err| err.severity == ErrorSeverity::Error)
+    {
         return CompileResult {
             status: CompileStatus::TokenizerOrParserErrors {
                 tokens,
@@ -303,8 +306,10 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
     let term_analyzer = FunctionTerminationAnalyzer::new(&mut errors);
     let function_terminations = term_analyzer.visit_program(&mut program);
 
-    let mut ir_generator = IrGenerator::new(&context, &mut errors, function_terminations.clone());
-    if let Err(error) = ir_generator.generate_program_ir(&program) {
+    let ir_generator = IrGenerator::new(&context, &mut errors, function_terminations.clone());
+    let module = ir_generator.generate_program_ir(&program);
+
+    if let Err(error) = module {
         errors.push(FleetError {
             start: SourceLocation::start(),
             end: SourceLocation::end(src),
@@ -323,14 +328,19 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
             errors,
         };
     }
-    if !ir_generator.errors().is_empty() {
+    let module = module.unwrap();
+
+    if errors
+        .iter()
+        .any(|err| err.severity == ErrorSeverity::Error)
+    {
         return CompileResult {
             status: CompileStatus::IrGeneratorErrors {
                 tokens,
                 program,
                 function_terminations,
-                partial_module: if ir_generator.module().verify().is_ok() {
-                    Some(ir_generator.module().clone())
+                partial_module: if module.verify().is_ok() {
+                    Some(module)
                 } else {
                     None
                 },
@@ -344,7 +354,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
             tokens,
             program,
             function_terminations,
-            module: ir_generator.module().clone(),
+            module: module.clone(),
         },
         errors,
     };

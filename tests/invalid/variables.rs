@@ -13,9 +13,9 @@ fn no_initialize() {
             }
         "##},
         SourceLocation {
-            index: 27,
+            index: 37,
             line: 2,
-            column: 4,
+            column: 14,
         },
     );
 }

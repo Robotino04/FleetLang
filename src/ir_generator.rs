@@ -88,14 +88,7 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
         }
     }
 
-    pub fn errors(&self) -> &Vec<FleetError> {
-        &self.errors
-    }
-    pub fn module(&self) -> &Module<'a> {
-        &self.module
-    }
-
-    pub fn generate_program_ir(&mut self, program: &Program) -> Result<&Module<'a>> {
+    pub fn generate_program_ir(mut self, program: &Program) -> Result<Module<'a>> {
         eprintln!("Generating program");
 
         for f in &program.functions {
@@ -118,7 +111,7 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
             });
         }
 
-        return Ok(&self.module);
+        return Ok(self.module);
     }
 
     fn generate_type(&mut self, type_: &Type) -> AnyTypeEnum<'a> {
