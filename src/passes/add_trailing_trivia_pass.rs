@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        AstVisitor, BlockStatement, Expression, ExpressionStatement, FunctionDefinition,
-        IfStatement, OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type,
+        AstVisitor, BlockStatement, ExpressionStatement, FunctionDefinition, IfStatement,
+        OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type,
         VariableDefinitionStatement,
     },
     tokenizer::{Token, Trivia},
@@ -23,8 +23,13 @@ impl AddTrailingTriviaPass {
 }
 
 impl AstVisitor for AddTrailingTriviaPass {
-    type SubOutput = ();
-    type Output = ();
+    type ProgramOutput = ();
+    type FunctionDefinitionOutput = ();
+    type StatementOutput = ();
+    type ExecutorHostOutput = ();
+    type ExecutorOutput = ();
+    type ExpressionOutput = ();
+    type TypeOutput = ();
 
     fn visit_program(mut self, program: &mut Program) {
         if let Some(f) = program.functions.last_mut() {
@@ -41,14 +46,11 @@ impl AstVisitor for AddTrailingTriviaPass {
         ExpressionStatement {
             semicolon_token, ..
         }: &mut ExpressionStatement,
-    ) -> Self::SubOutput {
+    ) {
         self.add_trailing_trivia_to_token(semicolon_token);
     }
 
-    fn visit_on_statement(
-        &mut self,
-        OnStatement { body, .. }: &mut OnStatement,
-    ) -> Self::SubOutput {
+    fn visit_on_statement(&mut self, OnStatement { body, .. }: &mut OnStatement) {
         self.visit_statement(body);
     }
 
@@ -57,7 +59,7 @@ impl AstVisitor for AddTrailingTriviaPass {
         BlockStatement {
             close_brace_token, ..
         }: &mut BlockStatement,
-    ) -> Self::SubOutput {
+    ) {
         self.add_trailing_trivia_to_token(close_brace_token);
     }
 
@@ -66,7 +68,7 @@ impl AstVisitor for AddTrailingTriviaPass {
         ReturnStatement {
             semicolon_token, ..
         }: &mut ReturnStatement,
-    ) -> Self::SubOutput {
+    ) {
         self.add_trailing_trivia_to_token(semicolon_token);
     }
 
@@ -75,7 +77,7 @@ impl AstVisitor for AddTrailingTriviaPass {
         VariableDefinitionStatement {
             semicolon_token, ..
         }: &mut VariableDefinitionStatement,
-    ) -> Self::SubOutput {
+    ) {
         self.add_trailing_trivia_to_token(semicolon_token);
     }
 
@@ -87,7 +89,7 @@ impl AstVisitor for AddTrailingTriviaPass {
             else_,
             ..
         }: &mut IfStatement,
-    ) -> Self::SubOutput {
+    ) {
         if let Some((_, else_body)) = else_ {
             self.visit_statement(else_body);
         } else if let Some((_, _, body)) = elifs.last_mut() {
@@ -105,34 +107,41 @@ impl AstVisitor for AddTrailingTriviaPass {
         self.add_trailing_trivia_to_token(&mut executor.close_bracket_token);
     }
 
-    fn visit_expression(&mut self, expression: &mut Expression) {
-        match expression {
-            Expression::Number { token, .. } => {
-                self.add_trailing_trivia_to_token(token);
-            }
-            Expression::VariableAccess { name_token, .. } => {
-                self.add_trailing_trivia_to_token(name_token);
-            }
-            Expression::FunctionCall {
-                close_paren_token, ..
-            } => {
-                self.add_trailing_trivia_to_token(close_paren_token);
-            }
-            Expression::Grouping {
-                close_paren_token, ..
-            } => {
-                self.add_trailing_trivia_to_token(close_paren_token);
-            }
-            Expression::Unary { operand, .. } => {
-                self.visit_expression(&mut *operand);
-            }
-            Expression::Binary { right, .. } => {
-                self.visit_expression(&mut *right);
-            }
-            Expression::VariableAssignment { right, .. } => {
-                self.visit_expression(&mut *right);
-            }
-        }
+    fn visit_number_expression(&mut self, expression: &mut crate::ast::NumberExpression) {
+        self.add_trailing_trivia_to_token(&mut expression.token);
+    }
+
+    fn visit_function_call_expression(
+        &mut self,
+        expression: &mut crate::ast::FunctionCallExpression,
+    ) {
+        self.add_trailing_trivia_to_token(&mut expression.close_paren_token);
+    }
+
+    fn visit_grouping_expression(&mut self, expression: &mut crate::ast::GroupingExpression) {
+        self.add_trailing_trivia_to_token(&mut expression.close_paren_token);
+    }
+
+    fn visit_variable_access_expression(
+        &mut self,
+        expression: &mut crate::ast::VariableAccessExpression,
+    ) {
+        self.add_trailing_trivia_to_token(&mut expression.name_token);
+    }
+
+    fn visit_unary_expression(&mut self, expression: &mut crate::ast::UnaryExpression) {
+        self.visit_expression(&mut expression.operand);
+    }
+
+    fn visit_binary_expression(&mut self, expression: &mut crate::ast::BinaryExpression) {
+        self.visit_expression(&mut expression.right);
+    }
+
+    fn visit_variable_assignment_expression(
+        &mut self,
+        expression: &mut crate::ast::VariableAssignmentExpression,
+    ) {
+        self.visit_expression(&mut expression.right);
     }
 
     fn visit_type(&mut self, type_: &mut Type) {

@@ -13,9 +13,11 @@ use inkwell::{
 
 use crate::{
     ast::{
-        AstVisitor, BinaryOperation, BlockStatement, Expression, ExpressionStatement,
-        FunctionDefinition, IfStatement, OnStatement, PerNodeData, Program, ReturnStatement,
-        SelfExecutorHost, ThreadExecutor, Type, UnaryOperation, VariableDefinitionStatement,
+        AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, ExpressionStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement,
+        NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
+        ThreadExecutor, Type, UnaryExpression, UnaryOperation, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement,
     },
     escape::unescape,
     infra::{ErrorSeverity, FleetError},
@@ -128,42 +130,16 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum TypeOrValue<'a> {
-    Type(AnyTypeEnum<'a>),
-    Value(BasicValueEnum<'a>),
-    FunctionValue(FunctionValue<'a>),
-}
-
-impl<'a> TypeOrValue<'a> {
-    pub fn unwrap_type(self) -> AnyTypeEnum<'a> {
-        if let TypeOrValue::Type(type_) = self {
-            return type_;
-        } else {
-            panic!("Expected a Type in this TypeOrValue. Got TypeOrValue::{self:?}");
-        }
-    }
-    pub fn unwrap_value(self) -> BasicValueEnum<'a> {
-        if let TypeOrValue::Value(value) = self {
-            return value;
-        } else {
-            panic!("Expected a Value in this TypeOrValue. Got TypeOrValue::{self:?}");
-        }
-    }
-    pub fn unwrap_function_value(self) -> FunctionValue<'a> {
-        if let TypeOrValue::FunctionValue(fvalue) = self {
-            return fvalue;
-        } else {
-            panic!("Expected a FunctionValue in this TypeOrValue. Got TypeOrValue::{self:?}");
-        }
-    }
-}
-
 impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
-    type Output = Result<Module<'a>>;
-    type SubOutput = Result<Option<TypeOrValue<'a>>>;
+    type ProgramOutput = Result<Module<'a>>;
+    type FunctionDefinitionOutput = Result<FunctionValue<'a>>;
+    type StatementOutput = Result<()>;
+    type ExecutorHostOutput = Result<()>;
+    type ExecutorOutput = Result<()>;
+    type ExpressionOutput = Result<Option<BasicValueEnum<'a>>>;
+    type TypeOutput = Result<AnyTypeEnum<'a>>;
 
-    fn visit_program(mut self, program: &mut Program) -> Self::Output {
+    fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         eprintln!("Generating program");
 
         for f in &mut program.functions {
@@ -189,13 +165,13 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         return Ok(self.module);
     }
 
-    fn visit_function_definition(&mut self, function: &mut FunctionDefinition) -> Self::SubOutput {
+    fn visit_function_definition(
+        &mut self,
+        function: &mut FunctionDefinition,
+    ) -> Self::FunctionDefinitionOutput {
         eprintln!("Generating function {:?}", function.name);
 
-        let return_type_ir = self
-            .visit_type(&mut function.return_type)?
-            .unwrap()
-            .unwrap_type();
+        let return_type_ir = self.visit_type(&mut function.return_type)?;
         let ir_function = self.module.add_function(
             &function.name,
             self.make_into_function_type(return_type_ir, &[], false)?,
@@ -244,61 +220,69 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         };
         */
 
-        return Ok(Some(TypeOrValue::FunctionValue(ir_function)));
+        return Ok(ir_function);
     }
 
     fn visit_expression_statement(
         &mut self,
-        expr_stmt: &mut ExpressionStatement,
-    ) -> Self::SubOutput {
-        self.visit_expression(&mut expr_stmt.expression)?;
-        Ok(None)
+        ExpressionStatement {
+            expression,
+            semicolon_token: _,
+            id: _,
+        }: &mut ExpressionStatement,
+    ) -> Self::StatementOutput {
+        self.visit_expression(expression)?;
+        Ok(())
     }
 
-    fn visit_on_statement(&mut self, _on_stmt: &mut OnStatement) -> Self::SubOutput {
+    fn visit_on_statement(&mut self, _on_stmt: &mut OnStatement) -> Self::StatementOutput {
         todo!()
     }
 
-    fn visit_block_statement(&mut self, block: &mut BlockStatement) -> Self::SubOutput {
+    fn visit_block_statement(
+        &mut self,
+        BlockStatement {
+            open_brace_token: _,
+            body,
+            close_brace_token: _,
+            id: _,
+        }: &mut BlockStatement,
+    ) -> Self::StatementOutput {
         self.variable_scopes.push_child();
-        for substmt in &mut block.body {
+        for substmt in body {
             self.visit_statement(substmt)?;
         }
         self.variable_scopes.pop();
-        Ok(None)
+        Ok(())
     }
 
-    fn visit_return_statement(&mut self, return_stmt: &mut ReturnStatement) -> Self::SubOutput {
+    fn visit_return_statement(
+        &mut self,
+        return_stmt: &mut ReturnStatement,
+    ) -> Self::StatementOutput {
         let ir_value = self.visit_expression(&mut return_stmt.value)?;
 
         self.builder.build_return(match &ir_value {
-            Some(TypeOrValue::Value(BasicValueEnum::ArrayValue(array_value))) => Some(array_value),
-            Some(TypeOrValue::Value(BasicValueEnum::IntValue(int_value))) => Some(int_value),
-            Some(TypeOrValue::Value(BasicValueEnum::FloatValue(float_value))) => Some(float_value),
-            Some(TypeOrValue::Value(BasicValueEnum::PointerValue(pointer_value))) => {
-                Some(pointer_value)
-            }
-            Some(TypeOrValue::Value(BasicValueEnum::StructValue(struct_value))) => {
-                Some(struct_value)
-            }
-            Some(TypeOrValue::Value(BasicValueEnum::VectorValue(vector_value))) => {
-                Some(vector_value)
-            }
-            _ => None,
+            Some(BasicValueEnum::ArrayValue(array_value)) => Some(array_value),
+            Some(BasicValueEnum::IntValue(int_value)) => Some(int_value),
+            Some(BasicValueEnum::FloatValue(float_value)) => Some(float_value),
+            Some(BasicValueEnum::PointerValue(pointer_value)) => Some(pointer_value),
+            Some(BasicValueEnum::StructValue(struct_value)) => Some(struct_value),
+            Some(BasicValueEnum::VectorValue(vector_value)) => Some(vector_value),
+            None => None,
         })?;
-        Ok(None)
+        Ok(())
     }
 
     fn visit_variable_definition_statement(
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
-    ) -> Self::SubOutput {
+    ) -> Self::StatementOutput {
         let eval_value = self
             .visit_expression(&mut vardef_stmt.value)?
             .ok_or(format!(
                 "Somehow passed using a void value as a variable initializer"
-            ))?
-            .unwrap_value();
+            ))?;
         let ptr = self
             .builder
             .build_alloca(eval_value.get_type().into_int_type(), &vardef_stmt.name)?;
@@ -317,10 +301,10 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             ));
         }
 
-        Ok(None)
+        Ok(())
     }
 
-    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::SubOutput {
+    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::StatementOutput {
         let current_block = self
             .builder
             .get_insert_block()
@@ -337,8 +321,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         self.builder.position_at_end(current_block);
         let condition_value = self
             .visit_expression(&mut if_stmt.condition)?
-            .expect("Somehow passed a Unit value to an if condition")
-            .unwrap_value();
+            .expect("Somehow passed a Unit value to an if condition");
         let condition_value = self.builder.build_int_compare(
             IntPredicate::NE,
             condition_value.into_int_value(),
@@ -372,8 +355,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
             let condition_value = self
                 .visit_expression(condition)?
-                .expect("Somehow passed a Unit value to an elif condition")
-                .unwrap_value();
+                .expect("Somehow passed a Unit value to an elif condition");
             let condition_value = self.builder.build_int_compare(
                 IntPredicate::NE,
                 condition_value.into_int_value(),
@@ -426,502 +408,507 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
         self.builder.position_at_end(end_block);
 
-        Ok(None)
+        Ok(())
     }
 
     fn visit_self_executor_host(
         &mut self,
         _executor_host: &mut SelfExecutorHost,
-    ) -> Self::SubOutput {
+    ) -> Self::ExecutorHostOutput {
         todo!()
     }
 
-    fn visit_thread_executor(&mut self, _executor: &mut ThreadExecutor) -> Self::SubOutput {
+    fn visit_thread_executor(&mut self, _executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
         todo!()
     }
 
-    fn visit_expression(&mut self, expr: &mut Expression) -> Self::SubOutput {
-        eprintln!("Generating expression");
-        match expr {
-            Expression::Number {
-                value,
-                token: _,
-                id: _,
-            } => {
-                return Ok(Some(TypeOrValue::Value(
-                    self.context
-                        .i32_type()
-                        .const_int(*value as u64, false)
-                        .as_basic_value_enum(),
-                )));
-            }
-            Expression::VariableAccess {
-                name,
-                name_token,
-                id: _,
-            } => {
-                if let Some((type_, ptr)) = self.variable_scopes.get(name) {
-                    return Ok(Some(TypeOrValue::Value(self.builder.build_load(
-                        type_.clone(),
-                        ptr.clone(),
-                        name,
-                    )?)));
-                } else {
-                    self.errors.push(FleetError::from_token(
-                        name_token,
-                        format!("Variable {name:?} is accessed, but not defined"),
-                        ErrorSeverity::Error,
-                    ));
-                    return Ok(Some(TypeOrValue::Value(
-                        self.context
-                            .i32_type()
-                            .const_all_ones()
-                            .as_basic_value_enum(),
-                    )));
-                }
-            }
+    fn visit_number_expression(
+        &mut self,
+        NumberExpression {
+            value,
+            token: _,
+            id: _,
+        }: &mut NumberExpression,
+    ) -> Self::ExpressionOutput {
+        return Ok(Some(
+            self.context
+                .i32_type()
+                .const_int(*value as u64, false)
+                .as_basic_value_enum(),
+        ));
+    }
 
-            Expression::FunctionCall {
-                name,
-                name_token,
-                open_paren_token: _,
-                arguments,
-                close_paren_token: _,
-                id: _,
-            } => {
-                let mut args: Vec<BasicMetadataValueEnum> = vec![];
-                for arg in arguments {
-                    args.push(
-                        self.visit_expression(arg)?
-                            .ok_or(format!(
-                                "Somehow passed a Unit value as a function parameter near {:#?}",
-                                name_token
-                            ))?
-                            .unwrap_value()
-                            .into(),
-                    );
-                }
-
-                if let Some(f) = self.functions.get(name) {
-                    return Ok(self
-                        .builder
-                        .build_call(*f, &args[..], name)?
-                        .try_as_basic_value()
-                        .left()
-                        .map(|l| TypeOrValue::Value(l.as_basic_value_enum())));
-                } else {
-                    self.errors.push(FleetError::from_token(
-                        name_token,
-                        format!("Function {name:?} called but not defined"),
-                        ErrorSeverity::Error,
-                    ));
-                    return Ok(Some(TypeOrValue::Value(
-                        self.context
-                            .i32_type()
-                            .const_all_ones()
-                            .as_basic_value_enum(),
-                    )));
-                }
-            }
-            Expression::Unary {
-                operation,
-                operand,
-                operator_token: _,
-                id: _,
-            } => {
-                let value = self
-                    .visit_expression(operand)?
+    fn visit_function_call_expression(
+        &mut self,
+        FunctionCallExpression {
+            name,
+            name_token,
+            open_paren_token: _,
+            arguments,
+            close_paren_token: _,
+            id: _,
+        }: &mut FunctionCallExpression,
+    ) -> Self::ExpressionOutput {
+        let mut args: Vec<BasicMetadataValueEnum> = vec![];
+        for arg in arguments {
+            args.push(
+                self.visit_expression(arg)?
                     .ok_or(format!(
-                        "Somehow passed a Unit value as an operand to {:?}",
-                        operation
+                        "Somehow passed a Unit value as a function parameter near {:#?}",
+                        name_token
                     ))?
-                    .unwrap_value();
+                    .into(),
+            );
+        }
 
-                return match operation {
-                    UnaryOperation::BitwiseNot => Ok(Some(TypeOrValue::Value(
-                        self.builder
-                            .build_not::<IntValue>(value.into_int_value(), "bitwise_not")?
-                            .into(),
-                    ))),
-                    UnaryOperation::LogicalNot => Ok(Some(TypeOrValue::Value(
-                        self.builder
-                            .build_int_z_extend(
-                                self.builder.build_int_compare::<IntValue>(
-                                    IntPredicate::EQ,
-                                    value.into_int_value(),
-                                    value.get_type().into_int_type().const_zero(),
-                                    "logical_not",
-                                )?,
-                                value.get_type().into_int_type(),
-                                "cast",
-                            )?
-                            .into(),
-                    ))),
-                    UnaryOperation::Negate => Ok(Some(TypeOrValue::Value(
-                        self.builder
-                            .build_int_neg::<IntValue>(value.into_int_value(), "negate")?
-                            .into(),
-                    ))),
-                };
-            }
-            Expression::Binary {
-                left,
-                operator_token: _,
-                operation,
-                right,
-                id: _,
-            } => {
-                let left_value = self
-                    .visit_expression(left)?
-                    .ok_or(format!(
-                        "Somehow passed a Unit value as an operand to {:?}",
-                        operation
-                    ))?
-                    .unwrap_value();
-                let mut right_value_gen = |self_: &mut Self| -> Result<BasicValueEnum<'a>> {
-                    Ok(self_
-                        .visit_expression(right)?
-                        .ok_or(format!(
-                            "Somehow passed a Unit value as an operand to {:?}",
-                            operation
-                        ))?
-                        .unwrap_value())
-                };
-
-                return match operation {
-                    BinaryOperation::Add => {
-                        let right_value = right_value_gen(self)?;
-                        Ok(Some(TypeOrValue::Value(
-                            self.builder
-                                .build_int_add::<IntValue>(
-                                    left_value.into_int_value(),
-                                    right_value.into_int_value(),
-                                    "add",
-                                )?
-                                .into(),
-                        )))
-                    }
-                    BinaryOperation::Subtract => {
-                        let right_value = right_value_gen(self)?;
-                        Ok(Some(TypeOrValue::Value(
-                            self.builder
-                                .build_int_sub(
-                                    left_value.into_int_value(),
-                                    right_value.into_int_value(),
-                                    "sub",
-                                )?
-                                .into(),
-                        )))
-                    }
-
-                    BinaryOperation::Multiply => {
-                        let right_value = right_value_gen(self)?;
-                        Ok(Some(TypeOrValue::Value(
-                            self.builder
-                                .build_int_mul(
-                                    left_value.into_int_value(),
-                                    right_value.into_int_value(),
-                                    "mul",
-                                )?
-                                .into(),
-                        )))
-                    }
-                    BinaryOperation::Divide => {
-                        let right_value = right_value_gen(self)?;
-                        Ok(Some(TypeOrValue::Value(
-                            self.builder
-                                .build_int_signed_div(
-                                    left_value.into_int_value(),
-                                    right_value.into_int_value(),
-                                    "div",
-                                )?
-                                .into(),
-                        )))
-                    }
-                    BinaryOperation::Modulo => {
-                        let right_value = right_value_gen(self)?;
-                        Ok(Some(TypeOrValue::Value(
-                            self.builder
-                                .build_int_signed_rem(
-                                    left_value.into_int_value(),
-                                    right_value.into_int_value(),
-                                    "mod",
-                                )?
-                                .into(),
-                        )))
-                    }
-
-                    BinaryOperation::LessThan => {
-                        let right_value = right_value_gen(self)?;
-                        Ok(Some(TypeOrValue::Value(
-                            self.builder
-                                .build_int_z_extend(
-                                    self.builder.build_int_compare::<IntValue>(
-                                        IntPredicate::SLT,
-                                        left_value.into_int_value(),
-                                        right_value.into_int_value(),
-                                        "less_than",
-                                    )?,
-                                    left_value.get_type().into_int_type(),
-                                    "extent_from_i1",
-                                )?
-                                .into(),
-                        )))
-                    }
-                    BinaryOperation::LessThanOrEqual => {
-                        let right_value = right_value_gen(self)?;
-                        Ok(Some(TypeOrValue::Value(
-                            self.builder
-                                .build_int_z_extend(
-                                    self.builder.build_int_compare::<IntValue>(
-                                        IntPredicate::SLE,
-                                        left_value.into_int_value(),
-                                        right_value.into_int_value(),
-                                        "less_than_or_equal",
-                                    )?,
-                                    left_value.get_type().into_int_type(),
-                                    "extent_from_i1",
-                                )?
-                                .into(),
-                        )))
-                    }
-                    BinaryOperation::GreaterThan => {
-                        let right_value = right_value_gen(self)?;
-                        Ok(Some(TypeOrValue::Value(
-                            self.builder
-                                .build_int_z_extend(
-                                    self.builder.build_int_compare::<IntValue>(
-                                        IntPredicate::SGT,
-                                        left_value.into_int_value(),
-                                        right_value.into_int_value(),
-                                        "greater_than",
-                                    )?,
-                                    left_value.get_type().into_int_type(),
-                                    "extent_from_i1",
-                                )?
-                                .into(),
-                        )))
-                    }
-                    BinaryOperation::GreaterThanOrEqual => {
-                        let right_value = right_value_gen(self)?;
-                        Ok(Some(TypeOrValue::Value(
-                            self.builder
-                                .build_int_z_extend(
-                                    self.builder.build_int_compare::<IntValue>(
-                                        IntPredicate::SGE,
-                                        left_value.into_int_value(),
-                                        right_value.into_int_value(),
-                                        "greater_than_or_equal",
-                                    )?,
-                                    left_value.get_type().into_int_type(),
-                                    "extent_from_i1",
-                                )?
-                                .into(),
-                        )))
-                    }
-                    BinaryOperation::Equal => {
-                        let right_value = right_value_gen(self)?;
-                        Ok(Some(TypeOrValue::Value(
-                            self.builder
-                                .build_int_z_extend(
-                                    self.builder.build_int_compare::<IntValue>(
-                                        IntPredicate::EQ,
-                                        left_value.into_int_value(),
-                                        right_value.into_int_value(),
-                                        "equal",
-                                    )?,
-                                    left_value.get_type().into_int_type(),
-                                    "extent_from_i1",
-                                )?
-                                .into(),
-                        )))
-                    }
-                    BinaryOperation::NotEqual => {
-                        let right_value = right_value_gen(self)?;
-                        Ok(Some(TypeOrValue::Value(
-                            self.builder
-                                .build_int_z_extend(
-                                    self.builder.build_int_compare::<IntValue>(
-                                        IntPredicate::NE,
-                                        left_value.into_int_value(),
-                                        right_value.into_int_value(),
-                                        "not_equal",
-                                    )?,
-                                    left_value.get_type().into_int_type(),
-                                    "extent_from_i1",
-                                )?
-                                .into(),
-                        )))
-                    }
-
-                    BinaryOperation::LogicalAnd => {
-                        let current_block = self
-                            .builder
-                            .get_insert_block()
-                            .expect("expected builder to be in a block");
-                        let right_block = self
-                            .context
-                            .insert_basic_block_after(current_block, "logical_and_rhs");
-                        let end_block = self
-                            .context
-                            .insert_basic_block_after(right_block, "logical_and_end");
-
-                        self.builder.position_at_end(current_block);
-                        self.builder.build_conditional_branch(
-                            self.builder.build_int_compare::<IntValue>(
-                                IntPredicate::EQ,
-                                left_value.into_int_value(),
-                                left_value.get_type().into_int_type().const_zero(),
-                                "is_zero",
-                            )?,
-                            end_block,
-                            right_block,
-                        )?;
-
-                        self.builder.position_at_end(right_block);
-                        let right_value = right_value_gen(self)?;
-                        let bool_right_value = self.builder.build_int_z_extend(
-                            self.builder.build_int_compare(
-                                IntPredicate::NE,
-                                right_value.get_type().into_int_type().const_zero(),
-                                right_value.into_int_value(),
-                                "downcast_i1",
-                            )?,
-                            right_value.get_type().into_int_type(),
-                            "upcast",
-                        )?;
-                        self.builder.build_unconditional_branch(end_block)?;
-                        // needed because right_value may have generated new basic blocks and
-                        // right_block isn't the branch source anymore
-                        let last_right_block = self
-                            .builder
-                            .get_insert_block()
-                            .expect("expected builder to be in a block");
-
-                        self.builder.position_at_end(end_block);
-                        let result = self.builder.build_phi(
-                            left_value.get_type().into_int_type(),
-                            "logical_and_result",
-                        )?;
-
-                        result.add_incoming(&[
-                            (
-                                &left_value.get_type().into_int_type().const_zero(),
-                                current_block,
-                            ),
-                            (&bool_right_value, last_right_block),
-                        ]);
-
-                        Ok(Some(TypeOrValue::Value(result.as_basic_value())))
-                    }
-                    BinaryOperation::LogicalOr => {
-                        let current_block = self
-                            .builder
-                            .get_insert_block()
-                            .expect("expected builder to be in a block");
-                        let right_block = self
-                            .context
-                            .insert_basic_block_after(current_block, "logical_or_rhs");
-                        let end_block = self
-                            .context
-                            .insert_basic_block_after(right_block, "logical_or_end");
-
-                        self.builder.position_at_end(current_block);
-                        self.builder.build_conditional_branch(
-                            self.builder.build_int_compare::<IntValue>(
-                                IntPredicate::EQ,
-                                left_value.into_int_value(),
-                                left_value.get_type().into_int_type().const_zero(),
-                                "is_zero",
-                            )?,
-                            right_block,
-                            end_block,
-                        )?;
-
-                        self.builder.position_at_end(right_block);
-                        let right_value = right_value_gen(self)?;
-                        let bool_right_value = self.builder.build_int_z_extend(
-                            self.builder.build_int_compare(
-                                IntPredicate::NE,
-                                right_value.get_type().into_int_type().const_zero(),
-                                right_value.into_int_value(),
-                                "downcast_i1",
-                            )?,
-                            right_value.get_type().into_int_type(),
-                            "upcast",
-                        )?;
-                        self.builder.build_unconditional_branch(end_block)?;
-                        // needed because right_value may have generated new basic blocks and
-                        // right_block isn't the branch source anymore
-                        let last_right_block = self
-                            .builder
-                            .get_insert_block()
-                            .expect("expected builder to be in a block");
-
-                        self.builder.position_at_end(end_block);
-                        let result = self.builder.build_phi(
-                            left_value.get_type().into_int_type(),
-                            "logical_or_result",
-                        )?;
-
-                        result.add_incoming(&[
-                            (
-                                &left_value.get_type().into_int_type().const_int(1, false),
-                                current_block,
-                            ),
-                            (&bool_right_value, last_right_block),
-                        ]);
-
-                        Ok(Some(TypeOrValue::Value(result.as_basic_value())))
-                    }
-                };
-            }
-            Expression::Grouping {
-                open_paren_token: _,
-                subexpression,
-                close_paren_token: _,
-                id: _,
-            } => self.visit_expression(subexpression),
-
-            Expression::VariableAssignment {
-                name,
+        if let Some(f) = self.functions.get(name) {
+            return Ok(self
+                .builder
+                .build_call(*f, &args[..], name)?
+                .try_as_basic_value()
+                .left()
+                .map(|l| l.as_basic_value_enum()));
+        } else {
+            self.errors.push(FleetError::from_token(
                 name_token,
-                equal_token: _,
-                right,
-                id: _,
-            } => {
-                let right_value = self
-                    .visit_expression(right)?
-                    .ok_or(format!(
-                        "Somehow tried assigning a Unit value to variable {name:?}",
-                    ))?
-                    .unwrap_value();
-
-                if let Some((_type, ptr)) = self.variable_scopes.get(name) {
-                    self.builder.build_store(ptr.clone(), right_value)?;
-                    return Ok(Some(TypeOrValue::Value(right_value)));
-                } else {
-                    self.errors.push(FleetError::from_token(
-                        name_token,
-                        format!("Variable {name:?} is assigned, but not defined"),
-                        ErrorSeverity::Error,
-                    ));
-                    return Ok(Some(TypeOrValue::Value(
-                        self.context
-                            .i32_type()
-                            .const_all_ones()
-                            .as_basic_value_enum(),
-                    )));
-                }
-            }
+                format!("Function {name:?} called but not defined"),
+                ErrorSeverity::Error,
+            ));
+            return Ok(Some(
+                self.context
+                    .i32_type()
+                    .const_all_ones()
+                    .as_basic_value_enum(),
+            ));
         }
     }
 
-    fn visit_type(&mut self, type_: &mut Type) -> Self::SubOutput {
-        match type_ {
-            Type::I32 { token: _, id: _ } => {
-                Ok(Some(TypeOrValue::Type(self.context.i32_type().into())))
+    fn visit_grouping_expression(
+        &mut self,
+        GroupingExpression {
+            open_paren_token: _,
+            subexpression,
+            close_paren_token: _,
+            id: _,
+        }: &mut GroupingExpression,
+    ) -> Self::ExpressionOutput {
+        self.visit_expression(subexpression)
+    }
+
+    fn visit_variable_access_expression(
+        &mut self,
+        VariableAccessExpression {
+            name,
+            name_token,
+            id: _,
+        }: &mut VariableAccessExpression,
+    ) -> Self::ExpressionOutput {
+        if let Some((type_, ptr)) = self.variable_scopes.get(name) {
+            return Ok(Some(self.builder.build_load(
+                type_.clone(),
+                ptr.clone(),
+                name,
+            )?));
+        } else {
+            self.errors.push(FleetError::from_token(
+                name_token,
+                format!("Variable {name:?} is accessed, but not defined"),
+                ErrorSeverity::Error,
+            ));
+            return Ok(Some(
+                self.context
+                    .i32_type()
+                    .const_all_ones()
+                    .as_basic_value_enum(),
+            ));
+        }
+    }
+
+    fn visit_unary_expression(
+        &mut self,
+        UnaryExpression {
+            operator_token: _,
+            operation,
+            operand,
+            id: _,
+        }: &mut UnaryExpression,
+    ) -> Self::ExpressionOutput {
+        let value = self.visit_expression(operand)?.ok_or(format!(
+            "Somehow passed a Unit value as an operand to {:?}",
+            operation
+        ))?;
+
+        return match operation {
+            UnaryOperation::BitwiseNot => Ok(Some(
+                self.builder
+                    .build_not::<IntValue>(value.into_int_value(), "bitwise_not")?
+                    .into(),
+            )),
+            UnaryOperation::LogicalNot => Ok(Some(
+                self.builder
+                    .build_int_z_extend(
+                        self.builder.build_int_compare::<IntValue>(
+                            IntPredicate::EQ,
+                            value.into_int_value(),
+                            value.get_type().into_int_type().const_zero(),
+                            "logical_not",
+                        )?,
+                        value.get_type().into_int_type(),
+                        "cast",
+                    )?
+                    .into(),
+            )),
+            UnaryOperation::Negate => Ok(Some(
+                self.builder
+                    .build_int_neg::<IntValue>(value.into_int_value(), "negate")?
+                    .into(),
+            )),
+        };
+    }
+
+    fn visit_binary_expression(
+        &mut self,
+        BinaryExpression {
+            left,
+            operator_token: _,
+            operation,
+            right,
+            id: _,
+        }: &mut BinaryExpression,
+    ) -> Self::ExpressionOutput {
+        let left_value = self.visit_expression(left)?.ok_or(format!(
+            "Somehow passed a Unit value as an operand to {:?}",
+            operation
+        ))?;
+        let mut right_value_gen = |self_: &mut Self| -> Result<BasicValueEnum<'a>> {
+            Ok(self_.visit_expression(right)?.ok_or(format!(
+                "Somehow passed a Unit value as an operand to {:?}",
+                operation
+            ))?)
+        };
+
+        return match operation {
+            BinaryOperation::Add => {
+                let right_value = right_value_gen(self)?;
+                Ok(Some(
+                    self.builder
+                        .build_int_add::<IntValue>(
+                            left_value.into_int_value(),
+                            right_value.into_int_value(),
+                            "add",
+                        )?
+                        .into(),
+                ))
             }
+            BinaryOperation::Subtract => {
+                let right_value = right_value_gen(self)?;
+                Ok(Some(
+                    self.builder
+                        .build_int_sub(
+                            left_value.into_int_value(),
+                            right_value.into_int_value(),
+                            "sub",
+                        )?
+                        .into(),
+                ))
+            }
+
+            BinaryOperation::Multiply => {
+                let right_value = right_value_gen(self)?;
+                Ok(Some(
+                    self.builder
+                        .build_int_mul(
+                            left_value.into_int_value(),
+                            right_value.into_int_value(),
+                            "mul",
+                        )?
+                        .into(),
+                ))
+            }
+            BinaryOperation::Divide => {
+                let right_value = right_value_gen(self)?;
+                Ok(Some(
+                    self.builder
+                        .build_int_signed_div(
+                            left_value.into_int_value(),
+                            right_value.into_int_value(),
+                            "div",
+                        )?
+                        .into(),
+                ))
+            }
+            BinaryOperation::Modulo => {
+                let right_value = right_value_gen(self)?;
+                Ok(Some(
+                    self.builder
+                        .build_int_signed_rem(
+                            left_value.into_int_value(),
+                            right_value.into_int_value(),
+                            "mod",
+                        )?
+                        .into(),
+                ))
+            }
+
+            BinaryOperation::LessThan => {
+                let right_value = right_value_gen(self)?;
+                Ok(Some(
+                    self.builder
+                        .build_int_z_extend(
+                            self.builder.build_int_compare::<IntValue>(
+                                IntPredicate::SLT,
+                                left_value.into_int_value(),
+                                right_value.into_int_value(),
+                                "less_than",
+                            )?,
+                            left_value.get_type().into_int_type(),
+                            "extent_from_i1",
+                        )?
+                        .into(),
+                ))
+            }
+            BinaryOperation::LessThanOrEqual => {
+                let right_value = right_value_gen(self)?;
+                Ok(Some(
+                    self.builder
+                        .build_int_z_extend(
+                            self.builder.build_int_compare::<IntValue>(
+                                IntPredicate::SLE,
+                                left_value.into_int_value(),
+                                right_value.into_int_value(),
+                                "less_than_or_equal",
+                            )?,
+                            left_value.get_type().into_int_type(),
+                            "extent_from_i1",
+                        )?
+                        .into(),
+                ))
+            }
+            BinaryOperation::GreaterThan => {
+                let right_value = right_value_gen(self)?;
+                Ok(Some(
+                    self.builder
+                        .build_int_z_extend(
+                            self.builder.build_int_compare::<IntValue>(
+                                IntPredicate::SGT,
+                                left_value.into_int_value(),
+                                right_value.into_int_value(),
+                                "greater_than",
+                            )?,
+                            left_value.get_type().into_int_type(),
+                            "extent_from_i1",
+                        )?
+                        .into(),
+                ))
+            }
+            BinaryOperation::GreaterThanOrEqual => {
+                let right_value = right_value_gen(self)?;
+                Ok(Some(
+                    self.builder
+                        .build_int_z_extend(
+                            self.builder.build_int_compare::<IntValue>(
+                                IntPredicate::SGE,
+                                left_value.into_int_value(),
+                                right_value.into_int_value(),
+                                "greater_than_or_equal",
+                            )?,
+                            left_value.get_type().into_int_type(),
+                            "extent_from_i1",
+                        )?
+                        .into(),
+                ))
+            }
+            BinaryOperation::Equal => {
+                let right_value = right_value_gen(self)?;
+                Ok(Some(
+                    self.builder
+                        .build_int_z_extend(
+                            self.builder.build_int_compare::<IntValue>(
+                                IntPredicate::EQ,
+                                left_value.into_int_value(),
+                                right_value.into_int_value(),
+                                "equal",
+                            )?,
+                            left_value.get_type().into_int_type(),
+                            "extent_from_i1",
+                        )?
+                        .into(),
+                ))
+            }
+            BinaryOperation::NotEqual => {
+                let right_value = right_value_gen(self)?;
+                Ok(Some(
+                    self.builder
+                        .build_int_z_extend(
+                            self.builder.build_int_compare::<IntValue>(
+                                IntPredicate::NE,
+                                left_value.into_int_value(),
+                                right_value.into_int_value(),
+                                "not_equal",
+                            )?,
+                            left_value.get_type().into_int_type(),
+                            "extent_from_i1",
+                        )?
+                        .into(),
+                ))
+            }
+
+            BinaryOperation::LogicalAnd => {
+                let current_block = self
+                    .builder
+                    .get_insert_block()
+                    .expect("expected builder to be in a block");
+                let right_block = self
+                    .context
+                    .insert_basic_block_after(current_block, "logical_and_rhs");
+                let end_block = self
+                    .context
+                    .insert_basic_block_after(right_block, "logical_and_end");
+
+                self.builder.position_at_end(current_block);
+                self.builder.build_conditional_branch(
+                    self.builder.build_int_compare::<IntValue>(
+                        IntPredicate::EQ,
+                        left_value.into_int_value(),
+                        left_value.get_type().into_int_type().const_zero(),
+                        "is_zero",
+                    )?,
+                    end_block,
+                    right_block,
+                )?;
+
+                self.builder.position_at_end(right_block);
+                let right_value = right_value_gen(self)?;
+                let bool_right_value = self.builder.build_int_z_extend(
+                    self.builder.build_int_compare(
+                        IntPredicate::NE,
+                        right_value.get_type().into_int_type().const_zero(),
+                        right_value.into_int_value(),
+                        "downcast_i1",
+                    )?,
+                    right_value.get_type().into_int_type(),
+                    "upcast",
+                )?;
+                self.builder.build_unconditional_branch(end_block)?;
+                // needed because right_value may have generated new basic blocks and
+                // right_block isn't the branch source anymore
+                let last_right_block = self
+                    .builder
+                    .get_insert_block()
+                    .expect("expected builder to be in a block");
+
+                self.builder.position_at_end(end_block);
+                let result = self
+                    .builder
+                    .build_phi(left_value.get_type().into_int_type(), "logical_and_result")?;
+
+                result.add_incoming(&[
+                    (
+                        &left_value.get_type().into_int_type().const_zero(),
+                        current_block,
+                    ),
+                    (&bool_right_value, last_right_block),
+                ]);
+
+                Ok(Some(result.as_basic_value()))
+            }
+            BinaryOperation::LogicalOr => {
+                let current_block = self
+                    .builder
+                    .get_insert_block()
+                    .expect("expected builder to be in a block");
+                let right_block = self
+                    .context
+                    .insert_basic_block_after(current_block, "logical_or_rhs");
+                let end_block = self
+                    .context
+                    .insert_basic_block_after(right_block, "logical_or_end");
+
+                self.builder.position_at_end(current_block);
+                self.builder.build_conditional_branch(
+                    self.builder.build_int_compare::<IntValue>(
+                        IntPredicate::EQ,
+                        left_value.into_int_value(),
+                        left_value.get_type().into_int_type().const_zero(),
+                        "is_zero",
+                    )?,
+                    right_block,
+                    end_block,
+                )?;
+
+                self.builder.position_at_end(right_block);
+                let right_value = right_value_gen(self)?;
+                let bool_right_value = self.builder.build_int_z_extend(
+                    self.builder.build_int_compare(
+                        IntPredicate::NE,
+                        right_value.get_type().into_int_type().const_zero(),
+                        right_value.into_int_value(),
+                        "downcast_i1",
+                    )?,
+                    right_value.get_type().into_int_type(),
+                    "upcast",
+                )?;
+                self.builder.build_unconditional_branch(end_block)?;
+                // needed because right_value may have generated new basic blocks and
+                // right_block isn't the branch source anymore
+                let last_right_block = self
+                    .builder
+                    .get_insert_block()
+                    .expect("expected builder to be in a block");
+
+                self.builder.position_at_end(end_block);
+                let result = self
+                    .builder
+                    .build_phi(left_value.get_type().into_int_type(), "logical_or_result")?;
+
+                result.add_incoming(&[
+                    (
+                        &left_value.get_type().into_int_type().const_int(1, false),
+                        current_block,
+                    ),
+                    (&bool_right_value, last_right_block),
+                ]);
+
+                Ok(Some(result.as_basic_value()))
+            }
+        };
+    }
+
+    fn visit_variable_assignment_expression(
+        &mut self,
+        VariableAssignmentExpression {
+            name,
+            name_token,
+            equal_token: _,
+            right,
+            id: _,
+        }: &mut VariableAssignmentExpression,
+    ) -> Self::ExpressionOutput {
+        let right_value = self.visit_expression(right)?.ok_or(format!(
+            "Somehow tried assigning a Unit value to variable {name:?}",
+        ))?;
+
+        if let Some((_type, ptr)) = self.variable_scopes.get(name) {
+            self.builder.build_store(ptr.clone(), right_value)?;
+            return Ok(Some(right_value));
+        } else {
+            self.errors.push(FleetError::from_token(
+                name_token,
+                format!("Variable {name:?} is assigned, but not defined"),
+                ErrorSeverity::Error,
+            ));
+            return Ok(Some(
+                self.context
+                    .i32_type()
+                    .const_all_ones()
+                    .as_basic_value_enum(),
+            ));
+        }
+    }
+
+    fn visit_type(&mut self, type_: &mut Type) -> Self::TypeOutput {
+        match type_ {
+            Type::I32 { token: _, id: _ } => Ok(self.context.i32_type().into()),
         }
     }
 }

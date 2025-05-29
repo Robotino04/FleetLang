@@ -1,8 +1,9 @@
 use crate::{
     ast::{
-        AstVisitor, BlockStatement, Expression, ExpressionStatement, FunctionDefinition,
-        IfStatement, OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type,
-        VariableDefinitionStatement,
+        AstVisitor, BinaryExpression, BlockStatement, ExpressionStatement, FunctionCallExpression,
+        FunctionDefinition, GroupingExpression, IfStatement, NumberExpression, OnStatement,
+        Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type, UnaryExpression,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
     },
     document_model::DocumentElement,
     tokenizer::{Keyword, Token, TokenType, Trivia, TriviaKind},
@@ -151,10 +152,15 @@ impl AstToDocumentModelConverter {
 }
 
 impl AstVisitor for AstToDocumentModelConverter {
-    type SubOutput = DocumentElement;
-    type Output = DocumentElement;
+    type ProgramOutput = DocumentElement;
+    type FunctionDefinitionOutput = DocumentElement;
+    type StatementOutput = DocumentElement;
+    type ExecutorHostOutput = DocumentElement;
+    type ExecutorOutput = DocumentElement;
+    type ExpressionOutput = DocumentElement;
+    type TypeOutput = DocumentElement;
 
-    fn visit_program(mut self, program: &mut Program) -> Self::Output {
+    fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         DocumentElement::Concatenation(vec![
             DocumentElement::SpaceEater,
             DocumentElement::spaced_concatentation(
@@ -183,7 +189,7 @@ impl AstVisitor for AstToDocumentModelConverter {
             body,
             id: _,
         }: &mut FunctionDefinition,
-    ) -> Self::SubOutput {
+    ) -> Self::FunctionDefinitionOutput {
         DocumentElement::spaced_concatentation(
             DocumentElement::CollapsableSpace,
             vec![
@@ -215,7 +221,7 @@ impl AstVisitor for AstToDocumentModelConverter {
             semicolon_token,
             id: _,
         }: &mut ExpressionStatement,
-    ) -> Self::SubOutput {
+    ) -> Self::StatementOutput {
         DocumentElement::Concatenation(vec![
             self.visit_expression(expression),
             DocumentElement::double_space_eater(),
@@ -233,7 +239,7 @@ impl AstVisitor for AstToDocumentModelConverter {
             body,
             id: _,
         }: &mut OnStatement,
-    ) -> Self::SubOutput {
+    ) -> Self::StatementOutput {
         DocumentElement::spaced_concatentation(
             DocumentElement::CollapsableSpace,
             vec![
@@ -256,7 +262,7 @@ impl AstVisitor for AstToDocumentModelConverter {
             close_brace_token,
             id: _,
         }: &mut BlockStatement,
-    ) -> Self::SubOutput {
+    ) -> Self::StatementOutput {
         DocumentElement::spaced_concatentation(
             DocumentElement::CollapsableLineBreak,
             vec![
@@ -297,7 +303,7 @@ impl AstVisitor for AstToDocumentModelConverter {
             semicolon_token,
             id: _,
         }: &mut ReturnStatement,
-    ) -> Self::SubOutput {
+    ) -> Self::StatementOutput {
         DocumentElement::Concatenation(vec![
             DocumentElement::spaced_concatentation(
                 DocumentElement::CollapsableSpace,
@@ -325,7 +331,7 @@ impl AstVisitor for AstToDocumentModelConverter {
             semicolon_token,
             id: _,
         }: &mut VariableDefinitionStatement,
-    ) -> Self::SubOutput {
+    ) -> Self::StatementOutput {
         DocumentElement::Concatenation(vec![
             DocumentElement::spaced_concatentation(
                 DocumentElement::CollapsableSpace,
@@ -355,7 +361,7 @@ impl AstVisitor for AstToDocumentModelConverter {
             else_,
             id: _,
         }: &mut IfStatement,
-    ) -> Self::SubOutput {
+    ) -> Self::StatementOutput {
         let mut elements = vec![DocumentElement::spaced_concatentation(
             DocumentElement::CollapsableSpace,
             vec![
@@ -395,11 +401,11 @@ impl AstVisitor for AstToDocumentModelConverter {
     fn visit_self_executor_host(
         &mut self,
         executor_host: &mut SelfExecutorHost,
-    ) -> Self::SubOutput {
+    ) -> Self::ExecutorHostOutput {
         self.token_to_element(&executor_host.token)
     }
 
-    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::SubOutput {
+    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
         DocumentElement::Concatenation(vec![
             self.visit_executor_host(&mut executor.host),
             self.token_to_element(&mut executor.dot_token),
@@ -410,106 +416,139 @@ impl AstVisitor for AstToDocumentModelConverter {
         ])
     }
 
-    fn visit_expression(&mut self, expression: &mut Expression) -> Self::SubOutput {
-        match expression {
-            Expression::Number {
-                value: _,
-                token,
-                id: _,
-            } => self.token_to_element(token),
-            Expression::FunctionCall {
-                name: _,
-                name_token,
-                open_paren_token,
-                arguments,
-                close_paren_token,
-                id: _,
-            } => DocumentElement::Concatenation(vec![
-                self.token_to_element(name_token),
-                DocumentElement::Concatenation(vec![
-                    self.token_to_element(open_paren_token),
-                    DocumentElement::spaced_concatentation(
-                        DocumentElement::Concatenation(vec![
-                            DocumentElement::Text(",".to_string()),
-                            DocumentElement::CollapsableSpace,
-                        ]),
-                        arguments
-                            .iter_mut()
-                            .map(|arg| self.visit_expression(arg))
-                            .collect(),
-                    ),
-                    self.token_to_element(close_paren_token),
-                ]),
-            ]),
-            Expression::VariableAccess {
-                name: _,
-                name_token,
-                id: _,
-            } => self.token_to_element(name_token),
-            Expression::Grouping {
-                open_paren_token,
-                subexpression,
-                close_paren_token,
-                id: _,
-            } => DocumentElement::Concatenation(vec![
-                DocumentElement::Concatenation(vec![
-                    self.trivia_to_element(&open_paren_token.leading_trivia),
-                    DocumentElement::CollapsableSpace,
-                    self.token_type_to_element(open_paren_token),
-                    DocumentElement::double_space_eater(),
-                    self.trivia_to_element(&open_paren_token.trailing_trivia),
-                ]),
-                self.visit_expression(subexpression),
-                DocumentElement::Concatenation(vec![
-                    self.trivia_to_element(&close_paren_token.leading_trivia),
-                    DocumentElement::double_space_eater(),
-                    self.token_type_to_element(close_paren_token),
-                    DocumentElement::CollapsableSpace,
-                    self.trivia_to_element(&close_paren_token.trailing_trivia),
-                ]),
-            ]),
-            Expression::Unary {
-                operator_token,
-                operation: _,
-                operand,
-                id: _,
-            } => DocumentElement::Concatenation(vec![
-                self.token_to_element(operator_token),
-                DocumentElement::double_space_eater(),
-                self.visit_expression(operand),
-            ]),
-            Expression::Binary {
-                left,
-                operator_token,
-                operation: _,
-                right,
-                id: _,
-            } => DocumentElement::spaced_concatentation(
-                DocumentElement::CollapsableSpace,
-                vec![
-                    self.visit_expression(left),
-                    self.token_to_element(operator_token),
-                    self.visit_expression(right),
-                ],
-            ),
-            Expression::VariableAssignment {
-                name: _,
-                name_token,
-                equal_token,
-                right,
-                id: _,
-            } => DocumentElement::spaced_concatentation(
-                DocumentElement::CollapsableSpace,
-                vec![
-                    self.token_to_element(name_token),
-                    self.token_to_element(equal_token),
-                    self.visit_expression(right),
-                ],
-            ),
-        }
+    fn visit_number_expression(
+        &mut self,
+        expression: &mut NumberExpression,
+    ) -> Self::ExpressionOutput {
+        self.token_to_element(&expression.token)
     }
 
-    fn visit_type(&mut self, type_: &mut Type) -> Self::SubOutput {
+    fn visit_function_call_expression(
+        &mut self,
+        FunctionCallExpression {
+            name: _,
+            name_token,
+            open_paren_token,
+            arguments,
+            close_paren_token,
+            id: _,
+        }: &mut FunctionCallExpression,
+    ) -> Self::ExpressionOutput {
+        DocumentElement::Concatenation(vec![
+            self.token_to_element(name_token),
+            DocumentElement::Concatenation(vec![
+                self.token_to_element(open_paren_token),
+                DocumentElement::spaced_concatentation(
+                    DocumentElement::Concatenation(vec![
+                        DocumentElement::Text(",".to_string()),
+                        DocumentElement::CollapsableSpace,
+                    ]),
+                    arguments
+                        .iter_mut()
+                        .map(|arg| self.visit_expression(arg))
+                        .collect(),
+                ),
+                self.token_to_element(close_paren_token),
+            ]),
+        ])
+    }
+
+    fn visit_grouping_expression(
+        &mut self,
+        GroupingExpression {
+            open_paren_token,
+            subexpression,
+            close_paren_token,
+            id: _,
+        }: &mut GroupingExpression,
+    ) -> Self::ExpressionOutput {
+        DocumentElement::Concatenation(vec![
+            DocumentElement::Concatenation(vec![
+                self.trivia_to_element(&open_paren_token.leading_trivia),
+                DocumentElement::CollapsableSpace,
+                self.token_type_to_element(open_paren_token),
+                DocumentElement::double_space_eater(),
+                self.trivia_to_element(&open_paren_token.trailing_trivia),
+            ]),
+            self.visit_expression(subexpression),
+            DocumentElement::Concatenation(vec![
+                self.trivia_to_element(&close_paren_token.leading_trivia),
+                DocumentElement::double_space_eater(),
+                self.token_type_to_element(close_paren_token),
+                DocumentElement::CollapsableSpace,
+                self.trivia_to_element(&close_paren_token.trailing_trivia),
+            ]),
+        ])
+    }
+
+    fn visit_variable_access_expression(
+        &mut self,
+        VariableAccessExpression {
+            name: _,
+            name_token,
+            id: _,
+        }: &mut VariableAccessExpression,
+    ) -> Self::ExpressionOutput {
+        self.token_to_element(name_token)
+    }
+
+    fn visit_unary_expression(
+        &mut self,
+        UnaryExpression {
+            operator_token,
+            operation: _,
+            operand,
+            id: _,
+        }: &mut UnaryExpression,
+    ) -> Self::ExpressionOutput {
+        DocumentElement::Concatenation(vec![
+            self.token_to_element(operator_token),
+            DocumentElement::double_space_eater(),
+            self.visit_expression(operand),
+        ])
+    }
+
+    fn visit_binary_expression(
+        &mut self,
+        BinaryExpression {
+            left,
+            operator_token,
+            operation: _,
+            right,
+            id: _,
+        }: &mut BinaryExpression,
+    ) -> Self::ExpressionOutput {
+        DocumentElement::spaced_concatentation(
+            DocumentElement::CollapsableSpace,
+            vec![
+                self.visit_expression(left),
+                self.token_to_element(operator_token),
+                self.visit_expression(right),
+            ],
+        )
+    }
+
+    fn visit_variable_assignment_expression(
+        &mut self,
+        VariableAssignmentExpression {
+            name: _,
+            name_token,
+            equal_token,
+            right,
+            id: _,
+        }: &mut VariableAssignmentExpression,
+    ) -> Self::ExpressionOutput {
+        DocumentElement::spaced_concatentation(
+            DocumentElement::CollapsableSpace,
+            vec![
+                self.token_to_element(name_token),
+                self.token_to_element(equal_token),
+                self.visit_expression(right),
+            ],
+        )
+    }
+
+    fn visit_type(&mut self, type_: &mut Type) -> Self::TypeOutput {
         match type_ {
             Type::I32 { token, id: _ } => self.token_to_element(token),
         }

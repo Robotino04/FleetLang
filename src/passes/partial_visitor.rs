@@ -1,7 +1,9 @@
 use crate::ast::{
-    AstVisitor, BlockStatement, Executor, ExecutorHost, Expression, FunctionDefinition,
-    IfStatement, OnStatement, Program, ReturnStatement, SelfExecutorHost, Statement,
-    ThreadExecutor, Type, VariableDefinitionStatement,
+    AstVisitor, BinaryExpression, BlockStatement, Executor, ExecutorHost, Expression,
+    FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement, NumberExpression,
+    OnStatement, Program, ReturnStatement, SelfExecutorHost, Statement, ThreadExecutor, Type,
+    UnaryExpression, VariableAccessExpression, VariableAssignmentExpression,
+    VariableDefinitionStatement,
 };
 
 pub trait PartialAstVisitor {
@@ -121,66 +123,58 @@ pub trait PartialAstVisitor {
         self.partial_visit_expression(&mut executor.index);
     }
 
+    // expressions
     fn partial_visit_expression(&mut self, expression: &mut Expression) {
         match expression {
-            Expression::Number {
-                value: _,
-                token: _,
-                id: _,
-            } => {}
-            Expression::VariableAccess {
-                name: _,
-                name_token: _,
-                id: _,
-            } => {}
-            Expression::FunctionCall {
-                name: _,
-                name_token: _,
-                open_paren_token: _,
-                arguments,
-                close_paren_token: _,
-                id: _,
-            } => {
-                for arg in arguments {
-                    self.partial_visit_expression(arg);
-                }
+            Expression::Number(number_expression) => {
+                self.partial_visit_number_expression(number_expression)
             }
-            Expression::Grouping {
-                open_paren_token: _,
-                subexpression,
-                close_paren_token: _,
-                id: _,
-            } => {
-                self.partial_visit_expression(&mut *subexpression);
+            Expression::FunctionCall(function_call_expression) => {
+                self.partial_visit_function_call_expression(function_call_expression)
             }
-            Expression::Unary {
-                operator_token: _,
-                operation: _,
-                operand,
-                id: _,
-            } => {
-                self.partial_visit_expression(&mut *operand);
+            Expression::Grouping(grouping_expression) => {
+                self.partial_visit_grouping_expression(grouping_expression)
             }
-            Expression::Binary {
-                left,
-                operator_token: _,
-                operation: _,
-                right,
-                id: _,
-            } => {
-                self.partial_visit_expression(&mut *left);
-                self.partial_visit_expression(&mut *right);
+            Expression::VariableAccess(variable_access_expression) => {
+                self.partial_visit_variable_access_expression(variable_access_expression)
             }
-            Expression::VariableAssignment {
-                name: _,
-                name_token: _,
-                equal_token: _,
-                right,
-                id: _,
-            } => {
-                self.partial_visit_expression(&mut *right);
+            Expression::Unary(unary_expression) => {
+                self.partial_visit_unary_expression(unary_expression)
+            }
+            Expression::Binary(binary_expression) => {
+                self.partial_visit_binary_expression(binary_expression)
+            }
+            Expression::VariableAssignment(variable_assignment_expression) => {
+                self.partial_visit_variable_assignment_expression(variable_assignment_expression)
             }
         }
+    }
+    fn partial_visit_number_expression(&mut self, _expression: &mut NumberExpression) {}
+    fn partial_visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
+        for arg in &mut expression.arguments {
+            self.partial_visit_expression(arg);
+        }
+    }
+    fn partial_visit_grouping_expression(&mut self, expression: &mut GroupingExpression) {
+        self.partial_visit_expression(&mut *expression.subexpression);
+    }
+    fn partial_visit_variable_access_expression(
+        &mut self,
+        _expression: &mut VariableAccessExpression,
+    ) {
+    }
+    fn partial_visit_unary_expression(&mut self, expression: &mut UnaryExpression) {
+        self.partial_visit_expression(&mut *expression.operand);
+    }
+    fn partial_visit_binary_expression(&mut self, expression: &mut BinaryExpression) {
+        self.partial_visit_expression(&mut *expression.left);
+        self.partial_visit_expression(&mut *expression.right);
+    }
+    fn partial_visit_variable_assignment_expression(
+        &mut self,
+        expression: &mut VariableAssignmentExpression,
+    ) {
+        self.partial_visit_expression(&mut *expression.right)
     }
 
     fn partial_visit_type(&mut self, type_: &mut Type) {
@@ -194,66 +188,123 @@ impl<T> AstVisitor for T
 where
     T: PartialAstVisitor,
 {
-    type SubOutput = ();
-    type Output = ();
+    type ProgramOutput = ();
+    type FunctionDefinitionOutput = ();
+    type StatementOutput = ();
+    type ExecutorHostOutput = ();
+    type ExecutorOutput = ();
+    type ExpressionOutput = ();
+    type TypeOutput = ();
 
-    fn visit_program(self, program: &mut Program) -> Self::Output {
+    fn visit_program(self, program: &mut Program) -> Self::ProgramOutput {
         self.partial_visit_program(program);
     }
 
     fn visit_function_definition(
         &mut self,
         function_definition: &mut FunctionDefinition,
-    ) -> Self::SubOutput {
+    ) -> Self::FunctionDefinitionOutput {
         self.partial_visit_function_definition(function_definition);
     }
 
     fn visit_expression_statement(
         &mut self,
         expr_stmt: &mut crate::ast::ExpressionStatement,
-    ) -> Self::SubOutput {
+    ) -> Self::StatementOutput {
         self.partial_visit_expression_statement(expr_stmt);
     }
 
-    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::SubOutput {
+    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
         self.partial_visit_on_statement(on_stmt);
     }
 
-    fn visit_block_statement(&mut self, block: &mut BlockStatement) -> Self::SubOutput {
+    fn visit_block_statement(&mut self, block: &mut BlockStatement) -> Self::StatementOutput {
         self.partial_visit_block_statement(block);
     }
 
-    fn visit_return_statement(&mut self, return_stmt: &mut ReturnStatement) -> Self::SubOutput {
+    fn visit_return_statement(
+        &mut self,
+        return_stmt: &mut ReturnStatement,
+    ) -> Self::StatementOutput {
         self.partial_visit_return_statement(return_stmt);
     }
 
     fn visit_variable_definition_statement(
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
-    ) -> Self::SubOutput {
+    ) -> Self::StatementOutput {
         self.partial_visit_variable_definition_statement(vardef_stmt);
     }
 
-    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::SubOutput {
+    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::StatementOutput {
         self.partial_visit_if_statement(if_stmt);
     }
 
     fn visit_self_executor_host(
         &mut self,
         executor_host: &mut SelfExecutorHost,
-    ) -> Self::SubOutput {
+    ) -> Self::ExecutorHostOutput {
         self.partial_visit_self_executor_host(executor_host);
     }
 
-    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::SubOutput {
+    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
         self.partial_visit_thread_executor(executor);
     }
 
-    fn visit_expression(&mut self, expression: &mut Expression) -> Self::SubOutput {
+    fn visit_expression(&mut self, expression: &mut Expression) -> Self::ExpressionOutput {
         self.partial_visit_expression(expression);
     }
 
-    fn visit_type(&mut self, type_: &mut Type) -> Self::SubOutput {
+    fn visit_number_expression(
+        &mut self,
+        expression: &mut NumberExpression,
+    ) -> Self::ExpressionOutput {
+        self.partial_visit_number_expression(expression);
+    }
+
+    fn visit_function_call_expression(
+        &mut self,
+        expression: &mut FunctionCallExpression,
+    ) -> Self::ExpressionOutput {
+        self.partial_visit_function_call_expression(expression);
+    }
+
+    fn visit_grouping_expression(
+        &mut self,
+        expression: &mut GroupingExpression,
+    ) -> Self::ExpressionOutput {
+        self.partial_visit_grouping_expression(expression);
+    }
+
+    fn visit_variable_access_expression(
+        &mut self,
+        expression: &mut VariableAccessExpression,
+    ) -> Self::ExpressionOutput {
+        self.partial_visit_variable_access_expression(expression);
+    }
+
+    fn visit_unary_expression(
+        &mut self,
+        expression: &mut UnaryExpression,
+    ) -> Self::ExpressionOutput {
+        self.partial_visit_unary_expression(expression);
+    }
+
+    fn visit_binary_expression(
+        &mut self,
+        expression: &mut BinaryExpression,
+    ) -> Self::ExpressionOutput {
+        self.partial_visit_binary_expression(expression);
+    }
+
+    fn visit_variable_assignment_expression(
+        &mut self,
+        expression: &mut VariableAssignmentExpression,
+    ) -> Self::ExpressionOutput {
+        self.partial_visit_variable_assignment_expression(expression);
+    }
+
+    fn visit_type(&mut self, type_: &mut Type) -> Self::TypeOutput {
         self.partial_visit_type(type_);
     }
 }

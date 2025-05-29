@@ -1,7 +1,9 @@
 use crate::ast::{
-    AstNode, BinaryOperation, BlockStatement, Expression, ExpressionStatement, FunctionDefinition,
-    IfStatement, OnStatement, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type,
-    UnaryOperation, VariableDefinitionStatement,
+    AstNode, BinaryExpression, BinaryOperation, BlockStatement, ExpressionStatement,
+    FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement, NumberExpression,
+    OnStatement, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type, UnaryExpression,
+    UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
+    VariableDefinitionStatement,
 };
 
 fn generate_function_declaration(function: &FunctionDefinition) -> String {
@@ -136,12 +138,12 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
         }) => {
             return generate_c(host) + ".threads[" + generate_c(index).as_str() + "]";
         }
-        AstNode::Expression(Expression::Number {
+        AstNode::NumberExpression(NumberExpression {
             value,
             token: _,
             id: _,
         }) => value.to_string(),
-        AstNode::Expression(Expression::FunctionCall {
+        AstNode::FunctionCallExpression(FunctionCallExpression {
             name,
             name_token: _,
             open_paren_token: _,
@@ -159,7 +161,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
                     .as_str()
                 + ")";
         }
-        AstNode::Expression(Expression::Unary {
+        AstNode::UnaryExpression(UnaryExpression {
             operation,
             operand,
             operator_token: _,
@@ -173,7 +175,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             .to_string()
                 + generate_c(*operand).as_str();
         }
-        AstNode::Expression(Expression::Binary {
+        AstNode::BinaryExpression(BinaryExpression {
             left,
             operator_token: _,
             operation,
@@ -201,7 +203,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
                 generate_c(*right)
             );
         }
-        AstNode::Expression(Expression::Grouping {
+        AstNode::GroupingExpression(GroupingExpression {
             open_paren_token: _,
             subexpression,
             close_paren_token: _,
@@ -209,14 +211,14 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
         }) => {
             return format!("({})", generate_c(*subexpression),);
         }
-        AstNode::Expression(Expression::VariableAccess {
+        AstNode::VariableAccessExpression(VariableAccessExpression {
             name,
             name_token: _,
             id: _,
         }) => {
             return name;
         }
-        AstNode::Expression(Expression::VariableAssignment {
+        AstNode::VariableAssignmentExpression(VariableAssignmentExpression {
             name,
             name_token: _,
             equal_token: _,

@@ -1,8 +1,9 @@
 use crate::{
     ast::{
-        AstNode, BlockStatement, Expression, ExpressionStatement, FunctionDefinition, IfStatement,
-        OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type,
-        VariableDefinitionStatement,
+        AstNode, BinaryExpression, BlockStatement, ExpressionStatement, FunctionCallExpression,
+        FunctionDefinition, GroupingExpression, IfStatement, NumberExpression, OnStatement,
+        Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type, UnaryExpression,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
     },
     tokenizer::SourceLocation,
 };
@@ -94,7 +95,7 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             close_bracket_token,
             id: _,
         }) => (find_node_bounds(host).0, close_bracket_token.end),
-        AstNode::Expression(Expression::Unary {
+        AstNode::UnaryExpression(UnaryExpression {
             operator_token,
             operation: _,
             operand,
@@ -103,26 +104,26 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             return (operator_token.start, find_node_bounds(*operand).1);
         }
         // TODO: once we have type inference, display type here
-        AstNode::Expression(Expression::Number {
+        AstNode::NumberExpression(NumberExpression {
             value: _,
             token,
             id: _,
         }) => (token.start, token.end),
-        AstNode::Expression(Expression::Binary {
+        AstNode::BinaryExpression(BinaryExpression {
             left,
             operator_token: _,
             operation: _,
             right,
             id: _,
         }) => (find_node_bounds(*left).0, find_node_bounds(*right).1),
-        AstNode::Expression(Expression::Grouping {
+        AstNode::GroupingExpression(GroupingExpression {
             open_paren_token,
             subexpression: _,
             close_paren_token,
             id: _,
         }) => (open_paren_token.start, close_paren_token.end),
 
-        AstNode::Expression(Expression::FunctionCall {
+        AstNode::FunctionCallExpression(FunctionCallExpression {
             name: _,
             name_token,
             open_paren_token: _,
@@ -130,18 +131,19 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             close_paren_token,
             id: _,
         }) => (name_token.start, close_paren_token.end),
-        AstNode::Expression(Expression::VariableAccess {
+        AstNode::VariableAccessExpression(VariableAccessExpression {
             name: _,
             name_token,
             id: _,
         }) => (name_token.start, name_token.end),
-        AstNode::Expression(Expression::VariableAssignment {
+        AstNode::VariableAssignmentExpression(VariableAssignmentExpression {
             name: _,
             name_token,
             equal_token: _,
             right,
             id: _,
         }) => (name_token.start, find_node_bounds(*right).1),
+
         AstNode::Type(Type::I32 { token, id: _ }) => (token.start, token.end),
     }
 }

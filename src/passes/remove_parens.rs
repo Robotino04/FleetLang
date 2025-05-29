@@ -1,5 +1,6 @@
 use crate::ast::{
-    Associativity, AstVisitor, Expression, IfStatement, ReturnStatement, ThreadExecutor,
+    Associativity, AstVisitor, BinaryExpression, Expression, GroupingExpression, IfStatement,
+    ReturnStatement, ThreadExecutor, UnaryExpression, VariableAssignmentExpression,
     VariableDefinitionStatement,
 };
 
@@ -83,41 +84,62 @@ impl PartialAstVisitor for RemoveParensPass {
         self.visit_expression(&mut executor.index);
     }
 
-    fn partial_visit_expression(&mut self, expression: &mut Expression) {
-        let this_precedence = expression.get_precedence();
-        let this_associativity = expression.get_associativity();
+    fn partial_visit_function_call_expression(
+        &mut self,
+        expression: &mut crate::ast::FunctionCallExpression,
+    ) {
+        for arg in &mut expression.arguments {
+            self.parent_precedence = Expression::TOP_PRECEDENCE;
+            self.parent_associativity = Associativity::Both;
+            self.visit_expression(arg);
+        }
+    }
 
+    fn partial_visit_unary_expression(&mut self, expression: &mut UnaryExpression) {
+        self.parent_precedence = Expression::Unary(expression.clone()).get_precedence();
+        self.current_side = OperandSide::Left;
+        self.visit_expression(&mut expression.operand);
+    }
+
+    fn partial_visit_binary_expression(&mut self, expression: &mut BinaryExpression) {
+        let this_precedence = Expression::Binary(expression.clone()).get_precedence();
+        let this_associativity = Expression::Binary(expression.clone()).get_associativity();
+
+        self.parent_precedence = this_precedence;
+        self.parent_associativity = this_associativity;
+        self.current_side = OperandSide::Left;
+        self.visit_expression(&mut expression.left);
+
+        self.parent_precedence = this_precedence;
+        self.parent_associativity = this_associativity;
+        self.current_side = OperandSide::Right;
+        self.visit_expression(&mut expression.right);
+    }
+
+    fn partial_visit_variable_assignment_expression(
+        &mut self,
+        expression: &mut VariableAssignmentExpression,
+    ) {
+        let this_precedence = Expression::VariableAssignment(expression.clone()).get_precedence();
+        let this_associativity =
+            Expression::VariableAssignment(expression.clone()).get_associativity();
+
+        self.parent_precedence = this_precedence;
+        self.parent_associativity = this_associativity;
+        self.current_side = OperandSide::Right;
+        self.visit_expression(&mut expression.right);
+    }
+
+    // need to use the general function here because we may potentially change a nodes type which
+    // is impossible otherwise
+    fn partial_visit_expression(&mut self, expression: &mut Expression) {
         match expression {
-            Expression::Number {
-                value: _,
-                token: _,
-                id: _,
-            } => {}
-            Expression::VariableAccess {
-                name: _,
-                name_token: _,
-                id: _,
-            } => {}
-            Expression::FunctionCall {
-                name: _,
-                name_token: _,
-                open_paren_token: _,
-                arguments,
-                close_paren_token: _,
-                id: _,
-            } => {
-                for arg in arguments {
-                    self.parent_precedence = Expression::TOP_PRECEDENCE;
-                    self.parent_associativity = Associativity::Both;
-                    self.visit_expression(arg);
-                }
-            }
-            Expression::Grouping {
+            Expression::Grouping(GroupingExpression {
                 open_paren_token,
                 subexpression,
                 close_paren_token,
                 id: _,
-            } => {
+            }) => {
                 let old_parent_precedence = self.parent_precedence;
                 let old_parent_associativity = self.parent_associativity;
                 let old_side = self.current_side;
@@ -164,44 +186,23 @@ impl PartialAstVisitor for RemoveParensPass {
                     *expression = *subexpression.clone();
                 }
             }
-            Expression::Unary {
-                operator_token: _,
-                operation: _,
-                operand,
-                id: _,
-            } => {
-                self.parent_precedence = this_precedence;
-                self.current_side = OperandSide::Left;
-                self.visit_expression(&mut *operand);
+            Expression::Number(number_expression) => {
+                self.partial_visit_number_expression(number_expression)
             }
-            Expression::Binary {
-                left,
-                operator_token: _,
-                operation: _,
-                right,
-                id: _,
-            } => {
-                self.parent_precedence = this_precedence;
-                self.parent_associativity = this_associativity;
-                self.current_side = OperandSide::Left;
-                self.visit_expression(&mut *left);
-
-                self.parent_precedence = this_precedence;
-                self.parent_associativity = this_associativity;
-                self.current_side = OperandSide::Right;
-                self.visit_expression(&mut *right);
+            Expression::FunctionCall(function_call_expression) => {
+                self.partial_visit_function_call_expression(function_call_expression)
             }
-            Expression::VariableAssignment {
-                name: _,
-                name_token: _,
-                equal_token: _,
-                right,
-                id: _,
-            } => {
-                self.parent_precedence = this_precedence;
-                self.parent_associativity = this_associativity;
-                self.current_side = OperandSide::Right;
-                self.visit_expression(&mut *right);
+            Expression::VariableAccess(variable_access_expression) => {
+                self.partial_visit_variable_access_expression(variable_access_expression)
+            }
+            Expression::Unary(unary_expression) => {
+                self.partial_visit_unary_expression(unary_expression)
+            }
+            Expression::Binary(binary_expression) => {
+                self.partial_visit_binary_expression(binary_expression)
+            }
+            Expression::VariableAssignment(variable_assignment_expression) => {
+                self.partial_visit_variable_assignment_expression(variable_assignment_expression)
             }
         }
     }

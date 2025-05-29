@@ -1,8 +1,10 @@
 use crate::{
     ast::{
-        BinaryOperation, BlockStatement, Executor, ExecutorHost, Expression, ExpressionStatement,
-        FunctionDefinition, IfStatement, NodeID, OnStatement, Program, ReturnStatement,
-        SelfExecutorHost, Statement, ThreadExecutor, Type, VariableDefinitionStatement,
+        BinaryExpression, BinaryOperation, BlockStatement, Executor, ExecutorHost, Expression,
+        ExpressionStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression,
+        IfStatement, NodeID, NumberExpression, OnStatement, Program, ReturnStatement,
+        SelfExecutorHost, Statement, ThreadExecutor, Type, UnaryExpression,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
     },
     infra::{ErrorSeverity, FleetError},
     tokenizer::{Keyword, Token, TokenType},
@@ -296,11 +298,11 @@ impl<'errors> Parser<'errors> {
     fn parse_primary_expression(&mut self) -> Result<Expression> {
         match self.current_token_type() {
             Some(TokenType::Number(value)) => {
-                return Ok(Expression::Number {
+                return Ok(Expression::Number(NumberExpression {
                     value,
                     token: expect!(self, TokenType::Number(_))?,
                     id: self.next_id(),
-                });
+                }));
             }
 
             Some(TokenType::Identifier(name)) => {
@@ -313,55 +315,55 @@ impl<'errors> Parser<'errors> {
                             arguments.push(self.parse_expression()?);
                         }
                         let close_paren_token = expect!(self, TokenType::CloseParen)?;
-                        return Ok(Expression::FunctionCall {
+                        return Ok(Expression::FunctionCall(FunctionCallExpression {
                             name,
                             name_token,
                             arguments,
                             open_paren_token,
                             close_paren_token,
                             id: self.next_id(),
-                        });
+                        }));
                     }
                     _ => {
-                        return Ok(Expression::VariableAccess {
+                        return Ok(Expression::VariableAccess(VariableAccessExpression {
                             name,
                             name_token,
                             id: self.next_id(),
-                        });
+                        }));
                     }
                 }
             }
             Some(TokenType::OpenParen) => {
-                return Ok(Expression::Grouping {
+                return Ok(Expression::Grouping(GroupingExpression {
                     open_paren_token: expect!(self, TokenType::OpenParen)?,
                     subexpression: Box::new(self.parse_expression()?),
                     close_paren_token: expect!(self, TokenType::CloseParen)?,
                     id: self.next_id(),
-                });
+                }));
             }
             _ => unable_to_parse!(self, "primary expression"),
         }
     }
     fn parse_unary_expression(&mut self) -> Result<Expression> {
         match self.current_token_type() {
-            Some(TokenType::Tilde) => Ok(Expression::Unary {
+            Some(TokenType::Tilde) => Ok(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::Tilde)?,
                 operation: crate::ast::UnaryOperation::BitwiseNot,
                 operand: Box::new(self.parse_unary_expression()?),
                 id: self.next_id(),
-            }),
-            Some(TokenType::Minus) => Ok(Expression::Unary {
+            })),
+            Some(TokenType::Minus) => Ok(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::Minus)?,
                 operation: crate::ast::UnaryOperation::Negate,
                 operand: Box::new(self.parse_unary_expression()?),
                 id: self.next_id(),
-            }),
-            Some(TokenType::ExclamationMark) => Ok(Expression::Unary {
+            })),
+            Some(TokenType::ExclamationMark) => Ok(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::ExclamationMark)?,
                 operation: crate::ast::UnaryOperation::LogicalNot,
                 operand: Box::new(self.parse_unary_expression()?),
                 id: self.next_id(),
-            }),
+            })),
 
             Some(_) => return self.parse_primary_expression(),
             None => unable_to_parse!(self, "unary expression"),
@@ -374,37 +376,37 @@ impl<'errors> Parser<'errors> {
             Some(TokenType::Star) => {
                 let operator_token = expect!(self, TokenType::Star)?;
                 let right = self.parse_unary_expression()?;
-                left = Expression::Binary {
+                left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
                     operation: BinaryOperation::Multiply,
                     right: Box::new(right),
                     id: self.next_id(),
-                };
+                });
                 true
             }
             Some(TokenType::Slash) => {
                 let operator_token = expect!(self, TokenType::Slash)?;
                 let right = self.parse_unary_expression()?;
-                left = Expression::Binary {
+                left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
                     operation: BinaryOperation::Divide,
                     right: Box::new(right),
                     id: self.next_id(),
-                };
+                });
                 true
             }
             Some(TokenType::Percent) => {
                 let operator_token = expect!(self, TokenType::Percent)?;
                 let right = self.parse_unary_expression()?;
-                left = Expression::Binary {
+                left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
                     operation: BinaryOperation::Modulo,
                     right: Box::new(right),
                     id: self.next_id(),
-                };
+                });
                 true
             }
             _ => false,
@@ -419,25 +421,25 @@ impl<'errors> Parser<'errors> {
             Some(TokenType::Plus) => {
                 let operator_token = expect!(self, TokenType::Plus)?;
                 let right = self.parse_product_expression()?;
-                left = Expression::Binary {
+                left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
                     operation: BinaryOperation::Add,
                     right: Box::new(right),
                     id: self.next_id(),
-                };
+                });
                 true
             }
             Some(TokenType::Minus) => {
                 let operator_token = expect!(self, TokenType::Minus)?;
                 let right = self.parse_product_expression()?;
-                left = Expression::Binary {
+                left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
                     operation: BinaryOperation::Subtract,
                     right: Box::new(right),
                     id: self.next_id(),
-                };
+                });
                 true
             }
             _ => false,
@@ -452,49 +454,49 @@ impl<'errors> Parser<'errors> {
             Some(TokenType::LessThan) => {
                 let operator_token = expect!(self, TokenType::LessThan)?;
                 let right = self.parse_sum_expression()?;
-                left = Expression::Binary {
+                left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
                     operation: BinaryOperation::LessThan,
                     right: Box::new(right),
                     id: self.next_id(),
-                };
+                });
                 true
             }
             Some(TokenType::LessThanEqual) => {
                 let operator_token = expect!(self, TokenType::LessThanEqual)?;
                 let right = self.parse_sum_expression()?;
-                left = Expression::Binary {
+                left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
                     operation: BinaryOperation::LessThanOrEqual,
                     right: Box::new(right),
                     id: self.next_id(),
-                };
+                });
                 true
             }
             Some(TokenType::GreaterThan) => {
                 let operator_token = expect!(self, TokenType::GreaterThan)?;
                 let right = self.parse_sum_expression()?;
-                left = Expression::Binary {
+                left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
                     operation: BinaryOperation::GreaterThan,
                     right: Box::new(right),
                     id: self.next_id(),
-                };
+                });
                 true
             }
             Some(TokenType::GreaterThanEqual) => {
                 let operator_token = expect!(self, TokenType::GreaterThanEqual)?;
                 let right = self.parse_sum_expression()?;
-                left = Expression::Binary {
+                left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
                     operation: BinaryOperation::GreaterThanOrEqual,
                     right: Box::new(right),
                     id: self.next_id(),
-                };
+                });
                 true
             }
             _ => false,
@@ -509,25 +511,25 @@ impl<'errors> Parser<'errors> {
             Some(TokenType::DoubleEqual) => {
                 let operator_token = expect!(self, TokenType::DoubleEqual)?;
                 let right = self.parse_comparison_expression()?;
-                left = Expression::Binary {
+                left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
                     operation: BinaryOperation::Equal,
                     right: Box::new(right),
                     id: self.next_id(),
-                };
+                });
                 true
             }
             Some(TokenType::NotEqual) => {
                 let operator_token = expect!(self, TokenType::NotEqual)?;
                 let right = self.parse_comparison_expression()?;
-                left = Expression::Binary {
+                left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
                     operation: BinaryOperation::NotEqual,
                     right: Box::new(right),
                     id: self.next_id(),
-                };
+                });
                 true
             }
             _ => false,
@@ -542,13 +544,13 @@ impl<'errors> Parser<'errors> {
             Some(TokenType::DoubleAmpersand) => {
                 let operator_token = expect!(self, TokenType::DoubleAmpersand)?;
                 let right = self.parse_equality_expression()?;
-                left = Expression::Binary {
+                left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
                     operation: BinaryOperation::LogicalAnd,
                     right: Box::new(right),
                     id: self.next_id(),
-                };
+                });
                 true
             }
             _ => false,
@@ -563,13 +565,13 @@ impl<'errors> Parser<'errors> {
             Some(TokenType::DoublePipe) => {
                 let operator_token = expect!(self, TokenType::DoublePipe)?;
                 let right = self.parse_logical_and_expression()?;
-                left = Expression::Binary {
+                left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
                     operation: BinaryOperation::LogicalOr,
                     right: Box::new(right),
                     id: self.next_id(),
-                };
+                });
                 true
             }
             _ => false,
@@ -581,21 +583,23 @@ impl<'errors> Parser<'errors> {
         let left = self.parse_logical_or_expression()?;
 
         match left {
-            Expression::VariableAccess {
+            Expression::VariableAccess(VariableAccessExpression {
                 name,
                 name_token,
                 id: _,
-            } if matches!(self.current_token_type(), Some(TokenType::EqualSign)) => {
+            }) if matches!(self.current_token_type(), Some(TokenType::EqualSign)) => {
                 let equal_token = expect!(self, TokenType::EqualSign)?;
                 let value = self.parse_assignment_expression()?;
 
-                return Ok(Expression::VariableAssignment {
-                    name,
-                    name_token,
-                    equal_token,
-                    right: Box::new(value),
-                    id: self.next_id(),
-                });
+                return Ok(Expression::VariableAssignment(
+                    VariableAssignmentExpression {
+                        name,
+                        name_token,
+                        equal_token,
+                        right: Box::new(value),
+                        id: self.next_id(),
+                    },
+                ));
             }
             _ => {
                 return Ok(left);

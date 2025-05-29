@@ -4,9 +4,11 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::LazyLock;
 
 use fleet::ast::{
-    AstNode, AstVisitor, BinaryOperation, BlockStatement, Expression, ExpressionStatement,
-    FunctionDefinition, IfStatement, OnStatement, ReturnStatement, SelfExecutorHost,
-    ThreadExecutor, Type, UnaryOperation, VariableDefinitionStatement,
+    AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, ExpressionStatement,
+    FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement, NumberExpression,
+    OnStatement, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type, UnaryExpression,
+    UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
+    VariableDefinitionStatement,
 };
 use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
 use fleet::passes::find_containing_node::FindContainingNodePass;
@@ -163,7 +165,7 @@ impl Backend {
                 ),
                 "thread executor".to_string(),
             ),
-            AstNode::Expression(Expression::Unary {
+            AstNode::UnaryExpression(UnaryExpression {
                 operator_token: _,
                 operation,
                 operand: _,
@@ -181,12 +183,12 @@ impl Backend {
                 )
             }
             // TODO: once we have type inference, display type here
-            AstNode::Expression(Expression::Number {
+            AstNode::NumberExpression(NumberExpression {
                 value,
                 token: _,
                 id: _,
             }) => (value.to_string(), "number literal".to_string()),
-            AstNode::Expression(Expression::Binary {
+            AstNode::BinaryExpression(BinaryExpression {
                 left: _,
                 operator_token: _,
                 operation,
@@ -214,7 +216,7 @@ impl Backend {
                     "binary expression".to_string(),
                 )
             }
-            AstNode::Expression(Expression::Grouping {
+            AstNode::GroupingExpression(GroupingExpression {
                 open_paren_token: _,
                 subexpression,
                 close_paren_token: _,
@@ -224,7 +226,7 @@ impl Backend {
                 "expression grouping".to_string(),
             ),
 
-            AstNode::Expression(Expression::FunctionCall {
+            AstNode::FunctionCallExpression(FunctionCallExpression {
                 name,
                 name_token: _,
                 open_paren_token: _,
@@ -238,7 +240,7 @@ impl Backend {
                     "function call".to_string(),
                 )
             }
-            AstNode::Expression(Expression::VariableAccess {
+            AstNode::VariableAccessExpression(VariableAccessExpression {
                 name,
                 name_token: _,
                 id: _,
@@ -250,7 +252,7 @@ impl Backend {
                     "variable access".to_string(),
                 )
             }
-            AstNode::Expression(Expression::VariableAssignment {
+            AstNode::VariableAssignmentExpression(VariableAssignmentExpression {
                 name,
                 name_token: _,
                 equal_token: _,
@@ -355,10 +357,15 @@ impl ExtractSemanticTokensPass {
 }
 
 impl AstVisitor for ExtractSemanticTokensPass {
-    type SubOutput = ();
-    type Output = Vec<SemanticToken>;
+    type ProgramOutput = Vec<SemanticToken>;
+    type FunctionDefinitionOutput = ();
+    type StatementOutput = ();
+    type ExecutorHostOutput = ();
+    type ExecutorOutput = ();
+    type ExpressionOutput = ();
+    type TypeOutput = ();
 
-    fn visit_program(mut self, program: &mut fleet::ast::Program) -> Self::Output {
+    fn visit_program(mut self, program: &mut fleet::ast::Program) -> Self::ProgramOutput {
         for f in &mut program.functions {
             self.visit_function_definition(f);
         }
@@ -400,12 +407,12 @@ impl AstVisitor for ExtractSemanticTokensPass {
     fn visit_expression_statement(
         &mut self,
         expr_stmt: &mut ExpressionStatement,
-    ) -> Self::SubOutput {
+    ) -> Self::StatementOutput {
         self.visit_expression(&mut expr_stmt.expression);
         self.build_comment_tokens_only(&mut expr_stmt.semicolon_token);
     }
 
-    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::SubOutput {
+    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
         self.build_semantic_token(&mut on_stmt.on_token, SemanticTokenType::KEYWORD, vec![]);
         self.build_comment_tokens_only(&mut on_stmt.open_paren_token);
         self.visit_executor(&mut on_stmt.executor);
@@ -413,7 +420,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
         self.visit_statement(&mut on_stmt.body);
     }
 
-    fn visit_block_statement(&mut self, block: &mut BlockStatement) -> Self::SubOutput {
+    fn visit_block_statement(&mut self, block: &mut BlockStatement) -> Self::StatementOutput {
         self.build_comment_tokens_only(&mut block.open_brace_token);
         for stmt in &mut block.body {
             self.visit_statement(stmt);
@@ -421,7 +428,10 @@ impl AstVisitor for ExtractSemanticTokensPass {
         self.build_comment_tokens_only(&mut block.close_brace_token);
     }
 
-    fn visit_return_statement(&mut self, return_stmt: &mut ReturnStatement) -> Self::SubOutput {
+    fn visit_return_statement(
+        &mut self,
+        return_stmt: &mut ReturnStatement,
+    ) -> Self::StatementOutput {
         self.build_semantic_token(
             &mut return_stmt.return_token,
             SemanticTokenType::KEYWORD,
@@ -434,7 +444,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
     fn visit_variable_definition_statement(
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
-    ) -> Self::SubOutput {
+    ) -> Self::StatementOutput {
         self.build_semantic_token(
             &mut vardef_stmt.let_token,
             SemanticTokenType::KEYWORD,
@@ -452,7 +462,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
         self.build_comment_tokens_only(&mut vardef_stmt.semicolon_token);
     }
 
-    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::SubOutput {
+    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::StatementOutput {
         self.build_semantic_token(&mut if_stmt.if_token, SemanticTokenType::KEYWORD, vec![]);
         self.visit_expression(&mut if_stmt.condition);
         self.visit_statement(&mut if_stmt.if_body);
@@ -484,83 +494,106 @@ impl AstVisitor for ExtractSemanticTokensPass {
         self.build_comment_tokens_only(&mut executor.close_bracket_token);
     }
 
-    fn visit_expression(&mut self, expression: &mut Expression) {
-        match expression {
-            Expression::Number {
-                value: _,
-                token,
-                id: _,
-            } => {
-                self.build_semantic_token(token, SemanticTokenType::NUMBER, vec![]);
-            }
-            Expression::FunctionCall {
-                name: _,
-                name_token,
-                open_paren_token,
-                arguments,
-                close_paren_token,
-                id: _,
-            } => {
-                self.build_semantic_token(name_token, SemanticTokenType::FUNCTION, vec![]);
-                self.build_comment_tokens_only(open_paren_token);
-                for arg in arguments {
-                    self.visit_expression(arg);
-                }
-                self.build_comment_tokens_only(close_paren_token);
-            }
-            Expression::Grouping {
-                open_paren_token,
-                subexpression,
-                close_paren_token,
-                id: _,
-            } => {
-                self.build_comment_tokens_only(open_paren_token);
-                self.visit_expression(subexpression);
-                self.build_comment_tokens_only(close_paren_token);
-            }
-            Expression::VariableAccess {
-                name: _,
-                name_token,
-                id: _,
-            } => {
-                self.build_semantic_token(name_token, SemanticTokenType::VARIABLE, vec![]);
-            }
-            Expression::Unary {
-                operator_token,
-                operation: _,
-                operand,
-                id: _,
-            } => {
-                self.build_comment_tokens_only(operator_token);
-                self.visit_expression(operand);
-            }
-            Expression::Binary {
-                left,
-                operator_token,
-                operation: _,
-                right,
-                id: _,
-            } => {
-                self.visit_expression(left);
-                self.build_comment_tokens_only(operator_token);
-                self.visit_expression(right);
-            }
-            Expression::VariableAssignment {
-                name: _,
-                name_token,
-                equal_token,
-                right,
-                id: _,
-            } => {
-                self.build_semantic_token(
-                    name_token,
-                    SemanticTokenType::VARIABLE,
-                    vec![SemanticTokenModifier::MODIFICATION],
-                );
-                self.build_comment_tokens_only(equal_token);
-                self.visit_expression(right);
-            }
+    fn visit_number_expression(
+        &mut self,
+        NumberExpression {
+            value: _,
+            token,
+            id: _,
+        }: &mut NumberExpression,
+    ) -> Self::ExpressionOutput {
+        self.build_semantic_token(token, SemanticTokenType::NUMBER, vec![]);
+    }
+
+    fn visit_function_call_expression(
+        &mut self,
+        FunctionCallExpression {
+            name: _,
+            name_token,
+            open_paren_token,
+            arguments,
+            close_paren_token,
+            id: _,
+        }: &mut FunctionCallExpression,
+    ) -> Self::ExpressionOutput {
+        self.build_semantic_token(name_token, SemanticTokenType::FUNCTION, vec![]);
+        self.build_comment_tokens_only(open_paren_token);
+        for arg in arguments {
+            self.visit_expression(arg);
         }
+        self.build_comment_tokens_only(close_paren_token);
+    }
+
+    fn visit_grouping_expression(
+        &mut self,
+        GroupingExpression {
+            open_paren_token,
+            subexpression,
+            close_paren_token,
+            id: _,
+        }: &mut GroupingExpression,
+    ) -> Self::ExpressionOutput {
+        self.build_comment_tokens_only(open_paren_token);
+        self.visit_expression(subexpression);
+        self.build_comment_tokens_only(close_paren_token);
+    }
+
+    fn visit_variable_access_expression(
+        &mut self,
+        VariableAccessExpression {
+            name: _,
+            name_token,
+            id: _,
+        }: &mut VariableAccessExpression,
+    ) -> Self::ExpressionOutput {
+        self.build_semantic_token(name_token, SemanticTokenType::VARIABLE, vec![]);
+    }
+
+    fn visit_unary_expression(
+        &mut self,
+        UnaryExpression {
+            operator_token,
+            operation: _,
+            operand,
+            id: _,
+        }: &mut UnaryExpression,
+    ) -> Self::ExpressionOutput {
+        self.build_comment_tokens_only(operator_token);
+        self.visit_expression(operand);
+    }
+
+    fn visit_binary_expression(
+        &mut self,
+        BinaryExpression {
+            left,
+            operator_token,
+            operation: _,
+            right,
+            id: _,
+        }: &mut BinaryExpression,
+    ) -> Self::ExpressionOutput {
+        self.visit_expression(left);
+        self.build_comment_tokens_only(operator_token);
+        self.visit_expression(right);
+    }
+
+    fn visit_variable_assignment_expression(
+        &mut self,
+        VariableAssignmentExpression {
+            name: _,
+            name_token,
+            equal_token,
+            right,
+            id: _,
+        }: &mut VariableAssignmentExpression,
+    ) -> Self::ExpressionOutput {
+        self.build_semantic_token(
+            name_token,
+            SemanticTokenType::VARIABLE,
+            vec![SemanticTokenModifier::MODIFICATION],
+        );
+        self.build_comment_tokens_only(equal_token);
+        self.visit_expression(right);
     }
 
     fn visit_type(&mut self, type_: &mut Type) {
