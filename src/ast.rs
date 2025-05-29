@@ -26,7 +26,7 @@ pub enum AstNode {
     BinaryExpression(BinaryExpression),
     VariableAssignmentExpression(VariableAssignmentExpression),
 
-    Type(Type),
+    I32Type(I32Type),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -43,7 +43,6 @@ impl HasID for AstNode {
             AstNode::FunctionDefinition(function_definition) => function_definition.get_id(),
             AstNode::SelfExecutorHost(executor_host) => executor_host.get_id(),
             AstNode::ThreadExecutor(executor) => executor.get_id(),
-            AstNode::Type(type_) => type_.get_id(),
 
             AstNode::ExpressionStatement(expression_statement) => expression_statement.get_id(),
             AstNode::OnStatement(on_statement) => on_statement.get_id(),
@@ -65,6 +64,8 @@ impl HasID for AstNode {
             AstNode::VariableAssignmentExpression(variable_assignment_expression) => {
                 variable_assignment_expression.get_id()
             }
+
+            AstNode::I32Type(i32_type) => i32_type.get_id(),
         }
     }
 }
@@ -218,7 +219,13 @@ pub trait AstVisitor {
     ) -> Self::ExpressionOutput;
 
     // types
-    fn visit_type(&mut self, type_: &mut Type) -> Self::TypeOutput;
+    fn visit_type(&mut self, type_: &mut Type) -> Self::TypeOutput {
+        match type_ {
+            Type::I32(i32_type) => self.visit_i32_type(i32_type),
+        }
+    }
+
+    fn visit_i32_type(&mut self, i32_type: &mut I32Type) -> Self::TypeOutput;
 }
 
 #[derive(Clone, Debug)]
@@ -246,30 +253,30 @@ pub struct FunctionDefinition {
 generate_ast_requirements!(FunctionDefinition, unwrap_function_definition);
 
 #[derive(Clone, Debug)]
-pub enum Type {
-    I32 { token: Token, id: NodeID },
+pub struct I32Type {
+    pub token: Token,
+    pub id: NodeID,
 }
-//generate_ast_requirements!(Type, unwrap_type);
-impl AstNode {
-    pub fn unwrap_type(self) -> Type {
-        if let AstNode::Type(contents) = self {
-            contents
-        } else {
-            panic!("Expected AstNode::{}, found {:#?}", stringify!(Type), self)
-        }
-    }
+
+generate_ast_requirements!(I32Type, unwrap_i32_type);
+
+#[derive(Clone, Debug)]
+pub enum Type {
+    I32(I32Type),
 }
 
 impl From<Type> for AstNode {
     fn from(value: Type) -> Self {
-        Self::Type(value)
+        match value {
+            Type::I32(i32_type) => i32_type.into(),
+        }
     }
 }
 
 impl HasID for Type {
     fn get_id(&self) -> NodeID {
         match self {
-            Type::I32 { token: _, id } => *id,
+            Type::I32(i32_type) => i32_type.get_id(),
         }
     }
 }

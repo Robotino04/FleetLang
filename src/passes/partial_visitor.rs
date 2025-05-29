@@ -1,8 +1,8 @@
 use crate::ast::{
     AstVisitor, BinaryExpression, BlockStatement, Executor, ExecutorHost, Expression,
-    FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement, NumberExpression,
-    OnStatement, Program, ReturnStatement, SelfExecutorHost, Statement, ThreadExecutor, Type,
-    UnaryExpression, VariableAccessExpression, VariableAssignmentExpression,
+    FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
+    NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, Statement,
+    ThreadExecutor, Type, UnaryExpression, VariableAccessExpression, VariableAssignmentExpression,
     VariableDefinitionStatement,
 };
 
@@ -179,9 +179,10 @@ pub trait PartialAstVisitor {
 
     fn partial_visit_type(&mut self, type_: &mut Type) {
         match type_ {
-            Type::I32 { .. } => {}
+            Type::I32(i32_type) => self.partial_visit_i32_type(i32_type),
         }
     }
+    fn partial_visit_i32_type(&mut self, _i32_type: &mut I32Type) {}
 }
 
 impl<T> AstVisitor for T
@@ -304,7 +305,12 @@ where
         self.partial_visit_variable_assignment_expression(expression);
     }
 
+    // types
     fn visit_type(&mut self, type_: &mut Type) -> Self::TypeOutput {
         self.partial_visit_type(type_);
+    }
+
+    fn visit_i32_type(&mut self, i32_type: &mut I32Type) -> Self::TypeOutput {
+        self.partial_visit_i32_type(i32_type);
     }
 }

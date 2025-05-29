@@ -1,9 +1,9 @@
 use crate::{
     ast::{
         AstNode, AstVisitor, BinaryExpression, BlockStatement, ExpressionStatement,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
         NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor,
-        Type, UnaryExpression, VariableAccessExpression, VariableAssignmentExpression,
+        UnaryExpression, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement,
     },
     tokenizer::{SourceLocation, Token},
@@ -301,14 +301,10 @@ impl AstVisitor for FindContainingNodePass {
         return Ok(());
     }
 
-    fn visit_type(&mut self, type_: &mut Type) -> Self::TypeOutput {
+    fn visit_i32_type(&mut self, type_: &mut I32Type) -> Self::TypeOutput {
         self.node_hierarchy.push(type_.clone().into());
 
-        match type_ {
-            Type::I32 { token, id: _ } => {
-                self.visit_token(token)?;
-            }
-        }
+        self.visit_token(&type_.token)?;
 
         self.node_hierarchy.pop();
 

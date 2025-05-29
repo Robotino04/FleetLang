@@ -1,8 +1,8 @@
 use crate::ast::{
     AstNode, BinaryExpression, BinaryOperation, BlockStatement, ExpressionStatement,
-    FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement, NumberExpression,
-    OnStatement, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type, UnaryExpression,
-    UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
+    FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
+    NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, ThreadExecutor,
+    UnaryExpression, UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
     VariableDefinitionStatement,
 };
 
@@ -45,7 +45,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
                 + " "
                 + generate_c(function.body).as_str();
         }
-        AstNode::Type(Type::I32 { token: _, id: _ }) => "int32_t".to_string(),
+        AstNode::I32Type(I32Type { token: _, id: _ }) => "int32_t".to_string(),
         AstNode::ExpressionStatement(ExpressionStatement {
             expression,
             semicolon_token: _,

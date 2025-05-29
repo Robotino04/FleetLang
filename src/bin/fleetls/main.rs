@@ -5,9 +5,9 @@ use std::sync::LazyLock;
 
 use fleet::ast::{
     AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, ExpressionStatement,
-    FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement, NumberExpression,
-    OnStatement, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type, UnaryExpression,
-    UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
+    FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
+    NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, ThreadExecutor,
+    UnaryExpression, UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
     VariableDefinitionStatement,
 };
 use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
@@ -265,7 +265,7 @@ impl Backend {
                     "variable assignment".to_string(),
                 )
             }
-            AstNode::Type(Type::I32 { token: _, id: _ }) => (format!("i32"), "type".to_string()),
+            AstNode::I32Type(I32Type { token: _, id: _ }) => (format!("i32"), "type".to_string()),
         }
     }
 }
@@ -596,12 +596,8 @@ impl AstVisitor for ExtractSemanticTokensPass {
         self.visit_expression(right);
     }
 
-    fn visit_type(&mut self, type_: &mut Type) {
-        match type_ {
-            Type::I32 { token, id: _ } => {
-                self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
-            }
-        }
+    fn visit_i32_type(&mut self, I32Type { token, id: _ }: &mut I32Type) {
+        self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
     }
 }
 

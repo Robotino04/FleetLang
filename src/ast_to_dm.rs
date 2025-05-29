@@ -1,8 +1,8 @@
 use crate::{
     ast::{
         AstVisitor, BinaryExpression, BlockStatement, ExpressionStatement, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, IfStatement, NumberExpression, OnStatement,
-        Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type, UnaryExpression,
+        FunctionDefinition, GroupingExpression, I32Type, IfStatement, NumberExpression,
+        OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, UnaryExpression,
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
     },
     document_model::DocumentElement,
@@ -548,9 +548,7 @@ impl AstVisitor for AstToDocumentModelConverter {
         )
     }
 
-    fn visit_type(&mut self, type_: &mut Type) -> Self::TypeOutput {
-        match type_ {
-            Type::I32 { token, id: _ } => self.token_to_element(token),
-        }
+    fn visit_i32_type(&mut self, type_: &mut I32Type) -> Self::TypeOutput {
+        self.token_to_element(&type_.token)
     }
 }

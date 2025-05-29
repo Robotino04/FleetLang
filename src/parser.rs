@@ -2,7 +2,7 @@ use crate::{
     ast::{
         BinaryExpression, BinaryOperation, BlockStatement, Executor, ExecutorHost, Expression,
         ExpressionStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression,
-        IfStatement, NodeID, NumberExpression, OnStatement, Program, ReturnStatement,
+        I32Type, IfStatement, NodeID, NumberExpression, OnStatement, Program, ReturnStatement,
         SelfExecutorHost, Statement, ThreadExecutor, Type, UnaryExpression,
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
     },
@@ -659,10 +659,10 @@ impl<'errors> Parser<'errors> {
 
     pub fn parse_type(&mut self) -> Result<Type> {
         match self.current_token_type() {
-            Some(TokenType::Keyword(Keyword::I32)) => Ok(Type::I32 {
+            Some(TokenType::Keyword(Keyword::I32)) => Ok(Type::I32(I32Type {
                 token: expect!(self, TokenType::Keyword(Keyword::I32))?,
                 id: self.next_id(),
-            }),
+            })),
             _ => unable_to_parse!(self, "type"),
         }
     }

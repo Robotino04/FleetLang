@@ -14,9 +14,9 @@ use inkwell::{
 use crate::{
     ast::{
         AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, ExpressionStatement,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
         NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
-        ThreadExecutor, Type, UnaryExpression, UnaryOperation, VariableAccessExpression,
+        ThreadExecutor, UnaryExpression, UnaryOperation, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement,
     },
     escape::unescape,
@@ -906,9 +906,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         }
     }
 
-    fn visit_type(&mut self, type_: &mut Type) -> Self::TypeOutput {
-        match type_ {
-            Type::I32 { token: _, id: _ } => Ok(self.context.i32_type().into()),
-        }
+    fn visit_i32_type(&mut self, _type: &mut I32Type) -> Self::TypeOutput {
+        Ok(self.context.i32_type().into())
     }
 }

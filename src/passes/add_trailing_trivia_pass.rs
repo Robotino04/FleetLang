@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        AstVisitor, BlockStatement, ExpressionStatement, FunctionDefinition, IfStatement,
-        OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type,
+        AstVisitor, BlockStatement, ExpressionStatement, FunctionDefinition, I32Type, IfStatement,
+        OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor,
         VariableDefinitionStatement,
     },
     tokenizer::{Token, Trivia},
@@ -144,11 +144,7 @@ impl AstVisitor for AddTrailingTriviaPass {
         self.visit_expression(&mut expression.right);
     }
 
-    fn visit_type(&mut self, type_: &mut Type) {
-        match type_ {
-            Type::I32 { token, id: _ } => {
-                self.add_trailing_trivia_to_token(token);
-            }
-        }
+    fn visit_i32_type(&mut self, i32_type: &mut I32Type) {
+        self.add_trailing_trivia_to_token(&mut i32_type.token);
     }
 }

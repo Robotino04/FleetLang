@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        AstVisitor, BlockStatement, ExpressionStatement, FunctionDefinition, IfStatement,
-        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, Type,
+        AstVisitor, BlockStatement, ExpressionStatement, FunctionDefinition, I32Type, IfStatement,
+        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor,
         VariableDefinitionStatement,
     },
     infra::{ErrorSeverity, FleetError},
@@ -267,13 +267,9 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         return term;
     }
 
-    fn visit_type(&mut self, type_: &mut Type) -> Self::TypeOutput {
-        match type_ {
-            Type::I32 { .. } => {
-                self.termination
-                    .insert(type_, FunctionTermination::DoesntTerminate);
-                return FunctionTermination::DoesntTerminate;
-            }
-        }
+    fn visit_i32_type(&mut self, type_: &mut I32Type) -> Self::TypeOutput {
+        self.termination
+            .insert(type_, FunctionTermination::DoesntTerminate);
+        return FunctionTermination::DoesntTerminate;
     }
 }
