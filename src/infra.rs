@@ -5,9 +5,10 @@ use crate::{
     ast_to_dm::AstToDocumentModelConverter,
     document_model::{fully_flatten_document, stringify_document},
     ir_generator::IrGenerator,
-    parser::Parser,
+    parser::{IdGenerator, Parser},
     passes::{
         find_node_bonds::find_node_bounds,
+        fix_non_block_statements::FixNonBlockStatements,
         function_termination_analysis::{FunctionTermination, FunctionTerminationAnalyzer},
         remove_parens::RemoveParensPass,
     },
@@ -18,6 +19,7 @@ use crate::{
 pub enum ErrorSeverity {
     Error,
     Warning,
+    Note,
 }
 
 #[derive(Clone, Debug)]
@@ -56,6 +58,7 @@ pub fn print_error_message(source: &String, error: &FleetError) {
     let ansi_color = match error.severity {
         ErrorSeverity::Error => "31",
         ErrorSeverity::Warning => "33",
+        ErrorSeverity::Note => "34",
     };
 
     let num_before_error_lines = 3;
@@ -130,22 +133,40 @@ pub enum CompileStatus<'a> {
     },
     TokenizerOrParserErrors {
         tokens: Vec<Token>,
-        partial_program: Program,
+        partial_parsed_program: Program,
+        id_generator: IdGenerator,
+    },
+    AnalysisErrors {
+        tokens: Vec<Token>,
+        parsed_program: Program,
+        parsed_id_generator: IdGenerator,
+        program: Program,
+        id_generator: IdGenerator,
+        function_terminations: PerNodeData<FunctionTermination>,
     },
     IrGeneratorFailure {
         tokens: Vec<Token>,
+        parsed_program: Program,
+        parsed_id_generator: IdGenerator,
         program: Program,
+        id_generator: IdGenerator,
         function_terminations: PerNodeData<FunctionTermination>,
     },
     IrGeneratorErrors {
         tokens: Vec<Token>,
+        parsed_program: Program,
+        parsed_id_generator: IdGenerator,
         program: Program,
+        id_generator: IdGenerator,
         function_terminations: PerNodeData<FunctionTermination>,
         partial_module: Option<Module<'a>>,
     },
     Success {
         tokens: Vec<Token>,
+        parsed_program: Program,
+        parsed_id_generator: IdGenerator,
         program: Program,
+        id_generator: IdGenerator,
         function_terminations: PerNodeData<FunctionTermination>,
         module: Module<'a>,
     },
@@ -155,109 +176,109 @@ impl<'a> CompileStatus<'a> {
     pub fn module(&self) -> Option<&Module<'a>> {
         match &self {
             CompileStatus::TokenizerFailure {} => None,
-            CompileStatus::ParserFailure { tokens: _ } => None,
-            CompileStatus::TokenizerOrParserErrors {
-                tokens: _,
-                partial_program: _,
-            } => None,
-            CompileStatus::IrGeneratorFailure {
-                tokens: _,
-                program: _,
-                function_terminations: _,
-            } => None,
-            CompileStatus::IrGeneratorErrors {
-                tokens: _,
-                program: _,
-                function_terminations: _,
-                partial_module,
-            } => partial_module.as_ref(),
-            CompileStatus::Success {
-                tokens: _,
-                program: _,
-                function_terminations: _,
-                module,
-            } => Some(module),
+            CompileStatus::ParserFailure { .. } => None,
+            CompileStatus::TokenizerOrParserErrors { .. } => None,
+            CompileStatus::AnalysisErrors { .. } => None,
+            CompileStatus::IrGeneratorFailure { .. } => None,
+            CompileStatus::IrGeneratorErrors { partial_module, .. } => partial_module.as_ref(),
+            CompileStatus::Success { module, .. } => Some(module),
         }
     }
     pub fn tokens(&self) -> Option<&Vec<Token>> {
         match &self {
             CompileStatus::TokenizerFailure {} => None,
             CompileStatus::ParserFailure { tokens } => Some(tokens),
-            CompileStatus::TokenizerOrParserErrors {
-                tokens,
-                partial_program: _,
-            } => Some(tokens),
-            CompileStatus::IrGeneratorFailure {
-                tokens,
-                program: _,
-                function_terminations: _,
-            } => Some(tokens),
-            CompileStatus::IrGeneratorErrors {
-                tokens,
-                program: _,
-                function_terminations: _,
-                partial_module: _,
-            } => Some(tokens),
-            CompileStatus::Success {
-                tokens,
-                program: _,
-                function_terminations: _,
-                module: _,
-            } => Some(tokens),
+            CompileStatus::TokenizerOrParserErrors { tokens, .. } => Some(tokens),
+            CompileStatus::AnalysisErrors { tokens, .. } => Some(tokens),
+            CompileStatus::IrGeneratorFailure { tokens, .. } => Some(tokens),
+            CompileStatus::IrGeneratorErrors { tokens, .. } => Some(tokens),
+            CompileStatus::Success { tokens, .. } => Some(tokens),
         }
     }
     pub fn program(&self) -> Option<&Program> {
         match &self {
             CompileStatus::TokenizerFailure {} => None,
+            CompileStatus::ParserFailure { .. } => None,
+            CompileStatus::TokenizerOrParserErrors {
+                partial_parsed_program,
+                ..
+            } => Some(partial_parsed_program),
+            CompileStatus::AnalysisErrors { program, .. } => Some(program),
+            CompileStatus::IrGeneratorFailure { program, .. } => Some(program),
+            CompileStatus::IrGeneratorErrors { program, .. } => Some(program),
+            CompileStatus::Success { program, .. } => Some(program),
+        }
+    }
+    // the program as it was parsed without any modifications
+    pub fn parsed_program(&self) -> Option<&Program> {
+        match &self {
+            CompileStatus::TokenizerFailure {} => None,
             CompileStatus::ParserFailure { tokens: _ } => None,
             CompileStatus::TokenizerOrParserErrors {
-                tokens: _,
-                partial_program,
-            } => Some(partial_program),
-            CompileStatus::IrGeneratorFailure {
-                tokens: _,
-                program,
-                function_terminations: _,
-            } => Some(program),
-            CompileStatus::IrGeneratorErrors {
-                tokens: _,
-                program,
-                function_terminations: _,
-                partial_module: _,
-            } => Some(program),
-            CompileStatus::Success {
-                tokens: _,
-                program,
-                function_terminations: _,
-                module: _,
-            } => Some(program),
+                partial_parsed_program,
+                ..
+            } => Some(partial_parsed_program),
+            CompileStatus::AnalysisErrors { parsed_program, .. } => Some(parsed_program),
+            CompileStatus::IrGeneratorFailure { parsed_program, .. } => Some(parsed_program),
+            CompileStatus::IrGeneratorErrors { parsed_program, .. } => Some(parsed_program),
+            CompileStatus::Success { parsed_program, .. } => Some(parsed_program),
         }
     }
     pub fn function_terminations(&self) -> Option<&PerNodeData<FunctionTermination>> {
         match &self {
             CompileStatus::TokenizerFailure {} => None,
             CompileStatus::ParserFailure { tokens: _ } => None,
-            CompileStatus::TokenizerOrParserErrors {
-                tokens: _,
-                partial_program: _,
-            } => None,
-            CompileStatus::IrGeneratorFailure {
-                tokens: _,
-                program: _,
+            CompileStatus::TokenizerOrParserErrors { .. } => None,
+            CompileStatus::AnalysisErrors {
                 function_terminations,
+                ..
+            } => Some(function_terminations),
+            CompileStatus::IrGeneratorFailure {
+                function_terminations,
+                ..
             } => Some(function_terminations),
             CompileStatus::IrGeneratorErrors {
-                tokens: _,
-                program: _,
                 function_terminations,
-                partial_module: _,
+                ..
             } => Some(function_terminations),
             CompileStatus::Success {
-                tokens: _,
-                program: _,
                 function_terminations,
-                module: _,
+                ..
             } => Some(function_terminations),
+        }
+    }
+    pub fn id_generator(&self) -> Option<&IdGenerator> {
+        match &self {
+            CompileStatus::TokenizerFailure {} => None,
+            CompileStatus::ParserFailure { .. } => None,
+            CompileStatus::TokenizerOrParserErrors { id_generator, .. } => Some(id_generator),
+            CompileStatus::AnalysisErrors { id_generator, .. } => Some(id_generator),
+            CompileStatus::IrGeneratorFailure { id_generator, .. } => Some(id_generator),
+            CompileStatus::IrGeneratorErrors { id_generator, .. } => Some(id_generator),
+            CompileStatus::Success { id_generator, .. } => Some(id_generator),
+        }
+    }
+    pub fn parsed_id_generator(&self) -> Option<&IdGenerator> {
+        match &self {
+            CompileStatus::TokenizerFailure {} => None,
+            CompileStatus::ParserFailure { .. } => None,
+            CompileStatus::TokenizerOrParserErrors { id_generator, .. } => Some(id_generator),
+            CompileStatus::AnalysisErrors {
+                parsed_id_generator,
+                ..
+            } => Some(parsed_id_generator),
+            CompileStatus::IrGeneratorFailure {
+                parsed_id_generator,
+                ..
+            } => Some(parsed_id_generator),
+            CompileStatus::IrGeneratorErrors {
+                parsed_id_generator,
+                ..
+            } => Some(parsed_id_generator),
+            CompileStatus::Success {
+                parsed_id_generator,
+                ..
+            } => Some(parsed_id_generator),
         }
     }
 }
@@ -271,24 +292,24 @@ pub struct CompileResult<'a> {
 pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
     let mut errors = vec![];
 
-    let tokens = Tokenizer::new(src.to_string(), &mut errors).tokenize();
-    if tokens.is_err() {
+    let Ok(tokens) = Tokenizer::new(src.to_string(), &mut errors).tokenize() else {
         return CompileResult {
             status: CompileStatus::TokenizerFailure {},
             errors,
         };
-    }
-    let tokens = tokens.unwrap();
+    };
 
-    let program = Parser::new(tokens.clone(), &mut errors).parse_program();
-
-    if program.is_err() {
+    let Ok((mut program, mut id_generator)) =
+        Parser::new(tokens.clone(), &mut errors).parse_program()
+    else {
         return CompileResult {
             status: CompileStatus::ParserFailure { tokens },
             errors,
         };
-    }
-    let mut program = program.unwrap();
+    };
+
+    let parsed_program = program.clone();
+    let parsed_id_generator = id_generator.clone();
 
     if errors
         .iter()
@@ -297,38 +318,62 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
         return CompileResult {
             status: CompileStatus::TokenizerOrParserErrors {
                 tokens,
-                partial_program: program,
+                partial_parsed_program: parsed_program,
+                id_generator: parsed_id_generator,
             },
             errors,
         };
     }
 
+    // Analysis
     let term_analyzer = FunctionTerminationAnalyzer::new(&mut errors);
     let function_terminations = term_analyzer.visit_program(&mut program);
 
-    let ir_generator = IrGenerator::new(&context, &mut errors, function_terminations.clone());
-    let module = ir_generator.visit_program(&mut program);
+    FixNonBlockStatements::new(&mut errors, &mut id_generator).visit_program(&mut program);
 
-    if let Err(error) = module {
-        errors.push(FleetError {
-            start: SourceLocation::start(),
-            end: SourceLocation::end(src),
-            message: match error.source() {
-                Some(source) => format!("{} ({:?})", error.to_string(), source),
-                None => error.to_string(),
-            },
-            severity: ErrorSeverity::Error,
-        });
+    if errors
+        .iter()
+        .any(|err| err.severity == ErrorSeverity::Error)
+    {
         return CompileResult {
-            status: CompileStatus::IrGeneratorFailure {
+            status: CompileStatus::AnalysisErrors {
                 tokens,
+                parsed_program,
                 program,
                 function_terminations,
+                parsed_id_generator,
+                id_generator,
             },
             errors,
         };
     }
-    let module = module.unwrap();
+
+    let ir_generator = IrGenerator::new(&context, &mut errors, function_terminations.clone());
+    let module = match ir_generator.visit_program(&mut program) {
+        Ok(module) => module,
+        Err(error) => {
+            errors.push(FleetError {
+                start: SourceLocation::start(),
+                end: SourceLocation::end(src),
+                message: match error.source() {
+                    Some(source) => format!("{} ({:?})", error.to_string(), source),
+                    None => error.to_string(),
+                },
+                severity: ErrorSeverity::Error,
+            });
+            return CompileResult {
+                status: CompileStatus::IrGeneratorFailure {
+                    tokens,
+                    parsed_program,
+                    program,
+                    function_terminations,
+                    parsed_id_generator,
+                    id_generator,
+                },
+                errors,
+            };
+        }
+    };
 
     if errors
         .iter()
@@ -337,6 +382,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
         return CompileResult {
             status: CompileStatus::IrGeneratorErrors {
                 tokens,
+                parsed_program,
                 program,
                 function_terminations,
                 partial_module: if module.verify().is_ok() {
@@ -344,6 +390,8 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
                 } else {
                     None
                 },
+                parsed_id_generator,
+                id_generator,
             },
             errors,
         };
@@ -352,16 +400,23 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
     return CompileResult {
         status: CompileStatus::Success {
             tokens,
+            parsed_program,
             program,
             function_terminations,
             module: module.clone(),
+            parsed_id_generator,
+            id_generator,
         },
         errors,
     };
 }
 
-pub fn format_program(mut program: Program) -> String {
+pub fn format_program(mut program: Program, mut id_generator: IdGenerator) -> String {
+    let mut errors = vec![];
+
     RemoveParensPass::new().visit_program(&mut program);
+    FixNonBlockStatements::new(&mut errors, &mut id_generator).visit_program(&mut program);
+
     let document = AstToDocumentModelConverter::new().visit_program(&mut program);
     let formatted_src = stringify_document(&fully_flatten_document(document));
     return formatted_src;

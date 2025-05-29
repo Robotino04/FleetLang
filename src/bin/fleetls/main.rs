@@ -674,7 +674,7 @@ impl LanguageServer for Backend {
 
         let _program = res
             .status
-            .program()
+            .parsed_program()
             .ok_or_else(|| tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
                 message: "Parsing failed completely".into(),
@@ -703,6 +703,7 @@ impl LanguageServer for Backend {
                             severity: Some(match error.severity {
                                 ErrorSeverity::Error => DiagnosticSeverity::ERROR,
                                 ErrorSeverity::Warning => DiagnosticSeverity::WARNING,
+                                ErrorSeverity::Note => DiagnosticSeverity::HINT,
                             }),
                             code: None,
                             code_description: None,
@@ -751,7 +752,7 @@ impl LanguageServer for Backend {
 
         let mut program = res
             .status
-            .program()
+            .parsed_program()
             .ok_or_else(|| tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
                 message: "Parsing failed completely".into(),
@@ -833,7 +834,7 @@ impl LanguageServer for Backend {
 
         let mut program = res
             .status
-            .program()
+            .parsed_program()
             .ok_or_else(|| tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
                 message: "Parsing failed completely".into(),
@@ -869,6 +870,7 @@ impl LanguageServer for Backend {
             CompileStatus::TokenizerFailure { .. } => true,
             CompileStatus::ParserFailure { .. } => true,
             CompileStatus::TokenizerOrParserErrors { .. } => true,
+            CompileStatus::AnalysisErrors { .. } => false,
             CompileStatus::IrGeneratorFailure { .. } => false,
             CompileStatus::IrGeneratorErrors { .. } => false,
             CompileStatus::Success { .. } => false,
@@ -882,12 +884,20 @@ impl LanguageServer for Backend {
 
         let program = res
             .status
-            .program()
+            .parsed_program()
             .ok_or_else(|| tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
                 message: "Parsing failed completely".into(),
                 data: None,
             })?;
+        let id_generator =
+            res.status
+                .parsed_id_generator()
+                .ok_or_else(|| tower_lsp::jsonrpc::Error {
+                    code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                    message: "Parsing failed completely".into(),
+                    data: None,
+                })?;
 
         return Ok(Some(vec![TextEdit {
             range: Range {
@@ -900,7 +910,7 @@ impl LanguageServer for Backend {
                     character: text.split('\n').last().unwrap().chars().count() as u32,
                 },
             },
-            new_text: format_program(program.clone()),
+            new_text: format_program(program.clone(), id_generator.clone()),
         }]));
     }
 }

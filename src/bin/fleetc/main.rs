@@ -51,19 +51,40 @@ fn main() {
         }
         CompileStatus::TokenizerOrParserErrors {
             tokens,
-            partial_program,
+            partial_parsed_program,
+            id_generator: _,
         } => {
             println!("{}", generate_header("Tokens", 50));
             println!("{:#?}", tokens);
             println!("{}", generate_header("Partial AST", 50));
-            println!("{:#?}", partial_program);
+            println!("{:#?}", partial_parsed_program);
             print_all_errors_and_message("The parser or tokenizer failed partially");
+            exit(1);
+        }
+        CompileStatus::AnalysisErrors {
+            tokens,
+            parsed_program: _,
+            parsed_id_generator: _,
+            program,
+            id_generator: _,
+            function_terminations,
+        } => {
+            println!("{}", generate_header("Tokens", 50));
+            println!("{:#?}", tokens);
+            println!("{}", generate_header("AST", 50));
+            println!("{:#?}", program);
+            println!("{}", generate_header("Function Terminations", 50));
+            println!("{:#?}", function_terminations);
+            print_all_errors_and_message("Program analysis found some errors");
             exit(1);
         }
         CompileStatus::IrGeneratorFailure {
             tokens,
+            parsed_program: _,
             program,
             function_terminations,
+            id_generator: _,
+            parsed_id_generator: _,
         } => {
             println!("{}", generate_header("Tokens", 50));
             println!("{:#?}", tokens);
@@ -76,9 +97,12 @@ fn main() {
         }
         CompileStatus::IrGeneratorErrors {
             tokens,
+            parsed_program: _,
             program,
             partial_module,
             function_terminations,
+            id_generator: _,
+            parsed_id_generator: _,
         } => {
             println!("{}", generate_header("Tokens", 50));
             println!("{:#?}", tokens);
@@ -103,9 +127,12 @@ fn main() {
         }
         CompileStatus::Success {
             tokens,
+            parsed_program: _,
             program,
             module,
             function_terminations,
+            id_generator: _,
+            parsed_id_generator: _,
         } => {
             println!("{}", generate_header("Tokens", 50));
             println!("{:#?}", tokens);
@@ -140,7 +167,13 @@ fn main() {
     */
 
     println!("{}", generate_header("Pretty-Printed", 50));
-    println!("{}", format_program(program));
+    println!(
+        "{}",
+        format_program(
+            res.status.parsed_program().unwrap().clone(),
+            res.status.parsed_id_generator().unwrap().clone()
+        )
+    );
     println!("{}", generate_header("", 50));
 
     Target::initialize_all(&inkwell::targets::InitializationConfig::default());

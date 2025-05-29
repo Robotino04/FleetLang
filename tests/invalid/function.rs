@@ -218,3 +218,18 @@ fn undefined_function() {
         },
     );
 }
+
+#[test]
+fn non_block_as_body() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32
+                return 0;
+        "##},
+        SourceLocation {
+            index: 25,
+            line: 2,
+            column: 4,
+        },
+    );
+}

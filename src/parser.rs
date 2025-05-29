@@ -17,7 +17,26 @@ pub struct Parser<'errors> {
     tokens: Vec<Token>,
     index: usize,
     errors: &'errors mut Vec<FleetError>,
+    id_generator: IdGenerator,
+}
+
+#[derive(Debug, Clone)]
+pub struct IdGenerator {
     id_counter: NodeID,
+}
+
+impl IdGenerator {
+    pub fn new() -> Self {
+        Self {
+            id_counter: NodeID(0),
+        }
+    }
+
+    pub fn next_id(&mut self) -> NodeID {
+        let current_id = self.id_counter;
+        self.id_counter.0 += 1;
+        return current_id;
+    }
 }
 
 macro_rules! expect {
@@ -121,7 +140,7 @@ impl<'errors> Parser<'errors> {
                 .collect(),
             index: 0,
             errors,
-            id_counter: NodeID(0),
+            id_generator: IdGenerator::new(),
         }
     }
 
@@ -144,13 +163,7 @@ impl<'errors> Parser<'errors> {
         return t;
     }
 
-    fn next_id(&mut self) -> NodeID {
-        let current_id = self.id_counter;
-        self.id_counter.0 += 1;
-        return current_id;
-    }
-
-    pub fn parse_program(mut self) -> Result<Program> {
+    pub fn parse_program(mut self) -> Result<(Program, IdGenerator)> {
         let mut functions = vec![];
 
         while !self.is_done() {
@@ -170,10 +183,13 @@ impl<'errors> Parser<'errors> {
             }
         }
 
-        Ok(Program {
-            functions,
-            id: self.next_id(),
-        })
+        Ok((
+            Program {
+                functions,
+                id: self.id_generator.next_id(),
+            },
+            self.id_generator,
+        ))
     }
 
     pub fn parse_statement(&mut self) -> Result<Statement> {
@@ -185,7 +201,7 @@ impl<'errors> Parser<'errors> {
                     executor: self.parse_executor()?,
                     close_paren_token: expect!(self, TokenType::CloseParen)?,
                     body: Box::new(self.parse_statement()?),
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 }));
             }
             Some(TokenType::OpenBrace) => {
@@ -217,7 +233,7 @@ impl<'errors> Parser<'errors> {
                     open_brace_token,
                     body,
                     close_brace_token,
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 }));
             }
             Some(TokenType::Keyword(Keyword::Return)) => {
@@ -225,7 +241,7 @@ impl<'errors> Parser<'errors> {
                     return_token: expect!(self, TokenType::Keyword(Keyword::Return))?,
                     value: self.parse_expression()?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 }));
             }
             Some(TokenType::Keyword(Keyword::Let)) => {
@@ -241,20 +257,13 @@ impl<'errors> Parser<'errors> {
                     equals_token: expect!(self, TokenType::EqualSign)?,
                     value: self.parse_expression()?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 }));
             }
             Some(TokenType::Keyword(Keyword::If)) => {
                 let if_token = expect!(self, TokenType::Keyword(Keyword::If))?;
                 let condition = self.parse_expression()?;
                 let if_body = self.parse_statement()?;
-                if !matches!(if_body, Statement::Block { .. }) {
-                    self.errors.push(FleetError::from_node(
-                        if_body.clone(),
-                        "If statements must always have a block as the body.",
-                        ErrorSeverity::Error,
-                    ));
-                }
 
                 let mut elifs = vec![];
 
@@ -279,14 +288,14 @@ impl<'errors> Parser<'errors> {
                     if_body: Box::new(if_body),
                     elifs,
                     else_,
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 }));
             }
             _ => {
                 return Ok(Statement::Expression(ExpressionStatement {
                     expression: self.parse_expression()?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 }));
             }
         }
@@ -301,7 +310,7 @@ impl<'errors> Parser<'errors> {
                 return Ok(Expression::Number(NumberExpression {
                     value,
                     token: expect!(self, TokenType::Number(_))?,
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 }));
             }
 
@@ -321,14 +330,14 @@ impl<'errors> Parser<'errors> {
                             arguments,
                             open_paren_token,
                             close_paren_token,
-                            id: self.next_id(),
+                            id: self.id_generator.next_id(),
                         }));
                     }
                     _ => {
                         return Ok(Expression::VariableAccess(VariableAccessExpression {
                             name,
                             name_token,
-                            id: self.next_id(),
+                            id: self.id_generator.next_id(),
                         }));
                     }
                 }
@@ -338,7 +347,7 @@ impl<'errors> Parser<'errors> {
                     open_paren_token: expect!(self, TokenType::OpenParen)?,
                     subexpression: Box::new(self.parse_expression()?),
                     close_paren_token: expect!(self, TokenType::CloseParen)?,
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 }));
             }
             _ => unable_to_parse!(self, "primary expression"),
@@ -350,19 +359,19 @@ impl<'errors> Parser<'errors> {
                 operator_token: expect!(self, TokenType::Tilde)?,
                 operation: crate::ast::UnaryOperation::BitwiseNot,
                 operand: Box::new(self.parse_unary_expression()?),
-                id: self.next_id(),
+                id: self.id_generator.next_id(),
             })),
             Some(TokenType::Minus) => Ok(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::Minus)?,
                 operation: crate::ast::UnaryOperation::Negate,
                 operand: Box::new(self.parse_unary_expression()?),
-                id: self.next_id(),
+                id: self.id_generator.next_id(),
             })),
             Some(TokenType::ExclamationMark) => Ok(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::ExclamationMark)?,
                 operation: crate::ast::UnaryOperation::LogicalNot,
                 operand: Box::new(self.parse_unary_expression()?),
-                id: self.next_id(),
+                id: self.id_generator.next_id(),
             })),
 
             Some(_) => return self.parse_primary_expression(),
@@ -381,7 +390,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::Multiply,
                     right: Box::new(right),
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 });
                 true
             }
@@ -393,7 +402,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::Divide,
                     right: Box::new(right),
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 });
                 true
             }
@@ -405,7 +414,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::Modulo,
                     right: Box::new(right),
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 });
                 true
             }
@@ -426,7 +435,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::Add,
                     right: Box::new(right),
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 });
                 true
             }
@@ -438,7 +447,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::Subtract,
                     right: Box::new(right),
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 });
                 true
             }
@@ -459,7 +468,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::LessThan,
                     right: Box::new(right),
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 });
                 true
             }
@@ -471,7 +480,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::LessThanOrEqual,
                     right: Box::new(right),
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 });
                 true
             }
@@ -483,7 +492,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::GreaterThan,
                     right: Box::new(right),
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 });
                 true
             }
@@ -495,7 +504,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::GreaterThanOrEqual,
                     right: Box::new(right),
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 });
                 true
             }
@@ -516,7 +525,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::Equal,
                     right: Box::new(right),
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 });
                 true
             }
@@ -528,7 +537,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::NotEqual,
                     right: Box::new(right),
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 });
                 true
             }
@@ -549,7 +558,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::LogicalAnd,
                     right: Box::new(right),
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 });
                 true
             }
@@ -570,7 +579,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::LogicalOr,
                     right: Box::new(right),
-                    id: self.next_id(),
+                    id: self.id_generator.next_id(),
                 });
                 true
             }
@@ -597,7 +606,7 @@ impl<'errors> Parser<'errors> {
                         name_token,
                         equal_token,
                         right: Box::new(value),
-                        id: self.next_id(),
+                        id: self.id_generator.next_id(),
                     },
                 ));
             }
@@ -611,14 +620,14 @@ impl<'errors> Parser<'errors> {
         let res = Ok(Executor::Thread(ThreadExecutor {
             host: ExecutorHost::Self_(SelfExecutorHost {
                 token: expect!(self, TokenType::Keyword(Keyword::Self_))?,
-                id: self.next_id(),
+                id: self.id_generator.next_id(),
             }),
             dot_token: expect!(self, TokenType::Dot)?,
             thread_token: expect!(self, = TokenType::Identifier("threads".to_string()))?,
             open_bracket_token: expect!(self, TokenType::OpenBracket)?,
             index: self.parse_expression()?,
             close_bracket_token: expect!(self, TokenType::CloseBracket)?,
-            id: self.next_id(),
+            id: self.id_generator.next_id(),
         }));
         return res;
     }
@@ -653,7 +662,7 @@ impl<'errors> Parser<'errors> {
             right_arrow_token,
             return_type,
             body,
-            id: self.next_id(),
+            id: self.id_generator.next_id(),
         })
     }
 
@@ -661,7 +670,7 @@ impl<'errors> Parser<'errors> {
         match self.current_token_type() {
             Some(TokenType::Keyword(Keyword::I32)) => Ok(Type::I32(I32Type {
                 token: expect!(self, TokenType::Keyword(Keyword::I32))?,
-                id: self.next_id(),
+                id: self.id_generator.next_id(),
             })),
             _ => unable_to_parse!(self, "type"),
         }

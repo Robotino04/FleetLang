@@ -23,6 +23,7 @@ pub fn assert_parser_or_tokenizer_error<'a>(src: &str, error_start: SourceLocati
             CompileStatus::TokenizerFailure {} => false,
             CompileStatus::ParserFailure { .. } => false,
             CompileStatus::TokenizerOrParserErrors { .. } => true,
+            CompileStatus::AnalysisErrors { .. } => false,
             CompileStatus::IrGeneratorFailure { .. } => false,
             CompileStatus::IrGeneratorErrors { .. } => false,
             CompileStatus::Success { .. } => false,
@@ -63,6 +64,7 @@ pub fn assert_compile_error<'a>(src: &str, error_start: SourceLocation) {
             CompileStatus::TokenizerFailure {} => false,
             CompileStatus::ParserFailure { .. } => false,
             CompileStatus::TokenizerOrParserErrors { .. } => false,
+            CompileStatus::AnalysisErrors { .. } => true,
             CompileStatus::IrGeneratorFailure { .. } => false,
             CompileStatus::IrGeneratorErrors { .. } => true,
             CompileStatus::Success { .. } => false,
@@ -81,6 +83,7 @@ pub fn assert_compile_and_warning<'a>(src: &str, warning_start: SourceLocation) 
             CompileStatus::TokenizerFailure {} => false,
             CompileStatus::ParserFailure { .. } => false,
             CompileStatus::TokenizerOrParserErrors { .. } => false,
+            CompileStatus::AnalysisErrors { .. } => false,
             CompileStatus::IrGeneratorFailure { .. } => false,
             CompileStatus::IrGeneratorErrors { .. } => false,
             CompileStatus::Success { .. } => true,
@@ -176,7 +179,10 @@ fn compile_or_panic<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
 fn format_or_panic(src: &str) -> String {
     let context = Context::create();
     let result = compile_or_panic(&context, src);
-    return format_program(result.status.program().unwrap().clone());
+    return format_program(
+        result.status.parsed_program().unwrap().clone(),
+        result.status.parsed_id_generator().unwrap().clone(),
+    );
 }
 
 fn execute_or_panic<ReturnType>(src: &str, function_name: &str) -> ReturnType {
