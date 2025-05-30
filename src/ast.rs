@@ -13,6 +13,10 @@ pub enum AstNode {
     ReturnStatement(ReturnStatement),
     VariableDefinitionStatement(VariableDefinitionStatement),
     IfStatement(IfStatement),
+    WhileLoopStatement(WhileLoopStatement),
+    ForLoopStatement(ForLoopStatement),
+    BreakStatement(BreakStatement),
+    SkipStatement(SkipStatement),
 
     SelfExecutorHost(SelfExecutorHost),
 
@@ -50,6 +54,10 @@ impl HasID for AstNode {
             AstNode::ReturnStatement(return_statement) => return_statement.get_id(),
             AstNode::VariableDefinitionStatement(vardef) => vardef.get_id(),
             AstNode::IfStatement(if_statement) => if_statement.get_id(),
+            AstNode::WhileLoopStatement(while_loop_statement) => while_loop_statement.get_id(),
+            AstNode::ForLoopStatement(for_loop_statement) => for_loop_statement.get_id(),
+            AstNode::BreakStatement(break_statement) => break_statement.get_id(),
+            AstNode::SkipStatement(skip_statement) => skip_statement.get_id(),
 
             AstNode::NumberExpression(number_expression) => number_expression.get_id(),
             AstNode::FunctionCallExpression(function_call_expression) => {
@@ -123,6 +131,14 @@ pub trait AstVisitor {
                 self.visit_variable_definition_statement(variable_definition_statement)
             }
             Statement::If(if_statement) => self.visit_if_statement(if_statement),
+            Statement::WhileLoop(while_loop_statement) => {
+                self.visit_while_loop_statement(while_loop_statement)
+            }
+            Statement::ForLoop(for_loop_statement) => {
+                self.visit_for_loop_statement(for_loop_statement)
+            }
+            Statement::Break(break_statement) => self.visit_break_statement(break_statement),
+            Statement::Skip(skip_statement) => self.visit_skip_statement(skip_statement),
         }
     }
     fn visit_expression_statement(
@@ -140,6 +156,16 @@ pub trait AstVisitor {
         vardef_stmt: &mut VariableDefinitionStatement,
     ) -> Self::StatementOutput;
     fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::StatementOutput;
+    fn visit_while_loop_statement(
+        &mut self,
+        while_stmt: &mut WhileLoopStatement,
+    ) -> Self::StatementOutput;
+    fn visit_for_loop_statement(
+        &mut self,
+        for_stmt: &mut ForLoopStatement,
+    ) -> Self::StatementOutput;
+    fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput;
+    fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput;
 
     // executor hosts
     fn visit_executor_host(
@@ -347,6 +373,45 @@ pub struct IfStatement {
 generate_ast_requirements!(IfStatement, unwrap_if_statement);
 
 #[derive(Clone, Debug)]
+pub struct WhileLoopStatement {
+    pub while_token: Token,
+    pub condition: Expression,
+    pub body: Box<Statement>,
+    pub id: NodeID,
+}
+generate_ast_requirements!(WhileLoopStatement, unwrap_while_loop_statement);
+
+#[derive(Clone, Debug)]
+pub struct ForLoopStatement {
+    pub for_token: Token,
+    pub open_paren_token: Token,
+    pub initializer: Box<Statement>,
+    pub condition: Option<Expression>,
+    pub second_semicolon_token: Token,
+    pub incrementer: Option<Expression>,
+    pub close_paren_token: Token,
+    pub body: Box<Statement>,
+    pub id: NodeID,
+}
+generate_ast_requirements!(ForLoopStatement, unwrap_for_loop_statement);
+
+#[derive(Clone, Debug)]
+pub struct BreakStatement {
+    pub break_token: Token,
+    pub semicolon_token: Token,
+    pub id: NodeID,
+}
+generate_ast_requirements!(BreakStatement, unwrap_break_statement);
+
+#[derive(Clone, Debug)]
+pub struct SkipStatement {
+    pub skip_token: Token,
+    pub semicolon_token: Token,
+    pub id: NodeID,
+}
+generate_ast_requirements!(SkipStatement, unwrap_skip_statement);
+
+#[derive(Clone, Debug)]
 pub enum Statement {
     Expression(ExpressionStatement),
     On(OnStatement),
@@ -354,6 +419,10 @@ pub enum Statement {
     Return(ReturnStatement),
     VariableDefinition(VariableDefinitionStatement),
     If(IfStatement),
+    WhileLoop(WhileLoopStatement),
+    ForLoop(ForLoopStatement),
+    Break(BreakStatement),
+    Skip(SkipStatement),
 }
 
 impl HasID for Statement {
@@ -365,6 +434,10 @@ impl HasID for Statement {
             Statement::Return(return_) => return_.get_id(),
             Statement::VariableDefinition(vardef) => vardef.get_id(),
             Statement::If(if_) => if_.get_id(),
+            Statement::WhileLoop(while_loop_statement) => while_loop_statement.get_id(),
+            Statement::ForLoop(for_loop_statement) => for_loop_statement.get_id(),
+            Statement::Break(break_statement) => break_statement.get_id(),
+            Statement::Skip(skip_statement) => skip_statement.get_id(),
         }
     }
 }
@@ -378,6 +451,10 @@ impl From<Statement> for AstNode {
             Statement::Return(return_) => return_.into(),
             Statement::VariableDefinition(vardef) => vardef.into(),
             Statement::If(if_) => if_.into(),
+            Statement::WhileLoop(while_loop_statement) => while_loop_statement.into(),
+            Statement::ForLoop(for_loop_statement) => for_loop_statement.into(),
+            Statement::Break(break_statement) => break_statement.into(),
+            Statement::Skip(skip_statement) => skip_statement.into(),
         }
     }
 }

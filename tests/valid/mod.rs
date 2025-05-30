@@ -5,3 +5,4 @@ mod conditional_statements;
 mod function;
 mod unary_op;
 mod variables;
+mod loops;

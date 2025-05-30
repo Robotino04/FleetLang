@@ -4,11 +4,12 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::LazyLock;
 
 use fleet::ast::{
-    AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, ExpressionStatement,
-    FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
-    NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, ThreadExecutor,
-    UnaryExpression, UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
-    VariableDefinitionStatement,
+    AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
+    ExpressionStatement, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
+    GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, ReturnStatement,
+    SelfExecutorHost, SkipStatement, ThreadExecutor, UnaryExpression, UnaryOperation,
+    VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+    WhileLoopStatement,
 };
 use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
 use fleet::passes::find_containing_node::FindContainingNodePass;
@@ -144,6 +145,22 @@ impl Backend {
             ),
             AstNode::IfStatement(IfStatement { .. }) => {
                 ("".to_string(), "`if` statement".to_string())
+            }
+            AstNode::WhileLoopStatement(WhileLoopStatement { .. }) => {
+                ("".to_string(), "`while` loop".to_string())
+            }
+            AstNode::ForLoopStatement(ForLoopStatement { initializer, .. }) => (
+                format!(
+                    "for ({}; ...; ...)",
+                    self.generate_node_hover(*initializer).0
+                ),
+                "`for` loop".to_string(),
+            ),
+            AstNode::BreakStatement(_break_statement) => {
+                ("".to_string(), "`break` statement".to_string())
+            }
+            AstNode::SkipStatement(_skip_statement) => {
+                ("".to_string(), "`skip` statement".to_string())
             }
 
             AstNode::SelfExecutorHost(SelfExecutorHost { .. }) => {
@@ -406,10 +423,14 @@ impl AstVisitor for ExtractSemanticTokensPass {
 
     fn visit_expression_statement(
         &mut self,
-        expr_stmt: &mut ExpressionStatement,
+        ExpressionStatement {
+            expression,
+            semicolon_token,
+            id: _,
+        }: &mut ExpressionStatement,
     ) -> Self::StatementOutput {
-        self.visit_expression(&mut expr_stmt.expression);
-        self.build_comment_tokens_only(&mut expr_stmt.semicolon_token);
+        self.visit_expression(expression);
+        self.build_comment_tokens_only(semicolon_token);
     }
 
     fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
@@ -475,6 +496,72 @@ impl AstVisitor for ExtractSemanticTokensPass {
             self.build_semantic_token(token, SemanticTokenType::KEYWORD, vec![]);
             self.visit_statement(body);
         }
+    }
+
+    fn visit_while_loop_statement(
+        &mut self,
+        WhileLoopStatement {
+            while_token,
+            condition,
+            body,
+            id: _,
+        }: &mut WhileLoopStatement,
+    ) -> Self::StatementOutput {
+        self.build_semantic_token(while_token, SemanticTokenType::KEYWORD, vec![]);
+        self.visit_expression(condition);
+        self.visit_statement(body);
+    }
+
+    fn visit_for_loop_statement(
+        &mut self,
+        ForLoopStatement {
+            for_token,
+            open_paren_token,
+            initializer,
+            condition,
+            second_semicolon_token,
+            incrementer,
+            close_paren_token,
+            body,
+            id: _,
+        }: &mut ForLoopStatement,
+    ) -> Self::StatementOutput {
+        self.build_semantic_token(for_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_comment_tokens_only(open_paren_token);
+        self.visit_statement(initializer);
+        if let Some(cond) = condition {
+            self.visit_expression(cond);
+        }
+        self.build_comment_tokens_only(second_semicolon_token);
+        if let Some(inc) = incrementer {
+            self.visit_expression(inc);
+        }
+        self.build_comment_tokens_only(close_paren_token);
+        self.visit_statement(body);
+    }
+
+    fn visit_break_statement(
+        &mut self,
+        BreakStatement {
+            break_token,
+            semicolon_token,
+            id: _,
+        }: &mut BreakStatement,
+    ) -> Self::StatementOutput {
+        self.build_semantic_token(break_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_comment_tokens_only(semicolon_token);
+    }
+
+    fn visit_skip_statement(
+        &mut self,
+        SkipStatement {
+            skip_token,
+            semicolon_token,
+            id: _,
+        }: &mut SkipStatement,
+    ) -> Self::StatementOutput {
+        self.build_semantic_token(skip_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_comment_tokens_only(semicolon_token);
     }
 
     fn visit_self_executor_host(&mut self, executor_host: &mut SelfExecutorHost) {
@@ -775,7 +862,9 @@ impl LanguageServer for Backend {
                     kind: MarkupKind::Markdown,
                     value: format!(
                         indoc! {r##"
+                        ```rust
                         {}
+                        ```
 
                         ---- Debug Stats ----
                         {}

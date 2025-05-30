@@ -18,6 +18,7 @@
 - type system (at least the other iX and f32)
 - find a better way to store CompileStatus
 - add quick fix system for e.g. non-block as if body
+- notes for removable parens
 
 
 ## Building

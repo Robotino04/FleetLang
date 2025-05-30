@@ -1,6 +1,6 @@
 use std::{env::args, fs::read_to_string, path::Path, process::exit};
 
-use fleet::infra::format_program;
+use fleet::infra::{ErrorSeverity, format_program};
 use fleet::{
     ast::AstNode,
     generate_c::generate_c,
@@ -15,6 +15,13 @@ use inkwell::{
 
 fn generate_header(text: impl AsRef<str>, length: usize) -> String {
     return format!("{:-^length$}", "|".to_string() + text.as_ref() + "|");
+}
+fn ansi_color_for_severity(severity: ErrorSeverity) -> &'static str {
+    match severity {
+        ErrorSeverity::Error => "31",
+        ErrorSeverity::Warning => "33",
+        ErrorSeverity::Note => "34",
+    }
 }
 
 fn main() {
@@ -31,11 +38,29 @@ fn main() {
     let res = compile_program(&context, &src);
 
     let print_all_errors_and_message = |msg| {
-        println!("{}", generate_header("Errors", 50));
+        let mut worst_error = None;
         for error in &res.errors {
-            print_error_message(&src, error);
+            if let Some(prev) = worst_error {
+                match (prev, error.severity) {
+                    (ErrorSeverity::Warning, ErrorSeverity::Error)
+                    | (ErrorSeverity::Note, ErrorSeverity::Error)
+                    | (ErrorSeverity::Note, ErrorSeverity::Warning) => {
+                        worst_error = Some(error.severity);
+                    }
+                    _ => {}
+                }
+            } else {
+                worst_error = Some(error.severity);
+            }
         }
-        println!("\x1B[31m{msg}\x1B[0m");
+        if let Some(worst_severity) = worst_error {
+            println!("{}", generate_header("Errors", 50));
+            for error in &res.errors {
+                print_error_message(&src, error);
+            }
+            let ansi_color = ansi_color_for_severity(worst_severity);
+            println!("\x1B[{}m{msg}\x1B[0m", ansi_color);
+        }
     };
 
     match &res.status {
@@ -146,7 +171,11 @@ fn main() {
             println!("{}", generate_header("LLVM IR (unoptimized)", 50));
             println!("{}", module.print_to_string().to_str().unwrap());
 
-            assert!(res.errors.is_empty());
+            assert!(
+                !res.errors
+                    .iter()
+                    .any(|err| matches!(err.severity, ErrorSeverity::Error))
+            );
         }
     }
     let program = res.status.program().unwrap().clone();
@@ -204,4 +233,6 @@ fn main() {
         .unwrap();
 
     println!("Object file written to {:?}", output_path);
+
+    print_all_errors_and_message("There are warnings");
 }

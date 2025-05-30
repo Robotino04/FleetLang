@@ -1,7 +1,7 @@
 use crate::ast::{
-    Associativity, AstVisitor, BinaryExpression, Expression, GroupingExpression, IfStatement,
-    ReturnStatement, ThreadExecutor, UnaryExpression, VariableAssignmentExpression,
-    VariableDefinitionStatement,
+    Associativity, AstVisitor, BinaryExpression, Expression, ForLoopStatement, GroupingExpression,
+    IfStatement, ReturnStatement, ThreadExecutor, UnaryExpression, VariableAssignmentExpression,
+    VariableDefinitionStatement, WhileLoopStatement,
 };
 
 use super::{
@@ -75,6 +75,47 @@ impl PartialAstVisitor for RemoveParensPass {
         if let Some((_, else_body)) = &mut if_stmt.else_ {
             self.visit_statement(&mut *else_body);
         }
+    }
+    fn partial_visit_while_loop_statement(
+        &mut self,
+        WhileLoopStatement {
+            while_token: _,
+            condition,
+            body,
+            id: _,
+        }: &mut WhileLoopStatement,
+    ) {
+        self.parent_precedence = Expression::TOP_PRECEDENCE;
+        self.parent_associativity = Associativity::Both;
+        self.visit_expression(condition);
+        self.visit_statement(body);
+    }
+    fn partial_visit_for_loop_statement(
+        &mut self,
+        ForLoopStatement {
+            for_token: _,
+            open_paren_token: _,
+            initializer,
+            condition,
+            second_semicolon_token: _,
+            incrementer,
+            close_paren_token: _,
+            body,
+            id: _,
+        }: &mut ForLoopStatement,
+    ) {
+        self.visit_statement(initializer);
+        if let Some(cond) = condition {
+            self.parent_precedence = Expression::TOP_PRECEDENCE;
+            self.parent_associativity = Associativity::Both;
+            self.visit_expression(cond);
+        }
+        if let Some(inc) = incrementer {
+            self.parent_precedence = Expression::TOP_PRECEDENCE;
+            self.parent_associativity = Associativity::Both;
+            self.visit_expression(inc);
+        }
+        self.visit_statement(body);
     }
 
     fn partial_visit_thread_executor(&mut self, executor: &mut ThreadExecutor) {

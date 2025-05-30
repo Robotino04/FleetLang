@@ -2,6 +2,7 @@ use std::{collections::HashMap, error::Error};
 
 use inkwell::{
     IntPredicate,
+    basic_block::BasicBlock,
     builder::Builder,
     context::Context,
     module::Module,
@@ -13,11 +14,12 @@ use inkwell::{
 
 use crate::{
     ast::{
-        AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, ExpressionStatement,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
-        NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
-        ThreadExecutor, UnaryExpression, UnaryOperation, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement,
+        AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
+        ExpressionStatement, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
+        GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, PerNodeData,
+        Program, ReturnStatement, SelfExecutorHost, SkipStatement, ThreadExecutor, UnaryExpression,
+        UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, WhileLoopStatement,
     },
     escape::unescape,
     infra::{ErrorSeverity, FleetError},
@@ -40,7 +42,7 @@ impl<'a> VariableScopeStack<'a> {
     }
 
     pub fn get<'b>(&'b self, name: &String) -> Option<&'b (BasicTypeEnum<'a>, PointerValue<'a>)> {
-        for scope in &self.scopes {
+        for scope in self.scopes.iter().rev() {
             if let Some(value) = scope.get(name) {
                 return Some(value);
             }
@@ -55,7 +57,7 @@ impl<'a> VariableScopeStack<'a> {
     ) -> Result<()> {
         let scope = self
             .scopes
-            .first_mut()
+            .last_mut()
             .expect("A variable scope stack must always contain at least one scope");
         if scope.contains_key(name) {
             return Err("variable already exists".into());
@@ -82,6 +84,8 @@ pub struct IrGenerator<'a, 'errors> {
     function_termination: PerNodeData<FunctionTermination>,
 
     variable_scopes: VariableScopeStack<'a>,
+    break_block: Option<BasicBlock<'a>>,
+    skip_block: Option<BasicBlock<'a>>,
 }
 impl<'a, 'errors> IrGenerator<'a, 'errors> {
     pub fn new(
@@ -100,6 +104,8 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
             errors,
             function_termination,
             variable_scopes: VariableScopeStack::new(),
+            break_block: None,
+            skip_block: None,
         }
     }
 
@@ -185,23 +191,25 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         self.visit_statement(&mut function.body)?;
         self.variable_scopes.pop();
 
-        let current_block = self
-            .builder
-            .get_insert_block()
-            .expect("A function should always have a body");
-
         if *self
             .function_termination
             .get(&function.body)
             .expect("all function bodies should have been analyzed for termination")
             == FunctionTermination::Terminates
         {
-            if current_block.get_terminator() == None {
-                // All code paths have already returned, so just remove this block. It is either empty
-                // or contains unreachable code.
-                current_block
-                    .remove_from_function()
-                    .map_err(|_| "Removing the last, unreachable block from a function failed")?;
+            for block in ir_function.get_basic_blocks() {
+                if block.get_terminator().is_none() {
+                    self.builder.position_at_end(block);
+                    self.builder.build_return(Some(
+                        &return_type_ir.into_int_type().const_int(123, false),
+                    ))?;
+                }
+
+                if block.get_first_use().is_none() && block != entry {
+                    block
+                        .remove_from_function()
+                        .map_err(|_| "Removing unreachable block from a function failed")?;
+                }
             }
         } else {
             self.errors.push(FleetError::from_node(
@@ -271,6 +279,13 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             Some(BasicValueEnum::VectorValue(vector_value)) => Some(vector_value),
             None => None,
         })?;
+        let next_block = self.context.insert_basic_block_after(
+            self.builder
+                .get_insert_block()
+                .expect("Builder should always be in a block"),
+            "after_return",
+        );
+        self.builder.position_at_end(next_block);
         Ok(())
     }
 
@@ -408,6 +423,192 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
         self.builder.position_at_end(end_block);
 
+        Ok(())
+    }
+
+    fn visit_while_loop_statement(
+        &mut self,
+        WhileLoopStatement {
+            while_token: _,
+            condition,
+            body,
+            id: _,
+        }: &mut WhileLoopStatement,
+    ) -> Self::StatementOutput {
+        let current_block = self
+            .builder
+            .get_insert_block()
+            .expect("builder should always be in a function");
+        let condition_block = self
+            .context
+            .insert_basic_block_after(current_block, "while_condition");
+        let body_block = self
+            .context
+            .insert_basic_block_after(condition_block, "while_body");
+        let end_block = self
+            .context
+            .insert_basic_block_after(body_block, "while_end");
+
+        self.builder.build_unconditional_branch(condition_block)?;
+        self.builder.position_at_end(condition_block);
+
+        let cond_value = self
+            .visit_expression(condition)?
+            .expect("Somehow passed a Unit value as a while condition");
+
+        let cond_booleanized = self.builder.build_int_compare(
+            IntPredicate::EQ,
+            cond_value.get_type().into_int_type().const_zero(),
+            cond_value.into_int_value(),
+            "while_condition",
+        )?;
+
+        self.builder
+            .build_conditional_branch(cond_booleanized, end_block, body_block)?;
+
+        self.builder.position_at_end(body_block);
+        {
+            let prev_skip = self.skip_block;
+            let prev_break = self.break_block;
+
+            self.skip_block = Some(condition_block);
+            self.break_block = Some(end_block);
+
+            self.visit_statement(body)?;
+
+            self.skip_block = prev_skip;
+            self.break_block = prev_break;
+        }
+        self.builder.build_unconditional_branch(condition_block)?;
+
+        self.builder.position_at_end(end_block);
+
+        return Ok(());
+    }
+
+    fn visit_for_loop_statement(
+        &mut self,
+        ForLoopStatement {
+            for_token: _,
+            open_paren_token: _,
+            initializer,
+            condition,
+            second_semicolon_token: _,
+            incrementer,
+            close_paren_token: _,
+            body,
+            id: _,
+        }: &mut ForLoopStatement,
+    ) -> Self::StatementOutput {
+        let current_block = self
+            .builder
+            .get_insert_block()
+            .expect("builder should always be in a function");
+        let condition_block = self
+            .context
+            .insert_basic_block_after(current_block, "for_condition");
+        let body_block = self
+            .context
+            .insert_basic_block_after(condition_block, "for_body");
+        let incrementer_block = self
+            .context
+            .insert_basic_block_after(body_block, "for_incrementer");
+        let end_block = self
+            .context
+            .insert_basic_block_after(incrementer_block, "for_end");
+
+        self.variable_scopes.push_child();
+        self.visit_statement(initializer)?;
+
+        self.builder.build_unconditional_branch(condition_block)?;
+        self.builder.position_at_end(condition_block);
+
+        let cond_value = condition
+            .as_mut()
+            .map(|cond| self.visit_expression(cond))
+            .unwrap_or(Ok(Some(
+                self.context
+                    .i32_type()
+                    .const_int(1, false)
+                    .as_basic_value_enum(),
+            )))?
+            .expect("Somehow passed a Unit value as a while condition");
+
+        let cond_booleanized = self.builder.build_int_compare(
+            IntPredicate::EQ,
+            cond_value.get_type().into_int_type().const_zero(),
+            cond_value.into_int_value(),
+            "for_condition",
+        )?;
+
+        self.builder
+            .build_conditional_branch(cond_booleanized, end_block, body_block)?;
+
+        self.builder.position_at_end(body_block);
+
+        {
+            let prev_skip = self.skip_block;
+            let prev_break = self.break_block;
+
+            self.skip_block = Some(incrementer_block);
+            self.break_block = Some(end_block);
+
+            self.visit_statement(body)?;
+
+            self.skip_block = prev_skip;
+            self.break_block = prev_break;
+        }
+
+        self.builder.build_unconditional_branch(incrementer_block)?;
+        self.builder.position_at_end(incrementer_block);
+        if let Some(inc) = incrementer {
+            self.visit_expression(inc)?;
+        }
+        self.builder.build_unconditional_branch(condition_block)?;
+
+        self.variable_scopes.pop();
+        self.builder.position_at_end(end_block);
+
+        return Ok(());
+    }
+
+    fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
+        if let Some(break_block) = self.break_block {
+            self.builder.build_unconditional_branch(break_block)?;
+            let next_block = self.context.insert_basic_block_after(
+                self.builder
+                    .get_insert_block()
+                    .expect("Builder should always be in a block"),
+                "after_break",
+            );
+            self.builder.position_at_end(next_block);
+        } else {
+            self.errors.push(FleetError::from_node(
+                break_stmt.clone(),
+                "Break statements can only appear inside of loops",
+                ErrorSeverity::Error,
+            ));
+        }
+        Ok(())
+    }
+
+    fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
+        if let Some(skip_block) = self.skip_block {
+            self.builder.build_unconditional_branch(skip_block)?;
+            let next_block = self.context.insert_basic_block_after(
+                self.builder
+                    .get_insert_block()
+                    .expect("Builder should always be in a block"),
+                "after_skip",
+            );
+            self.builder.position_at_end(next_block);
+        } else {
+            self.errors.push(FleetError::from_node(
+                skip_stmt.clone(),
+                "Skip statements can only appear inside of loops",
+                ErrorSeverity::Error,
+            ));
+        }
         Ok(())
     }
 

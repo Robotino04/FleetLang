@@ -1,9 +1,10 @@
 use crate::{
     ast::{
-        AstNode, BinaryExpression, BlockStatement, ExpressionStatement, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, I32Type, IfStatement, NumberExpression,
-        OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, UnaryExpression,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        AstNode, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
+        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
+        IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+        SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::SourceLocation,
 };
@@ -84,6 +85,33 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
                 }))
                 .unwrap_or(find_node_bounds(*if_body).1),
         ),
+        AstNode::WhileLoopStatement(WhileLoopStatement {
+            while_token,
+            condition: _,
+            body,
+            id: _,
+        }) => (while_token.start, find_node_bounds(*body).1),
+        AstNode::ForLoopStatement(ForLoopStatement {
+            for_token,
+            open_paren_token: _,
+            initializer: _,
+            condition: _,
+            second_semicolon_token: _,
+            incrementer: _,
+            close_paren_token: _,
+            body,
+            id: _,
+        }) => (for_token.start, find_node_bounds(*body).1),
+        AstNode::BreakStatement(BreakStatement {
+            break_token,
+            semicolon_token,
+            id: _,
+        }) => (break_token.start, semicolon_token.end),
+        AstNode::SkipStatement(SkipStatement {
+            skip_token,
+            semicolon_token,
+            id: _,
+        }) => (skip_token.start, semicolon_token.end),
 
         AstNode::SelfExecutorHost(SelfExecutorHost { token, id: _ }) => (token.start, token.end),
         AstNode::ThreadExecutor(ThreadExecutor {

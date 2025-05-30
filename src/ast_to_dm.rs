@@ -1,9 +1,10 @@
 use crate::{
     ast::{
-        AstVisitor, BinaryExpression, BlockStatement, ExpressionStatement, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, I32Type, IfStatement, NumberExpression,
-        OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, UnaryExpression,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
+        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
+        IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+        SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     document_model::DocumentElement,
     tokenizer::{Keyword, Token, TokenType, Trivia, TriviaKind},
@@ -89,6 +90,10 @@ impl AstToDocumentModelConverter {
             Keyword::If => "if",
             Keyword::Elif => "elif",
             Keyword::Else => "else",
+            Keyword::While => "while",
+            Keyword::For => "for",
+            Keyword::Break => "break",
+            Keyword::Skip => "skip",
         }
         .to_string()
     }
@@ -396,6 +401,90 @@ impl AstVisitor for AstToDocumentModelConverter {
             DocumentElement::CollapsableLineBreak,
             elements,
         );
+    }
+
+    fn visit_while_loop_statement(
+        &mut self,
+        WhileLoopStatement {
+            while_token,
+            condition,
+            body,
+            id: _,
+        }: &mut WhileLoopStatement,
+    ) -> Self::StatementOutput {
+        DocumentElement::spaced_concatentation(
+            DocumentElement::CollapsableSpace,
+            vec![
+                self.token_to_element(while_token),
+                self.visit_expression(condition),
+                self.visit_statement(body),
+            ],
+        )
+    }
+
+    fn visit_for_loop_statement(
+        &mut self,
+        ForLoopStatement {
+            for_token,
+            open_paren_token,
+            initializer,
+            condition,
+            second_semicolon_token,
+            incrementer,
+            close_paren_token,
+            body,
+            id: _,
+        }: &mut ForLoopStatement,
+    ) -> Self::StatementOutput {
+        DocumentElement::spaced_concatentation(
+            DocumentElement::CollapsableSpace,
+            vec![
+                self.token_to_element(for_token),
+                DocumentElement::Concatenation(vec![
+                    self.token_to_element(open_paren_token),
+                    DocumentElement::double_space_eater(),
+                    DocumentElement::spaced_concatentation(
+                        DocumentElement::CollapsableSpace,
+                        vec![
+                            self.visit_statement(&mut **initializer),
+                            condition
+                                .as_mut()
+                                .map(|con| {
+                                    DocumentElement::Concatenation(vec![
+                                        self.visit_expression(con),
+                                        DocumentElement::double_space_eater(),
+                                        self.token_to_element(second_semicolon_token),
+                                    ])
+                                })
+                                .unwrap_or(self.token_to_element(second_semicolon_token)),
+                            incrementer
+                                .as_mut()
+                                .map(|inc| self.visit_expression(inc))
+                                .unwrap_or(DocumentElement::empty()),
+                        ],
+                    ),
+                    DocumentElement::double_space_eater(),
+                    self.token_to_element(close_paren_token),
+                ]),
+                self.visit_statement(body),
+            ],
+        )
+    }
+
+    fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
+        DocumentElement::Concatenation(vec![
+            self.token_to_element(&break_stmt.break_token),
+            DocumentElement::double_space_eater(),
+            self.token_to_element(&break_stmt.semicolon_token),
+        ])
+    }
+
+    fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
+        DocumentElement::Concatenation(vec![
+            self.token_to_element(&skip_stmt.skip_token),
+            DocumentElement::double_space_eater(),
+            self.token_to_element(&skip_stmt.semicolon_token),
+        ])
     }
 
     fn visit_self_executor_host(

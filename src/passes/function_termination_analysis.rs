@@ -1,12 +1,14 @@
 use crate::{
     ast::{
-        AstVisitor, BlockStatement, ExpressionStatement, FunctionDefinition, I32Type, IfStatement,
-        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor,
-        VariableDefinitionStatement,
+        AstVisitor, BlockStatement, ExpressionStatement, ForLoopStatement, FunctionDefinition,
+        I32Type, IfStatement, OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
+        ThreadExecutor, VariableDefinitionStatement, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     tokenizer::SourceLocation,
 };
+
+use super::find_node_bonds::find_node_bounds;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FunctionTermination {
@@ -129,15 +131,24 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
 
     fn visit_block_statement(&mut self, block_stmt: &mut BlockStatement) -> Self::StatementOutput {
         let mut body_term = FunctionTermination::DoesntTerminate;
+        let mut unreachable_range = None;
         for stmt in &mut block_stmt.body {
             if body_term == FunctionTermination::Terminates {
-                self.errors.push(FleetError::from_node(
-                    stmt.clone(),
-                    "This code is unreachable",
-                    ErrorSeverity::Warning,
-                ));
+                if let Some((prev_start, _prev_end)) = unreachable_range {
+                    unreachable_range = Some((prev_start, find_node_bounds(stmt.clone()).1));
+                } else {
+                    unreachable_range = Some(find_node_bounds(stmt.clone()));
+                }
             }
             body_term = body_term.or(self.visit_statement(stmt));
+        }
+        if let Some((start, end)) = unreachable_range {
+            self.errors.push(FleetError {
+                start,
+                end,
+                message: "This code is unreachable".to_string(),
+                severity: ErrorSeverity::Warning,
+            });
         }
         self.termination.insert(block_stmt, body_term);
         return body_term;
@@ -172,14 +183,66 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
                     .or(self.visit_statement(elif_body)),
             );
         }
-        if let Some((_else_token, else_body)) = &mut if_stmt.else_ {
-            subterms = subterms.and(self.visit_statement(else_body));
-        } else {
-            subterms = subterms.and(FunctionTermination::DoesntTerminate);
-        }
+        subterms = if_stmt
+            .else_
+            .as_mut()
+            .map(|(_else_token, else_body)| subterms.and(self.visit_statement(else_body)))
+            .unwrap_or(subterms.and(FunctionTermination::DoesntTerminate));
         let term = if_term.or(subterms);
         self.termination.insert(if_stmt, term);
         return term;
+    }
+
+    fn visit_while_loop_statement(
+        &mut self,
+        while_stmt: &mut WhileLoopStatement,
+    ) -> Self::StatementOutput {
+        let con_term = self.visit_expression(&mut while_stmt.condition);
+        let body_term = self.visit_statement(&mut while_stmt.body);
+        let term = con_term.or(body_term);
+        self.termination.insert(while_stmt, term);
+        return term;
+    }
+
+    fn visit_for_loop_statement(
+        &mut self,
+        for_stmt: &mut ForLoopStatement,
+    ) -> Self::StatementOutput {
+        let init_term = self.visit_statement(&mut for_stmt.initializer);
+
+        let con_term = for_stmt
+            .condition
+            .as_mut()
+            .map(|condition| self.visit_expression(condition))
+            .unwrap_or(FunctionTermination::DoesntTerminate);
+        let inc_term = for_stmt
+            .incrementer
+            .as_mut()
+            .map(|incrementer| self.visit_expression(incrementer))
+            .unwrap_or(FunctionTermination::DoesntTerminate);
+
+        let body_term = self.visit_statement(&mut for_stmt.body);
+        let term = init_term.or(con_term).or(inc_term).or(body_term);
+        self.termination.insert(for_stmt, term);
+        return term;
+    }
+
+    fn visit_break_statement(
+        &mut self,
+        break_stmt: &mut crate::ast::BreakStatement,
+    ) -> Self::StatementOutput {
+        self.termination
+            .insert(break_stmt, FunctionTermination::DoesntTerminate);
+        return FunctionTermination::DoesntTerminate;
+    }
+
+    fn visit_skip_statement(
+        &mut self,
+        skip_stmt: &mut crate::ast::SkipStatement,
+    ) -> Self::StatementOutput {
+        self.termination
+            .insert(skip_stmt, FunctionTermination::DoesntTerminate);
+        return FunctionTermination::DoesntTerminate;
     }
 
     fn visit_self_executor_host(

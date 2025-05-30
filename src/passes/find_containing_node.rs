@@ -1,10 +1,10 @@
 use crate::{
     ast::{
-        AstNode, AstVisitor, BinaryExpression, BlockStatement, ExpressionStatement,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
-        NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor,
-        UnaryExpression, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement,
+        AstNode, AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
+        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
+        IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+        SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::{SourceLocation, Token},
 };
@@ -177,6 +177,63 @@ impl AstVisitor for FindContainingNodePass {
 
         self.node_hierarchy.pop();
         return Ok(());
+    }
+
+    fn visit_while_loop_statement(
+        &mut self,
+        while_stmt: &mut WhileLoopStatement,
+    ) -> Self::StatementOutput {
+        self.node_hierarchy.push(while_stmt.clone().into());
+
+        self.visit_token(&mut while_stmt.while_token)?;
+        self.visit_expression(&mut while_stmt.condition)?;
+        self.visit_statement(&mut while_stmt.body)?;
+
+        self.node_hierarchy.pop();
+        Ok(())
+    }
+
+    fn visit_for_loop_statement(
+        &mut self,
+        for_stmt: &mut ForLoopStatement,
+    ) -> Self::StatementOutput {
+        self.node_hierarchy.push(for_stmt.clone().into());
+
+        self.visit_token(&mut for_stmt.for_token)?;
+        self.visit_token(&mut for_stmt.open_paren_token)?;
+        self.visit_statement(&mut for_stmt.initializer)?;
+        if let Some(c) = &mut for_stmt.condition {
+            self.visit_expression(c)?;
+        }
+        self.visit_token(&mut for_stmt.second_semicolon_token)?;
+        if let Some(i) = &mut for_stmt.incrementer {
+            self.visit_expression(i)?;
+        }
+        self.visit_token(&mut for_stmt.close_paren_token)?;
+        self.visit_statement(&mut for_stmt.body)?;
+
+        self.node_hierarchy.pop();
+        Ok(())
+    }
+
+    fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
+        self.node_hierarchy.push(break_stmt.clone().into());
+
+        self.visit_token(&break_stmt.break_token)?;
+        self.visit_token(&break_stmt.semicolon_token)?;
+
+        self.node_hierarchy.pop();
+        Ok(())
+    }
+
+    fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
+        self.node_hierarchy.push(skip_stmt.clone().into());
+
+        self.visit_token(&skip_stmt.skip_token)?;
+        self.visit_token(&skip_stmt.semicolon_token)?;
+
+        self.node_hierarchy.pop();
+        Ok(())
     }
 
     fn visit_self_executor_host(

@@ -1,9 +1,10 @@
 use crate::{
     ast::{
-        AstVisitor, BinaryExpression, BlockStatement, ExpressionStatement, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, I32Type, IfStatement, NumberExpression,
-        OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor, UnaryExpression,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
+        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
+        IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+        SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -34,9 +35,9 @@ impl AstVisitor for AddLeadingTriviaPass {
     type TypeOutput = ();
 
     fn visit_program(mut self, program: &mut Program) {
-        if let Some(f) = program.functions.first_mut() {
+        program.functions.first_mut().map(|f| {
             self.visit_function_definition(f);
-        }
+        });
     }
 
     fn visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
@@ -79,6 +80,28 @@ impl AstVisitor for AddLeadingTriviaPass {
 
     fn visit_if_statement(&mut self, IfStatement { if_token, .. }: &mut IfStatement) {
         self.add_leading_trivia_to_token(if_token);
+    }
+
+    fn visit_while_loop_statement(
+        &mut self,
+        while_stmt: &mut WhileLoopStatement,
+    ) -> Self::StatementOutput {
+        self.add_leading_trivia_to_token(&mut while_stmt.while_token);
+    }
+
+    fn visit_for_loop_statement(
+        &mut self,
+        for_stmt: &mut ForLoopStatement,
+    ) -> Self::StatementOutput {
+        self.add_leading_trivia_to_token(&mut for_stmt.for_token);
+    }
+
+    fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
+        self.add_leading_trivia_to_token(&mut break_stmt.break_token);
+    }
+
+    fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
+        self.add_leading_trivia_to_token(&mut skip_stmt.skip_token);
     }
 
     fn visit_self_executor_host(&mut self, executor_host: &mut SelfExecutorHost) {

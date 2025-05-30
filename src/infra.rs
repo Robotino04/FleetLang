@@ -30,6 +30,15 @@ pub struct FleetError {
     pub severity: ErrorSeverity,
 }
 
+fn run_fix_passes(
+    errors: &mut Vec<FleetError>,
+    program: &mut Program,
+    id_generator: &mut IdGenerator,
+) {
+    RemoveParensPass::new().visit_program(program);
+    FixNonBlockStatements::new(errors, id_generator).visit_program(program);
+}
+
 impl FleetError {
     pub fn from_token(token: &Token, msg: impl ToString, severity: ErrorSeverity) -> Self {
         Self {
@@ -119,7 +128,15 @@ pub fn print_error_message(source: &String, error: &FleetError) {
         .collect::<Vec<_>>()
         .join("\n");
 
-    println!("\x1B[{ansi_color}m[FLEETC: ERROR] {}\x1B[0m", error.message);
+    println!(
+        "\x1B[{ansi_color}m[FLEETC: {}] {}\x1B[0m",
+        match error.severity {
+            ErrorSeverity::Error => "ERROR",
+            ErrorSeverity::Warning => "WARNING",
+            ErrorSeverity::Note => "NOTE",
+        },
+        error.message
+    );
     println!("{}", before_err_trunc);
     println!("{}", err);
     println!("{}\n", after_err_trunc);
@@ -329,7 +346,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
     let term_analyzer = FunctionTerminationAnalyzer::new(&mut errors);
     let function_terminations = term_analyzer.visit_program(&mut program);
 
-    FixNonBlockStatements::new(&mut errors, &mut id_generator).visit_program(&mut program);
+    run_fix_passes(&mut errors, &mut program, &mut id_generator);
 
     if errors
         .iter()
@@ -414,8 +431,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
 pub fn format_program(mut program: Program, mut id_generator: IdGenerator) -> String {
     let mut errors = vec![];
 
-    RemoveParensPass::new().visit_program(&mut program);
-    FixNonBlockStatements::new(&mut errors, &mut id_generator).visit_program(&mut program);
+    run_fix_passes(&mut errors, &mut program, &mut id_generator);
 
     let document = AstToDocumentModelConverter::new().visit_program(&mut program);
     let formatted_src = stringify_document(&fully_flatten_document(document));

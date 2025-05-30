@@ -1,9 +1,10 @@
 use crate::ast::{
-    AstVisitor, BinaryExpression, BlockStatement, Executor, ExecutorHost, Expression,
-    FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
-    NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, Statement,
-    ThreadExecutor, Type, UnaryExpression, VariableAccessExpression, VariableAssignmentExpression,
-    VariableDefinitionStatement,
+    AstVisitor, BinaryExpression, BlockStatement, BreakStatement, Executor, ExecutorHost,
+    Expression, ExpressionStatement, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
+    GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, Program,
+    ReturnStatement, SelfExecutorHost, SkipStatement, Statement, ThreadExecutor, Type,
+    UnaryExpression, VariableAccessExpression, VariableAssignmentExpression,
+    VariableDefinitionStatement, WhileLoopStatement,
 };
 
 pub trait PartialAstVisitor {
@@ -33,16 +34,23 @@ pub trait PartialAstVisitor {
                 self.partial_visit_variable_definition_statement(variable_definition_statement)
             }
             Statement::If(if_statement) => self.partial_visit_if_statement(if_statement),
+            Statement::WhileLoop(while_loop_statement) => {
+                self.partial_visit_while_loop_statement(while_loop_statement)
+            }
+            Statement::ForLoop(for_loop_statement) => {
+                self.partial_visit_for_loop_statement(for_loop_statement)
+            }
+            Statement::Break(break_statement) => {
+                self.partial_visit_break_statement(break_statement)
+            }
+            Statement::Skip(skip_statement) => self.partial_visit_skip_statement(skip_statement),
         }
     }
     fn partial_visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
         self.partial_visit_statement(&mut function_definition.body);
     }
 
-    fn partial_visit_expression_statement(
-        &mut self,
-        expr_stmt: &mut crate::ast::ExpressionStatement,
-    ) {
+    fn partial_visit_expression_statement(&mut self, expr_stmt: &mut ExpressionStatement) {
         self.partial_visit_expression(&mut expr_stmt.expression);
     }
 
@@ -99,6 +107,60 @@ pub trait PartialAstVisitor {
         if let Some((_, else_body)) = &mut if_stmt.else_ {
             self.partial_visit_statement(&mut *else_body);
         }
+    }
+    fn partial_visit_while_loop_statement(
+        &mut self,
+        WhileLoopStatement {
+            while_token: _,
+            condition,
+            body,
+            id: _,
+        }: &mut WhileLoopStatement,
+    ) {
+        self.partial_visit_expression(condition);
+        self.partial_visit_statement(body);
+    }
+    fn partial_visit_for_loop_statement(
+        &mut self,
+        ForLoopStatement {
+            for_token: _,
+            open_paren_token: _,
+            initializer,
+            condition,
+            second_semicolon_token: _,
+            incrementer,
+            close_paren_token: _,
+            body,
+            id: _,
+        }: &mut ForLoopStatement,
+    ) {
+        self.partial_visit_statement(&mut *initializer);
+        if let Some(c) = condition {
+            self.partial_visit_expression(c);
+        }
+        if let Some(i) = incrementer {
+            self.partial_visit_expression(i);
+        }
+
+        self.partial_visit_statement(body);
+    }
+    fn partial_visit_break_statement(
+        &mut self,
+        BreakStatement {
+            break_token: _,
+            semicolon_token: _,
+            id: _,
+        }: &mut BreakStatement,
+    ) {
+    }
+    fn partial_visit_skip_statement(
+        &mut self,
+        SkipStatement {
+            skip_token: _,
+            semicolon_token: _,
+            id: _,
+        }: &mut SkipStatement,
+    ) {
     }
 
     // executor hosts
@@ -210,7 +272,7 @@ where
 
     fn visit_expression_statement(
         &mut self,
-        expr_stmt: &mut crate::ast::ExpressionStatement,
+        expr_stmt: &mut ExpressionStatement,
     ) -> Self::StatementOutput {
         self.partial_visit_expression_statement(expr_stmt);
     }
@@ -239,6 +301,34 @@ where
 
     fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::StatementOutput {
         self.partial_visit_if_statement(if_stmt);
+    }
+
+    fn visit_while_loop_statement(
+        &mut self,
+        while_stmt: &mut WhileLoopStatement,
+    ) -> Self::StatementOutput {
+        self.partial_visit_while_loop_statement(while_stmt);
+    }
+
+    fn visit_for_loop_statement(
+        &mut self,
+        for_stmt: &mut ForLoopStatement,
+    ) -> Self::StatementOutput {
+        self.partial_visit_for_loop_statement(for_stmt);
+    }
+
+    fn visit_break_statement(
+        &mut self,
+        break_stmt: &mut crate::ast::BreakStatement,
+    ) -> Self::StatementOutput {
+        self.partial_visit_break_statement(break_stmt);
+    }
+
+    fn visit_skip_statement(
+        &mut self,
+        skip_stmt: &mut crate::ast::SkipStatement,
+    ) -> Self::StatementOutput {
+        self.partial_visit_skip_statement(skip_stmt);
     }
 
     fn visit_self_executor_host(

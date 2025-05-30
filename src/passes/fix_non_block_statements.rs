@@ -1,5 +1,8 @@
 use crate::{
-    ast::{AstVisitor, BlockStatement, FunctionDefinition, IfStatement, Statement},
+    ast::{
+        AstVisitor, BlockStatement, ForLoopStatement, FunctionDefinition, IfStatement, Statement,
+        WhileLoopStatement,
+    },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
     tokenizer::{Token, TokenType},
@@ -144,5 +147,72 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
 
             self.visit_statement(else_body);
         }
+    }
+
+    fn partial_visit_while_loop_statement(
+        &mut self,
+        WhileLoopStatement {
+            while_token: _,
+            condition,
+            body,
+            id: _,
+        }: &mut WhileLoopStatement,
+    ) {
+        if !matches!(**body, Statement::Block { .. }) {
+            self.errors.push(FleetError::from_node(
+                *body.clone(),
+                "While loops must always have a block as the body.",
+                ErrorSeverity::Error,
+            ));
+            self.errors.push(FleetError::from_node(
+                *body.clone(),
+                "Formatting will fix this",
+                ErrorSeverity::Note,
+            ));
+
+            **body = self.create_fake_block_arround(&**body);
+        }
+
+        self.visit_expression(condition);
+        self.visit_statement(body);
+    }
+
+    fn partial_visit_for_loop_statement(
+        &mut self,
+        ForLoopStatement {
+            for_token: _,
+            open_paren_token: _,
+            initializer,
+            condition,
+            second_semicolon_token: _,
+            incrementer,
+            close_paren_token: _,
+            body,
+            id: _,
+        }: &mut ForLoopStatement,
+    ) {
+        if !matches!(**body, Statement::Block { .. }) {
+            self.errors.push(FleetError::from_node(
+                *body.clone(),
+                "For loops must always have a block as the body.",
+                ErrorSeverity::Error,
+            ));
+            self.errors.push(FleetError::from_node(
+                *body.clone(),
+                "Formatting will fix this",
+                ErrorSeverity::Note,
+            ));
+
+            **body = self.create_fake_block_arround(&**body);
+        }
+
+        self.visit_statement(initializer);
+        if let Some(cond) = condition {
+            self.visit_expression(cond);
+        }
+        if let Some(inc) = incrementer {
+            self.visit_expression(inc);
+        }
+        self.visit_statement(body);
     }
 }

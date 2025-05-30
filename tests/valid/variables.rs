@@ -373,3 +373,21 @@ fn assign_precedence2() {
         5,
     );
 }
+
+#[test]
+fn per_function_variable_scopes() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main2 = () -> i32 {
+                let a: i32 = 3;
+                return a;
+            }
+            let main = () -> i32 {
+                let a: i32 = 2;
+                return a;
+            }
+        "##},
+        "main",
+        2,
+    );
+}

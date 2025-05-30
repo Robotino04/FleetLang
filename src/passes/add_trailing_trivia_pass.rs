@@ -1,8 +1,9 @@
 use crate::{
     ast::{
-        AstVisitor, BlockStatement, ExpressionStatement, FunctionDefinition, I32Type, IfStatement,
-        OnStatement, Program, ReturnStatement, SelfExecutorHost, ThreadExecutor,
-        VariableDefinitionStatement,
+        AstVisitor, BlockStatement, BreakStatement, ExpressionStatement, ForLoopStatement,
+        FunctionDefinition, I32Type, IfStatement, OnStatement, Program, ReturnStatement,
+        SelfExecutorHost, SkipStatement, ThreadExecutor, VariableDefinitionStatement,
+        WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -32,9 +33,9 @@ impl AstVisitor for AddTrailingTriviaPass {
     type TypeOutput = ();
 
     fn visit_program(mut self, program: &mut Program) {
-        if let Some(f) = program.functions.last_mut() {
+        program.functions.last_mut().map(|f| {
             self.visit_function_definition(f);
-        }
+        });
     }
 
     fn visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
@@ -97,6 +98,28 @@ impl AstVisitor for AddTrailingTriviaPass {
         } else {
             self.visit_statement(if_body);
         }
+    }
+
+    fn visit_while_loop_statement(
+        &mut self,
+        while_stmt: &mut WhileLoopStatement,
+    ) -> Self::StatementOutput {
+        self.visit_statement(&mut while_stmt.body);
+    }
+
+    fn visit_for_loop_statement(
+        &mut self,
+        for_stmt: &mut ForLoopStatement,
+    ) -> Self::StatementOutput {
+        self.visit_statement(&mut for_stmt.body);
+    }
+
+    fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
+        self.add_trailing_trivia_to_token(&mut break_stmt.break_token);
+    }
+
+    fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
+        self.add_trailing_trivia_to_token(&mut skip_stmt.skip_token);
     }
 
     fn visit_self_executor_host(&mut self, executor_host: &mut SelfExecutorHost) {

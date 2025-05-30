@@ -1,10 +1,11 @@
 use crate::{
     ast::{
-        BinaryExpression, BinaryOperation, BlockStatement, Executor, ExecutorHost, Expression,
-        ExpressionStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression,
-        I32Type, IfStatement, NodeID, NumberExpression, OnStatement, Program, ReturnStatement,
-        SelfExecutorHost, Statement, ThreadExecutor, Type, UnaryExpression,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, Executor, ExecutorHost,
+        Expression, ExpressionStatement, ForLoopStatement, FunctionCallExpression,
+        FunctionDefinition, GroupingExpression, I32Type, IfStatement, NodeID, NumberExpression,
+        OnStatement, Program, ReturnStatement, SelfExecutorHost, SkipStatement, Statement,
+        ThreadExecutor, Type, UnaryExpression, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     tokenizer::{Keyword, Token, TokenType},
@@ -288,6 +289,65 @@ impl<'errors> Parser<'errors> {
                     if_body: Box::new(if_body),
                     elifs,
                     else_,
+                    id: self.id_generator.next_id(),
+                }));
+            }
+            Some(TokenType::Keyword(Keyword::While)) => {
+                let while_token = expect!(self, TokenType::Keyword(Keyword::While))?;
+                let condition = self.parse_expression()?;
+                let body = self.parse_statement()?;
+                return Ok(Statement::WhileLoop(WhileLoopStatement {
+                    while_token,
+                    condition,
+                    body: Box::new(body),
+                    id: self.id_generator.next_id(),
+                }));
+            }
+            Some(TokenType::Keyword(Keyword::For)) => {
+                let for_token = expect!(self, TokenType::Keyword(Keyword::For))?;
+                let open_paren_token = expect!(self, TokenType::OpenParen)?;
+
+                let initializer = self.parse_statement()?;
+
+                let condition = if matches!(self.current_token_type(), Some(TokenType::Semicolon)) {
+                    None
+                } else {
+                    Some(self.parse_expression()?)
+                };
+                let second_semicolon_token = expect!(self, TokenType::Semicolon)?;
+
+                let incrementer =
+                    if matches!(self.current_token_type(), Some(TokenType::CloseParen)) {
+                        None
+                    } else {
+                        Some(self.parse_expression()?)
+                    };
+                let close_paren_token = expect!(self, TokenType::CloseParen)?;
+
+                let body = self.parse_statement()?;
+                return Ok(Statement::ForLoop(ForLoopStatement {
+                    for_token,
+                    open_paren_token,
+                    initializer: Box::new(initializer),
+                    condition,
+                    second_semicolon_token,
+                    incrementer,
+                    close_paren_token,
+                    body: Box::new(body),
+                    id: self.id_generator.next_id(),
+                }));
+            }
+            Some(TokenType::Keyword(Keyword::Break)) => {
+                return Ok(Statement::Break(BreakStatement {
+                    break_token: expect!(self, TokenType::Keyword(Keyword::Break))?,
+                    semicolon_token: expect!(self, TokenType::Semicolon)?,
+                    id: self.id_generator.next_id(),
+                }));
+            }
+            Some(TokenType::Keyword(Keyword::Skip)) => {
+                return Ok(Statement::Skip(SkipStatement {
+                    skip_token: expect!(self, TokenType::Keyword(Keyword::Skip))?,
+                    semicolon_token: expect!(self, TokenType::Semicolon)?,
                     id: self.id_generator.next_id(),
                 }));
             }

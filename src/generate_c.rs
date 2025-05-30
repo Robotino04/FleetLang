@@ -1,9 +1,9 @@
 use crate::ast::{
     AstNode, BinaryExpression, BinaryOperation, BlockStatement, ExpressionStatement,
-    FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
-    NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, ThreadExecutor,
+    ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
+    IfStatement, NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, ThreadExecutor,
     UnaryExpression, UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
-    VariableDefinitionStatement,
+    VariableDefinitionStatement, WhileLoopStatement,
 };
 
 fn generate_function_declaration(function: &FunctionDefinition) -> String {
@@ -126,6 +126,40 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
                     .map(|(_token, body)| " else {".to_string() + &generate_c(*body) + "}")
                     .unwrap_or("".to_string());
         }
+        AstNode::WhileLoopStatement(WhileLoopStatement {
+            while_token: _,
+            condition,
+            body,
+            id: _,
+        }) => {
+            return "while (".to_string()
+                + &generate_c(condition)
+                + ") {"
+                + &generate_c(*body)
+                + "}";
+        }
+        AstNode::ForLoopStatement(ForLoopStatement {
+            for_token: _,
+            open_paren_token: _,
+            initializer,
+            condition,
+            second_semicolon_token: _,
+            incrementer,
+            close_paren_token: _,
+            body,
+            id: _,
+        }) => {
+            return "for (".to_string()
+                + &generate_c(*initializer)
+                + &condition.map(|c| generate_c(c)).unwrap_or("".to_string())
+                + ";"
+                + &incrementer.map(|i| generate_c(i)).unwrap_or("".to_string())
+                + ") {"
+                + &generate_c(*body)
+                + "}";
+        }
+        AstNode::BreakStatement(_break_statement) => "break;".to_string(),
+        AstNode::SkipStatement(_skip_statement) => "continue;".to_string(),
         AstNode::SelfExecutorHost(SelfExecutorHost { token: _, id: _ }) => "self".to_string(),
         AstNode::ThreadExecutor(ThreadExecutor {
             host,

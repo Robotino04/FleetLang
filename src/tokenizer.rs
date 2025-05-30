@@ -75,6 +75,10 @@ pub enum Keyword {
     If,
     Elif,
     Else,
+    While,
+    For,
+    Break,
+    Skip,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -448,6 +452,11 @@ impl<'errors> Tokenizer<'errors> {
                             "if" => TokenType::Keyword(Keyword::If),
                             "elif" => TokenType::Keyword(Keyword::Elif),
                             "else" => TokenType::Keyword(Keyword::Else),
+
+                            "while" => TokenType::Keyword(Keyword::While),
+                            "for" => TokenType::Keyword(Keyword::For),
+                            "break" => TokenType::Keyword(Keyword::Break),
+                            "skip" => TokenType::Keyword(Keyword::Skip),
 
                             "i32" => TokenType::Keyword(Keyword::I32),
                             _ => TokenType::Identifier(lexeme.to_string()),
