@@ -1,4 +1,10 @@
-use std::{collections::HashMap, error::Error};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    error::Error,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use inkwell::{
     IntPredicate,
@@ -6,7 +12,7 @@ use inkwell::{
     builder::Builder,
     context::Context,
     module::Module,
-    types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, FunctionType},
+    types::{AnyTypeEnum, BasicMetadataTypeEnum, FunctionType},
     values::{
         BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue,
     },
@@ -17,61 +23,37 @@ use crate::{
         AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
         ExpressionStatement, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
         GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, PerNodeData,
-        Program, ReturnStatement, SelfExecutorHost, SkipStatement, ThreadExecutor, UnaryExpression,
-        UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
+        Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, ThreadExecutor,
+        UnaryExpression, UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, WhileLoopStatement,
     },
     escape::unescape,
     infra::{ErrorSeverity, FleetError},
-    passes::function_termination_analysis::FunctionTermination,
+    passes::{
+        function_termination_analysis::FunctionTermination,
+        type_propagation::{Function, FunctionID, RuntimeType, Variable, VariableID},
+    },
     tokenizer::SourceLocation,
 };
 
 type Result<T> = ::core::result::Result<T, Box<dyn Error>>;
 
-#[derive(Clone)]
-struct VariableScopeStack<'a> {
-    scopes: Vec<HashMap<String, (BasicTypeEnum<'a>, PointerValue<'a>)>>,
+#[derive(Clone, Debug)]
+pub struct VariableStorage<'a>(PointerValue<'a>);
+
+#[derive(Clone, Debug)]
+pub struct FunctionLocation<'a>(FunctionValue<'a>);
+
+impl<'a> Deref for VariableStorage<'a> {
+    type Target = PointerValue<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
-
-impl<'a> VariableScopeStack<'a> {
-    fn new() -> Self {
-        Self {
-            scopes: vec![HashMap::new()],
-        }
-    }
-
-    pub fn get<'b>(&'b self, name: &String) -> Option<&'b (BasicTypeEnum<'a>, PointerValue<'a>)> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(value) = scope.get(name) {
-                return Some(value);
-            }
-        }
-        return None;
-    }
-    pub fn try_insert(
-        &mut self,
-        name: &String,
-        value: PointerValue<'a>,
-        type_: BasicTypeEnum<'a>,
-    ) -> Result<()> {
-        let scope = self
-            .scopes
-            .last_mut()
-            .expect("A variable scope stack must always contain at least one scope");
-        if scope.contains_key(name) {
-            return Err("variable already exists".into());
-        } else {
-            scope.insert(name.clone(), (type_, value));
-            return Ok(());
-        }
-    }
-    pub fn push_child(&mut self) {
-        self.scopes.push(HashMap::new());
-    }
-    pub fn pop<'b>(&mut self) {
-        self.scopes.pop();
-        assert!(self.scopes.len() >= 1);
+impl<'a> DerefMut for VariableStorage<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -79,11 +61,14 @@ pub struct IrGenerator<'a, 'errors> {
     context: &'a Context,
     module: Module<'a>,
     builder: Builder<'a>,
-    functions: HashMap<String, FunctionValue<'a>>,
     errors: &'errors mut Vec<FleetError>,
-    function_termination: PerNodeData<FunctionTermination>,
 
-    variable_scopes: VariableScopeStack<'a>,
+    function_termination: PerNodeData<FunctionTermination>,
+    variable_data: PerNodeData<Rc<RefCell<Variable>>>,
+    variable_storage: HashMap<VariableID, VariableStorage<'a>>,
+    function_data: PerNodeData<Rc<RefCell<Function>>>,
+    function_locations: HashMap<FunctionID, FunctionLocation<'a>>,
+
     break_block: Option<BasicBlock<'a>>,
     skip_block: Option<BasicBlock<'a>>,
 }
@@ -92,6 +77,8 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
         context: &'a Context,
         errors: &'errors mut Vec<FleetError>,
         function_termination: PerNodeData<FunctionTermination>,
+        variable_data: PerNodeData<Rc<RefCell<Variable>>>,
+        function_data: PerNodeData<Rc<RefCell<Function>>>,
     ) -> Self {
         let module = context.create_module("module");
         let builder = context.create_builder();
@@ -100,10 +87,12 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
             context,
             module,
             builder,
-            functions: HashMap::new(),
             errors,
             function_termination,
-            variable_scopes: VariableScopeStack::new(),
+            variable_data,
+            variable_storage: HashMap::new(),
+            function_data,
+            function_locations: HashMap::new(),
             break_block: None,
             skip_block: None,
         }
@@ -134,19 +123,52 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
             AnyTypeEnum::VoidType(void_type) => Ok(void_type.fn_type(param_types, is_var_args)),
         }
     }
+
+    fn runtime_type_to_llvm(&self, type_: RuntimeType) -> AnyTypeEnum<'a> {
+        match type_ {
+            RuntimeType::I32 => self.context.i32_type().into(),
+            RuntimeType::Unit => self.context.void_type().into(),
+            RuntimeType::Unknown => panic!("Unknown types should have caused errors earlier."),
+        }
+    }
+
+    fn register_function(&mut self, function: &mut FunctionDefinition) -> Result<()> {
+        let return_type_ir = self.visit_type(&mut function.return_type)?;
+        let ir_function = self.module.add_function(
+            &function.name,
+            self.make_into_function_type(return_type_ir, &[], false)?,
+            None,
+        );
+        let ref_function = self
+            .function_data
+            .get(&function.id)
+            .expect("Function data should exist before calling ir_generator");
+        assert!(matches!(
+            self.function_locations
+                .insert(ref_function.borrow().id, FunctionLocation(ir_function)),
+            None
+        ));
+        Ok(())
+    }
 }
 
 impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
     type ProgramOutput = Result<Module<'a>>;
     type FunctionDefinitionOutput = Result<FunctionValue<'a>>;
+    type SimpleBindingOutput = Result<PointerValue<'a>>;
     type StatementOutput = Result<()>;
     type ExecutorHostOutput = Result<()>;
     type ExecutorOutput = Result<()>;
     type ExpressionOutput = Result<Option<BasicValueEnum<'a>>>;
+
     type TypeOutput = Result<AnyTypeEnum<'a>>;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         eprintln!("Generating program");
+
+        for f in &mut program.functions {
+            self.register_function(f)?;
+        }
 
         for f in &mut program.functions {
             self.visit_function_definition(f)?;
@@ -178,22 +200,28 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         eprintln!("Generating function {:?}", function.name);
 
         let return_type_ir = self.visit_type(&mut function.return_type)?;
-        let ir_function = self.module.add_function(
-            &function.name,
-            self.make_into_function_type(return_type_ir, &[], false)?,
-            None,
-        );
+        let ir_function = self
+            .function_locations
+            .get(
+                &self
+                    .function_data
+                    .get(&function.id)
+                    .expect("Function data should exist before calling ir_generator")
+                    .borrow()
+                    .id,
+            )
+            .expect("Functions should be registered before traversing the tree")
+            .clone()
+            .0;
 
         let entry = self.context.append_basic_block(ir_function, "entry");
         self.builder.position_at_end(entry);
 
-        self.variable_scopes.push_child(); // the parameter scope
         self.visit_statement(&mut function.body)?;
-        self.variable_scopes.pop();
 
         if *self
             .function_termination
-            .get(&function.body)
+            .get_node(&function.body)
             .expect("all function bodies should have been analyzed for termination")
             == FunctionTermination::Terminates
         {
@@ -231,6 +259,61 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         return Ok(ir_function);
     }
 
+    fn visit_simple_binding(
+        &mut self,
+        simple_binding: &mut SimpleBinding,
+    ) -> Self::SimpleBindingOutput {
+        let type_ = self.visit_type(&mut simple_binding.type_)?;
+
+        let ptr = match type_ {
+            AnyTypeEnum::ArrayType(array_type) => self
+                .builder
+                .build_alloca(array_type, &simple_binding.name)?,
+            AnyTypeEnum::FloatType(float_type) => self
+                .builder
+                .build_alloca(float_type, &simple_binding.name)?,
+            AnyTypeEnum::FunctionType(_function_type) => {
+                panic!("Somehow tried to bind a function type")
+            }
+            AnyTypeEnum::IntType(int_type) => {
+                self.builder.build_alloca(int_type, &simple_binding.name)?
+            }
+            AnyTypeEnum::PointerType(pointer_type) => self
+                .builder
+                .build_alloca(pointer_type, &simple_binding.name)?,
+            AnyTypeEnum::StructType(struct_type) => self
+                .builder
+                .build_alloca(struct_type, &simple_binding.name)?,
+            AnyTypeEnum::VectorType(vector_type) => self
+                .builder
+                .build_alloca(vector_type, &simple_binding.name)?,
+            AnyTypeEnum::VoidType(_void_type) => {
+                panic!("Somehow tried to bind a void type")
+            }
+        };
+
+        let ref_variable = self
+            .variable_data
+            .get(&simple_binding.id)
+            .expect(&format!(
+                "Variable data for {:?} should exist before calling ir_generator",
+                simple_binding.name,
+            ))
+            .borrow();
+
+        assert!(
+            matches!(
+                self.variable_storage
+                    .insert(ref_variable.id, VariableStorage(ptr)),
+                None
+            ),
+            "Variable {:?} was already assigned some storage",
+            simple_binding.name
+        );
+
+        return Ok(ptr);
+    }
+
     fn visit_expression_statement(
         &mut self,
         ExpressionStatement {
@@ -256,11 +339,9 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             id: _,
         }: &mut BlockStatement,
     ) -> Self::StatementOutput {
-        self.variable_scopes.push_child();
         for substmt in body {
             self.visit_statement(substmt)?;
         }
-        self.variable_scopes.pop();
         Ok(())
     }
 
@@ -298,23 +379,9 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             .ok_or(format!(
                 "Somehow passed using a void value as a variable initializer"
             ))?;
-        let ptr = self
-            .builder
-            .build_alloca(eval_value.get_type().into_int_type(), &vardef_stmt.name)?;
+
+        let ptr = self.visit_simple_binding(&mut vardef_stmt.binding)?;
         self.builder.build_store(ptr, eval_value)?;
-        if let Err(_) =
-            self.variable_scopes
-                .try_insert(&vardef_stmt.name, ptr, eval_value.get_type())
-        {
-            self.errors.push(FleetError::from_token(
-                &vardef_stmt.name_token,
-                format!(
-                    "Variable {:?} was already defined in this scope",
-                    vardef_stmt.name
-                ),
-                ErrorSeverity::Error,
-            ));
-        }
 
         Ok(())
     }
@@ -352,7 +419,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
         if *self
             .function_termination
-            .get(&*if_stmt.if_body)
+            .get_node(&*if_stmt.if_body)
             .expect(&format!(
                 "{:?} didn't get analyzed for termination",
                 if_stmt.if_body
@@ -394,7 +461,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
             if *self
                 .function_termination
-                .get(body)
+                .get_node(body)
                 .expect(&format!("{body:?} didn't get analyzed for termination"))
                 != FunctionTermination::Terminates
             {
@@ -407,10 +474,14 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             next_block.set_name("else_body");
 
             self.visit_statement(else_body)?;
-            if *self.function_termination.get(&**else_body).expect(&format!(
-                "{:?} didn't get analyzed for termination",
-                else_body
-            )) != FunctionTermination::Terminates
+            if *self
+                .function_termination
+                .get_node(&**else_body)
+                .expect(&format!(
+                    "{:?} didn't get analyzed for termination",
+                    else_body
+                ))
+                != FunctionTermination::Terminates
             {
                 self.builder.build_unconditional_branch(end_block)?;
             }
@@ -517,7 +588,6 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             .context
             .insert_basic_block_after(incrementer_block, "for_end");
 
-        self.variable_scopes.push_child();
         self.visit_statement(initializer)?;
 
         self.builder.build_unconditional_branch(condition_block)?;
@@ -566,7 +636,6 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         }
         self.builder.build_unconditional_branch(condition_block)?;
 
-        self.variable_scopes.pop();
         self.builder.position_at_end(end_block);
 
         return Ok(());
@@ -647,7 +716,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             open_paren_token: _,
             arguments,
             close_paren_token: _,
-            id: _,
+            id,
         }: &mut FunctionCallExpression,
     ) -> Self::ExpressionOutput {
         let mut args: Vec<BasicMetadataValueEnum> = vec![];
@@ -662,26 +731,26 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             );
         }
 
-        if let Some(f) = self.functions.get(name) {
-            return Ok(self
-                .builder
-                .build_call(*f, &args[..], name)?
-                .try_as_basic_value()
-                .left()
-                .map(|l| l.as_basic_value_enum()));
-        } else {
-            self.errors.push(FleetError::from_token(
-                name_token,
-                format!("Function {name:?} called but not defined"),
-                ErrorSeverity::Error,
-            ));
-            return Ok(Some(
-                self.context
-                    .i32_type()
-                    .const_all_ones()
-                    .as_basic_value_enum(),
-            ));
-        }
+        let ir_function = self
+            .function_locations
+            .get(
+                &self
+                    .function_data
+                    .get(id)
+                    .expect("Function data should exist before calling ir_generator")
+                    .borrow()
+                    .id,
+            )
+            .expect("Functions should be registered before traversing the tree")
+            .clone()
+            .0;
+
+        return Ok(self
+            .builder
+            .build_call(ir_function, &args[..], name)?
+            .try_as_basic_value()
+            .left()
+            .map(|l| l.as_basic_value_enum()));
     }
 
     fn visit_grouping_expression(
@@ -700,29 +769,32 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         &mut self,
         VariableAccessExpression {
             name,
-            name_token,
-            id: _,
+            name_token: _,
+            id,
         }: &mut VariableAccessExpression,
     ) -> Self::ExpressionOutput {
-        if let Some((type_, ptr)) = self.variable_scopes.get(name) {
-            return Ok(Some(self.builder.build_load(
-                type_.clone(),
-                ptr.clone(),
-                name,
-            )?));
-        } else {
-            self.errors.push(FleetError::from_token(
-                name_token,
-                format!("Variable {name:?} is accessed, but not defined"),
-                ErrorSeverity::Error,
-            ));
-            return Ok(Some(
-                self.context
-                    .i32_type()
-                    .const_all_ones()
-                    .as_basic_value_enum(),
-            ));
-        }
+        let var = self.variable_data.get(id).expect(&format!(
+            "Variable data for {name:?} should exist before running ir_generator"
+        ));
+
+        let storage = self
+            .variable_storage
+            .get(&var.borrow().id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Variables should have storage before being accessed.{}",
+                    format!(
+                        "\nVarData: {:#?}\nVarStorage: {:#?}\nThis ID: {id:?}",
+                        self.variable_data, self.variable_storage
+                    )
+                )
+            });
+        return Ok(Some(match self.runtime_type_to_llvm(var.borrow().type_) {
+            AnyTypeEnum::IntType(int_type) => {
+                self.builder.build_load(int_type, storage.0.clone(), name)
+            }
+            _ => todo!(),
+        }?));
     }
 
     fn visit_unary_expression(
@@ -1079,32 +1151,26 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         &mut self,
         VariableAssignmentExpression {
             name,
-            name_token,
+            name_token: _,
             equal_token: _,
             right,
-            id: _,
+            id,
         }: &mut VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
         let right_value = self.visit_expression(right)?.ok_or(format!(
             "Somehow tried assigning a Unit value to variable {name:?}",
         ))?;
 
-        if let Some((_type, ptr)) = self.variable_scopes.get(name) {
-            self.builder.build_store(ptr.clone(), right_value)?;
-            return Ok(Some(right_value));
-        } else {
-            self.errors.push(FleetError::from_token(
-                name_token,
-                format!("Variable {name:?} is assigned, but not defined"),
-                ErrorSeverity::Error,
-            ));
-            return Ok(Some(
-                self.context
-                    .i32_type()
-                    .const_all_ones()
-                    .as_basic_value_enum(),
-            ));
-        }
+        let var = self.variable_data.get(id).expect(&format!(
+            "Variable data for {name:?} should exist before calling ir_generator"
+        ));
+        let storage = self
+            .variable_storage
+            .get(&var.borrow().id)
+            .expect("Variables should have storage before being accessed");
+
+        self.builder.build_store(storage.0, right_value)?;
+        return Ok(Some(right_value));
     }
 
     fn visit_i32_type(&mut self, _type: &mut I32Type) -> Self::TypeOutput {

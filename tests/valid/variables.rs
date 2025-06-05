@@ -391,3 +391,20 @@ fn per_function_variable_scopes() {
         2,
     );
 }
+
+#[test]
+fn shadowing() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let j: i32 = 3;
+                {
+                    let j: i32 = j + 1;
+                }
+                return j;
+            }
+        "##},
+        "main",
+        3,
+    );
+}

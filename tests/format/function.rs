@@ -170,7 +170,7 @@ fn remove_parens_multiple_returns() {
             let main = () -> i32 {
                 return (1 * 2);
             }
-            let main = () -> i32 {
+            let main2 = () -> i32 {
                 return (1 + 1);
             }"##
         },
@@ -178,7 +178,7 @@ fn remove_parens_multiple_returns() {
             let main = () -> i32 {
                 return 1 * 2;
             }
-            let main = () -> i32 {
+            let main2 = () -> i32 {
                 return 1 + 1;
             }"##
         },

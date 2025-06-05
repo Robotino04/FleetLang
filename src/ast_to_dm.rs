@@ -3,7 +3,7 @@ use crate::{
         AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
         ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
         IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
+        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     document_model::DocumentElement,
@@ -159,10 +159,12 @@ impl AstToDocumentModelConverter {
 impl AstVisitor for AstToDocumentModelConverter {
     type ProgramOutput = DocumentElement;
     type FunctionDefinitionOutput = DocumentElement;
+    type SimpleBindingOutput = DocumentElement;
     type StatementOutput = DocumentElement;
     type ExecutorHostOutput = DocumentElement;
     type ExecutorOutput = DocumentElement;
     type ExpressionOutput = DocumentElement;
+
     type TypeOutput = DocumentElement;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
@@ -188,6 +190,7 @@ impl AstVisitor for AstToDocumentModelConverter {
             name_token,
             equal_token,
             open_paren_token,
+            parameters,
             close_paren_token,
             right_arrow_token,
             return_type,
@@ -206,7 +209,22 @@ impl AstVisitor for AstToDocumentModelConverter {
                     DocumentElement::CollapsableSpace,
                     self.token_type_to_element(open_paren_token),
                     self.trivia_to_element(&open_paren_token.trailing_trivia),
-                    //
+                    DocumentElement::spaced_concatentation(
+                        DocumentElement::CollapsableSpace,
+                        parameters
+                            .iter_mut()
+                            .map(|(param, comma)| {
+                                if let Some(comma) = comma {
+                                    DocumentElement::Concatenation(vec![
+                                        self.visit_simple_binding(param),
+                                        self.token_type_to_element(comma),
+                                    ])
+                                } else {
+                                    self.visit_simple_binding(param)
+                                }
+                            })
+                            .collect(),
+                    ),
                     self.trivia_to_element(&close_paren_token.leading_trivia),
                     self.token_type_to_element(close_paren_token),
                     DocumentElement::CollapsableSpace,
@@ -215,6 +233,27 @@ impl AstVisitor for AstToDocumentModelConverter {
                 self.token_to_element(right_arrow_token),
                 self.visit_type(return_type),
                 self.visit_statement(body),
+            ],
+        )
+    }
+
+    fn visit_simple_binding(
+        &mut self,
+        SimpleBinding {
+            name_token,
+            name: _,
+            colon_token,
+            type_,
+            id: _,
+        }: &mut SimpleBinding,
+    ) -> Self::SimpleBindingOutput {
+        DocumentElement::spaced_concatentation(
+            DocumentElement::CollapsableSpace,
+            vec![
+                self.token_to_element(name_token),
+                DocumentElement::double_space_eater(),
+                self.token_to_element(colon_token),
+                self.visit_type(type_),
             ],
         )
     }
@@ -327,10 +366,7 @@ impl AstVisitor for AstToDocumentModelConverter {
         &mut self,
         VariableDefinitionStatement {
             let_token,
-            name_token,
-            name: _,
-            colon_token,
-            type_,
+            binding,
             equals_token,
             value,
             semicolon_token,
@@ -342,15 +378,11 @@ impl AstVisitor for AstToDocumentModelConverter {
                 DocumentElement::CollapsableSpace,
                 vec![
                     self.token_to_element(let_token),
-                    self.token_to_element(name_token),
-                    DocumentElement::double_space_eater(),
-                    self.token_to_element(colon_token),
-                    self.visit_type(type_),
+                    self.visit_simple_binding(binding),
                     self.token_to_element(equals_token),
                     self.visit_expression(value),
                 ],
             ),
-            DocumentElement::double_space_eater(),
             DocumentElement::double_space_eater(),
             self.token_to_element(semicolon_token),
         ])

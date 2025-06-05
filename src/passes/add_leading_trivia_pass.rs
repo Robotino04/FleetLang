@@ -3,7 +3,7 @@ use crate::{
         AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
         ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
         IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
+        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
@@ -28,10 +28,12 @@ impl AddLeadingTriviaPass {
 impl AstVisitor for AddLeadingTriviaPass {
     type ProgramOutput = ();
     type FunctionDefinitionOutput = ();
+    type SimpleBindingOutput = ();
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
     type ExpressionOutput = ();
+
     type TypeOutput = ();
 
     fn visit_program(mut self, program: &mut Program) {
@@ -42,6 +44,13 @@ impl AstVisitor for AddLeadingTriviaPass {
 
     fn visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
         self.add_leading_trivia_to_token(&mut function_definition.name_token);
+    }
+
+    fn visit_simple_binding(
+        &mut self,
+        SimpleBinding { name_token, .. }: &mut SimpleBinding,
+    ) -> Self::SimpleBindingOutput {
+        self.add_leading_trivia_to_token(name_token);
     }
 
     fn visit_expression_statement(
@@ -73,9 +82,9 @@ impl AstVisitor for AddLeadingTriviaPass {
 
     fn visit_variable_definition_statement(
         &mut self,
-        VariableDefinitionStatement { let_token, .. }: &mut VariableDefinitionStatement,
+        VariableDefinitionStatement { binding, .. }: &mut VariableDefinitionStatement,
     ) {
-        self.add_leading_trivia_to_token(let_token);
+        self.visit_simple_binding(binding);
     }
 
     fn visit_if_statement(&mut self, IfStatement { if_token, .. }: &mut IfStatement) {

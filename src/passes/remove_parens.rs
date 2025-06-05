@@ -1,7 +1,7 @@
 use crate::ast::{
-    Associativity, AstVisitor, BinaryExpression, Expression, ForLoopStatement, GroupingExpression,
-    IfStatement, ReturnStatement, ThreadExecutor, UnaryExpression, VariableAssignmentExpression,
-    VariableDefinitionStatement, WhileLoopStatement,
+    Associativity, AstVisitor, BinaryExpression, Expression, ExpressionStatement, ForLoopStatement,
+    GroupingExpression, IfStatement, ReturnStatement, SimpleBinding, ThreadExecutor,
+    UnaryExpression, VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
 };
 
 use super::{
@@ -34,15 +34,15 @@ impl RemoveParensPass {
 impl RemoveParensPass {}
 
 impl PartialAstVisitor for RemoveParensPass {
-    fn partial_visit_expression_statement(
-        &mut self,
-        expr_stmt: &mut crate::ast::ExpressionStatement,
-    ) {
+    fn partial_visit_simple_binding(&mut self, simple_binding: &mut SimpleBinding) {
+        self.visit_type(&mut simple_binding.type_);
+    }
+
+    fn partial_visit_expression_statement(&mut self, expr_stmt: &mut ExpressionStatement) {
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
         self.visit_expression(&mut expr_stmt.expression);
     }
-
     fn partial_visit_return_statement(&mut self, return_stmt: &mut ReturnStatement) {
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
@@ -53,7 +53,7 @@ impl PartialAstVisitor for RemoveParensPass {
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
     ) {
-        self.visit_type(&mut vardef_stmt.type_);
+        self.visit_simple_binding(&mut vardef_stmt.binding);
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
         self.visit_expression(&mut vardef_stmt.value);
@@ -123,52 +123,6 @@ impl PartialAstVisitor for RemoveParensPass {
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
         self.visit_expression(&mut executor.index);
-    }
-
-    fn partial_visit_function_call_expression(
-        &mut self,
-        expression: &mut crate::ast::FunctionCallExpression,
-    ) {
-        for arg in &mut expression.arguments {
-            self.parent_precedence = Expression::TOP_PRECEDENCE;
-            self.parent_associativity = Associativity::Both;
-            self.visit_expression(arg);
-        }
-    }
-
-    fn partial_visit_unary_expression(&mut self, expression: &mut UnaryExpression) {
-        self.parent_precedence = Expression::Unary(expression.clone()).get_precedence();
-        self.current_side = OperandSide::Left;
-        self.visit_expression(&mut expression.operand);
-    }
-
-    fn partial_visit_binary_expression(&mut self, expression: &mut BinaryExpression) {
-        let this_precedence = Expression::Binary(expression.clone()).get_precedence();
-        let this_associativity = Expression::Binary(expression.clone()).get_associativity();
-
-        self.parent_precedence = this_precedence;
-        self.parent_associativity = this_associativity;
-        self.current_side = OperandSide::Left;
-        self.visit_expression(&mut expression.left);
-
-        self.parent_precedence = this_precedence;
-        self.parent_associativity = this_associativity;
-        self.current_side = OperandSide::Right;
-        self.visit_expression(&mut expression.right);
-    }
-
-    fn partial_visit_variable_assignment_expression(
-        &mut self,
-        expression: &mut VariableAssignmentExpression,
-    ) {
-        let this_precedence = Expression::VariableAssignment(expression.clone()).get_precedence();
-        let this_associativity =
-            Expression::VariableAssignment(expression.clone()).get_associativity();
-
-        self.parent_precedence = this_precedence;
-        self.parent_associativity = this_associativity;
-        self.current_side = OperandSide::Right;
-        self.visit_expression(&mut expression.right);
     }
 
     // need to use the general function here because we may potentially change a nodes type which
@@ -246,5 +200,51 @@ impl PartialAstVisitor for RemoveParensPass {
                 self.partial_visit_variable_assignment_expression(variable_assignment_expression)
             }
         }
+    }
+
+    fn partial_visit_function_call_expression(
+        &mut self,
+        expression: &mut crate::ast::FunctionCallExpression,
+    ) {
+        for arg in &mut expression.arguments {
+            self.parent_precedence = Expression::TOP_PRECEDENCE;
+            self.parent_associativity = Associativity::Both;
+            self.visit_expression(arg);
+        }
+    }
+
+    fn partial_visit_unary_expression(&mut self, expression: &mut UnaryExpression) {
+        self.parent_precedence = Expression::Unary(expression.clone()).get_precedence();
+        self.current_side = OperandSide::Left;
+        self.visit_expression(&mut expression.operand);
+    }
+
+    fn partial_visit_binary_expression(&mut self, expression: &mut BinaryExpression) {
+        let this_precedence = Expression::Binary(expression.clone()).get_precedence();
+        let this_associativity = Expression::Binary(expression.clone()).get_associativity();
+
+        self.parent_precedence = this_precedence;
+        self.parent_associativity = this_associativity;
+        self.current_side = OperandSide::Left;
+        self.visit_expression(&mut expression.left);
+
+        self.parent_precedence = this_precedence;
+        self.parent_associativity = this_associativity;
+        self.current_side = OperandSide::Right;
+        self.visit_expression(&mut expression.right);
+    }
+
+    fn partial_visit_variable_assignment_expression(
+        &mut self,
+        expression: &mut VariableAssignmentExpression,
+    ) {
+        let this_precedence = Expression::VariableAssignment(expression.clone()).get_precedence();
+        let this_associativity =
+            Expression::VariableAssignment(expression.clone()).get_associativity();
+
+        self.parent_precedence = this_precedence;
+        self.parent_associativity = this_associativity;
+        self.current_side = OperandSide::Right;
+        self.visit_expression(&mut expression.right);
     }
 }

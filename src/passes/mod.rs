@@ -6,3 +6,4 @@ pub mod fix_non_block_statements;
 pub mod function_termination_analysis;
 pub mod partial_visitor;
 pub mod remove_parens;
+pub mod type_propagation;

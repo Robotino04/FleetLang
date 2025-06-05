@@ -1,9 +1,9 @@
 use crate::ast::{
     AstNode, BinaryExpression, BinaryOperation, BlockStatement, ExpressionStatement,
     ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
-    IfStatement, NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, ThreadExecutor,
-    UnaryExpression, UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
-    VariableDefinitionStatement, WhileLoopStatement,
+    IfStatement, NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, SimpleBinding,
+    ThreadExecutor, UnaryExpression, UnaryOperation, VariableAccessExpression,
+    VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
 };
 
 fn generate_function_declaration(function: &FunctionDefinition) -> String {
@@ -44,6 +44,15 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             return generate_function_declaration(&function)
                 + " "
                 + generate_c(function.body).as_str();
+        }
+        AstNode::SimpleBinding(SimpleBinding {
+            name_token: _,
+            name,
+            colon_token: _,
+            type_,
+            id: _,
+        }) => {
+            return format!("{} {}", generate_c(type_), name);
         }
         AstNode::I32Type(I32Type { token: _, id: _ }) => "int32_t".to_string(),
         AstNode::ExpressionStatement(ExpressionStatement {
@@ -88,16 +97,13 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
         }
         AstNode::VariableDefinitionStatement(VariableDefinitionStatement {
             let_token: _,
-            name_token: _,
-            name,
-            colon_token: _,
-            type_,
+            binding,
             equals_token: _,
             value,
             semicolon_token: _,
             id: _,
         }) => {
-            return generate_c(type_) + " " + &name + " = " + &generate_c(value) + ";";
+            return generate_c(binding) + " = " + &generate_c(value) + ";";
         }
         AstNode::IfStatement(IfStatement {
             if_token: _,

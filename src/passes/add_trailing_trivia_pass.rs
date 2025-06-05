@@ -2,8 +2,8 @@ use crate::{
     ast::{
         AstVisitor, BlockStatement, BreakStatement, ExpressionStatement, ForLoopStatement,
         FunctionDefinition, I32Type, IfStatement, OnStatement, Program, ReturnStatement,
-        SelfExecutorHost, SkipStatement, ThreadExecutor, VariableDefinitionStatement,
-        WhileLoopStatement,
+        SelfExecutorHost, SimpleBinding, SkipStatement, ThreadExecutor,
+        VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -26,10 +26,12 @@ impl AddTrailingTriviaPass {
 impl AstVisitor for AddTrailingTriviaPass {
     type ProgramOutput = ();
     type FunctionDefinitionOutput = ();
+    type SimpleBindingOutput = ();
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
     type ExpressionOutput = ();
+
     type TypeOutput = ();
 
     fn visit_program(mut self, program: &mut Program) {
@@ -40,6 +42,13 @@ impl AstVisitor for AddTrailingTriviaPass {
 
     fn visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
         self.visit_statement(&mut function_definition.body);
+    }
+
+    fn visit_simple_binding(
+        &mut self,
+        SimpleBinding { type_, .. }: &mut SimpleBinding,
+    ) -> Self::SimpleBindingOutput {
+        self.visit_type(type_);
     }
 
     fn visit_expression_statement(

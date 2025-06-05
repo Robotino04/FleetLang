@@ -1,21 +1,25 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env::args;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::rc::Rc;
 use std::sync::LazyLock;
 
 use fleet::ast::{
     AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
     ExpressionStatement, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
-    GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, ReturnStatement,
-    SelfExecutorHost, SkipStatement, ThreadExecutor, UnaryExpression, UnaryOperation,
-    VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-    WhileLoopStatement,
+    GroupingExpression, HasID, I32Type, IfStatement, NodeID, NumberExpression, OnStatement,
+    PerNodeData, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, ThreadExecutor,
+    UnaryExpression, UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
+    VariableDefinitionStatement, WhileLoopStatement,
 };
 use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
 use fleet::passes::find_containing_node::FindContainingNodePass;
+use fleet::passes::type_propagation::{Function, RuntimeType, Variable};
 use fleet::tokenizer::{SourceLocation, Token, Trivia, TriviaKind};
 use indoc::indoc;
 use inkwell::context::Context;
+use itertools::Itertools;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::{Client, LspService, Server};
 use tower_lsp::{LanguageServer, lsp_types::*};
@@ -83,8 +87,38 @@ fn token_length(start: SourceLocation, end: SourceLocation) -> u32 {
     (end.index - start.index) as u32
 }
 
+fn stringify_runtime_type(type_: RuntimeType) -> &'static str {
+    match type_ {
+        RuntimeType::I32 => "i32",
+        RuntimeType::Unit => "()",
+        RuntimeType::Unknown => "/* type unknown */",
+    }
+}
+
 impl Backend {
-    fn generate_node_hover(&self, node: impl Into<AstNode>) -> (String, String) {
+    fn format_option_type(&self, type_: Option<Option<RuntimeType>>) -> String {
+        type_
+            .as_ref()
+            .map(|td| {
+                td.map(|t| stringify_runtime_type(t).to_string())
+                    .unwrap_or("/* missing type data*/".to_string())
+            })
+            .unwrap_or("/* type data unavailable */".to_string())
+    }
+    fn get_type_as_hover(
+        &self,
+        id: NodeID,
+        type_data: &Option<PerNodeData<RuntimeType>>,
+    ) -> String {
+        self.format_option_type(type_data.as_ref().map(|td| td.get(&id).cloned()))
+    }
+    fn generate_node_hover(
+        &self,
+        node: impl Into<AstNode>,
+        variable_data: &Option<PerNodeData<Rc<RefCell<Variable>>>>,
+        function_data: &Option<PerNodeData<Rc<RefCell<Function>>>>,
+        type_data: &Option<PerNodeData<RuntimeType>>,
+    ) -> (String, String) {
         match node.into() {
             AstNode::Program(_) => ("".to_string(), "program".to_string()),
             AstNode::FunctionDefinition(FunctionDefinition {
@@ -93,21 +127,53 @@ impl Backend {
                 name_token: _,
                 equal_token: _,
                 open_paren_token: _,
+                parameters,
                 close_paren_token: _,
                 right_arrow_token: _,
                 return_type,
                 body: _,
                 id: _,
             }) => (
-                format!("{name} = () -> {}", self.generate_node_hover(return_type).0),
+                format!(
+                    "let {name} = ({}) -> {}",
+                    Itertools::intersperse(
+                        parameters.iter().map(|(param, _comma)| self
+                            .generate_node_hover(
+                                param.clone(),
+                                variable_data,
+                                function_data,
+                                type_data
+                            )
+                            .0),
+                        ",".to_string()
+                    )
+                    .collect::<String>(),
+                    self.generate_node_hover(return_type, variable_data, function_data, type_data)
+                        .0
+                ),
                 "function definition".to_string(),
+            ),
+            AstNode::SimpleBinding(SimpleBinding {
+                name_token: _,
+                name,
+                colon_token: _,
+                type_,
+                id: _,
+            }) => (
+                format!(
+                    "{name}: {}",
+                    self.generate_node_hover(type_, variable_data, function_data, type_data)
+                        .0
+                ),
+                "simple binding".to_string(),
             ),
             AstNode::ExpressionStatement(ExpressionStatement {
                 expression,
                 semicolon_token: _,
                 id: _,
             }) => (
-                self.generate_node_hover(expression).0,
+                self.generate_node_hover(expression, variable_data, function_data, type_data)
+                    .0,
                 "expression statement".to_string(),
             ),
             AstNode::OnStatement(OnStatement {
@@ -118,28 +184,30 @@ impl Backend {
                 body: _,
                 id: _,
             }) => (
-                format!("on ({})", self.generate_node_hover(executor).0),
+                format!(
+                    "on ({})",
+                    self.generate_node_hover(executor, variable_data, function_data, type_data)
+                        .0
+                ),
                 "`on` statement".to_string(),
             ),
             AstNode::BlockStatement(BlockStatement { .. }) => ("".to_string(), "block".to_string()),
-            // TODO: once we have type inference, show the value type here
-            AstNode::ReturnStatement(ReturnStatement { .. }) => {
-                ("return".to_string(), "`return` statement".to_string())
-            }
+            AstNode::ReturnStatement(ReturnStatement { id, .. }) => (
+                format!("return {}", self.get_type_as_hover(id, type_data)),
+                "`return` statement".to_string(),
+            ),
             AstNode::VariableDefinitionStatement(VariableDefinitionStatement {
                 let_token: _,
-                name_token: _,
-                name,
-                colon_token: _,
-                type_,
+                binding,
                 equals_token: _,
                 value: _,
                 semicolon_token: _,
                 id: _,
             }) => (
                 format!(
-                    "let {name}: {} = ...", // TODO: once we have consteval, display that here
-                    self.generate_node_hover(type_).0
+                    "let {} = ...", // TODO: once we have consteval, display that here
+                    self.generate_node_hover(binding, variable_data, function_data, type_data)
+                        .0
                 ),
                 "variable definition".to_string(),
             ),
@@ -149,13 +217,39 @@ impl Backend {
             AstNode::WhileLoopStatement(WhileLoopStatement { .. }) => {
                 ("".to_string(), "`while` loop".to_string())
             }
-            AstNode::ForLoopStatement(ForLoopStatement { initializer, .. }) => (
-                format!(
-                    "for ({}; ...; ...)",
-                    self.generate_node_hover(*initializer).0
-                ),
-                "`for` loop".to_string(),
-            ),
+            AstNode::ForLoopStatement(ForLoopStatement {
+                for_token: _,
+                open_paren_token: _,
+                initializer,
+                condition,
+                second_semicolon_token: _,
+                incrementer,
+                close_paren_token: _,
+                body: _,
+                id: _,
+            }) => {
+                let condition_type = condition
+                    .map(|cond| self.get_type_as_hover(cond.get_id(), type_data))
+                    .unwrap_or("".to_string());
+                let incrementer_type = incrementer
+                    .map(|cond| self.get_type_as_hover(cond.get_id(), type_data))
+                    .unwrap_or("".to_string());
+                (
+                    format!(
+                        "for ({}; {}; {})",
+                        self.generate_node_hover(
+                            *initializer,
+                            variable_data,
+                            function_data,
+                            type_data
+                        )
+                        .0,
+                        condition_type,
+                        incrementer_type
+                    ),
+                    "`for` loop".to_string(),
+                )
+            }
             AstNode::BreakStatement(_break_statement) => {
                 ("".to_string(), "`break` statement".to_string())
             }
@@ -177,25 +271,36 @@ impl Backend {
             }) => (
                 format!(
                     "{}.threads[{}]",
-                    self.generate_node_hover(host).0,
-                    self.generate_node_hover(index).0
+                    self.generate_node_hover(host, variable_data, function_data, type_data)
+                        .0,
+                    self.generate_node_hover(index, variable_data, function_data, type_data)
+                        .0
                 ),
                 "thread executor".to_string(),
             ),
             AstNode::UnaryExpression(UnaryExpression {
                 operator_token: _,
                 operation,
-                operand: _,
-                id: _,
+                operand,
+                id,
             }) => {
                 // TODO: once we have type inference, display operand type here
                 (
-                    match operation {
-                        UnaryOperation::BitwiseNot => "bitwise negation (~)",
-                        UnaryOperation::LogicalNot => "logical negation (!)",
-                        UnaryOperation::Negate => "arithmetic negation (-)",
-                    }
-                    .to_string(),
+                    {
+                        let inner_type = self.get_type_as_hover(operand.get_id(), type_data);
+                        let outer_type = self.get_type_as_hover(id, type_data);
+                        match operation {
+                            UnaryOperation::BitwiseNot => {
+                                format!("bitwise negation (~{inner_type}) => {outer_type}")
+                            }
+                            UnaryOperation::LogicalNot => {
+                                format!("logical negation (!{inner_type}) => {outer_type}")
+                            }
+                            UnaryOperation::Negate => {
+                                format!("arithmetic negation (-{inner_type}) => {outer_type}")
+                            }
+                        }
+                    },
                     "unary expression".to_string(),
                 )
             }
@@ -203,33 +308,40 @@ impl Backend {
             AstNode::NumberExpression(NumberExpression {
                 value,
                 token: _,
-                id: _,
-            }) => (value.to_string(), "number literal".to_string()),
+                id,
+            }) => (
+                format!("{value} {}", self.get_type_as_hover(id, type_data)),
+                "number literal".to_string(),
+            ),
             AstNode::BinaryExpression(BinaryExpression {
-                left: _,
+                left,
                 operator_token: _,
                 operation,
-                right: _,
-                id: _,
+                right,
+                id,
             }) => {
                 // TODO: once we have type inference, display operand types here
+                let left_type = self.get_type_as_hover(left.get_id(), type_data);
+                let right_type = self.get_type_as_hover(right.get_id(), type_data);
+                let result_type = self.get_type_as_hover(id, type_data);
+                let (name, op) = match operation {
+                    BinaryOperation::Add => ("addition", "+"),
+                    BinaryOperation::Subtract => ("subtraction", "-"),
+                    BinaryOperation::Multiply => ("multiplication", "*"),
+                    BinaryOperation::Divide => ("division", "/"),
+                    BinaryOperation::Modulo => ("modulo", "%"),
+                    BinaryOperation::GreaterThan => ("greater than", ">"),
+                    BinaryOperation::GreaterThanOrEqual => ("greater than or equal", ">="),
+                    BinaryOperation::LessThan => ("less than", "<"),
+                    BinaryOperation::LessThanOrEqual => ("less than or equal", "<="),
+                    BinaryOperation::Equal => ("equal", "=="),
+                    BinaryOperation::NotEqual => ("not equal", "!="),
+                    BinaryOperation::LogicalAnd => ("logical and", "&&"),
+                    BinaryOperation::LogicalOr => ("logical or", "||"),
+                };
+
                 (
-                    match operation {
-                        BinaryOperation::Add => "addition (+)",
-                        BinaryOperation::Subtract => "subtraction (-)",
-                        BinaryOperation::Multiply => "multiplication (*)",
-                        BinaryOperation::Divide => "division (/)",
-                        BinaryOperation::Modulo => "module (%)",
-                        BinaryOperation::GreaterThan => "greater than (>)",
-                        BinaryOperation::GreaterThanOrEqual => "greater than or equal (>=)",
-                        BinaryOperation::LessThan => "less than (<)",
-                        BinaryOperation::LessThanOrEqual => "less than or equal (<=)",
-                        BinaryOperation::Equal => "equal (==)",
-                        BinaryOperation::NotEqual => "not equal (!=)",
-                        BinaryOperation::LogicalAnd => "logical and (&&)",
-                        BinaryOperation::LogicalOr => "logical or (||)",
-                    }
-                    .to_string(),
+                    format!("{name} ({left_type} {op} {right_type} => {result_type})"),
                     "binary expression".to_string(),
                 )
             }
@@ -239,7 +351,16 @@ impl Backend {
                 close_paren_token: _,
                 id: _,
             }) => (
-                format!("({})", self.generate_node_hover(*subexpression).0),
+                format!(
+                    "({})",
+                    self.generate_node_hover(
+                        *subexpression,
+                        variable_data,
+                        function_data,
+                        type_data
+                    )
+                    .0
+                ),
                 "expression grouping".to_string(),
             ),
 
@@ -249,23 +370,27 @@ impl Backend {
                 open_paren_token: _,
                 arguments: _,
                 close_paren_token: _,
-                id: _,
+                id,
             }) => {
-                // TODO: once we have proper semantic analysis, display the function types here
+                let ref_func = function_data.as_ref().map(|fd| fd.get(&id));
+                let return_type = self.format_option_type(
+                    ref_func.map(|func| func.map(|func| func.borrow().return_type.clone())),
+                );
+
                 (
-                    format!("let {name} = () -> ..."),
+                    format!("let {name} = () -> {return_type}"),
                     "function call".to_string(),
                 )
             }
             AstNode::VariableAccessExpression(VariableAccessExpression {
                 name,
                 name_token: _,
-                id: _,
+                id,
             }) => {
-                // TODO: once we have proper semantic analysis, display the variable types here
+                let type_ = self.get_type_as_hover(id, type_data);
                 // TODO: once we have consteval, display the value here
                 (
-                    format!("let {name}: ... = ..."),
+                    format!("let {name}: {type_} = ..."),
                     "variable access".to_string(),
                 )
             }
@@ -274,11 +399,13 @@ impl Backend {
                 name_token: _,
                 equal_token: _,
                 right: _,
-                id: _,
+                id,
             }) => {
+                let type_ = self.get_type_as_hover(id, type_data);
                 // TODO: once we have proper semantic analysis, display the variable types here
+                // TODO: once we have consteval, display the value here
                 (
-                    format!("let {name}: ..."),
+                    format!("let {name}: {type_} = ..."),
                     "variable assignment".to_string(),
                 )
             }
@@ -376,10 +503,12 @@ impl ExtractSemanticTokensPass {
 impl AstVisitor for ExtractSemanticTokensPass {
     type ProgramOutput = Vec<SemanticToken>;
     type FunctionDefinitionOutput = ();
+    type SimpleBindingOutput = ();
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
     type ExpressionOutput = ();
+
     type TypeOutput = ();
 
     fn visit_program(mut self, program: &mut fleet::ast::Program) -> Self::ProgramOutput {
@@ -397,6 +526,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
             name_token,
             equal_token,
             open_paren_token,
+            parameters,
             close_paren_token,
             right_arrow_token,
             return_type,
@@ -415,10 +545,30 @@ impl AstVisitor for ExtractSemanticTokensPass {
         );
         self.build_comment_tokens_only(equal_token);
         self.build_comment_tokens_only(open_paren_token);
+        for (param, comma) in parameters {
+            self.visit_simple_binding(param);
+            if let Some(comma) = comma {
+                self.build_comment_tokens_only(comma);
+            }
+        }
+
         self.build_comment_tokens_only(close_paren_token);
         self.build_comment_tokens_only(right_arrow_token);
         self.visit_type(return_type);
         self.visit_statement(body);
+    }
+
+    fn visit_simple_binding(
+        &mut self,
+        simple_binding: &mut SimpleBinding,
+    ) -> Self::SimpleBindingOutput {
+        self.build_semantic_token(
+            &mut simple_binding.name_token,
+            SemanticTokenType::VARIABLE,
+            vec![SemanticTokenModifier::DEFINITION],
+        );
+        self.build_comment_tokens_only(&mut simple_binding.colon_token);
+        self.visit_type(&mut simple_binding.type_);
     }
 
     fn visit_expression_statement(
@@ -471,13 +621,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
             SemanticTokenType::KEYWORD,
             vec![],
         );
-        self.build_semantic_token(
-            &mut vardef_stmt.name_token,
-            SemanticTokenType::VARIABLE,
-            vec![SemanticTokenModifier::DEFINITION],
-        );
-        self.build_comment_tokens_only(&mut vardef_stmt.colon_token);
-        self.visit_type(&mut vardef_stmt.type_);
+        self.visit_simple_binding(&mut vardef_stmt.binding);
         self.build_comment_tokens_only(&mut vardef_stmt.equals_token);
         self.visit_expression(&mut vardef_stmt.value);
         self.build_comment_tokens_only(&mut vardef_stmt.semicolon_token);
@@ -855,6 +999,9 @@ impl LanguageServer for Backend {
         });
 
         let terminations = res.status.function_terminations().cloned();
+        let type_data = res.status.type_data().cloned();
+        let variable_data = res.status.variable_data().cloned();
+        let function_data = res.status.function_data().cloned();
 
         if let Ok((node_hierarchy, hovered_token)) = find_pass.visit_program(&mut program) {
             Ok(Some(Hover {
@@ -876,12 +1023,17 @@ impl LanguageServer for Backend {
                     "##},
                         node_hierarchy
                             .last()
-                            .map(|node| self.generate_node_hover(node.clone()))
+                            .map(|node| self.generate_node_hover(
+                                node.clone(),
+                                &variable_data,
+                                &function_data,
+                                &type_data
+                            ))
                             .map_or("No AST Node".to_string(), |(info, debug)| format!(
                                 "{info} // {debug}"
                             )),
                         terminations
-                            .map(|ts| ts.get(node_hierarchy.last()?).cloned())
+                            .map(|ts| ts.get_node(node_hierarchy.last()?).cloned())
                             .flatten()
                             .map_or("No termination info available".to_string(), |t| format!(
                                 "{t:?}"

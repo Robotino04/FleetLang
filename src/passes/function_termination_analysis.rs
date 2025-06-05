@@ -2,7 +2,7 @@ use crate::{
     ast::{
         AstVisitor, BlockStatement, ExpressionStatement, ForLoopStatement, FunctionDefinition,
         I32Type, IfStatement, OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
-        ThreadExecutor, VariableDefinitionStatement, WhileLoopStatement,
+        SimpleBinding, ThreadExecutor, VariableDefinitionStatement, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     tokenizer::SourceLocation,
@@ -57,10 +57,12 @@ impl<'errors> FunctionTerminationAnalyzer<'errors> {
 impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
     type ProgramOutput = PerNodeData<FunctionTermination>;
     type FunctionDefinitionOutput = FunctionTermination;
+    type SimpleBindingOutput = FunctionTermination;
     type StatementOutput = FunctionTermination;
     type ExecutorHostOutput = FunctionTermination;
     type ExecutorOutput = FunctionTermination;
     type ExpressionOutput = FunctionTermination;
+
     type TypeOutput = FunctionTermination;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
@@ -69,11 +71,11 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         }
 
         if let Some(main_function) = program.functions.iter().find(|f| f.name == "main") {
-            self.termination.insert(
+            self.termination.insert_node(
                 program,
                 *self
                     .termination
-                    .get(main_function)
+                    .get_node(main_function)
                     .expect("All functions should have been analyzed by now"),
             );
         } else {
@@ -99,8 +101,17 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         } = function;
         self.visit_type(return_type);
         let body_termination = self.visit_statement(body);
-        self.termination.insert(function, body_termination);
+        self.termination.insert_node(function, body_termination);
         return body_termination;
+    }
+
+    fn visit_simple_binding(
+        &mut self,
+        simple_binding: &mut SimpleBinding,
+    ) -> Self::SimpleBindingOutput {
+        let term = self.visit_type(&mut simple_binding.type_);
+        self.termination.insert_node(simple_binding, term);
+        return term;
     }
 
     fn visit_expression_statement(
@@ -108,7 +119,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         expr_stmt: &mut ExpressionStatement,
     ) -> Self::StatementOutput {
         let exp_term = self.visit_expression(&mut expr_stmt.expression);
-        self.termination.insert(expr_stmt, exp_term);
+        self.termination.insert_node(expr_stmt, exp_term);
         return exp_term;
     }
 
@@ -125,7 +136,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
 
         let term = exec_term.or(body_term);
 
-        self.termination.insert(on_stmt, term);
+        self.termination.insert_node(on_stmt, term);
         return term;
     }
 
@@ -150,7 +161,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
                 severity: ErrorSeverity::Warning,
             });
         }
-        self.termination.insert(block_stmt, body_term);
+        self.termination.insert_node(block_stmt, body_term);
         return body_term;
     }
 
@@ -160,7 +171,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
     ) -> Self::StatementOutput {
         self.visit_expression(&mut return_stmt.value);
         self.termination
-            .insert(return_stmt, FunctionTermination::Terminates);
+            .insert_node(return_stmt, FunctionTermination::Terminates);
         return FunctionTermination::Terminates;
     }
 
@@ -168,9 +179,9 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
     ) -> Self::StatementOutput {
-        self.visit_type(&mut vardef_stmt.type_);
+        self.visit_simple_binding(&mut vardef_stmt.binding);
         let term = self.visit_expression(&mut vardef_stmt.value);
-        self.termination.insert(vardef_stmt, term);
+        self.termination.insert_node(vardef_stmt, term);
         return term;
     }
 
@@ -189,7 +200,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
             .map(|(_else_token, else_body)| subterms.and(self.visit_statement(else_body)))
             .unwrap_or(subterms.and(FunctionTermination::DoesntTerminate));
         let term = if_term.or(subterms);
-        self.termination.insert(if_stmt, term);
+        self.termination.insert_node(if_stmt, term);
         return term;
     }
 
@@ -200,7 +211,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         let con_term = self.visit_expression(&mut while_stmt.condition);
         let body_term = self.visit_statement(&mut while_stmt.body);
         let term = con_term.or(body_term);
-        self.termination.insert(while_stmt, term);
+        self.termination.insert_node(while_stmt, term);
         return term;
     }
 
@@ -223,7 +234,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
 
         let body_term = self.visit_statement(&mut for_stmt.body);
         let term = init_term.or(con_term).or(inc_term).or(body_term);
-        self.termination.insert(for_stmt, term);
+        self.termination.insert_node(for_stmt, term);
         return term;
     }
 
@@ -232,7 +243,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         break_stmt: &mut crate::ast::BreakStatement,
     ) -> Self::StatementOutput {
         self.termination
-            .insert(break_stmt, FunctionTermination::DoesntTerminate);
+            .insert_node(break_stmt, FunctionTermination::DoesntTerminate);
         return FunctionTermination::DoesntTerminate;
     }
 
@@ -241,7 +252,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         skip_stmt: &mut crate::ast::SkipStatement,
     ) -> Self::StatementOutput {
         self.termination
-            .insert(skip_stmt, FunctionTermination::DoesntTerminate);
+            .insert_node(skip_stmt, FunctionTermination::DoesntTerminate);
         return FunctionTermination::DoesntTerminate;
     }
 
@@ -250,7 +261,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         executor_host: &mut SelfExecutorHost,
     ) -> Self::ExecutorHostOutput {
         self.termination
-            .insert(executor_host, FunctionTermination::DoesntTerminate);
+            .insert_node(executor_host, FunctionTermination::DoesntTerminate);
         return FunctionTermination::DoesntTerminate;
     }
 
@@ -258,7 +269,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         let host_term = self.visit_executor_host(&mut executor.host);
         let index_term = self.visit_expression(&mut executor.index);
         let term = host_term.or(index_term);
-        self.termination.insert(executor, term);
+        self.termination.insert_node(executor, term);
         return term;
     }
 
@@ -267,7 +278,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         expression: &mut crate::ast::NumberExpression,
     ) -> Self::ExpressionOutput {
         self.termination
-            .insert(expression, FunctionTermination::DoesntTerminate);
+            .insert_node(expression, FunctionTermination::DoesntTerminate);
         return FunctionTermination::DoesntTerminate;
     }
 
@@ -279,7 +290,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         for arg in &mut expression.arguments {
             term = term.or(self.visit_expression(arg));
         }
-        self.termination.insert(expression, term);
+        self.termination.insert_node(expression, term);
         return term;
     }
 
@@ -288,7 +299,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         expression: &mut crate::ast::GroupingExpression,
     ) -> Self::ExpressionOutput {
         let term = self.visit_expression(&mut expression.subexpression);
-        self.termination.insert(expression, term);
+        self.termination.insert_node(expression, term);
         return term;
     }
 
@@ -297,7 +308,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         expression: &mut crate::ast::VariableAccessExpression,
     ) -> Self::ExpressionOutput {
         self.termination
-            .insert(expression, FunctionTermination::DoesntTerminate);
+            .insert_node(expression, FunctionTermination::DoesntTerminate);
         return FunctionTermination::DoesntTerminate;
     }
 
@@ -306,7 +317,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         expression: &mut crate::ast::UnaryExpression,
     ) -> Self::ExpressionOutput {
         let term = self.visit_expression(&mut expression.operand);
-        self.termination.insert(expression, term);
+        self.termination.insert_node(expression, term);
         return term;
     }
 
@@ -317,7 +328,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         let term = self
             .visit_expression(&mut expression.left)
             .or(self.visit_expression(&mut expression.right));
-        self.termination.insert(expression, term);
+        self.termination.insert_node(expression, term);
         return term;
     }
 
@@ -326,13 +337,13 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         expression: &mut crate::ast::VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
         let term = self.visit_expression(&mut expression.right);
-        self.termination.insert(expression, term);
+        self.termination.insert_node(expression, term);
         return term;
     }
 
     fn visit_i32_type(&mut self, type_: &mut I32Type) -> Self::TypeOutput {
         self.termination
-            .insert(type_, FunctionTermination::DoesntTerminate);
+            .insert_node(type_, FunctionTermination::DoesntTerminate);
         return FunctionTermination::DoesntTerminate;
     }
 }

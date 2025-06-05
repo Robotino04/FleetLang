@@ -3,7 +3,7 @@ use crate::{
         AstNode, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
         ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
         IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
+        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::SourceLocation,
@@ -22,12 +22,20 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             name_token: _,
             equal_token: _,
             open_paren_token: _,
+            parameters: _,
             close_paren_token: _,
             right_arrow_token: _,
             return_type: _,
             body,
             id: _,
         }) => (let_token.start, find_node_bounds(body).1),
+        AstNode::SimpleBinding(SimpleBinding {
+            name_token,
+            name: _,
+            colon_token: _,
+            type_,
+            id: _,
+        }) => (name_token.start, find_node_bounds(type_).1),
         AstNode::ExpressionStatement(ExpressionStatement {
             expression,
             semicolon_token,
@@ -49,7 +57,6 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             close_brace_token,
             id: _,
         }) => (open_brace_token.start, close_brace_token.end),
-        // TODO: once we have type inference, show the value type here
         AstNode::ReturnStatement(ReturnStatement {
             return_token,
             value: _,
@@ -59,10 +66,7 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
 
         AstNode::VariableDefinitionStatement(VariableDefinitionStatement {
             let_token,
-            name_token: _,
-            name: _,
-            colon_token: _,
-            type_: _,
+            binding: _,
             equals_token: _,
             value: _,
             semicolon_token,
@@ -131,7 +135,6 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
         }) => {
             return (operator_token.start, find_node_bounds(*operand).1);
         }
-        // TODO: once we have type inference, display type here
         AstNode::NumberExpression(NumberExpression {
             value: _,
             token,

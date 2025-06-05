@@ -2,8 +2,8 @@ use crate::ast::{
     AstVisitor, BinaryExpression, BlockStatement, BreakStatement, Executor, ExecutorHost,
     Expression, ExpressionStatement, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
     GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, Program,
-    ReturnStatement, SelfExecutorHost, SkipStatement, Statement, ThreadExecutor, Type,
-    UnaryExpression, VariableAccessExpression, VariableAssignmentExpression,
+    ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, Statement, ThreadExecutor,
+    Type, UnaryExpression, VariableAccessExpression, VariableAssignmentExpression,
     VariableDefinitionStatement, WhileLoopStatement,
 };
 
@@ -15,6 +15,13 @@ pub trait PartialAstVisitor {
         for f in &mut program.functions {
             self.partial_visit_function_definition(f);
         }
+    }
+    fn partial_visit_simple_binding(&mut self, simple_binding: &mut SimpleBinding) {
+        self.partial_visit_type(&mut simple_binding.type_);
+    }
+
+    fn partial_visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
+        self.partial_visit_statement(&mut function_definition.body);
     }
 
     // statements
@@ -46,10 +53,6 @@ pub trait PartialAstVisitor {
             Statement::Skip(skip_statement) => self.partial_visit_skip_statement(skip_statement),
         }
     }
-    fn partial_visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
-        self.partial_visit_statement(&mut function_definition.body);
-    }
-
     fn partial_visit_expression_statement(&mut self, expr_stmt: &mut ExpressionStatement) {
         self.partial_visit_expression(&mut expr_stmt.expression);
     }
@@ -91,7 +94,7 @@ pub trait PartialAstVisitor {
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
     ) {
-        self.partial_visit_type(&mut vardef_stmt.type_);
+        self.partial_visit_simple_binding(&mut vardef_stmt.binding);
         self.partial_visit_expression(&mut vardef_stmt.value);
     }
 
@@ -253,6 +256,7 @@ where
 {
     type ProgramOutput = ();
     type FunctionDefinitionOutput = ();
+    type SimpleBindingOutput = ();
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
@@ -290,6 +294,13 @@ where
         return_stmt: &mut ReturnStatement,
     ) -> Self::StatementOutput {
         self.partial_visit_return_statement(return_stmt);
+    }
+
+    fn visit_simple_binding(
+        &mut self,
+        simple_binding: &mut SimpleBinding,
+    ) -> Self::SimpleBindingOutput {
+        self.partial_visit_simple_binding(simple_binding);
     }
 
     fn visit_variable_definition_statement(

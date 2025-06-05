@@ -42,7 +42,7 @@ impl<'a> FixNonBlockStatements<'a> {
                 leading_trivia: vec![],
                 trailing_trivia: vec![],
             },
-            id: self.id_generator.next_id(),
+            id: self.id_generator.next_node_id(),
         });
     }
 }
@@ -56,6 +56,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
             name_token: _,
             equal_token: _,
             open_paren_token: _,
+            parameters,
             close_paren_token: _,
             right_arrow_token: _,
             return_type,
@@ -63,6 +64,12 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
             id: _,
         }: &mut FunctionDefinition,
     ) {
+        for (param, _comma) in parameters {
+            self.visit_simple_binding(param);
+        }
+
+        self.visit_type(return_type);
+
         if !matches!(body, Statement::Block { .. }) {
             self.errors.push(FleetError::from_node(
                 body.clone(),
@@ -78,7 +85,6 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
             *body = self.create_fake_block_arround(body);
         }
         self.visit_statement(body);
-        self.visit_type(return_type);
     }
 
     fn partial_visit_if_statement(

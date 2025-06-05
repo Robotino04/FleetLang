@@ -3,7 +3,7 @@ use crate::{
         AstNode, AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
         ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
         IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
+        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::{SourceLocation, Token},
@@ -38,10 +38,12 @@ impl FindContainingNodePass {
 impl AstVisitor for FindContainingNodePass {
     type ProgramOutput = Result<(Vec<AstNode>, Token), ()>;
     type FunctionDefinitionOutput = Result<(), ()>;
+    type SimpleBindingOutput = Result<(), ()>;
     type StatementOutput = Result<(), ()>;
     type ExecutorHostOutput = Result<(), ()>;
     type ExecutorOutput = Result<(), ()>;
     type ExpressionOutput = Result<(), ()>;
+
     type TypeOutput = Result<(), ()>;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
@@ -67,6 +69,7 @@ impl AstVisitor for FindContainingNodePass {
             name_token,
             equal_token,
             open_paren_token,
+            parameters,
             close_paren_token,
             right_arrow_token,
             return_type,
@@ -79,12 +82,34 @@ impl AstVisitor for FindContainingNodePass {
         self.visit_token(name_token)?;
         self.visit_token(equal_token)?;
         self.visit_token(open_paren_token)?;
+        for (param, comma) in parameters {
+            self.visit_simple_binding(param)?;
+            if let Some(comma) = comma {
+                self.visit_token(comma)?;
+            }
+        }
         self.visit_token(close_paren_token)?;
         self.visit_token(right_arrow_token)?;
         self.visit_type(return_type)?;
         self.visit_statement(body)?;
 
         self.node_hierarchy.pop();
+        return Ok(());
+    }
+
+    fn visit_simple_binding(
+        &mut self,
+        SimpleBinding {
+            name_token,
+            name: _,
+            colon_token,
+            type_,
+            id: _,
+        }: &mut SimpleBinding,
+    ) -> Self::SimpleBindingOutput {
+        self.visit_token(name_token)?;
+        self.visit_token(colon_token)?;
+        self.visit_type(type_)?;
         return Ok(());
     }
 
@@ -147,10 +172,8 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::StatementOutput {
         self.node_hierarchy.push(vardef_stmt.clone().into());
 
-        self.visit_token(&vardef_stmt.let_token)?;
-        self.visit_token(&vardef_stmt.name_token)?;
-        self.visit_token(&vardef_stmt.colon_token)?;
-        self.visit_type(&mut vardef_stmt.type_)?;
+        self.visit_token(&mut vardef_stmt.let_token)?;
+        self.visit_simple_binding(&mut vardef_stmt.binding)?;
         self.visit_token(&vardef_stmt.equals_token)?;
         self.visit_expression(&mut vardef_stmt.value)?;
         self.visit_token(&vardef_stmt.semicolon_token)?;

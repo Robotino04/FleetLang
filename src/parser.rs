@@ -3,11 +3,12 @@ use crate::{
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, Executor, ExecutorHost,
         Expression, ExpressionStatement, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GroupingExpression, I32Type, IfStatement, NodeID, NumberExpression,
-        OnStatement, Program, ReturnStatement, SelfExecutorHost, SkipStatement, Statement,
-        ThreadExecutor, Type, UnaryExpression, VariableAccessExpression,
+        OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
+        Statement, ThreadExecutor, Type, UnaryExpression, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
+    passes::type_propagation::{FunctionID, VariableID},
     tokenizer::{Keyword, Token, TokenType},
 };
 
@@ -23,19 +24,34 @@ pub struct Parser<'errors> {
 
 #[derive(Debug, Clone)]
 pub struct IdGenerator {
-    id_counter: NodeID,
+    node_id_counter: NodeID,
+    variable_id_counter: VariableID,
+    function_id_counter: FunctionID,
 }
 
 impl IdGenerator {
     pub fn new() -> Self {
         Self {
-            id_counter: NodeID(0),
+            node_id_counter: NodeID(0),
+            variable_id_counter: VariableID(0),
+            function_id_counter: FunctionID(0),
         }
     }
 
-    pub fn next_id(&mut self) -> NodeID {
-        let current_id = self.id_counter;
-        self.id_counter.0 += 1;
+    pub fn next_node_id(&mut self) -> NodeID {
+        let current_id = self.node_id_counter;
+        self.node_id_counter.0 += 1;
+        return current_id;
+    }
+    pub fn next_variable_id(&mut self) -> VariableID {
+        let current_id = self.variable_id_counter;
+        self.variable_id_counter.0 += 1;
+        return current_id;
+    }
+
+    pub fn next_function_id(&mut self) -> FunctionID {
+        let current_id = self.function_id_counter;
+        self.function_id_counter.0 += 1;
         return current_id;
     }
 }
@@ -187,10 +203,66 @@ impl<'errors> Parser<'errors> {
         Ok((
             Program {
                 functions,
-                id: self.id_generator.next_id(),
+                id: self.id_generator.next_node_id(),
             },
             self.id_generator,
         ))
+    }
+
+    pub fn parse_function_definition(&mut self) -> Result<FunctionDefinition> {
+        let let_token = expect!(self, TokenType::Keyword(Keyword::Let))?;
+        let (name_token, name) =
+            expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
+
+        let equal_token = expect!(self, TokenType::EqualSign)?;
+        let open_paren_token = expect!(self, TokenType::OpenParen)?;
+
+        let mut parameters = vec![];
+
+        while self.current_token_type() != Some(TokenType::CloseParen) {
+            match self.current_token_type() {
+                Some(TokenType::Colon) => parameters.push((
+                    self.parse_simple_binding()?,
+                    Some(expect!(self, TokenType::Colon)?),
+                )),
+                _ => {
+                    parameters.push((self.parse_simple_binding()?, None));
+                    break;
+                }
+            }
+        }
+
+        let close_paren_token = expect!(self, TokenType::CloseParen)?;
+        let right_arrow_token = expect!(self, TokenType::SingleRightArrow)?;
+        let return_type = self.parse_type()?;
+        let body = self.parse_statement()?;
+
+        Ok(FunctionDefinition {
+            let_token,
+            name,
+            name_token,
+            equal_token,
+            open_paren_token,
+            parameters,
+            close_paren_token,
+            right_arrow_token,
+            return_type,
+            body,
+            id: self.id_generator.next_node_id(),
+        })
+    }
+
+    pub fn parse_simple_binding(&mut self) -> Result<SimpleBinding> {
+        let (name_token, name) =
+            expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
+
+        return Ok(SimpleBinding {
+            name_token,
+            name,
+            colon_token: expect!(self, TokenType::Colon)?,
+            type_: self.parse_type()?,
+            id: self.id_generator.next_node_id(),
+        });
     }
 
     pub fn parse_statement(&mut self) -> Result<Statement> {
@@ -202,7 +274,7 @@ impl<'errors> Parser<'errors> {
                     executor: self.parse_executor()?,
                     close_paren_token: expect!(self, TokenType::CloseParen)?,
                     body: Box::new(self.parse_statement()?),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 }));
             }
             Some(TokenType::OpenBrace) => {
@@ -234,7 +306,7 @@ impl<'errors> Parser<'errors> {
                     open_brace_token,
                     body,
                     close_brace_token,
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 }));
             }
             Some(TokenType::Keyword(Keyword::Return)) => {
@@ -242,23 +314,19 @@ impl<'errors> Parser<'errors> {
                     return_token: expect!(self, TokenType::Keyword(Keyword::Return))?,
                     value: self.parse_expression()?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 }));
             }
             Some(TokenType::Keyword(Keyword::Let)) => {
                 let let_token = expect!(self, TokenType::Keyword(Keyword::Let))?;
-                let (name_token, name) = expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
 
                 return Ok(Statement::VariableDefinition(VariableDefinitionStatement {
                     let_token,
-                    name_token,
-                    name,
-                    colon_token: expect!(self, TokenType::Colon)?,
-                    type_: self.parse_type()?,
+                    binding: self.parse_simple_binding()?,
                     equals_token: expect!(self, TokenType::EqualSign)?,
                     value: self.parse_expression()?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 }));
             }
             Some(TokenType::Keyword(Keyword::If)) => {
@@ -289,7 +357,7 @@ impl<'errors> Parser<'errors> {
                     if_body: Box::new(if_body),
                     elifs,
                     else_,
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 }));
             }
             Some(TokenType::Keyword(Keyword::While)) => {
@@ -300,7 +368,7 @@ impl<'errors> Parser<'errors> {
                     while_token,
                     condition,
                     body: Box::new(body),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 }));
             }
             Some(TokenType::Keyword(Keyword::For)) => {
@@ -334,28 +402,28 @@ impl<'errors> Parser<'errors> {
                     incrementer,
                     close_paren_token,
                     body: Box::new(body),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 }));
             }
             Some(TokenType::Keyword(Keyword::Break)) => {
                 return Ok(Statement::Break(BreakStatement {
                     break_token: expect!(self, TokenType::Keyword(Keyword::Break))?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 }));
             }
             Some(TokenType::Keyword(Keyword::Skip)) => {
                 return Ok(Statement::Skip(SkipStatement {
                     skip_token: expect!(self, TokenType::Keyword(Keyword::Skip))?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 }));
             }
             _ => {
                 return Ok(Statement::Expression(ExpressionStatement {
                     expression: self.parse_expression()?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 }));
             }
         }
@@ -370,7 +438,7 @@ impl<'errors> Parser<'errors> {
                 return Ok(Expression::Number(NumberExpression {
                     value,
                     token: expect!(self, TokenType::Number(_))?,
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 }));
             }
 
@@ -390,14 +458,14 @@ impl<'errors> Parser<'errors> {
                             arguments,
                             open_paren_token,
                             close_paren_token,
-                            id: self.id_generator.next_id(),
+                            id: self.id_generator.next_node_id(),
                         }));
                     }
                     _ => {
                         return Ok(Expression::VariableAccess(VariableAccessExpression {
                             name,
                             name_token,
-                            id: self.id_generator.next_id(),
+                            id: self.id_generator.next_node_id(),
                         }));
                     }
                 }
@@ -407,7 +475,7 @@ impl<'errors> Parser<'errors> {
                     open_paren_token: expect!(self, TokenType::OpenParen)?,
                     subexpression: Box::new(self.parse_expression()?),
                     close_paren_token: expect!(self, TokenType::CloseParen)?,
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 }));
             }
             _ => unable_to_parse!(self, "primary expression"),
@@ -419,19 +487,19 @@ impl<'errors> Parser<'errors> {
                 operator_token: expect!(self, TokenType::Tilde)?,
                 operation: crate::ast::UnaryOperation::BitwiseNot,
                 operand: Box::new(self.parse_unary_expression()?),
-                id: self.id_generator.next_id(),
+                id: self.id_generator.next_node_id(),
             })),
             Some(TokenType::Minus) => Ok(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::Minus)?,
                 operation: crate::ast::UnaryOperation::Negate,
                 operand: Box::new(self.parse_unary_expression()?),
-                id: self.id_generator.next_id(),
+                id: self.id_generator.next_node_id(),
             })),
             Some(TokenType::ExclamationMark) => Ok(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::ExclamationMark)?,
                 operation: crate::ast::UnaryOperation::LogicalNot,
                 operand: Box::new(self.parse_unary_expression()?),
-                id: self.id_generator.next_id(),
+                id: self.id_generator.next_node_id(),
             })),
 
             Some(_) => return self.parse_primary_expression(),
@@ -450,7 +518,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::Multiply,
                     right: Box::new(right),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 });
                 true
             }
@@ -462,7 +530,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::Divide,
                     right: Box::new(right),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 });
                 true
             }
@@ -474,7 +542,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::Modulo,
                     right: Box::new(right),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 });
                 true
             }
@@ -495,7 +563,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::Add,
                     right: Box::new(right),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 });
                 true
             }
@@ -507,7 +575,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::Subtract,
                     right: Box::new(right),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 });
                 true
             }
@@ -528,7 +596,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::LessThan,
                     right: Box::new(right),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 });
                 true
             }
@@ -540,7 +608,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::LessThanOrEqual,
                     right: Box::new(right),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 });
                 true
             }
@@ -552,7 +620,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::GreaterThan,
                     right: Box::new(right),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 });
                 true
             }
@@ -564,7 +632,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::GreaterThanOrEqual,
                     right: Box::new(right),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 });
                 true
             }
@@ -585,7 +653,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::Equal,
                     right: Box::new(right),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 });
                 true
             }
@@ -597,7 +665,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::NotEqual,
                     right: Box::new(right),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 });
                 true
             }
@@ -618,7 +686,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::LogicalAnd,
                     right: Box::new(right),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 });
                 true
             }
@@ -639,7 +707,7 @@ impl<'errors> Parser<'errors> {
                     operator_token,
                     operation: BinaryOperation::LogicalOr,
                     right: Box::new(right),
-                    id: self.id_generator.next_id(),
+                    id: self.id_generator.next_node_id(),
                 });
                 true
             }
@@ -666,7 +734,7 @@ impl<'errors> Parser<'errors> {
                         name_token,
                         equal_token,
                         right: Box::new(value),
-                        id: self.id_generator.next_id(),
+                        id: self.id_generator.next_node_id(),
                     },
                 ));
             }
@@ -680,57 +748,23 @@ impl<'errors> Parser<'errors> {
         let res = Ok(Executor::Thread(ThreadExecutor {
             host: ExecutorHost::Self_(SelfExecutorHost {
                 token: expect!(self, TokenType::Keyword(Keyword::Self_))?,
-                id: self.id_generator.next_id(),
+                id: self.id_generator.next_node_id(),
             }),
             dot_token: expect!(self, TokenType::Dot)?,
             thread_token: expect!(self, = TokenType::Identifier("threads".to_string()))?,
             open_bracket_token: expect!(self, TokenType::OpenBracket)?,
             index: self.parse_expression()?,
             close_bracket_token: expect!(self, TokenType::CloseBracket)?,
-            id: self.id_generator.next_id(),
+            id: self.id_generator.next_node_id(),
         }));
         return res;
-    }
-    pub fn parse_function_definition(&mut self) -> Result<FunctionDefinition> {
-        let let_token = expect!(self, TokenType::Keyword(Keyword::Let))?;
-        let (name_token, name) =
-            expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
-
-        let equal_token = expect!(self, TokenType::EqualSign)?;
-        let open_paren_token = expect!(self, TokenType::OpenParen)?;
-
-        /*
-        let mut params = vec![];
-
-        while self.current_token_type() != Some(TokenType::CloseParen) {
-            params.push(expect!(self, TokenType::Identifier(name) => (self.current_token(), name)));
-        }
-        */
-
-        let close_paren_token = expect!(self, TokenType::CloseParen)?;
-        let right_arrow_token = expect!(self, TokenType::SingleRightArrow)?;
-        let return_type = self.parse_type()?;
-        let body = self.parse_statement()?;
-
-        Ok(FunctionDefinition {
-            let_token,
-            name,
-            name_token,
-            equal_token,
-            open_paren_token,
-            close_paren_token,
-            right_arrow_token,
-            return_type,
-            body,
-            id: self.id_generator.next_id(),
-        })
     }
 
     pub fn parse_type(&mut self) -> Result<Type> {
         match self.current_token_type() {
             Some(TokenType::Keyword(Keyword::I32)) => Ok(Type::I32(I32Type {
                 token: expect!(self, TokenType::Keyword(Keyword::I32))?,
-                id: self.id_generator.next_id(),
+                id: self.id_generator.next_node_id(),
             })),
             _ => unable_to_parse!(self, "type"),
         }

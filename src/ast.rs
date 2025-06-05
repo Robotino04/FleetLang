@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+};
 
 use crate::tokenizer::Token;
 
@@ -6,6 +9,8 @@ use crate::tokenizer::Token;
 pub enum AstNode {
     Program(Program),
     FunctionDefinition(FunctionDefinition),
+
+    SimpleBinding(SimpleBinding),
 
     ExpressionStatement(ExpressionStatement),
     OnStatement(OnStatement),
@@ -45,6 +50,9 @@ impl HasID for AstNode {
         match self {
             AstNode::Program(program) => program.get_id(),
             AstNode::FunctionDefinition(function_definition) => function_definition.get_id(),
+
+            AstNode::SimpleBinding(simple_binding) => simple_binding.get_id(),
+
             AstNode::SelfExecutorHost(executor_host) => executor_host.get_id(),
             AstNode::ThreadExecutor(executor) => executor.get_id(),
 
@@ -106,6 +114,7 @@ macro_rules! generate_ast_requirements {
 pub trait AstVisitor {
     type ProgramOutput;
     type FunctionDefinitionOutput;
+    type SimpleBindingOutput;
     type StatementOutput;
     type ExecutorHostOutput;
     type ExecutorOutput;
@@ -117,6 +126,11 @@ pub trait AstVisitor {
         &mut self,
         function_definition: &mut FunctionDefinition,
     ) -> Self::FunctionDefinitionOutput;
+
+    fn visit_simple_binding(
+        &mut self,
+        simple_binding: &mut SimpleBinding,
+    ) -> Self::SimpleBindingOutput;
 
     // statements
     fn visit_statement(&mut self, statement: &mut Statement) -> Self::StatementOutput {
@@ -262,13 +276,23 @@ pub struct Program {
 generate_ast_requirements!(Program, unwrap_program);
 
 #[derive(Clone, Debug)]
+pub struct SimpleBinding {
+    pub name_token: Token,
+    pub name: String,
+    pub colon_token: Token,
+    pub type_: Type,
+    pub id: NodeID,
+}
+generate_ast_requirements!(SimpleBinding, unwrap_simple_binding);
+
+#[derive(Clone, Debug)]
 pub struct FunctionDefinition {
     pub let_token: Token,
     pub name: String,
     pub name_token: Token,
     pub equal_token: Token,
     pub open_paren_token: Token,
-    // TODO: maybe store comma tokens too, once we have arguments
+    pub parameters: Vec<(SimpleBinding, Option<Token>)>,
     pub close_paren_token: Token,
     pub right_arrow_token: Token,
     pub return_type: Type,
@@ -347,10 +371,7 @@ generate_ast_requirements!(ReturnStatement, unwrap_return_statement);
 #[derive(Clone, Debug)]
 pub struct VariableDefinitionStatement {
     pub let_token: Token,
-    pub name_token: Token,
-    pub name: String,
-    pub colon_token: Token,
-    pub type_: Type,
+    pub binding: SimpleBinding,
     pub equals_token: Token,
     pub value: Expression,
     pub semicolon_token: Token,
@@ -746,16 +767,24 @@ impl<T> PerNodeData<T> {
         }
     }
 
-    pub fn get_id(&self, id: NodeID) -> Option<&T> {
-        self.map.get(&id)
-    }
-    pub fn get(&self, node: &impl HasID) -> Option<&T> {
+    pub fn get_node(&self, node: &impl HasID) -> Option<&T> {
         self.map.get(&node.get_id())
     }
-    pub fn insert_id(&mut self, id: NodeID, value: T) {
-        self.map.insert(id, value);
-    }
-    pub fn insert(&mut self, node: &impl HasID, value: T) {
+    pub fn insert_node(&mut self, node: &impl HasID, value: T) {
         self.map.insert(node.get_id(), value);
+    }
+}
+
+impl<T> Deref for PerNodeData<T> {
+    type Target = HashMap<NodeID, T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.map
+    }
+}
+
+impl<T> DerefMut for PerNodeData<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.map
     }
 }
