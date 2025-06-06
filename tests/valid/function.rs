@@ -270,7 +270,7 @@ fn single_arg() {
 }
 
 #[test]
-#[ignore = "Requires Unit type"]
+#[ignore = "i8 is missing"]
 fn stack_pointer_alignment_direction() {
     assert_compile_and_return_value(
         indoc! {r##"
@@ -477,13 +477,11 @@ fn stack_pointer_alignment_direction() {
                 _99 = 15;
             }
             // simplified version of greetings example (from R#)
-            main(): i32 {
+            let main = () -> i32 {
                 let name_buffer_length: i32 = 50;
                 let name: i64 = 0;
-
                 let name_length: i32 = 0;
                 fill_stack();
-
                 return name_buffer_length - name - name_length;
             }
         "##},
@@ -493,7 +491,6 @@ fn stack_pointer_alignment_direction() {
 }
 
 #[test]
-#[ignore = "Requires Unit type"]
 fn stack_variable_after_return() {
     assert_compile_and_return_value(
         indoc! {r##"
@@ -506,7 +503,6 @@ fn stack_variable_after_return() {
             }
             let main = () -> i32 {
                 recurse(500);
-
                 return 0;
             }
         "##},
@@ -542,6 +538,39 @@ fn shadow_parameter() {
             }
             let main = () -> i32 {
                 return foo(4);
+            }
+        "##},
+        "main",
+        3,
+    );
+}
+
+#[test]
+fn unit_no_return() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let foo = () -> () {
+            }
+            let main = () -> i32 {
+                foo();
+                return 3;
+            }
+        "##},
+        "main",
+        3,
+    );
+}
+
+#[test]
+fn unit_return() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let foo = () -> () {
+                return;
+            }
+            let main = () -> i32 {
+                foo();
+                return 3;
             }
         "##},
         "main",

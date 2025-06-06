@@ -10,8 +10,8 @@ use fleet::ast::{
     ExpressionStatement, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
     GroupingExpression, HasID, I32Type, IfStatement, NodeID, NumberExpression, OnStatement,
     PerNodeData, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, ThreadExecutor,
-    UnaryExpression, UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
-    VariableDefinitionStatement, WhileLoopStatement,
+    UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+    VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
 };
 use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
 use fleet::passes::find_containing_node::FindContainingNodePass;
@@ -283,28 +283,24 @@ impl Backend {
                 operation,
                 operand,
                 id,
-            }) => {
-                // TODO: once we have type inference, display operand type here
-                (
-                    {
-                        let inner_type = self.get_type_as_hover(operand.get_id(), type_data);
-                        let outer_type = self.get_type_as_hover(id, type_data);
-                        match operation {
-                            UnaryOperation::BitwiseNot => {
-                                format!("bitwise negation (~{inner_type}) => {outer_type}")
-                            }
-                            UnaryOperation::LogicalNot => {
-                                format!("logical negation (!{inner_type}) => {outer_type}")
-                            }
-                            UnaryOperation::Negate => {
-                                format!("arithmetic negation (-{inner_type}) => {outer_type}")
-                            }
+            }) => (
+                {
+                    let inner_type = self.get_type_as_hover(operand.get_id(), type_data);
+                    let outer_type = self.get_type_as_hover(id, type_data);
+                    match operation {
+                        UnaryOperation::BitwiseNot => {
+                            format!("bitwise negation (~{inner_type}) => {outer_type}")
                         }
-                    },
-                    "unary expression".to_string(),
-                )
-            }
-            // TODO: once we have type inference, display type here
+                        UnaryOperation::LogicalNot => {
+                            format!("logical negation (!{inner_type}) => {outer_type}")
+                        }
+                        UnaryOperation::Negate => {
+                            format!("arithmetic negation (-{inner_type}) => {outer_type}")
+                        }
+                    }
+                },
+                "unary expression".to_string(),
+            ),
             AstNode::NumberExpression(NumberExpression {
                 value,
                 token: _,
@@ -320,7 +316,6 @@ impl Backend {
                 right,
                 id,
             }) => {
-                // TODO: once we have type inference, display operand types here
                 let left_type = self.get_type_as_hover(left.get_id(), type_data);
                 let right_type = self.get_type_as_hover(right.get_id(), type_data);
                 let result_type = self.get_type_as_hover(id, type_data);
@@ -417,7 +412,6 @@ impl Backend {
                 id,
             }) => {
                 let type_ = self.get_type_as_hover(id, type_data);
-                // TODO: once we have proper semantic analysis, display the variable types here
                 // TODO: once we have consteval, display the value here
                 (
                     format!("let {name}: {type_} = ..."),
@@ -425,6 +419,11 @@ impl Backend {
                 )
             }
             AstNode::I32Type(I32Type { token: _, id: _ }) => (format!("i32"), "type".to_string()),
+            AstNode::UnitType(UnitType {
+                open_paren_token: _,
+                close_paren_token: _,
+                id: _,
+            }) => (format!("()"), "type".to_string()),
         }
     }
 }
@@ -623,7 +622,9 @@ impl AstVisitor for ExtractSemanticTokensPass {
             SemanticTokenType::KEYWORD,
             vec![],
         );
-        self.visit_expression(&mut return_stmt.value);
+        if let Some(value) = &mut return_stmt.value {
+            self.visit_expression(value);
+        }
         self.build_comment_tokens_only(&mut return_stmt.semicolon_token);
     }
 
@@ -847,6 +848,18 @@ impl AstVisitor for ExtractSemanticTokensPass {
 
     fn visit_i32_type(&mut self, I32Type { token, id: _ }: &mut I32Type) {
         self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
+    }
+
+    fn visit_unit_type(
+        &mut self,
+        UnitType {
+            open_paren_token,
+            close_paren_token,
+            id: _,
+        }: &mut UnitType,
+    ) -> Self::TypeOutput {
+        self.build_comment_tokens_only(open_paren_token);
+        self.build_comment_tokens_only(close_paren_token);
     }
 }
 

@@ -3,7 +3,7 @@ use crate::ast::{
     Expression, ExpressionStatement, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
     GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, Program,
     ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, Statement, ThreadExecutor,
-    Type, UnaryExpression, VariableAccessExpression, VariableAssignmentExpression,
+    Type, UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
     VariableDefinitionStatement, WhileLoopStatement,
 };
 
@@ -87,7 +87,9 @@ pub trait PartialAstVisitor {
     }
 
     fn partial_visit_return_statement(&mut self, return_stmt: &mut ReturnStatement) {
-        self.partial_visit_expression(&mut return_stmt.value);
+        if let Some(retvalue) = &mut return_stmt.value {
+            self.partial_visit_expression(retvalue);
+        }
     }
 
     fn partial_visit_variable_definition_statement(
@@ -245,9 +247,11 @@ pub trait PartialAstVisitor {
     fn partial_visit_type(&mut self, type_: &mut Type) {
         match type_ {
             Type::I32(i32_type) => self.partial_visit_i32_type(i32_type),
+            Type::Unit(unit_type) => self.partial_visit_unit_type(unit_type),
         }
     }
     fn partial_visit_i32_type(&mut self, _i32_type: &mut I32Type) {}
+    fn partial_visit_unit_type(&mut self, _unit_type: &mut UnitType) {}
 }
 
 impl<T> AstVisitor for T
@@ -269,6 +273,7 @@ where
 
     fn visit_function_definition(
         &mut self,
+
         function_definition: &mut FunctionDefinition,
     ) -> Self::FunctionDefinitionOutput {
         self.partial_visit_function_definition(function_definition);
@@ -328,17 +333,11 @@ where
         self.partial_visit_for_loop_statement(for_stmt);
     }
 
-    fn visit_break_statement(
-        &mut self,
-        break_stmt: &mut crate::ast::BreakStatement,
-    ) -> Self::StatementOutput {
+    fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
         self.partial_visit_break_statement(break_stmt);
     }
 
-    fn visit_skip_statement(
-        &mut self,
-        skip_stmt: &mut crate::ast::SkipStatement,
-    ) -> Self::StatementOutput {
+    fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
         self.partial_visit_skip_statement(skip_stmt);
     }
 
@@ -413,5 +412,8 @@ where
 
     fn visit_i32_type(&mut self, i32_type: &mut I32Type) -> Self::TypeOutput {
         self.partial_visit_i32_type(i32_type);
+    }
+    fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
+        self.partial_visit_unit_type(unit_type);
     }
 }

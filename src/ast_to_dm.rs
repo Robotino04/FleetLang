@@ -3,8 +3,9 @@ use crate::{
         AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
         ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
         IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        WhileLoopStatement,
     },
     document_model::DocumentElement,
     tokenizer::{Keyword, Token, TokenType, Trivia, TriviaKind},
@@ -353,13 +354,15 @@ impl AstVisitor for AstToDocumentModelConverter {
         }: &mut ReturnStatement,
     ) -> Self::StatementOutput {
         DocumentElement::Concatenation(vec![
-            DocumentElement::spaced_concatentation(
-                DocumentElement::CollapsableSpace,
-                vec![
+            if let Some(value) = value {
+                DocumentElement::Concatenation(vec![
                     self.token_to_element(return_token),
+                    DocumentElement::CollapsableSpace,
                     self.visit_expression(value),
-                ],
-            ),
+                ])
+            } else {
+                self.token_to_element(return_token)
+            },
             DocumentElement::double_space_eater(),
             DocumentElement::double_space_eater(),
             self.token_to_element(semicolon_token),
@@ -682,5 +685,13 @@ impl AstVisitor for AstToDocumentModelConverter {
 
     fn visit_i32_type(&mut self, type_: &mut I32Type) -> Self::TypeOutput {
         self.token_to_element(&type_.token)
+    }
+
+    fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
+        DocumentElement::Concatenation(vec![
+            self.token_to_element(&unit_type.open_paren_token),
+            DocumentElement::double_space_eater(),
+            self.token_to_element(&unit_type.close_paren_token),
+        ])
     }
 }

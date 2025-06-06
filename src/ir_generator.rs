@@ -25,8 +25,8 @@ use crate::{
         ExpressionStatement, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
         GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, PerNodeData,
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, ThreadExecutor,
-        UnaryExpression, UnaryOperation, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, WhileLoopStatement,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     escape::unescape,
     infra::{ErrorSeverity, FleetError},
@@ -269,17 +269,37 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             == FunctionTermination::Terminates
         {
             for block in ir_function.get_basic_blocks() {
-                if block.get_terminator().is_none() {
-                    self.builder.position_at_end(block);
-                    self.builder.build_return(Some(
-                        &return_type_ir.into_int_type().const_int(123, false),
-                    ))?;
-                }
-
                 if block.get_first_use().is_none() && block != entry {
                     block
                         .remove_from_function()
                         .map_err(|_| "Removing unreachable block from a function failed")?;
+                    continue;
+                }
+
+                if block.get_terminator().is_none() {
+                    self.builder.position_at_end(block);
+                    match return_type_ir {
+                        AnyTypeEnum::ArrayType(_array_type) => todo!(),
+                        AnyTypeEnum::FloatType(_float_type) => todo!(),
+                        AnyTypeEnum::FunctionType(_function_type) => todo!(),
+                        AnyTypeEnum::IntType(int_type) => {
+                            self.builder
+                                .build_return(Some(&int_type.const_int(123, false)))?;
+                        }
+                        AnyTypeEnum::PointerType(_pointer_type) => todo!(),
+                        AnyTypeEnum::StructType(_struct_type) => todo!(),
+                        AnyTypeEnum::VectorType(_vector_type) => todo!(),
+                        AnyTypeEnum::VoidType(_void_type) => {
+                            self.builder.build_return(None)?;
+                        }
+                    }
+                }
+            }
+        } else if matches!(return_type_ir, AnyTypeEnum::VoidType(_)) {
+            for block in ir_function.get_basic_blocks() {
+                if block.get_terminator().is_none() {
+                    self.builder.position_at_end(block);
+                    self.builder.build_return(None)?;
                 }
             }
         } else {
@@ -392,17 +412,21 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         &mut self,
         return_stmt: &mut ReturnStatement,
     ) -> Self::StatementOutput {
-        let ir_value = self.visit_expression(&mut return_stmt.value)?;
+        if let Some(retvalue) = &mut return_stmt.value {
+            let ir_value = self.visit_expression(retvalue)?;
 
-        self.builder.build_return(match &ir_value {
-            Some(BasicValueEnum::ArrayValue(array_value)) => Some(array_value),
-            Some(BasicValueEnum::IntValue(int_value)) => Some(int_value),
-            Some(BasicValueEnum::FloatValue(float_value)) => Some(float_value),
-            Some(BasicValueEnum::PointerValue(pointer_value)) => Some(pointer_value),
-            Some(BasicValueEnum::StructValue(struct_value)) => Some(struct_value),
-            Some(BasicValueEnum::VectorValue(vector_value)) => Some(vector_value),
-            None => None,
-        })?;
+            self.builder.build_return(match &ir_value {
+                Some(BasicValueEnum::ArrayValue(array_value)) => Some(array_value),
+                Some(BasicValueEnum::IntValue(int_value)) => Some(int_value),
+                Some(BasicValueEnum::FloatValue(float_value)) => Some(float_value),
+                Some(BasicValueEnum::PointerValue(pointer_value)) => Some(pointer_value),
+                Some(BasicValueEnum::StructValue(struct_value)) => Some(struct_value),
+                Some(BasicValueEnum::VectorValue(vector_value)) => Some(vector_value),
+                None => unreachable!("Unit functions should not return an expression"),
+            })?;
+        } else {
+            self.builder.build_return(None)?;
+        }
         let next_block = self.context.insert_basic_block_after(
             self.builder
                 .get_insert_block()
@@ -1218,5 +1242,9 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
     fn visit_i32_type(&mut self, _type: &mut I32Type) -> Self::TypeOutput {
         Ok(self.context.i32_type().into())
+    }
+
+    fn visit_unit_type(&mut self, _unit_type: &mut UnitType) -> Self::TypeOutput {
+        Ok(self.context.void_type().into())
     }
 }

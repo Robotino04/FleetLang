@@ -318,3 +318,22 @@ fn too_many_arguments() {
         },
     );
 }
+
+#[test]
+fn unit_function_in_expression() {
+    assert_compile_error(
+        indoc! {r##"
+            let foo = () -> () {
+                return;
+            }
+            let main = () -> i32 {
+                return foo() + 2;
+            }
+        "##},
+        SourceLocation {
+            index: 69,
+            line: 5,
+            column: 11,
+        },
+    );
+}

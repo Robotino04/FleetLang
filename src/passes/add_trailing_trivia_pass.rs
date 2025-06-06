@@ -1,9 +1,11 @@
 use crate::{
     ast::{
-        AstVisitor, BlockStatement, BreakStatement, ExpressionStatement, ForLoopStatement,
-        FunctionDefinition, I32Type, IfStatement, OnStatement, Program, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SkipStatement, ThreadExecutor,
-        VariableDefinitionStatement, WhileLoopStatement,
+        AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
+        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
+        IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -139,44 +141,42 @@ impl AstVisitor for AddTrailingTriviaPass {
         self.add_trailing_trivia_to_token(&mut executor.close_bracket_token);
     }
 
-    fn visit_number_expression(&mut self, expression: &mut crate::ast::NumberExpression) {
+    fn visit_number_expression(&mut self, expression: &mut NumberExpression) {
         self.add_trailing_trivia_to_token(&mut expression.token);
     }
 
-    fn visit_function_call_expression(
-        &mut self,
-        expression: &mut crate::ast::FunctionCallExpression,
-    ) {
+    fn visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
         self.add_trailing_trivia_to_token(&mut expression.close_paren_token);
     }
 
-    fn visit_grouping_expression(&mut self, expression: &mut crate::ast::GroupingExpression) {
+    fn visit_grouping_expression(&mut self, expression: &mut GroupingExpression) {
         self.add_trailing_trivia_to_token(&mut expression.close_paren_token);
     }
 
-    fn visit_variable_access_expression(
-        &mut self,
-        expression: &mut crate::ast::VariableAccessExpression,
-    ) {
+    fn visit_variable_access_expression(&mut self, expression: &mut VariableAccessExpression) {
         self.add_trailing_trivia_to_token(&mut expression.name_token);
     }
 
-    fn visit_unary_expression(&mut self, expression: &mut crate::ast::UnaryExpression) {
+    fn visit_unary_expression(&mut self, expression: &mut UnaryExpression) {
         self.visit_expression(&mut expression.operand);
     }
 
-    fn visit_binary_expression(&mut self, expression: &mut crate::ast::BinaryExpression) {
+    fn visit_binary_expression(&mut self, expression: &mut BinaryExpression) {
         self.visit_expression(&mut expression.right);
     }
 
     fn visit_variable_assignment_expression(
         &mut self,
-        expression: &mut crate::ast::VariableAssignmentExpression,
+        expression: &mut VariableAssignmentExpression,
     ) {
         self.visit_expression(&mut expression.right);
     }
 
     fn visit_i32_type(&mut self, i32_type: &mut I32Type) {
         self.add_trailing_trivia_to_token(&mut i32_type.token);
+    }
+
+    fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
+        self.add_trailing_trivia_to_token(&mut unit_type.close_paren_token);
     }
 }

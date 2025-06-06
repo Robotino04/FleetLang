@@ -177,3 +177,23 @@ fn defined_late() {
         },
     );
 }
+
+#[test]
+fn unit_variable() {
+    assert_compile_error(
+        indoc! {r##"
+            let unit_value = () -> () {
+                return;
+            }
+            let main = () -> i32 {
+                let a: () = unit_value();
+                return 5;
+            }
+        "##},
+        SourceLocation {
+            index: 76,
+            line: 5,
+            column: 11,
+        },
+    );
+}

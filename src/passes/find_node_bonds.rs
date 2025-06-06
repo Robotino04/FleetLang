@@ -3,8 +3,9 @@ use crate::{
         AstNode, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
         ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
         IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        WhileLoopStatement,
     },
     tokenizer::SourceLocation,
 };
@@ -176,5 +177,10 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
         }) => (name_token.start, find_node_bounds(*right).1),
 
         AstNode::I32Type(I32Type { token, id: _ }) => (token.start, token.end),
+        AstNode::UnitType(UnitType {
+            open_paren_token,
+            close_paren_token,
+            id: _,
+        }) => (open_paren_token.start, close_paren_token.end),
     }
 }

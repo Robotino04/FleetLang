@@ -4,8 +4,9 @@ use crate::{
         Expression, ExpressionStatement, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GroupingExpression, I32Type, IfStatement, NodeID, NumberExpression,
         OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
-        Statement, ThreadExecutor, Type, UnaryExpression, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+        Statement, ThreadExecutor, Type, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::type_propagation::{FunctionID, VariableID},
@@ -310,9 +311,17 @@ impl<'errors> Parser<'errors> {
                 }));
             }
             Some(TokenType::Keyword(Keyword::Return)) => {
+                let return_token = expect!(self, TokenType::Keyword(Keyword::Return))?;
+
+                let value = if let Some(TokenType::Semicolon) = self.current_token_type() {
+                    None
+                } else {
+                    Some(self.parse_expression()?)
+                };
+
                 return Ok(Statement::Return(ReturnStatement {
-                    return_token: expect!(self, TokenType::Keyword(Keyword::Return))?,
-                    value: self.parse_expression()?,
+                    return_token,
+                    value,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
                     id: self.id_generator.next_node_id(),
                 }));
@@ -494,19 +503,19 @@ impl<'errors> Parser<'errors> {
         match self.current_token_type() {
             Some(TokenType::Tilde) => Ok(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::Tilde)?,
-                operation: crate::ast::UnaryOperation::BitwiseNot,
+                operation: UnaryOperation::BitwiseNot,
                 operand: Box::new(self.parse_unary_expression()?),
                 id: self.id_generator.next_node_id(),
             })),
             Some(TokenType::Minus) => Ok(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::Minus)?,
-                operation: crate::ast::UnaryOperation::Negate,
+                operation: UnaryOperation::Negate,
                 operand: Box::new(self.parse_unary_expression()?),
                 id: self.id_generator.next_node_id(),
             })),
             Some(TokenType::ExclamationMark) => Ok(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::ExclamationMark)?,
-                operation: crate::ast::UnaryOperation::LogicalNot,
+                operation: UnaryOperation::LogicalNot,
                 operand: Box::new(self.parse_unary_expression()?),
                 id: self.id_generator.next_node_id(),
             })),
@@ -773,6 +782,11 @@ impl<'errors> Parser<'errors> {
         match self.current_token_type() {
             Some(TokenType::Keyword(Keyword::I32)) => Ok(Type::I32(I32Type {
                 token: expect!(self, TokenType::Keyword(Keyword::I32))?,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::OpenParen) => Ok(Type::Unit(UnitType {
+                open_paren_token: expect!(self, TokenType::OpenParen)?,
+                close_paren_token: expect!(self, TokenType::CloseParen)?,
                 id: self.id_generator.next_node_id(),
             })),
             _ => unable_to_parse!(self, "type"),

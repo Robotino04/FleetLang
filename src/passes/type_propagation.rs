@@ -8,7 +8,7 @@ use crate::{
         ExpressionStatement, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
         GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, PerNodeData,
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, ThreadExecutor,
-        UnaryExpression, VariableAccessExpression, VariableAssignmentExpression,
+        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
@@ -241,6 +241,14 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                 ErrorSeverity::Error,
             ));
         }
+        if defined_type == RuntimeType::Unit {
+            self.errors.push(FleetError::from_node(
+                type_.clone(),
+                format!("Variables cannot have Unit type"),
+                ErrorSeverity::Error,
+            ));
+        }
+
         self.referenced_variable.insert(
             *id,
             self.variable_scopes
@@ -304,7 +312,9 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             id: _,
         }: &mut ReturnStatement,
     ) -> Self::StatementOutput {
-        self.visit_expression(value);
+        if let Some(retvalue) = value {
+            self.visit_expression(retvalue);
+        }
     }
 
     fn visit_variable_definition_statement(
@@ -652,5 +662,9 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
 
     fn visit_i32_type(&mut self, _type: &mut I32Type) -> Self::TypeOutput {
         return RuntimeType::I32;
+    }
+
+    fn visit_unit_type(&mut self, _unit_type: &mut UnitType) -> Self::TypeOutput {
+        return RuntimeType::Unit;
     }
 }

@@ -3,8 +3,9 @@ use crate::{
         AstNode, AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
         ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
         IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        WhileLoopStatement,
     },
     tokenizer::{SourceLocation, Token},
 };
@@ -159,7 +160,9 @@ impl AstVisitor for FindContainingNodePass {
         self.node_hierarchy.push(return_stmt.clone().into());
 
         self.visit_token(&return_stmt.return_token)?;
-        self.visit_expression(&mut return_stmt.value)?;
+        if let Some(retvalue) = &mut return_stmt.value {
+            self.visit_expression(retvalue)?;
+        }
         self.visit_token(&return_stmt.semicolon_token)?;
 
         self.node_hierarchy.pop();
@@ -388,6 +391,17 @@ impl AstVisitor for FindContainingNodePass {
         self.node_hierarchy.push(type_.clone().into());
 
         self.visit_token(&type_.token)?;
+
+        self.node_hierarchy.pop();
+
+        return Ok(());
+    }
+
+    fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
+        self.node_hierarchy.push(unit_type.clone().into());
+
+        self.visit_token(&unit_type.open_paren_token)?;
+        self.visit_token(&unit_type.close_paren_token)?;
 
         self.node_hierarchy.pop();
 

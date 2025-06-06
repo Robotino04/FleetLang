@@ -4,7 +4,7 @@ use crate::ast::{
     AstNode, BinaryExpression, BinaryOperation, BlockStatement, ExpressionStatement,
     ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
     IfStatement, NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, SimpleBinding,
-    ThreadExecutor, UnaryExpression, UnaryOperation, VariableAccessExpression,
+    ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
     VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
 };
 
@@ -74,7 +74,6 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
         }) => {
             return format!("{} {}", generate_c(type_), name);
         }
-        AstNode::I32Type(I32Type { token: _, id: _ }) => "int32_t".to_string(),
         AstNode::ExpressionStatement(ExpressionStatement {
             expression,
             semicolon_token: _,
@@ -113,7 +112,9 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             semicolon_token: _,
             id: _,
         }) => {
-            return "return ".to_string() + generate_c(value).as_str() + ";";
+            return "return ".to_string()
+                + &value.map(|v| generate_c(v)).unwrap_or("".to_string())
+                + ";";
         }
         AstNode::VariableDefinitionStatement(VariableDefinitionStatement {
             let_token: _,
@@ -287,5 +288,11 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
         }) => {
             return format!("({name} = {})", generate_c(*right),);
         }
+        AstNode::I32Type(I32Type { token: _, id: _ }) => "int32_t".to_string(),
+        AstNode::UnitType(UnitType {
+            open_paren_token: _,
+            close_paren_token: _,
+            id: _,
+        }) => "void".to_string(),
     }
 }

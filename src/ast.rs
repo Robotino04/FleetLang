@@ -36,6 +36,7 @@ pub enum AstNode {
     VariableAssignmentExpression(VariableAssignmentExpression),
 
     I32Type(I32Type),
+    UnitType(UnitType),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -82,6 +83,7 @@ impl HasID for AstNode {
             }
 
             AstNode::I32Type(i32_type) => i32_type.get_id(),
+            AstNode::UnitType(unit_type) => unit_type.get_id(),
         }
     }
 }
@@ -262,10 +264,12 @@ pub trait AstVisitor {
     fn visit_type(&mut self, type_: &mut Type) -> Self::TypeOutput {
         match type_ {
             Type::I32(i32_type) => self.visit_i32_type(i32_type),
+            Type::Unit(unit_type) => self.visit_unit_type(unit_type),
         }
     }
 
     fn visit_i32_type(&mut self, i32_type: &mut I32Type) -> Self::TypeOutput;
+    fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput;
 }
 
 #[derive(Clone, Debug)]
@@ -311,14 +315,25 @@ pub struct I32Type {
 generate_ast_requirements!(I32Type, unwrap_i32_type);
 
 #[derive(Clone, Debug)]
+pub struct UnitType {
+    pub open_paren_token: Token,
+    pub close_paren_token: Token,
+    pub id: NodeID,
+}
+
+generate_ast_requirements!(UnitType, unwrap_unit_type);
+
+#[derive(Clone, Debug)]
 pub enum Type {
     I32(I32Type),
+    Unit(UnitType),
 }
 
 impl From<Type> for AstNode {
     fn from(value: Type) -> Self {
         match value {
             Type::I32(i32_type) => i32_type.into(),
+            Type::Unit(unit_type) => unit_type.into(),
         }
     }
 }
@@ -327,6 +342,7 @@ impl HasID for Type {
     fn get_id(&self) -> NodeID {
         match self {
             Type::I32(i32_type) => i32_type.get_id(),
+            Type::Unit(unit_type) => unit_type.get_id(),
         }
     }
 }
@@ -362,7 +378,7 @@ generate_ast_requirements!(BlockStatement, unwrap_block_statement);
 #[derive(Clone, Debug)]
 pub struct ReturnStatement {
     pub return_token: Token,
-    pub value: Expression,
+    pub value: Option<Expression>,
     pub semicolon_token: Token,
     pub id: NodeID,
 }

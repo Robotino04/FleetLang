@@ -3,8 +3,9 @@ use crate::{
         AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
         ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
         IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -154,5 +155,9 @@ impl AstVisitor for AddLeadingTriviaPass {
 
     fn visit_i32_type(&mut self, i32_type: &mut I32Type) {
         self.add_leading_trivia_to_token(&mut i32_type.token);
+    }
+
+    fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
+        self.add_leading_trivia_to_token(&mut unit_type.open_paren_token);
     }
 }
