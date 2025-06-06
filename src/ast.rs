@@ -587,8 +587,7 @@ pub struct FunctionCallExpression {
     pub name: String,
     pub name_token: Token,
     pub open_paren_token: Token,
-    // TODO: maybe store comma tokens too
-    pub arguments: Vec<Expression>,
+    pub arguments: Vec<(Expression, Option<Token>)>,
     pub close_paren_token: Token,
     pub id: NodeID,
 }

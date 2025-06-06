@@ -216,7 +216,7 @@ pub trait PartialAstVisitor {
     }
     fn partial_visit_number_expression(&mut self, _expression: &mut NumberExpression) {}
     fn partial_visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
-        for arg in &mut expression.arguments {
+        for (arg, _comma) in &mut expression.arguments {
             self.partial_visit_expression(arg);
         }
     }

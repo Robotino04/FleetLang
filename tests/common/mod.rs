@@ -56,6 +56,10 @@ fn assert_warning_at_position(errors: &Vec<FleetError>, warning_start: SourceLoc
 }
 
 pub fn assert_compile_error<'a>(src: &str, error_start: SourceLocation) {
+    assert_is_formatted(src);
+    assert_compile_error_no_formatting(src, error_start);
+}
+pub fn assert_compile_error_no_formatting<'a>(src: &str, error_start: SourceLocation) {
     let context = Context::create();
     let result = compile_program(&context, src);
 
@@ -178,7 +182,22 @@ fn compile_or_panic<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
 
 fn format_or_panic(src: &str) -> String {
     let context = Context::create();
-    let result = compile_or_panic(&context, src);
+    let result = compile_program(&context, src);
+
+    assert!(
+        match result.status {
+            CompileStatus::TokenizerFailure {} => false,
+            CompileStatus::ParserFailure { .. } => false,
+            CompileStatus::TokenizerOrParserErrors { .. } => false,
+            CompileStatus::AnalysisErrors { .. } => true,
+            CompileStatus::IrGeneratorFailure { .. } => true,
+            CompileStatus::IrGeneratorErrors { .. } => true,
+            CompileStatus::Success { .. } => true,
+        },
+        "Cannot format something that doesn't parse: {:#?}",
+        result.status
+    );
+
     return format_program(
         result.status.parsed_program().unwrap().clone(),
         result.status.parsed_id_generator().unwrap().clone(),
@@ -209,6 +228,10 @@ fn execute_function<ReturnType>(module: &Module, function_name: &str) -> ReturnT
 }
 
 fn assert_is_formatted(src: &str) {
-    let formatted_src = format_or_panic(src);
-    assert_eq!(src, formatted_src, "Expected left to be formatted");
+    let formatted_src = format_or_panic(src.trim_end());
+    assert_eq!(
+        src.trim_end(),
+        formatted_src,
+        "Expected left to be formatted"
+    );
 }

@@ -145,7 +145,7 @@ impl Backend {
                                 type_data
                             )
                             .0),
-                        ",".to_string()
+                        ", ".to_string()
                     )
                     .collect::<String>(),
                     self.generate_node_hover(return_type, variable_data, function_data, type_data)
@@ -376,9 +376,24 @@ impl Backend {
                 let return_type = self.format_option_type(
                     ref_func.map(|func| func.map(|func| func.borrow().return_type.clone())),
                 );
+                let parameters = ref_func
+                    .map(|func| {
+                        func.map(|func| {
+                            Itertools::intersperse(
+                                func.borrow()
+                                    .parameter_types
+                                    .iter()
+                                    .map(|param| stringify_runtime_type(*param).to_string()),
+                                ", ".to_string(),
+                            )
+                            .collect::<String>()
+                        })
+                        .unwrap_or("/* missing type data*/".to_string())
+                    })
+                    .unwrap_or("/* type data unavailable */".to_string());
 
                 (
-                    format!("let {name} = () -> {return_type}"),
+                    format!("let {name} = ({parameters}) -> {return_type}"),
                     "function call".to_string(),
                 )
             }
@@ -749,8 +764,11 @@ impl AstVisitor for ExtractSemanticTokensPass {
     ) -> Self::ExpressionOutput {
         self.build_semantic_token(name_token, SemanticTokenType::FUNCTION, vec![]);
         self.build_comment_tokens_only(open_paren_token);
-        for arg in arguments {
+        for (arg, comma) in arguments {
             self.visit_expression(arg);
+            if let Some(comma) = comma {
+                self.build_comment_tokens_only(comma);
+            }
         }
         self.build_comment_tokens_only(close_paren_token);
     }

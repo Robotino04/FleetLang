@@ -185,3 +185,120 @@ fn remove_parens_multiple_returns() {
         "main",
     );
 }
+
+#[test]
+fn expand_parameters() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                return foo(2, 3);
+            }
+            let foo = (a:i32,b:i32) -> i32 {
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return foo(2, 3);
+            }
+            let foo = (a: i32, b: i32) -> i32 {
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn collapse_parameters() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                return foo(2, 3);
+            }
+            let foo = (a  :   i32  ,  b
+            :  i32 ) -> i32 {
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return foo(2, 3);
+            }
+            let foo = (a: i32, b: i32) -> i32 {
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn expand_arguments() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                return foo(2,3);
+            }
+            let foo = (a:i32, b:i32) -> i32 {
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return foo(2, 3);
+            }
+            let foo = (a: i32, b: i32) -> i32 {
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn collapse_arguments() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                return foo
+                (   2  , 3   );
+            }
+            let foo = (a:i32, b:i32) -> i32 {
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return foo(2, 3);
+            }
+            let foo = (a: i32, b: i32) -> i32 {
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn remove_parens_arguments() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                return foo(((2)), ((3 + 2) * 4) * 2);
+            }
+            let foo = (a:i32, b:i32) -> i32 {
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return foo(2, (3 + 2) * 4 * 2);
+            }
+            let foo = (a: i32, b: i32) -> i32 {
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}

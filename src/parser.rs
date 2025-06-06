@@ -220,13 +220,13 @@ impl<'errors> Parser<'errors> {
         let mut parameters = vec![];
 
         while self.current_token_type() != Some(TokenType::CloseParen) {
+            let binding = self.parse_simple_binding()?;
             match self.current_token_type() {
-                Some(TokenType::Colon) => parameters.push((
-                    self.parse_simple_binding()?,
-                    Some(expect!(self, TokenType::Colon)?),
-                )),
+                Some(TokenType::Comma) => {
+                    parameters.push((binding, Some(expect!(self, TokenType::Comma)?)))
+                }
                 _ => {
-                    parameters.push((self.parse_simple_binding()?, None));
+                    parameters.push((binding, None));
                     break;
                 }
             }
@@ -449,7 +449,16 @@ impl<'errors> Parser<'errors> {
                         let open_paren_token = expect!(self, TokenType::OpenParen)?;
                         let mut arguments = vec![];
                         while self.current_token_type() != Some(TokenType::CloseParen) {
-                            arguments.push(self.parse_expression()?);
+                            let arg = self.parse_expression()?;
+                            match self.current_token_type() {
+                                Some(TokenType::Comma) => {
+                                    arguments.push((arg, Some(expect!(self, TokenType::Comma)?)))
+                                }
+                                _ => {
+                                    arguments.push((arg, None));
+                                    break;
+                                }
+                            }
                         }
                         let close_paren_token = expect!(self, TokenType::CloseParen)?;
                         return Ok(Expression::FunctionCall(FunctionCallExpression {

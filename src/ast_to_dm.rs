@@ -114,6 +114,7 @@ impl AstToDocumentModelConverter {
             TokenType::CloseBracket     => "}",
 
             TokenType::Semicolon        => ";",
+            TokenType::Comma            => ",",
             TokenType::Dot              => ".",
             TokenType::Colon            => ":",
 
@@ -208,6 +209,7 @@ impl AstVisitor for AstToDocumentModelConverter {
                     self.trivia_to_element(&open_paren_token.leading_trivia),
                     DocumentElement::CollapsableSpace,
                     self.token_type_to_element(open_paren_token),
+                    DocumentElement::double_space_eater(),
                     self.trivia_to_element(&open_paren_token.trailing_trivia),
                     DocumentElement::spaced_concatentation(
                         DocumentElement::CollapsableSpace,
@@ -217,6 +219,7 @@ impl AstVisitor for AstToDocumentModelConverter {
                                 if let Some(comma) = comma {
                                     DocumentElement::Concatenation(vec![
                                         self.visit_simple_binding(param),
+                                        DocumentElement::double_space_eater(),
                                         self.token_type_to_element(comma),
                                     ])
                                 } else {
@@ -226,6 +229,7 @@ impl AstVisitor for AstToDocumentModelConverter {
                             .collect(),
                     ),
                     self.trivia_to_element(&close_paren_token.leading_trivia),
+                    DocumentElement::double_space_eater(),
                     self.token_type_to_element(close_paren_token),
                     DocumentElement::CollapsableSpace,
                     self.trivia_to_element(&close_paren_token.trailing_trivia),
@@ -557,18 +561,25 @@ impl AstVisitor for AstToDocumentModelConverter {
     ) -> Self::ExpressionOutput {
         DocumentElement::Concatenation(vec![
             self.token_to_element(name_token),
+            DocumentElement::double_space_eater(),
             DocumentElement::Concatenation(vec![
                 self.token_to_element(open_paren_token),
+                DocumentElement::double_space_eater(),
                 DocumentElement::spaced_concatentation(
-                    DocumentElement::Concatenation(vec![
-                        DocumentElement::Text(",".to_string()),
-                        DocumentElement::CollapsableSpace,
-                    ]),
+                    DocumentElement::CollapsableSpace,
                     arguments
                         .iter_mut()
-                        .map(|arg| self.visit_expression(arg))
+                        .map(|(arg, comma)| match comma {
+                            Some(comma) => DocumentElement::Concatenation(vec![
+                                self.visit_expression(arg),
+                                DocumentElement::double_space_eater(),
+                                self.token_to_element(comma),
+                            ]),
+                            None => self.visit_expression(arg),
+                        })
                         .collect(),
                 ),
+                DocumentElement::double_space_eater(),
                 self.token_to_element(close_paren_token),
             ]),
         ])

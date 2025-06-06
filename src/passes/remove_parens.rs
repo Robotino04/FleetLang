@@ -206,7 +206,7 @@ impl PartialAstVisitor for RemoveParensPass {
         &mut self,
         expression: &mut crate::ast::FunctionCallExpression,
     ) {
-        for arg in &mut expression.arguments {
+        for (arg, _comma) in &mut expression.arguments {
             self.parent_precedence = Expression::TOP_PRECEDENCE;
             self.parent_associativity = Associativity::Both;
             self.visit_expression(arg);

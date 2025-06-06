@@ -1,12 +1,15 @@
 use fleet::tokenizer::SourceLocation;
 use indoc::indoc;
 
-use crate::common::{assert_compile_error, assert_parser_or_tokenizer_error};
+use crate::common::{assert_compile_error, assert_compile_error_no_formatting, assert_parser_or_tokenizer_error};
 
 #[test]
 fn missing_main() {
     assert_compile_error(
         indoc! {r##"
+            let foo = () -> i32 {
+                return 0;
+            }
         "##},
         SourceLocation {
             index: 0,
@@ -193,7 +196,8 @@ fn unknown_characters_2() {
 fn missing_return() {
     assert_compile_error(
         indoc! {r##"
-            let main = () -> i32 {}
+            let main = () -> i32 {
+            }
         "##},
         SourceLocation {
             index: 0,
@@ -221,7 +225,7 @@ fn undefined_function() {
 
 #[test]
 fn non_block_as_body() {
-    assert_compile_error(
+    assert_compile_error_no_formatting(
         indoc! {r##"
             let main = () -> i32
                 return 0;
@@ -230,6 +234,87 @@ fn non_block_as_body() {
             index: 25,
             line: 2,
             column: 4,
+        },
+    );
+}
+
+#[test]
+fn too_few_arguments() {
+    assert_compile_error(
+        indoc! {r##"
+            let foo = (a: i32) -> i32 {
+                return a + 3;
+            }
+            let main = () -> i32 {
+                return foo();
+            }
+        "##},
+        SourceLocation {
+            index: 86,
+            line: 5,
+            column: 15,
+        },
+    );
+}
+
+#[test]
+fn c_like_declaration() {
+    assert_parser_or_tokenizer_error(
+        indoc! {r##"
+            let foo = (a: i32) -> i32;
+
+            let main = () -> i32 {
+                return 5;
+            }
+            let foo = (a: i32) -> i32 {
+                return 4;
+            }
+        "##},
+        SourceLocation {
+            index: 25,
+            line: 1,
+            column: 25,
+        },
+    );
+}
+
+#[test]
+fn redefine_function() {
+    assert_compile_error(
+        indoc! {r##"
+            let foo = () -> i32 {
+                return 3;
+            }
+            let main = () -> i32 {
+                return foo();
+            }
+            let foo = () -> i32 {
+                return 4;
+            }
+        "##},
+        SourceLocation {
+            index: 81,
+            line: 7,
+            column: 0,
+        },
+    );
+}
+
+#[test]
+fn too_many_arguments() {
+    assert_compile_error(
+        indoc! {r##"
+            let foo = (a: i32) -> i32 {
+                return a + 1;
+            }
+            let main = () -> i32 {
+                return foo(1, 2);
+            }
+        "##},
+        SourceLocation {
+            index: 89,
+            line: 5,
+            column: 18,
         },
     );
 }

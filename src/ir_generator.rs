@@ -17,6 +17,7 @@ use inkwell::{
         BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue,
     },
 };
+use itertools::Itertools;
 
 use crate::{
     ast::{
@@ -136,13 +137,41 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
         let return_type_ir = self.visit_type(&mut function.return_type)?;
         let ir_function = self.module.add_function(
             &function.name,
-            self.make_into_function_type(return_type_ir, &[], false)?,
+            self.make_into_function_type(
+                return_type_ir,
+                function
+                    .parameters
+                    .iter()
+                    .map(|(param, _comma)| {
+                        self.variable_data
+                            .get(&param.id)
+                            .expect("parameters should have variables assigned by now")
+                    })
+                    .map(|var| match self.runtime_type_to_llvm(var.borrow().type_) {
+                        AnyTypeEnum::ArrayType(array_type) => array_type.into(),
+                        AnyTypeEnum::FloatType(float_type) => float_type.into(),
+                        AnyTypeEnum::FunctionType(_function_type) => {
+                            panic!("cannot have function types as parameter")
+                        }
+                        AnyTypeEnum::IntType(int_type) => int_type.into(),
+                        AnyTypeEnum::PointerType(pointer_type) => pointer_type.into(),
+                        AnyTypeEnum::StructType(struct_type) => struct_type.into(),
+                        AnyTypeEnum::VectorType(vector_type) => vector_type.into(),
+                        AnyTypeEnum::VoidType(_void_type) => {
+                            panic!("cannot unit type as parameter")
+                        }
+                    })
+                    .collect_vec()
+                    .as_slice(),
+                false,
+            )?,
             None,
         );
         let ref_function = self
             .function_data
             .get(&function.id)
             .expect("Function data should exist before calling ir_generator");
+
         assert!(matches!(
             self.function_locations
                 .insert(ref_function.borrow().id, FunctionLocation(ir_function)),
@@ -216,6 +245,20 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
         let entry = self.context.append_basic_block(ir_function, "entry");
         self.builder.position_at_end(entry);
+
+        assert_eq!(
+            ir_function.count_params() as usize,
+            function.parameters.len(),
+            "ir function has an incorrect number of parameters"
+        );
+        for ((param, _comma), ir_param) in function
+            .parameters
+            .iter_mut()
+            .zip(ir_function.get_param_iter())
+        {
+            let ptr = self.visit_simple_binding(param)?;
+            self.builder.build_store(ptr, ir_param)?;
+        }
 
         self.visit_statement(&mut function.body)?;
 
@@ -720,7 +763,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         }: &mut FunctionCallExpression,
     ) -> Self::ExpressionOutput {
         let mut args: Vec<BasicMetadataValueEnum> = vec![];
-        for arg in arguments {
+        for (arg, _comma) in arguments {
             args.push(
                 self.visit_expression(arg)?
                     .ok_or(format!(

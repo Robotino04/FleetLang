@@ -1,3 +1,5 @@
+use itertools::Itertools;
+
 use crate::ast::{
     AstNode, BinaryExpression, BinaryOperation, BlockStatement, ExpressionStatement,
     ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
@@ -7,7 +9,25 @@ use crate::ast::{
 };
 
 fn generate_function_declaration(function: &FunctionDefinition) -> String {
-    return generate_c(function.return_type.clone()) + " " + function.name.as_str() + "(void)";
+    let params = Itertools::intersperse(
+        function
+            .parameters
+            .iter()
+            .map(|(param, _comma)| generate_c(param.clone())),
+        ", ".to_string(),
+    )
+    .collect::<String>();
+
+    return generate_c(function.return_type.clone())
+        + " "
+        + function.name.as_str()
+        + "("
+        + if function.parameters.is_empty() {
+            "void"
+        } else {
+            params.as_str()
+        }
+        + ")";
 }
 
 pub fn generate_c(node: impl Into<AstNode>) -> String {
@@ -195,7 +215,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
                 + "("
                 + arguments
                     .iter()
-                    .map(|e| generate_c(e.clone()))
+                    .map(|(arg, _comma)| generate_c(arg.clone()))
                     .collect::<Vec<_>>()
                     .join(", ")
                     .as_str()

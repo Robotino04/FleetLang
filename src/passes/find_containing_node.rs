@@ -305,8 +305,11 @@ impl AstVisitor for FindContainingNodePass {
 
         self.visit_token(&expression.name_token)?;
         self.visit_token(&expression.open_paren_token)?;
-        for arg in &mut expression.arguments {
+        for (arg, comma) in &mut expression.arguments {
             self.visit_expression(arg)?;
+            if let Some(comma) = comma {
+                self.visit_token(comma)?;
+            }
         }
         self.visit_token(&expression.close_paren_token)?;
 

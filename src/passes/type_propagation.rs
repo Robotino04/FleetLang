@@ -471,7 +471,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             ));
 
             // still typecheck args, even though the function doesn't exist
-            for arg in &mut expression.arguments {
+            for (arg, _comma) in &mut expression.arguments {
                 self.visit_expression(arg);
             }
             return RuntimeType::Unknown;
@@ -486,7 +486,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         expression
             .arguments
             .iter_mut()
-            .map(|arg| (self_shared.borrow_mut().visit_expression(arg), arg))
+            .map(|(arg, _comma)| (self_shared.borrow_mut().visit_expression(arg), arg))
             .zip_longest(ref_function.parameter_types.iter())
             .enumerate()
             .for_each(|(i, types)| match types {

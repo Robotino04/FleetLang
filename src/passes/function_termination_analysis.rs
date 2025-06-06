@@ -287,7 +287,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         expression: &mut crate::ast::FunctionCallExpression,
     ) -> Self::ExpressionOutput {
         let mut term = FunctionTermination::DoesntTerminate;
-        for arg in &mut expression.arguments {
+        for (arg, _comma) in &mut expression.arguments {
             term = term.or(self.visit_expression(arg));
         }
         self.termination.insert_node(expression, term);

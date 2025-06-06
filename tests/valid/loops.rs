@@ -23,7 +23,6 @@ fn break_for() {
 }
 
 #[test]
-#[ignore = "Function parameters don't exist yet"]
 fn for_counter_allocation() {
     assert_compile_and_return_value(
         indoc! {r##"

@@ -38,6 +38,7 @@ pub enum TokenType {
     CloseBracket,
 
     Semicolon,
+    Comma,
     Colon,
     Dot,
     EqualSign,
@@ -250,6 +251,10 @@ impl<'errors> Tokenizer<'errors> {
                 }
                 ';' => {
                     let tok = self.single_char_token(TokenType::Semicolon);
+                    self.tokens.push(tok);
+                }
+                ',' => {
+                    let tok = self.single_char_token(TokenType::Comma);
                     self.tokens.push(tok);
                 }
                 ':' => {

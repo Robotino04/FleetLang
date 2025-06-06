@@ -1,11 +1,13 @@
 use fleet::tokenizer::SourceLocation;
 use indoc::indoc;
 
-use crate::common::{assert_compile_error, assert_parser_or_tokenizer_error};
+use crate::common::{
+    assert_compile_error, assert_compile_error_no_formatting, assert_parser_or_tokenizer_error,
+};
 
 #[test]
 fn non_block_as_body() {
-    assert_compile_error(
+    assert_compile_error_no_formatting(
         indoc! {r##"
             let main = () -> i32 {
                 if 5 let a: i32 = 4;
