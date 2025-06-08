@@ -1,11 +1,11 @@
 use crate::{
     ast::{
         AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
-        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
-        IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
+        GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, Program,
+        ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody,
+        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -29,10 +29,12 @@ impl AddLeadingTriviaPass {
 impl AstVisitor for AddLeadingTriviaPass {
     type ProgramOutput = ();
     type FunctionDefinitionOutput = ();
+    type FunctionBodyOutput = ();
     type SimpleBindingOutput = ();
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
+
     type ExpressionOutput = ();
 
     type TypeOutput = ();
@@ -45,6 +47,20 @@ impl AstVisitor for AddLeadingTriviaPass {
 
     fn visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
         self.add_leading_trivia_to_token(&mut function_definition.name_token);
+    }
+
+    fn visit_statement_function_body(
+        &mut self,
+        StatementFunctionBody { statement, .. }: &mut StatementFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        self.visit_statement(statement);
+    }
+
+    fn visit_extern_function_body(
+        &mut self,
+        ExternFunctionBody { at_token, .. }: &mut ExternFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        self.add_leading_trivia_to_token(at_token);
     }
 
     fn visit_simple_binding(

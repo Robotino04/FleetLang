@@ -7,11 +7,12 @@ use std::sync::LazyLock;
 
 use fleet::ast::{
     AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
-    ExpressionStatement, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
-    GroupingExpression, HasID, I32Type, IfStatement, NodeID, NumberExpression, OnStatement,
-    PerNodeData, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, ThreadExecutor,
-    UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-    VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+    ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+    FunctionDefinition, GroupingExpression, HasID, I32Type, IfStatement, NodeID, NumberExpression,
+    OnStatement, PerNodeData, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
+    StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
+    VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+    WhileLoopStatement,
 };
 use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
 use fleet::passes::find_containing_node::FindContainingNodePass;
@@ -153,6 +154,22 @@ impl Backend {
                         .0
                 ),
                 "function definition".to_string(),
+            ),
+            AstNode::ExternFunctionBody(ExternFunctionBody {
+                at_token: _,
+                extern_token: _,
+                symbol,
+                symbol_token: _,
+                semicolon_token: _,
+                id: _,
+            }) => (
+                format!("@extern \"{symbol}\""),
+                "extern function body".to_string(),
+            ),
+            AstNode::StatementFunctionBody(StatementFunctionBody { statement, id: _ }) => (
+                self.generate_node_hover(statement, variable_data, function_data, type_data)
+                    .0,
+                "statement function body".to_string(),
             ),
             AstNode::SimpleBinding(SimpleBinding {
                 name_token: _,
@@ -563,10 +580,12 @@ impl ExtractSemanticTokensPass {
 impl AstVisitor for ExtractSemanticTokensPass {
     type ProgramOutput = Vec<SemanticToken>;
     type FunctionDefinitionOutput = ();
+    type FunctionBodyOutput = ();
     type SimpleBindingOutput = ();
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
+
     type ExpressionOutput = ();
 
     type TypeOutput = ();
@@ -615,7 +634,35 @@ impl AstVisitor for ExtractSemanticTokensPass {
         self.build_comment_tokens_only(close_paren_token);
         self.build_comment_tokens_only(right_arrow_token);
         self.visit_type(return_type);
-        self.visit_statement(body);
+        self.visit_function_body(body);
+    }
+
+    fn visit_statement_function_body(
+        &mut self,
+        StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        self.visit_statement(statement);
+    }
+
+    fn visit_extern_function_body(
+        &mut self,
+        ExternFunctionBody {
+            at_token,
+            extern_token,
+            symbol: _,
+            symbol_token,
+            semicolon_token,
+            id: _,
+        }: &mut ExternFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        self.build_semantic_token(at_token, SemanticTokenType::OPERATOR, vec![]);
+        self.build_semantic_token(extern_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(
+            symbol_token,
+            SemanticTokenType::STRING,
+            vec![SemanticTokenModifier::READONLY],
+        );
+        self.build_comment_tokens_only(semicolon_token);
     }
 
     fn visit_simple_binding(

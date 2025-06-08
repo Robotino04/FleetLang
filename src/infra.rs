@@ -1,6 +1,8 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, error::Error, rc::Rc};
 
-use inkwell::{context::Context, module::Module};
+use inkwell::{
+    context::Context, module::Module, passes::PassBuilderOptions, targets::TargetMachine,
+};
 
 use crate::{
     ast::{AstNode, AstVisitor, PerNodeData, Program},
@@ -506,4 +508,12 @@ pub fn format_program(mut program: Program, mut id_generator: IdGenerator) -> St
     let document = AstToDocumentModelConverter::new().visit_program(&mut program);
     let formatted_src = stringify_document(&fully_flatten_document(document));
     return formatted_src;
+}
+
+pub fn run_default_optimization_passes(
+    module: &Module<'_>,
+    target_machine: &TargetMachine,
+) -> Result<(), Box<dyn Error>> {
+    module.run_passes("default<O1>", &target_machine, PassBuilderOptions::create())?;
+    Ok(())
 }

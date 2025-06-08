@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        AstVisitor, BlockStatement, ForLoopStatement, FunctionDefinition, IfStatement, Statement,
-        WhileLoopStatement,
+        AstVisitor, BlockStatement, ForLoopStatement, FunctionBody, FunctionDefinition,
+        IfStatement, Statement, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -70,21 +70,25 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
 
         self.visit_type(return_type);
 
-        if !matches!(body, Statement::Block { .. }) {
-            self.errors.push(FleetError::from_node(
-                body.clone(),
-                "Functions must have a block as the body",
-                ErrorSeverity::Error,
-            ));
-            self.errors.push(FleetError::from_node(
-                body.clone(),
-                "Formatting will fix this",
-                ErrorSeverity::Note,
-            ));
+        let body_clone = body.clone();
+        if let FunctionBody::Statement(stmt_body) = body {
+            if !matches!(stmt_body.statement, Statement::Block { .. }) {
+                self.errors.push(FleetError::from_node(
+                    body_clone.clone(),
+                    "Functions must have a block as the body",
+                    ErrorSeverity::Error,
+                ));
+                self.errors.push(FleetError::from_node(
+                    body_clone.clone(),
+                    "Formatting will fix this",
+                    ErrorSeverity::Note,
+                ));
 
-            *body = self.create_fake_block_arround(body);
+                stmt_body.statement = self.create_fake_block_arround(&stmt_body.statement);
+            }
         }
-        self.visit_statement(body);
+
+        self.visit_function_body(body);
     }
 
     fn partial_visit_if_statement(

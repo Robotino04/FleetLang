@@ -1,11 +1,11 @@
 use crate::{
     ast::{
         AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
-        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
-        IfStatement, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
+        GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, PerNodeData,
+        Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
+        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     tokenizer::SourceLocation,
@@ -60,10 +60,12 @@ impl<'errors> FunctionTerminationAnalyzer<'errors> {
 impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
     type ProgramOutput = PerNodeData<FunctionTermination>;
     type FunctionDefinitionOutput = FunctionTermination;
+    type FunctionBodyOutput = FunctionTermination;
     type SimpleBindingOutput = FunctionTermination;
     type StatementOutput = FunctionTermination;
     type ExecutorHostOutput = FunctionTermination;
     type ExecutorOutput = FunctionTermination;
+
     type ExpressionOutput = FunctionTermination;
 
     type TypeOutput = FunctionTermination;
@@ -103,9 +105,37 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
             return_type, body, ..
         } = function;
         self.visit_type(return_type);
-        let body_termination = self.visit_statement(body);
+        let body_termination = self.visit_function_body(body);
         self.termination.insert_node(function, body_termination);
         return body_termination;
+    }
+
+    fn visit_statement_function_body(
+        &mut self,
+        statement_function_body: &mut StatementFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        let StatementFunctionBody { statement, id: _ } = statement_function_body;
+        let term = self.visit_statement(statement);
+        self.termination.insert_node(statement_function_body, term);
+        return term;
+    }
+
+    fn visit_extern_function_body(
+        &mut self,
+        extern_function_body: &mut ExternFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        let ExternFunctionBody {
+            at_token: _,
+            extern_token: _,
+            symbol: _,
+            symbol_token: _,
+            semicolon_token: _,
+            id: _,
+        } = extern_function_body;
+
+        let term = FunctionTermination::MaybeTerminates;
+        self.termination.insert_node(extern_function_body, term);
+        return term;
     }
 
     fn visit_simple_binding(

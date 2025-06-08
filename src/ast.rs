@@ -10,6 +10,9 @@ pub enum AstNode {
     Program(Program),
     FunctionDefinition(FunctionDefinition),
 
+    ExternFunctionBody(ExternFunctionBody),
+    StatementFunctionBody(StatementFunctionBody),
+
     SimpleBinding(SimpleBinding),
 
     ExpressionStatement(ExpressionStatement),
@@ -51,6 +54,11 @@ impl HasID for AstNode {
         match self {
             AstNode::Program(program) => program.get_id(),
             AstNode::FunctionDefinition(function_definition) => function_definition.get_id(),
+
+            AstNode::ExternFunctionBody(extern_function_body) => extern_function_body.get_id(),
+            AstNode::StatementFunctionBody(statement_function_body) => {
+                statement_function_body.get_id()
+            }
 
             AstNode::SimpleBinding(simple_binding) => simple_binding.get_id(),
 
@@ -116,6 +124,7 @@ macro_rules! generate_ast_requirements {
 pub trait AstVisitor {
     type ProgramOutput;
     type FunctionDefinitionOutput;
+    type FunctionBodyOutput;
     type SimpleBindingOutput;
     type StatementOutput;
     type ExecutorHostOutput;
@@ -128,6 +137,28 @@ pub trait AstVisitor {
         &mut self,
         function_definition: &mut FunctionDefinition,
     ) -> Self::FunctionDefinitionOutput;
+
+    fn visit_function_body(
+        &mut self,
+        function_body: &mut FunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        match function_body {
+            FunctionBody::Statement(statement_function_body) => {
+                self.visit_statement_function_body(statement_function_body)
+            }
+            FunctionBody::Extern(extern_function_body) => {
+                self.visit_extern_function_body(extern_function_body)
+            }
+        }
+    }
+    fn visit_statement_function_body(
+        &mut self,
+        statement_function_body: &mut StatementFunctionBody,
+    ) -> Self::FunctionBodyOutput;
+    fn visit_extern_function_body(
+        &mut self,
+        extern_function_body: &mut ExternFunctionBody,
+    ) -> Self::FunctionBodyOutput;
 
     fn visit_simple_binding(
         &mut self,
@@ -300,11 +331,54 @@ pub struct FunctionDefinition {
     pub close_paren_token: Token,
     pub right_arrow_token: Token,
     pub return_type: Type,
-    pub body: Statement,
+
+    pub body: FunctionBody,
+
     pub id: NodeID,
 }
-
 generate_ast_requirements!(FunctionDefinition, unwrap_function_definition);
+
+#[derive(Clone, Debug)]
+pub struct ExternFunctionBody {
+    pub at_token: Token,
+    pub extern_token: Token,
+    pub symbol: String,
+    pub symbol_token: Token,
+    pub semicolon_token: Token,
+    pub id: NodeID,
+}
+generate_ast_requirements!(ExternFunctionBody, unwrap_extern_function_body);
+
+#[derive(Clone, Debug)]
+pub struct StatementFunctionBody {
+    pub statement: Statement,
+    pub id: NodeID,
+}
+generate_ast_requirements!(StatementFunctionBody, unwrap_statement_function_body);
+
+#[derive(Clone, Debug)]
+pub enum FunctionBody {
+    Statement(StatementFunctionBody),
+    Extern(ExternFunctionBody),
+}
+
+impl From<FunctionBody> for AstNode {
+    fn from(value: FunctionBody) -> Self {
+        match value {
+            FunctionBody::Statement(statement) => statement.into(),
+            FunctionBody::Extern(extern_function_body) => extern_function_body.into(),
+        }
+    }
+}
+
+impl HasID for FunctionBody {
+    fn get_id(&self) -> NodeID {
+        match self {
+            FunctionBody::Statement(statement) => statement.get_id(),
+            FunctionBody::Extern(extern_function_body) => extern_function_body.get_id(),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct I32Type {

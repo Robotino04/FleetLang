@@ -1,3 +1,18 @@
+let putchar = (char: i32) -> i32 @extern "putchar";
 let main = () -> i32 {
-    return ~(/**/(1 + 2) * 2);//asd
+    putchar(72); // 'H'
+    putchar(101); // 'e'
+    putchar(108); // 'l'
+    putchar(108); // 'l'
+    putchar(111); // 'o'
+    putchar(44); // ','
+    putchar(32); // ' '
+    putchar(87); // 'W'
+    putchar(111); // 'o'
+    putchar(114); // 'r'
+    putchar(108); // 'l'
+    putchar(100); // 'd'
+    putchar(33); // '!'
+    putchar(10); // '\n'
+    return 0;
 }

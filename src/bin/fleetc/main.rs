@@ -1,12 +1,11 @@
 use std::{env::args, fs::read_to_string, path::Path, process::exit};
 
-use fleet::infra::{ErrorSeverity, format_program};
+use fleet::infra::{ErrorSeverity, format_program, run_default_optimization_passes};
 use fleet::{
     ast::AstNode,
     generate_c::generate_c,
     infra::{CompileStatus, compile_program, print_error_message},
 };
-use inkwell::passes::PassBuilderOptions;
 use inkwell::{
     OptimizationLevel,
     context::Context,
@@ -233,9 +232,8 @@ fn main() {
         .unwrap();
 
     println!("{}", generate_header("LLVM IR (optimized)", 50));
-    module
-        .run_passes("default<O1>", &target_machine, PassBuilderOptions::create())
-        .unwrap();
+
+    run_default_optimization_passes(&module, &target_machine).unwrap();
 
     println!("{}", module.print_to_string().to_str().unwrap());
 

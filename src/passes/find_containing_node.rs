@@ -1,11 +1,11 @@
 use crate::{
     ast::{
         AstNode, AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
-        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
-        IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
+        GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, Program,
+        ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody,
+        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::{SourceLocation, Token},
 };
@@ -39,10 +39,12 @@ impl FindContainingNodePass {
 impl AstVisitor for FindContainingNodePass {
     type ProgramOutput = Result<(Vec<AstNode>, Option<Token>), ()>;
     type FunctionDefinitionOutput = Result<(SourceLocation, SourceLocation), ()>;
+    type FunctionBodyOutput = Result<(SourceLocation, SourceLocation), ()>;
     type SimpleBindingOutput = Result<(SourceLocation, SourceLocation), ()>;
     type StatementOutput = Result<(SourceLocation, SourceLocation), ()>;
     type ExecutorHostOutput = Result<(SourceLocation, SourceLocation), ()>;
     type ExecutorOutput = Result<(SourceLocation, SourceLocation), ()>;
+
     type ExpressionOutput = Result<(SourceLocation, SourceLocation), ()>;
 
     type TypeOutput = Result<(SourceLocation, SourceLocation), ()>;
@@ -80,8 +82,7 @@ impl AstVisitor for FindContainingNodePass {
             id: _,
         } = function;
 
-        let left_bound = self.visit_statement(body)?.0;
-        self.visit_token(let_token)?;
+        let left_bound = self.visit_token(let_token)?.0;
         self.visit_token(name_token)?;
         self.visit_token(equal_token)?;
         self.visit_token(open_paren_token)?;
@@ -94,7 +95,55 @@ impl AstVisitor for FindContainingNodePass {
         self.visit_token(close_paren_token)?;
         self.visit_token(right_arrow_token)?;
         self.visit_type(return_type)?;
-        let right_bound = self.visit_statement(body)?.1;
+        let right_bound = self.visit_function_body(body)?.1;
+
+        if left_bound <= self.search_position && self.search_position <= right_bound {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        return Ok((left_bound, right_bound));
+    }
+
+    fn visit_statement_function_body(
+        &mut self,
+        statement_function_body: &mut StatementFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        self.node_hierarchy
+            .push(statement_function_body.clone().into());
+
+        let StatementFunctionBody { statement, id: _ } = statement_function_body;
+
+        let (left_bound, right_bound) = self.visit_statement(statement)?;
+
+        if left_bound <= self.search_position && self.search_position <= right_bound {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        return Ok((left_bound, right_bound));
+    }
+
+    fn visit_extern_function_body(
+        &mut self,
+        extern_function_body: &mut ExternFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        self.node_hierarchy
+            .push(extern_function_body.clone().into());
+
+        let ExternFunctionBody {
+            at_token,
+            extern_token,
+            symbol: _,
+            symbol_token,
+            semicolon_token,
+            id: _,
+        } = extern_function_body;
+
+        let left_bound = self.visit_token(at_token)?.0;
+        self.visit_token(extern_token)?;
+        self.visit_token(symbol_token)?;
+        let right_bound = self.visit_token(semicolon_token)?.1;
 
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());

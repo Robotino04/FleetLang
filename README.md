@@ -14,13 +14,21 @@
 ## TODOs
 - if expressions
 - allow single manual newlines. Maybe add newline eaters after {\n and before \n} and print trivia newlines as long as they are inside a statement
-- type system (at least the other iX, bool and f32)
 - find a better way to store CompileStatus
 - add quick fix system for e.g. non-block as if body
 - notes for removable parens
 - show parameter names in hover for FunctionCallExpression. Likely requires storing the definition node, in which case, errors like multiple definitions could show the first definition
 - run analysis even on errored parse
 - maybe make non-block-statement fixes a code action instead of formatting. Replace `assert_compile_error_no_formatting` after
+- tuple types
+- arrays
+- structs
+- sum types
+- i8, i16, i64
+- f32, f64
+- bool
+- comptime evaluation
+- comptime type eval for generics (similar to zig/hblang)
 
 
 ## Building

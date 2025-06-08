@@ -22,11 +22,12 @@ use itertools::Itertools;
 use crate::{
     ast::{
         AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
-        ExpressionStatement, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
-        GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, PerNodeData,
-        Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, ThreadExecutor,
-        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
+        NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, WhileLoopStatement,
     },
     escape::unescape,
     infra::{ErrorSeverity, FleetError},
@@ -135,8 +136,21 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
 
     fn register_function(&mut self, function: &mut FunctionDefinition) -> Result<()> {
         let return_type_ir = self.visit_type(&mut function.return_type)?;
+
+        let name = match &function.body {
+            FunctionBody::Extern(ExternFunctionBody {
+                at_token: _,
+                extern_token: _,
+                symbol,
+                symbol_token: _,
+                semicolon_token: _,
+                id: _,
+            }) => symbol.clone(),
+            FunctionBody::Statement(_) => function.name.clone(),
+        };
+
         let ir_function = self.module.add_function(
-            &function.name,
+            &name,
             self.make_into_function_type(
                 return_type_ir,
                 function
@@ -184,10 +198,12 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
 impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
     type ProgramOutput = Result<Module<'a>>;
     type FunctionDefinitionOutput = Result<FunctionValue<'a>>;
+    type FunctionBodyOutput = Result<()>;
     type SimpleBindingOutput = Result<PointerValue<'a>>;
     type StatementOutput = Result<()>;
     type ExecutorHostOutput = Result<()>;
     type ExecutorOutput = Result<()>;
+
     type ExpressionOutput = Result<Option<BasicValueEnum<'a>>>;
 
     type TypeOutput = Result<AnyTypeEnum<'a>>;
@@ -260,7 +276,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             self.builder.build_store(ptr, ir_param)?;
         }
 
-        self.visit_statement(&mut function.body)?;
+        self.visit_function_body(&mut function.body)?;
 
         if *self
             .function_termination
@@ -303,23 +319,50 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                 }
             }
         } else {
-            self.errors.push(FleetError::from_node(
-                function.body.clone(),
-                "All code paths must return.",
-                ErrorSeverity::Error,
-            ));
+            match &function.body {
+                FunctionBody::Extern(_) => {}
+                FunctionBody::Statement(_) => {
+                    self.errors.push(FleetError::from_node(
+                        function.body.clone(),
+                        "All code paths must return.",
+                        ErrorSeverity::Error,
+                    ));
+                }
+            };
         }
 
-        /*
-        match function.return_type {
-            Type::I32 { token: _ } => self
-                .builder
-                .build_return(Some(&self.context.i32_type().const_int(0, false)))?,
-            // Type::Unit { token } => { self.builder.build_return(None)?; }
+        match &function.body {
+            FunctionBody::Extern(ExternFunctionBody { .. }) => {
+                for block in ir_function.get_basic_block_iter() {
+                    block.remove_from_function().unwrap();
+                }
+            }
+            FunctionBody::Statement(_) => {}
         };
-        */
 
         return Ok(ir_function);
+    }
+
+    fn visit_statement_function_body(
+        &mut self,
+        StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        self.visit_statement(statement)?;
+        Ok(())
+    }
+
+    fn visit_extern_function_body(
+        &mut self,
+        ExternFunctionBody {
+            at_token: _,
+            extern_token: _,
+            symbol: _,
+            symbol_token: _,
+            semicolon_token: _,
+            id: _,
+        }: &mut ExternFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        Ok(())
     }
 
     fn visit_simple_binding(

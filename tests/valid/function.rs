@@ -1,6 +1,6 @@
 use indoc::indoc;
 
-use crate::common::assert_compile_and_return_value;
+use crate::common::{assert_compile_and_output_subprocess, assert_compile_and_return_value};
 
 #[test]
 fn main_returning_0() {
@@ -150,33 +150,31 @@ fn fun_in_expr() {
 }
 
 #[test]
-#[ignore = "not sure how imports and extern should work yet"]
 fn hello_world() {
-    // TODO: figure out how to assert on stdout
-    assert_compile_and_return_value(
+    assert_compile_and_output_subprocess(
         indoc! {r##"
-            putchar @ std::libc;
-
+            let putchar = (char: i32) -> i32 @extern "putchar";
             let main = () -> i32 {
-                putchar('H');
-                putchar('e');
-                putchar('l');
-                putchar('l');
-                putchar('o');
-                putchar(',');
-                putchar(' ');
-                putchar('W');
-                putchar('o');
-                putchar('r');
-                putchar('l');
-                putchar('d');
-                putchar('!');
-                putchar('\n');
+                putchar(72); // 'H'
+                putchar(101); // 'e'
+                putchar(108); // 'l'
+                putchar(108); // 'l'
+                putchar(111); // 'o'
+                putchar(44); // ','
+                putchar(32); // ' '
+                putchar(87); // 'W'
+                putchar(111); // 'o'
+                putchar(114); // 'r'
+                putchar(108); // 'l'
+                putchar(100); // 'd'
+                putchar(33); // '!'
+                putchar(10); // '\n'
                 return 0;
             }
         "##},
-        "main",
-        16,
+        0,
+        "Hello, World!\n",
+        "",
     );
 }
 
@@ -575,5 +573,37 @@ fn unit_return() {
         "##},
         "main",
         3,
+    );
+}
+
+#[test]
+fn extern_function() {
+    assert_compile_and_output_subprocess(
+        indoc! {r##"
+            let putchar = (char: i32) -> i32 @extern "putchar";
+            let main = () -> i32 {
+                putchar(10);
+                return 0;
+            }
+        "##},
+        0,
+        "\n",
+        "",
+    );
+}
+
+#[test]
+fn extern_function_renamed() {
+    assert_compile_and_output_subprocess(
+        indoc! {r##"
+            let not_putchar = (char: i32) -> i32 @extern "putchar";
+            let main = () -> i32 {
+                not_putchar(10);
+                return 0;
+            }
+        "##},
+        0,
+        "\n",
+        "",
     );
 }

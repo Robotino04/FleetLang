@@ -43,9 +43,12 @@ pub enum TokenType {
     Comma,
     Colon,
     Dot,
+    At,
     EqualSign,
     SingleRightArrow,
+
     Number(i64),
+    StringLiteral(String),
 
     ExclamationMark,
     Tilde,
@@ -72,16 +75,21 @@ pub enum TokenType {
 pub enum Keyword {
     On,
     Self_,
+
     Let,
     I32,
+
     Return,
     If,
     Elif,
     Else,
+
     While,
     For,
     Break,
     Skip,
+
+    Extern,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -253,6 +261,10 @@ impl<'errors> Tokenizer<'errors> {
 
                 '.' => {
                     let tok = self.single_char_token(TokenType::Dot);
+                    self.tokens.push(tok);
+                }
+                '@' => {
+                    let tok = self.single_char_token(TokenType::At);
                     self.tokens.push(tok);
                 }
                 ';' => {
@@ -469,6 +481,8 @@ impl<'errors> Tokenizer<'errors> {
                             "break" => TokenType::Keyword(Keyword::Break),
                             "skip" => TokenType::Keyword(Keyword::Skip),
 
+                            "extern" => TokenType::Keyword(Keyword::Extern),
+
                             "i32" => TokenType::Keyword(Keyword::I32),
                             _ => TokenType::Identifier(lexeme.to_string()),
                         },
@@ -501,6 +515,34 @@ impl<'errors> Tokenizer<'errors> {
                             eprintln!("Unable to parse {:?} as a number", lexeme);
                             return 0;
                         })),
+
+                        leading_trivia: self.trivia_accumulator.clone(),
+                        trailing_trivia: vec![],
+                    });
+                    self.trivia_accumulator.clear();
+                }
+                '"' => {
+                    let start_location = self.current_location;
+
+                    self.advance(); // "
+                    while !matches!(self.chars[self.current_location.index], '"') {
+                        self.advance();
+
+                        if self.current_location.index >= self.chars.len() {
+                            break;
+                        }
+                    }
+                    self.advance(); // "
+
+                    let lexeme = self.chars
+                        [start_location.index + 1..self.current_location.index - 1]
+                        .iter()
+                        .collect::<String>();
+
+                    self.tokens.push(Token {
+                        start: start_location,
+                        end: self.current_location,
+                        type_: TokenType::StringLiteral(lexeme),
 
                         leading_trivia: self.trivia_accumulator.clone(),
                         trailing_trivia: vec![],

@@ -325,3 +325,46 @@ fn remove_trailing_comma() {
         "main",
     );
 }
+
+#[test]
+fn expand_extern() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let putchar = (char: i32) -> i32@extern"putchar";
+            let main = () -> i32 {
+                putchar(10);
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let putchar = (char: i32) -> i32 @extern "putchar";
+            let main = () -> i32 {
+                putchar(10);
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn collapse_extern() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let putchar = (char: i32) -> i32   @
+            extern  "putchar"  ;
+            let main = () -> i32 {
+                putchar(10);
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let putchar = (char: i32) -> i32 @extern "putchar";
+            let main = () -> i32 {
+                putchar(10);
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}

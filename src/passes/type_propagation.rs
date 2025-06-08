@@ -5,11 +5,12 @@ use itertools::{EitherOrBoth, Itertools};
 use crate::{
     ast::{
         AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
-        ExpressionStatement, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
-        GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, PerNodeData,
-        Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, ThreadExecutor,
-        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, WhileLoopStatement,
+        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+        FunctionDefinition, GroupingExpression, I32Type, IfStatement, NumberExpression,
+        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -156,10 +157,12 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         PerNodeData<Rc<RefCell<Function>>>,
     );
     type FunctionDefinitionOutput = ();
+    type FunctionBodyOutput = ();
     type SimpleBindingOutput = RuntimeType;
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
+
     type ExpressionOutput = RuntimeType;
 
     type TypeOutput = RuntimeType;
@@ -201,7 +204,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             self.visit_simple_binding(param);
         }
 
-        self.visit_statement(body);
+        self.visit_function_body(body);
         self.variable_scopes.pop();
 
         self.referenced_function.insert(
@@ -211,6 +214,26 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                 .expect("All functions should have been registered before traversing the tree")
                 .clone(),
         );
+    }
+
+    fn visit_statement_function_body(
+        &mut self,
+        StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        self.visit_statement(statement);
+    }
+
+    fn visit_extern_function_body(
+        &mut self,
+        ExternFunctionBody {
+            at_token: _,
+            extern_token: _,
+            symbol: _,
+            symbol_token: _,
+            semicolon_token: _,
+            id: _,
+        }: &mut ExternFunctionBody,
+    ) -> Self::FunctionBodyOutput {
     }
 
     fn visit_simple_binding(

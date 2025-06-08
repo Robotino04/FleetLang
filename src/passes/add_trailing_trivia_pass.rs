@@ -1,11 +1,11 @@
 use crate::{
     ast::{
         AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
-        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
-        IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        ExternFunctionBody, ForLoopStatement, FunctionBody, FunctionCallExpression,
+        FunctionDefinition, GroupingExpression, I32Type, IfStatement, NumberExpression,
+        OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
+        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -28,10 +28,12 @@ impl AddTrailingTriviaPass {
 impl AstVisitor for AddTrailingTriviaPass {
     type ProgramOutput = ();
     type FunctionDefinitionOutput = ();
+    type FunctionBodyOutput = ();
     type SimpleBindingOutput = ();
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
+
     type ExpressionOutput = ();
 
     type TypeOutput = ();
@@ -41,9 +43,31 @@ impl AstVisitor for AddTrailingTriviaPass {
             self.visit_function_definition(f);
         });
     }
-
     fn visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
-        self.visit_statement(&mut function_definition.body);
+        match &mut function_definition.body {
+            FunctionBody::Statement(statement_function_body) => {
+                self.visit_statement_function_body(statement_function_body)
+            }
+            FunctionBody::Extern(extern_function_body) => {
+                self.visit_extern_function_body(extern_function_body)
+            }
+        }
+    }
+
+    fn visit_statement_function_body(
+        &mut self,
+        StatementFunctionBody { statement, .. }: &mut StatementFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        self.visit_statement(statement);
+    }
+
+    fn visit_extern_function_body(
+        &mut self,
+        ExternFunctionBody {
+            semicolon_token, ..
+        }: &mut ExternFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        self.add_trailing_trivia_to_token(semicolon_token);
     }
 
     fn visit_simple_binding(

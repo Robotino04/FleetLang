@@ -2,13 +2,14 @@ use itertools::Itertools;
 
 use crate::ast::{
     AstNode, BinaryExpression, BinaryOperation, BlockStatement, ExpressionStatement,
-    ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
-    IfStatement, NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, SimpleBinding,
-    ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-    VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+    ExternFunctionBody, ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition,
+    GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, ReturnStatement,
+    SelfExecutorHost, SimpleBinding, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+    UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+    VariableDefinitionStatement, WhileLoopStatement,
 };
 
-fn generate_function_declaration(function: &FunctionDefinition) -> String {
+fn generate_function_declaration(function: &FunctionDefinition, mut prefix: String) -> String {
     let params = Itertools::intersperse(
         function
             .parameters
@@ -18,8 +19,13 @@ fn generate_function_declaration(function: &FunctionDefinition) -> String {
     )
     .collect::<String>();
 
+    if function.name == "main" {
+        prefix = "".to_string();
+    }
+
     return generate_c(function.return_type.clone())
         + " "
+        + &prefix
         + function.name.as_str()
         + "("
         + if function.parameters.is_empty() {
@@ -43,7 +49,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             let function_declarations = program
                 .functions
                 .iter()
-                .map(|f| generate_function_declaration(&f) + ";")
+                .map(|f| generate_function_declaration(&f, "fleet_".to_string()) + ";")
                 .collect::<Vec<_>>()
                 .join("\n");
 
@@ -60,10 +66,56 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
 "##
             );
         }
-        AstNode::FunctionDefinition(function) => {
-            return generate_function_declaration(&function)
+        AstNode::FunctionDefinition(
+            function @ FunctionDefinition {
+                body: FunctionBody::Statement(_),
+                ..
+            },
+        ) => {
+            return generate_function_declaration(&function, "fleet_".to_string())
                 + " "
                 + generate_c(function.body).as_str();
+        }
+        AstNode::FunctionDefinition(
+            ref function @ FunctionDefinition {
+                body:
+                    FunctionBody::Extern(ExternFunctionBody {
+                        at_token: _,
+                        extern_token: _,
+                        ref symbol,
+                        symbol_token: _,
+                        semicolon_token: _,
+                        id: _,
+                    }),
+                ..
+            },
+        ) => {
+            let mut fake_extern_function = function.clone();
+            fake_extern_function.name = symbol.clone();
+
+            return generate_function_declaration(&function, "fleet_".to_string())
+                + " {\n"
+                + "    extern "
+                + &generate_function_declaration(&fake_extern_function, "".to_string())
+                + ";\n"
+                + "    return "
+                + &symbol
+                + "("
+                + &function
+                    .parameters
+                    .iter()
+                    .map(|(param, _comma)| "fleet_".to_string() + &param.name)
+                    .join(",")
+                + ");\n"
+                + "}";
+        }
+        AstNode::ExternFunctionBody(_) => {
+            unreachable!(
+                "external function bodies should be handled by FunctionDefinition directly"
+            );
+        }
+        AstNode::StatementFunctionBody(StatementFunctionBody { statement, id: _ }) => {
+            generate_c(statement)
         }
         AstNode::SimpleBinding(SimpleBinding {
             name_token: _,
@@ -72,7 +124,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             type_,
             id: _,
         }) => {
-            return format!("{} {}", generate_c(type_), name);
+            return format!("{} fleet_{}", generate_c(type_), name);
         }
         AstNode::ExpressionStatement(ExpressionStatement {
             expression,
@@ -212,7 +264,8 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             close_paren_token: _,
             id: _,
         }) => {
-            return name.clone()
+            return "fleet_".to_string()
+                + &name
                 + "("
                 + arguments
                     .iter()
@@ -277,7 +330,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             name_token: _,
             id: _,
         }) => {
-            return name;
+            return "fleet_".to_string() + &name;
         }
         AstNode::VariableAssignmentExpression(VariableAssignmentExpression {
             name,
@@ -286,7 +339,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             right,
             id: _,
         }) => {
-            return format!("({name} = {})", generate_c(*right),);
+            return format!("(fleet_{name} = {})", generate_c(*right),);
         }
         AstNode::I32Type(I32Type { token: _, id: _ }) => "int32_t".to_string(),
         AstNode::UnitType(UnitType {

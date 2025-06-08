@@ -1,11 +1,11 @@
 use crate::{
     ast::{
         AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
-        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
-        IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
+        GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, Program,
+        ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody,
+        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     document_model::DocumentElement,
     tokenizer::{Keyword, Token, TokenType, Trivia, TriviaKind},
@@ -95,6 +95,7 @@ impl AstToDocumentModelConverter {
             Keyword::For => "for",
             Keyword::Break => "break",
             Keyword::Skip => "skip",
+            Keyword::Extern => "extern",
         }
         .to_string()
     }
@@ -104,7 +105,10 @@ impl AstToDocumentModelConverter {
         let s = match token.type_ {
             TokenType::Keyword(keyword) => &self.keyword_string(keyword),
             TokenType::Identifier(ref id) => id.as_str(),
+
             TokenType::Number(n) => &n.to_string(),
+            TokenType::StringLiteral(ref str) => &('"'.to_string() + &str + "\""),
+
             TokenType::UnknownCharacters(ref chars) => chars,
 
             TokenType::OpenBrace        => "{",
@@ -117,6 +121,7 @@ impl AstToDocumentModelConverter {
             TokenType::Semicolon        => ";",
             TokenType::Comma            => ",",
             TokenType::Dot              => ".",
+            TokenType::At               => "@",
             TokenType::Colon            => ":",
 
             TokenType::EqualSign        => "=",
@@ -161,10 +166,12 @@ impl AstToDocumentModelConverter {
 impl AstVisitor for AstToDocumentModelConverter {
     type ProgramOutput = DocumentElement;
     type FunctionDefinitionOutput = DocumentElement;
+    type FunctionBodyOutput = DocumentElement;
     type SimpleBindingOutput = DocumentElement;
     type StatementOutput = DocumentElement;
     type ExecutorHostOutput = DocumentElement;
     type ExecutorOutput = DocumentElement;
+
     type ExpressionOutput = DocumentElement;
 
     type TypeOutput = DocumentElement;
@@ -237,9 +244,38 @@ impl AstVisitor for AstToDocumentModelConverter {
                 ]),
                 self.token_to_element(right_arrow_token),
                 self.visit_type(return_type),
-                self.visit_statement(body),
+                self.visit_function_body(body),
             ],
         )
+    }
+
+    fn visit_statement_function_body(
+        &mut self,
+        StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        return self.visit_statement(statement);
+    }
+
+    fn visit_extern_function_body(
+        &mut self,
+        ExternFunctionBody {
+            at_token,
+            extern_token,
+            symbol: _,
+            symbol_token,
+            semicolon_token,
+            id: _,
+        }: &mut ExternFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        DocumentElement::Concatenation(vec![
+            self.token_to_element(at_token),
+            DocumentElement::double_space_eater(),
+            self.token_to_element(extern_token),
+            DocumentElement::CollapsableSpace,
+            self.token_to_element(symbol_token),
+            DocumentElement::double_space_eater(),
+            self.token_to_element(semicolon_token),
+        ])
     }
 
     fn visit_simple_binding(

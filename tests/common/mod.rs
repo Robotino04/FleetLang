@@ -1,18 +1,22 @@
 #[cfg(test)]
 use std::fmt::Debug;
+use std::process::{Command, ExitStatus, Stdio};
 
 use inkwell::{
+    OptimizationLevel,
     context::Context,
     module::Module,
-    targets::{InitializationConfig, Target},
+    targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple},
 };
 
 use fleet::{
     infra::{
         CompileResult, CompileStatus, ErrorSeverity, FleetError, compile_program, format_program,
+        run_default_optimization_passes,
     },
     tokenizer::SourceLocation,
 };
+use tempfile::tempdir;
 
 pub fn assert_parser_or_tokenizer_error<'a>(src: &str, error_start: SourceLocation) {
     let context = Context::create();
@@ -234,4 +238,77 @@ fn assert_is_formatted(src: &str) {
         formatted_src,
         "Expected left to be formatted"
     );
+}
+
+pub fn assert_compile_and_output_subprocess(
+    src: &str,
+    expected_exit_code: i32,
+    expected_stdout: impl AsRef<str>,
+    expected_stderr: impl AsRef<str>,
+) {
+    let context = Context::create();
+    let result = compile_or_panic(&context, src);
+
+    let module = result.status.module().unwrap();
+
+    Target::initialize_all(&inkwell::targets::InitializationConfig::default());
+
+    let triple = TargetTriple::create("x86_64-pc-linux-gnu");
+    let target = Target::from_triple(&triple).unwrap();
+    let target_machine = target
+        .create_target_machine(
+            &triple,
+            "x86-64",
+            "+avx2",
+            OptimizationLevel::Aggressive,
+            RelocMode::Default,
+            CodeModel::Default,
+        )
+        .unwrap();
+
+    run_default_optimization_passes(&module, &target_machine).unwrap();
+
+    let output_dir = tempdir().unwrap();
+    let object_file = output_dir.path().join("test.o");
+    let binary_file = output_dir.path().join("test");
+
+    target_machine
+        .write_to_file(&module, FileType::Object, object_file.as_path())
+        .unwrap();
+
+    assert!(
+        Command::new("clang")
+            .arg(object_file.to_str().unwrap())
+            .arg("-o")
+            .arg(binary_file.to_str().unwrap())
+            .spawn()
+            .unwrap()
+            .wait()
+            .unwrap()
+            .success()
+    );
+
+    let cmd = Command::new(binary_file)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let output = cmd.wait_with_output().unwrap();
+    assert_eq!(
+        output.status.code().unwrap(),
+        expected_exit_code,
+        "exit code doesn't match"
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        expected_stdout.as_ref(),
+        "stdout doesn't match"
+    );
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        expected_stderr.as_ref(),
+        "stderr doesn't match"
+    );
+    assert_is_formatted(src);
 }

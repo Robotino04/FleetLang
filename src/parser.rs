@@ -1,12 +1,12 @@
 use crate::{
     ast::{
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, Executor, ExecutorHost,
-        Expression, ExpressionStatement, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, I32Type, IfStatement, NodeID, NumberExpression,
-        OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
-        Statement, ThreadExecutor, Type, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
+        NodeID, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, Type,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::type_propagation::{FunctionID, VariableID},
@@ -236,7 +236,7 @@ impl<'errors> Parser<'errors> {
         let close_paren_token = expect!(self, TokenType::CloseParen)?;
         let right_arrow_token = expect!(self, TokenType::SingleRightArrow)?;
         let return_type = self.parse_type()?;
-        let body = self.parse_statement()?;
+        let body = self.parse_function_body()?;
 
         Ok(FunctionDefinition {
             let_token,
@@ -251,6 +251,30 @@ impl<'errors> Parser<'errors> {
             body,
             id: self.id_generator.next_node_id(),
         })
+    }
+    pub fn parse_function_body(&mut self) -> Result<FunctionBody> {
+        match self.current_token_type() {
+            Some(TokenType::At) => {
+                let at_token = expect!(self, TokenType::At)?;
+                let extern_token = expect!(self, TokenType::Keyword(Keyword::Extern))?;
+                let (symbol_token, symbol) = expect!(self, TokenType::StringLiteral(symbol) => (self.current_token().unwrap(), symbol))?;
+                let semicolon_token = expect!(self, TokenType::Semicolon)?;
+                return Ok(FunctionBody::Extern(ExternFunctionBody {
+                    at_token,
+                    extern_token,
+                    symbol,
+                    symbol_token,
+                    semicolon_token,
+                    id: self.id_generator.next_node_id(),
+                }));
+            }
+            _ => {
+                return Ok(FunctionBody::Statement(StatementFunctionBody {
+                    statement: self.parse_statement()?,
+                    id: self.id_generator.next_node_id(),
+                }));
+            }
+        }
     }
 
     pub fn parse_simple_binding(&mut self) -> Result<SimpleBinding> {

@@ -1,10 +1,11 @@
 use crate::ast::{
     AstVisitor, BinaryExpression, BlockStatement, BreakStatement, Executor, ExecutorHost,
-    Expression, ExpressionStatement, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
-    GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, Program,
-    ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, Statement, ThreadExecutor,
-    Type, UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-    VariableDefinitionStatement, WhileLoopStatement,
+    Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
+    FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
+    NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+    SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, Type, UnaryExpression,
+    UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+    WhileLoopStatement,
 };
 
 pub trait PartialAstVisitor {
@@ -21,7 +22,36 @@ pub trait PartialAstVisitor {
     }
 
     fn partial_visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
-        self.partial_visit_statement(&mut function_definition.body);
+        self.partial_visit_function_body(&mut function_definition.body);
+    }
+
+    fn partial_visit_function_body(&mut self, function_body: &mut FunctionBody) {
+        match function_body {
+            FunctionBody::Statement(statement_function_body) => {
+                self.partial_visit_statement_function_body(statement_function_body)
+            }
+            FunctionBody::Extern(extern_function_body) => {
+                self.partial_visit_extern_function_body(extern_function_body)
+            }
+        }
+    }
+    fn partial_visit_statement_function_body(
+        &mut self,
+        StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
+    ) {
+        self.partial_visit_statement(statement);
+    }
+    fn partial_visit_extern_function_body(
+        &mut self,
+        ExternFunctionBody {
+            at_token: _,
+            extern_token: _,
+            symbol: _,
+            symbol_token: _,
+            semicolon_token: _,
+            id: _,
+        }: &mut ExternFunctionBody,
+    ) {
     }
 
     // statements
@@ -260,11 +290,13 @@ where
 {
     type ProgramOutput = ();
     type FunctionDefinitionOutput = ();
+    type FunctionBodyOutput = ();
     type SimpleBindingOutput = ();
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
     type ExpressionOutput = ();
+
     type TypeOutput = ();
 
     fn visit_program(self, program: &mut Program) -> Self::ProgramOutput {
@@ -277,6 +309,27 @@ where
         function_definition: &mut FunctionDefinition,
     ) -> Self::FunctionDefinitionOutput {
         self.partial_visit_function_definition(function_definition);
+    }
+
+    fn visit_statement_function_body(
+        &mut self,
+        statement_function_body: &mut StatementFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        self.partial_visit_statement_function_body(statement_function_body);
+    }
+
+    fn visit_extern_function_body(
+        &mut self,
+        extern_function_body: &mut ExternFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        self.partial_visit_extern_function_body(extern_function_body);
+    }
+
+    fn visit_simple_binding(
+        &mut self,
+        simple_binding: &mut SimpleBinding,
+    ) -> Self::SimpleBindingOutput {
+        self.partial_visit_simple_binding(simple_binding);
     }
 
     fn visit_expression_statement(
@@ -299,13 +352,6 @@ where
         return_stmt: &mut ReturnStatement,
     ) -> Self::StatementOutput {
         self.partial_visit_return_statement(return_stmt);
-    }
-
-    fn visit_simple_binding(
-        &mut self,
-        simple_binding: &mut SimpleBinding,
-    ) -> Self::SimpleBindingOutput {
-        self.partial_visit_simple_binding(simple_binding);
     }
 
     fn visit_variable_definition_statement(
@@ -397,7 +443,6 @@ where
     ) -> Self::ExpressionOutput {
         self.partial_visit_binary_expression(expression);
     }
-
     fn visit_variable_assignment_expression(
         &mut self,
         expression: &mut VariableAssignmentExpression,
@@ -413,6 +458,7 @@ where
     fn visit_i32_type(&mut self, i32_type: &mut I32Type) -> Self::TypeOutput {
         self.partial_visit_i32_type(i32_type);
     }
+
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
         self.partial_visit_unit_type(unit_type);
     }

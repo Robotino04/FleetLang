@@ -1,11 +1,11 @@
 use crate::{
     ast::{
         AstNode, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
-        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
-        IfStatement, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
+        GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, Program,
+        ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody,
+        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::SourceLocation,
 };
@@ -30,6 +30,17 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             body,
             id: _,
         }) => (let_token.start, find_node_bounds(body).1),
+        AstNode::ExternFunctionBody(ExternFunctionBody {
+            at_token,
+            extern_token: _,
+            symbol: _,
+            symbol_token: _,
+            semicolon_token,
+            id: _,
+        }) => (at_token.start, semicolon_token.end),
+        AstNode::StatementFunctionBody(StatementFunctionBody { statement, id: _ }) => {
+            find_node_bounds(statement)
+        }
         AstNode::SimpleBinding(SimpleBinding {
             name_token,
             name: _,
