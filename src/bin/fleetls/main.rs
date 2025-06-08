@@ -15,6 +15,7 @@ use fleet::ast::{
 };
 use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
 use fleet::passes::find_containing_node::FindContainingNodePass;
+use fleet::passes::function_termination_analysis::FunctionTermination;
 use fleet::passes::type_propagation::{Function, RuntimeType, Variable};
 use fleet::tokenizer::{SourceLocation, Token, Trivia, TriviaKind};
 use indoc::indoc;
@@ -425,6 +426,51 @@ impl Backend {
                 id: _,
             }) => (format!("()"), "type".to_string()),
         }
+    }
+
+    fn full_hover_text(
+        &self,
+        node_hierarchy: &Vec<AstNode>,
+        variable_data: &Option<PerNodeData<Rc<RefCell<Variable>>>>,
+        function_data: &Option<PerNodeData<Rc<RefCell<Function>>>>,
+        type_data: &Option<PerNodeData<RuntimeType>>,
+        terminations: &Option<PerNodeData<FunctionTermination>>,
+        hovered_token: &Option<Token>,
+    ) -> String {
+        return format!(
+            indoc! {r##"
+                        ```rust
+                        {}
+                        ```
+
+                        ---- Debug Stats ----
+                        {}
+
+                        ---- Token ----
+                        ```rust
+                        {:#?}
+                        ```
+                    "##},
+            node_hierarchy
+                .last()
+                .map(|node| self.generate_node_hover(
+                    node.clone(),
+                    &variable_data,
+                    &function_data,
+                    &type_data
+                ))
+                .map_or("No AST Node".to_string(), |(info, debug)| format!(
+                    "{info} // {debug}"
+                )),
+            terminations
+                .as_ref()
+                .map(|ts| ts.get_node(node_hierarchy.last()?).cloned())
+                .flatten()
+                .map_or("No termination info available".to_string(), |t| format!(
+                    "{t:?}"
+                )),
+            hovered_token,
+        );
     }
 }
 
@@ -865,7 +911,10 @@ impl AstVisitor for ExtractSemanticTokensPass {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _params: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        eprintln!("{}", "-".repeat(80));
+        eprintln!("{params:#?}");
+
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
@@ -904,6 +953,13 @@ impl LanguageServer for Backend {
                     },
                 )),
                 document_formatting_provider: Some(OneOf::Left(true)),
+                signature_help_provider: Some(SignatureHelpOptions {
+                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+                    retrigger_characters: None,
+                    work_done_progress_options: WorkDoneProgressOptions {
+                        work_done_progress: None,
+                    },
+                }),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -913,7 +969,10 @@ impl LanguageServer for Backend {
         })
     }
 
-    async fn initialized(&self, _: InitializedParams) {
+    async fn initialized(&self, params: InitializedParams) {
+        eprintln!("{}", "-".repeat(80));
+        eprintln!("{params:#?}");
+
         self.client
             .log_message(MessageType::INFO, "server initialized!")
             .await;
@@ -923,6 +982,9 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentDiagnosticParams,
     ) -> Result<DocumentDiagnosticReportResult> {
+        eprintln!("{}", "-".repeat(80));
+        eprintln!("{params:#?}");
+
         let text = self
             .documents
             .read()
@@ -982,18 +1044,27 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        eprintln!("{}", "-".repeat(80));
+        eprintln!("{params:#?}");
+
         self.documents.write().unwrap().insert(
             params.text_document.uri,
             params.content_changes[0].text.clone(),
         );
     }
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        eprintln!("{}", "-".repeat(80));
+        eprintln!("{params:#?}");
+
         self.documents
             .write()
             .unwrap()
             .insert(params.text_document.uri, params.text_document.text);
     }
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        eprintln!("{}", "-".repeat(80));
+        eprintln!("{params:#?}");
+
         self.documents
             .write()
             .unwrap()
@@ -1001,6 +1072,9 @@ impl LanguageServer for Backend {
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        eprintln!("{}", "-".repeat(80));
+        eprintln!("{params:#?}");
+
         let text = self
             .documents
             .read()
@@ -1038,48 +1112,23 @@ impl LanguageServer for Backend {
             Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
-                    value: format!(
-                        indoc! {r##"
-                        ```rust
-                        {}
-                        ```
-
-                        ---- Debug Stats ----
-                        {}
-
-                        ---- Token ----
-                        ```rust
-                        {:#?}
-                        ```
-                    "##},
-                        node_hierarchy
-                            .last()
-                            .map(|node| self.generate_node_hover(
-                                node.clone(),
-                                &variable_data,
-                                &function_data,
-                                &type_data
-                            ))
-                            .map_or("No AST Node".to_string(), |(info, debug)| format!(
-                                "{info} // {debug}"
-                            )),
-                        terminations
-                            .map(|ts| ts.get_node(node_hierarchy.last()?).cloned())
-                            .flatten()
-                            .map_or("No termination info available".to_string(), |t| format!(
-                                "{t:?}"
-                            )),
-                        hovered_token,
+                    value: self.full_hover_text(
+                        &node_hierarchy,
+                        &variable_data,
+                        &function_data,
+                        &type_data,
+                        &terminations,
+                        &hovered_token,
                     ),
                 }),
-                range: Some(Range {
+                range: hovered_token.map(|token| Range {
                     start: Position {
-                        line: hovered_token.start.line as u32 - 1,
-                        character: hovered_token.start.column as u32,
+                        line: token.start.line as u32 - 1,
+                        character: token.start.column as u32,
                     },
                     end: Position {
-                        line: hovered_token.end.line as u32 - 1,
-                        character: hovered_token.end.column as u32,
+                        line: token.end.line as u32 - 1,
+                        character: token.end.column as u32,
                     },
                 }),
             }))
@@ -1092,7 +1141,9 @@ impl LanguageServer for Backend {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        eprintln!("---------------------------------------");
+        eprintln!("{}", "-".repeat(80));
+        eprintln!("{params:#?}");
+
         let text = self
             .documents
             .read()
@@ -1127,6 +1178,9 @@ impl LanguageServer for Backend {
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        eprintln!("{}", "-".repeat(80));
+        eprintln!("{params:#?}");
+
         let text = self
             .documents
             .read()
@@ -1184,6 +1238,150 @@ impl LanguageServer for Backend {
             },
             new_text: format_program(program.clone(), id_generator.clone()),
         }]));
+    }
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
+        eprintln!("{}", "-".repeat(80));
+        eprintln!("{params:#?}");
+
+        let text = self
+            .documents
+            .read()
+            .unwrap()
+            .get(&params.text_document_position_params.text_document.uri)
+            .unwrap()
+            .clone();
+
+        let context = Context::create();
+        let res = compile_program(&context, text.as_str());
+
+        let mut program = res
+            .status
+            .parsed_program()
+            .ok_or_else(|| tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: "Parsing failed completely".into(),
+                data: None,
+            })?
+            .clone();
+
+        let cpos = params.text_document_position_params.position;
+        let cpos_sl = SourceLocation {
+            index: 0,
+            line: cpos.line as usize + 1,
+            column: cpos.character as usize,
+        };
+        let find_pass = FindContainingNodePass::new(cpos_sl);
+
+        let type_data = res.status.type_data().cloned();
+        let variable_data = res.status.variable_data().cloned();
+        let function_data = res.status.function_data().cloned();
+
+        if let Ok((node_hierarchy, _hovered_token)) = find_pass.visit_program(&mut program) {
+            let mut prev_node = None;
+            let mut function_call = None;
+            for node in node_hierarchy.iter().rev() {
+                if let AstNode::FunctionCallExpression(fcall @ FunctionCallExpression { .. }) = node
+                {
+                    function_call = Some(fcall.clone());
+                    break;
+                }
+                prev_node = Some(node);
+            }
+
+            let Some(function_call) = function_call else {
+                return Ok(None);
+            };
+
+            let label = self
+                .generate_node_hover(
+                    function_call.clone(),
+                    &variable_data,
+                    &function_data,
+                    &type_data,
+                )
+                .0;
+
+            let Some(function_data) = function_data else {
+                return Ok(None);
+            };
+
+            let Some(ref_func) = function_data.get(&function_call.id) else {
+                return Ok(None);
+            };
+
+            let active_parameter = prev_node
+                .map(|argument| {
+                    function_call
+                        .arguments
+                        .iter()
+                        .find_position(|(arg, _token)| arg.get_id() == argument.get_id())
+                        .map(|(i, _)| i as u32)
+                        .unwrap_or(if cpos_sl <= function_call.open_paren_token.start {
+                            0
+                        } else {
+                            function_call
+                                .arguments
+                                .len()
+                                .min(ref_func.borrow().parameter_types.len().saturating_sub(1))
+                                as u32
+                        })
+                })
+                .unwrap_or(if cpos_sl <= function_call.open_paren_token.start {
+                    0
+                } else {
+                    function_call
+                        .arguments
+                        .len()
+                        .min(ref_func.borrow().parameter_types.len().saturating_sub(1))
+                        as u32
+                });
+
+            Ok(Some(SignatureHelp {
+                signatures: vec![SignatureInformation {
+                    label: label.clone(),
+                    documentation: None,
+                    parameters: Some(
+                        ref_func
+                            .borrow()
+                            .parameter_types
+                            .iter()
+                            .enumerate()
+                            .map(|(param_i, _param)| ParameterInformation {
+                                // TODO: once function_data links to the definition, display
+                                // param names here and use them to generate the label ranges
+                                // instead of parsing them out of the label
+                                label: ParameterLabel::LabelOffsets([
+                                    label
+                                        .clone()
+                                        .chars()
+                                        .enumerate()
+                                        .filter(|(_i, c)| matches!(*c, ',' | '(' | ')'))
+                                        .skip(param_i)
+                                        .next()
+                                        .map(|(i, c)| i + if matches!(c, ',') { 2 } else { 1 })
+                                        .unwrap_or(0) as u32,
+                                    label
+                                        .clone()
+                                        .chars()
+                                        .enumerate()
+                                        .filter(|(_i, c)| matches!(*c, ',' | '(' | ')'))
+                                        .skip(param_i + 1)
+                                        .next()
+                                        .map(|(i, _)| i)
+                                        .unwrap_or(0) as u32,
+                                ]),
+                                documentation: None,
+                            })
+                            .collect(),
+                    ),
+                    active_parameter: Some(active_parameter),
+                }],
+                active_signature: Some(0),
+                active_parameter: None,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 }
 

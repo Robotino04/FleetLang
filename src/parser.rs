@@ -459,6 +459,7 @@ impl<'errors> Parser<'errors> {
                         let mut arguments = vec![];
                         while self.current_token_type() != Some(TokenType::CloseParen) {
                             let arg = self.parse_expression()?;
+
                             match self.current_token_type() {
                                 Some(TokenType::Comma) => {
                                     arguments.push((arg, Some(expect!(self, TokenType::Comma)?)))

@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use crate::infra::{ErrorSeverity, FleetError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -90,12 +92,16 @@ pub struct SourceLocation {
 }
 
 impl Ord for SourceLocation {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        return self.index.cmp(&other.index);
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.line.cmp(&other.line) {
+            Ordering::Less => Ordering::Less,
+            Ordering::Equal => self.column.cmp(&other.column),
+            Ordering::Greater => Ordering::Greater,
+        }
     }
 }
 impl PartialOrd for SourceLocation {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }

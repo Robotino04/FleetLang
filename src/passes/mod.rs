@@ -3,6 +3,7 @@ pub mod add_trailing_trivia_pass;
 pub mod find_containing_node;
 pub mod find_node_bonds;
 pub mod fix_non_block_statements;
+pub mod fix_trailing_comma;
 pub mod function_termination_analysis;
 pub mod partial_visitor;
 pub mod remove_parens;

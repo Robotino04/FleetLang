@@ -11,6 +11,7 @@ use crate::{
     passes::{
         find_node_bonds::find_node_bounds,
         fix_non_block_statements::FixNonBlockStatements,
+        fix_trailing_comma::FixTrailingComma,
         function_termination_analysis::{FunctionTermination, FunctionTerminationAnalyzer},
         remove_parens::RemoveParensPass,
         type_propagation::{Function, RuntimeType, TypePropagator, Variable},
@@ -40,6 +41,7 @@ fn run_fix_passes(
 ) {
     RemoveParensPass::new().visit_program(program);
     FixNonBlockStatements::new(errors, id_generator).visit_program(program);
+    FixTrailingComma::new(errors, id_generator).visit_program(program);
 }
 
 impl FleetError {

@@ -522,7 +522,10 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                 EitherOrBoth::Right(param_type) => {
                     self_shared.borrow_mut().errors.push(FleetError::from_token(
                         close_paren_token,
-                        format!("{name:?} is missing parameter {i} of type {param_type:?}"),
+                        format!(
+                            "{name:?} is missing parameter {} of type {param_type:?}",
+                            i + 1
+                        ),
                         ErrorSeverity::Error,
                     ));
                 }

@@ -302,3 +302,26 @@ fn remove_parens_arguments() {
         "main",
     );
 }
+
+#[test]
+fn remove_trailing_comma() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                return foo(foo(1, 2 /* a */,/* b */), 4 /* c */,/* d */);
+            }
+            let foo = (a: i32, b: i32) -> i32 {
+                return a + b;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return foo(foo(1, 2 /* a */ /* b */), 4 /* c */ /* d */);
+            }
+            let foo = (a: i32, b: i32) -> i32 {
+                return a + b;
+            }"##
+        },
+        "main",
+    );
+}
