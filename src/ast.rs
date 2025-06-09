@@ -31,15 +31,18 @@ pub enum AstNode {
     ThreadExecutor(ThreadExecutor),
 
     NumberExpression(NumberExpression),
+    BoolExpression(BoolExpression),
     FunctionCallExpression(FunctionCallExpression),
     GroupingExpression(GroupingExpression),
     VariableAccessExpression(VariableAccessExpression),
     UnaryExpression(UnaryExpression),
+    CastExpression(CastExpression),
     BinaryExpression(BinaryExpression),
     VariableAssignmentExpression(VariableAssignmentExpression),
 
     I32Type(I32Type),
     UnitType(UnitType),
+    BoolType(BoolType),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -77,6 +80,7 @@ impl HasID for AstNode {
             AstNode::SkipStatement(skip_statement) => skip_statement.get_id(),
 
             AstNode::NumberExpression(number_expression) => number_expression.get_id(),
+            AstNode::BoolExpression(bool_expression) => bool_expression.get_id(),
             AstNode::FunctionCallExpression(function_call_expression) => {
                 function_call_expression.get_id()
             }
@@ -85,6 +89,7 @@ impl HasID for AstNode {
                 variable_access_expression.get_id()
             }
             AstNode::UnaryExpression(unary_expression) => unary_expression.get_id(),
+            AstNode::CastExpression(cast_expression) => cast_expression.get_id(),
             AstNode::BinaryExpression(binary_expression) => binary_expression.get_id(),
             AstNode::VariableAssignmentExpression(variable_assignment_expression) => {
                 variable_assignment_expression.get_id()
@@ -92,6 +97,7 @@ impl HasID for AstNode {
 
             AstNode::I32Type(i32_type) => i32_type.get_id(),
             AstNode::UnitType(unit_type) => unit_type.get_id(),
+            AstNode::BoolType(bool_type) => bool_type.get_id(),
         }
     }
 }
@@ -244,6 +250,7 @@ pub trait AstVisitor {
             Expression::Number(number_expression) => {
                 self.visit_number_expression(number_expression)
             }
+            Expression::Bool(bool_expression) => self.visit_bool_expression(bool_expression),
             Expression::FunctionCall(function_call_expression) => {
                 self.visit_function_call_expression(function_call_expression)
             }
@@ -253,6 +260,7 @@ pub trait AstVisitor {
             Expression::VariableAccess(variable_access_expression) => {
                 self.visit_variable_access_expression(variable_access_expression)
             }
+            Expression::Cast(cast_expression) => self.visit_cast_expression(cast_expression),
             Expression::Unary(unary_expression) => self.visit_unary_expression(unary_expression),
             Expression::Binary(binary_expression) => {
                 self.visit_binary_expression(binary_expression)
@@ -266,6 +274,7 @@ pub trait AstVisitor {
         &mut self,
         expression: &mut NumberExpression,
     ) -> Self::ExpressionOutput;
+    fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput;
     fn visit_function_call_expression(
         &mut self,
         expression: &mut FunctionCallExpression,
@@ -282,6 +291,7 @@ pub trait AstVisitor {
         &mut self,
         expression: &mut UnaryExpression,
     ) -> Self::ExpressionOutput;
+    fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput;
     fn visit_binary_expression(
         &mut self,
         expression: &mut BinaryExpression,
@@ -296,11 +306,13 @@ pub trait AstVisitor {
         match type_ {
             Type::I32(i32_type) => self.visit_i32_type(i32_type),
             Type::Unit(unit_type) => self.visit_unit_type(unit_type),
+            Type::Bool(bool_type) => self.visit_bool_type(bool_type),
         }
     }
 
     fn visit_i32_type(&mut self, i32_type: &mut I32Type) -> Self::TypeOutput;
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput;
+    fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput;
 }
 
 #[derive(Clone, Debug)]
@@ -398,9 +410,18 @@ pub struct UnitType {
 generate_ast_requirements!(UnitType, unwrap_unit_type);
 
 #[derive(Clone, Debug)]
+pub struct BoolType {
+    pub token: Token,
+    pub id: NodeID,
+}
+
+generate_ast_requirements!(BoolType, unwrap_bool_type);
+
+#[derive(Clone, Debug)]
 pub enum Type {
     I32(I32Type),
     Unit(UnitType),
+    Bool(BoolType),
 }
 
 impl From<Type> for AstNode {
@@ -408,6 +429,7 @@ impl From<Type> for AstNode {
         match value {
             Type::I32(i32_type) => i32_type.into(),
             Type::Unit(unit_type) => unit_type.into(),
+            Type::Bool(bool_type) => bool_type.into(),
         }
     }
 }
@@ -417,6 +439,7 @@ impl HasID for Type {
         match self {
             Type::I32(i32_type) => i32_type.get_id(),
             Type::Unit(unit_type) => unit_type.get_id(),
+            Type::Bool(bool_type) => bool_type.get_id(),
         }
     }
 }
@@ -673,6 +696,14 @@ pub struct NumberExpression {
 generate_ast_requirements!(NumberExpression, unwrap_number_expression);
 
 #[derive(Clone, Debug)]
+pub struct BoolExpression {
+    pub value: bool,
+    pub token: Token,
+    pub id: NodeID,
+}
+generate_ast_requirements!(BoolExpression, unwrap_bool_expression);
+
+#[derive(Clone, Debug)]
 pub struct FunctionCallExpression {
     pub name: String,
     pub name_token: Token,
@@ -714,6 +745,16 @@ pub struct UnaryExpression {
 generate_ast_requirements!(UnaryExpression, unwrap_unary_expression);
 
 #[derive(Clone, Debug)]
+pub struct CastExpression {
+    pub operand: Box<Expression>,
+    pub as_token: Token,
+    pub type_: Type,
+    pub id: NodeID,
+}
+
+generate_ast_requirements!(CastExpression, unwrap_cast_expression);
+
+#[derive(Clone, Debug)]
 pub struct BinaryExpression {
     pub left: Box<Expression>,
     pub operator_token: Token,
@@ -740,10 +781,12 @@ generate_ast_requirements!(
 #[derive(Clone, Debug)]
 pub enum Expression {
     Number(NumberExpression),
+    Bool(BoolExpression),
     FunctionCall(FunctionCallExpression),
     Grouping(GroupingExpression),
     VariableAccess(VariableAccessExpression),
     Unary(UnaryExpression),
+    Cast(CastExpression),
     Binary(BinaryExpression),
     VariableAssignment(VariableAssignmentExpression),
 }
@@ -754,48 +797,52 @@ impl Expression {
         use BinaryOperation::*;
         match self {
             Expression::Number { .. } => 0,
+            Expression::Bool { .. } => 0,
             Expression::FunctionCall { .. } => 0,
             Expression::Grouping { .. } => 0,
             Expression::VariableAccess { .. } => 0,
 
             Expression::Unary { .. } => 1,
+            Expression::Cast { .. } => 2,
             Expression::Binary(BinaryExpression {
                 operation: Multiply | Divide | Modulo,
                 ..
-            }) => 2,
+            }) => 3,
             Expression::Binary(BinaryExpression {
                 operation: Add | Subtract,
                 ..
-            }) => 3,
+            }) => 4,
             Expression::Binary(BinaryExpression {
                 operation: LessThan | LessThanOrEqual | GreaterThan | GreaterThanOrEqual,
                 ..
-            }) => 4,
+            }) => 5,
             Expression::Binary(BinaryExpression {
                 operation: Equal | NotEqual,
                 ..
-            }) => 5,
+            }) => 6,
             Expression::Binary(BinaryExpression {
                 operation: LogicalAnd,
                 ..
-            }) => 6,
+            }) => 7,
             Expression::Binary(BinaryExpression {
                 operation: LogicalOr,
                 ..
-            }) => 7,
+            }) => 8,
 
-            Expression::VariableAssignment { .. } => 8,
+            Expression::VariableAssignment { .. } => 9,
         }
     }
     pub fn get_associativity(&self) -> Associativity {
         use BinaryOperation::*;
         match self {
             Expression::Number { .. } => Associativity::Both,
+            Expression::Bool { .. } => Associativity::Both,
             Expression::FunctionCall { .. } => Associativity::Both,
             Expression::Grouping { .. } => Associativity::Both,
             Expression::VariableAccess { .. } => Associativity::Both,
 
             Expression::Unary { .. } => Associativity::Left,
+            Expression::Cast { .. } => Associativity::Left,
             Expression::Binary(BinaryExpression {
                 operation: Add | Multiply,
                 ..
@@ -816,10 +863,12 @@ impl HasID for Expression {
     fn get_id(&self) -> NodeID {
         match self {
             Expression::Number(expr) => expr.get_id(),
+            Expression::Bool(expr) => expr.get_id(),
             Expression::FunctionCall(expr) => expr.get_id(),
             Expression::Grouping(expr) => expr.get_id(),
             Expression::VariableAccess(expr) => expr.get_id(),
             Expression::Unary(expr) => expr.get_id(),
+            Expression::Cast(expr) => expr.get_id(),
             Expression::Binary(expr) => expr.get_id(),
             Expression::VariableAssignment(expr) => expr.get_id(),
         }
@@ -830,12 +879,14 @@ impl From<Expression> for AstNode {
     fn from(value: Expression) -> Self {
         match value {
             Expression::Number(number_expression) => number_expression.into(),
+            Expression::Bool(bool_expression) => bool_expression.into(),
             Expression::FunctionCall(function_call_expression) => function_call_expression.into(),
             Expression::Grouping(grouping_expression) => grouping_expression.into(),
             Expression::VariableAccess(variable_access_expression) => {
                 variable_access_expression.into()
             }
             Expression::Unary(unary_expression) => unary_expression.into(),
+            Expression::Cast(cast_expression) => cast_expression.into(),
             Expression::Binary(binary_expression) => binary_expression.into(),
             Expression::VariableAssignment(variable_assignment_expression) => {
                 variable_assignment_expression.into()

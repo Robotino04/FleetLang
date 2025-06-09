@@ -10,14 +10,14 @@ fn non_block_as_body() {
     assert_compile_error_no_formatting(
         indoc! {r##"
             let main = () -> i32 {
-                if 5 let a: i32 = 4;
+                if true let a: i32 = 4;
                 return a;
             }
         "##},
         SourceLocation {
-            index: 32,
+            index: 35,
             line: 2,
-            column: 9,
+            column: 12,
         },
     );
 }
@@ -28,7 +28,7 @@ fn if_expression() {
     assert_parser_or_tokenizer_error(
         indoc! {r##"
             let main = () -> i32 {
-                let flag: i32 = 0;
+                let flag: bool = false;
                 let a: i32 = if flag {
                     2;
                 }
@@ -39,7 +39,7 @@ fn if_expression() {
             }
         "##},
         SourceLocation {
-            index: 63,
+            index: 68,
             line: 3,
             column: 17,
         },
@@ -52,7 +52,7 @@ fn double_else() {
         indoc! {r##"
             let main = () -> i32 {
                 let a: i32 = 0;
-                if 1 {
+                if true {
                     return 1;
                 }
                 else {
@@ -64,7 +64,7 @@ fn double_else() {
             }
         "##},
         SourceLocation {
-            index: 117,
+            index: 120,
             line: 9,
             column: 4,
         },
@@ -76,7 +76,7 @@ fn not_all_paths_return_if() {
     assert_compile_error(
         indoc! {r##"
         let main = () -> i32 {
-            if 0 {
+            if false {
                 return 1;
             }
         }
@@ -94,10 +94,10 @@ fn not_all_paths_return_elif() {
     assert_compile_error(
         indoc! {r##"
         let main = () -> i32 {
-            if 0 {
+            if false {
                 return 1;
             }
-            elif 1 {
+            elif true {
                 return 3;
             }
         }

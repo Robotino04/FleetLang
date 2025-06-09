@@ -1,12 +1,13 @@
 use itertools::Itertools;
 
 use crate::ast::{
-    AstNode, BinaryExpression, BinaryOperation, BlockStatement, ExpressionStatement,
-    ExternFunctionBody, ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition,
-    GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, ReturnStatement,
-    SelfExecutorHost, SimpleBinding, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-    UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-    VariableDefinitionStatement, WhileLoopStatement,
+    AstNode, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
+    CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
+    FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
+    NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, SimpleBinding,
+    StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
+    VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+    WhileLoopStatement,
 };
 
 fn generate_function_declaration(function: &FunctionDefinition, mut prefix: String) -> String {
@@ -256,6 +257,11 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             token: _,
             id: _,
         }) => value.to_string(),
+        AstNode::BoolExpression(BoolExpression {
+            value,
+            token: _,
+            id: _,
+        }) => value.to_string(),
         AstNode::FunctionCallExpression(FunctionCallExpression {
             name,
             name_token: _,
@@ -289,6 +295,12 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             .to_string()
                 + generate_c(*operand).as_str();
         }
+        AstNode::CastExpression(CastExpression {
+            operand,
+            as_token: _,
+            type_,
+            id: _,
+        }) => return format!("(({})({}))", generate_c(type_), generate_c(*operand)),
         AstNode::BinaryExpression(BinaryExpression {
             left,
             operator_token: _,
@@ -347,5 +359,6 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             close_paren_token: _,
             id: _,
         }) => "void".to_string(),
+        AstNode::BoolType(BoolType { token: _, id: _ }) => "bool".to_string(),
     }
 }

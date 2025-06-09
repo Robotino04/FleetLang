@@ -7,7 +7,7 @@ fn collapse_while() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = () -> i32 {
-                while     0    
+                while     false    
                 {
                                 1;
                 }
@@ -17,7 +17,7 @@ fn collapse_while() {
         },
         indoc! {r##"
             let main = () -> i32 {
-                while 0 {
+                while false {
                     1;
                 }
                 return 2;
@@ -32,13 +32,13 @@ fn expand_while() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = () -> i32 {
-                while 0{1;}
+                while false{1;}
                 return 2;
             }"##
         },
         indoc! {r##"
             let main = () -> i32 {
-                while 0 {
+                while false {
                     1;
                 }
                 return 2;

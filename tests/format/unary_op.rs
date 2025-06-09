@@ -72,14 +72,14 @@ fn expand_binary_not() {
 
 #[test]
 fn collapse_logical_not() {
-    assert_formatting_and_same_behaviour::<i32>(
+    assert_formatting_and_same_behaviour::<bool>(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return !   0;
             }"##
         },
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return !0;
             }"##
         },
@@ -89,14 +89,14 @@ fn collapse_logical_not() {
 
 #[test]
 fn expand_logical_not() {
-    assert_formatting_and_same_behaviour::<i32>(
+    assert_formatting_and_same_behaviour::<bool>(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return!0;
             }"##
         },
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return !0;
             }"##
         },
@@ -106,14 +106,14 @@ fn expand_logical_not() {
 
 #[test]
 fn collapse_mixed() {
-    assert_formatting_and_same_behaviour::<i32>(
+    assert_formatting_and_same_behaviour::<bool>(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return ! ~    -  0;
             }"##
         },
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return !~-0;
             }"##
         },
@@ -123,14 +123,14 @@ fn collapse_mixed() {
 
 #[test]
 fn expand_mixed() {
-    assert_formatting_and_same_behaviour::<i32>(
+    assert_formatting_and_same_behaviour::<bool>(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return!-~0;
             }"##
         },
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return !-~0;
             }"##
         },

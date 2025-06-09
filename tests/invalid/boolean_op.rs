@@ -1,7 +1,7 @@
 use fleet::tokenizer::SourceLocation;
 use indoc::indoc;
 
-use crate::common::assert_parser_or_tokenizer_error;
+use crate::common::{assert_compile_error, assert_parser_or_tokenizer_error};
 
 #[test]
 fn missing_left_operand() {
@@ -63,6 +63,70 @@ fn missing_semicolon() {
             index: 41,
             line: 3,
             column: 0,
+        },
+    );
+}
+
+#[test]
+fn or_int_as_left() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> bool {
+                return 3 || true;
+            }
+        "##},
+        SourceLocation {
+            index: 35,
+            line: 2,
+            column: 11,
+        },
+    );
+}
+
+#[test]
+fn or_int_as_right() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> bool {
+                return false || 8;
+            }
+        "##},
+        SourceLocation {
+            index: 44,
+            line: 2,
+            column: 20,
+        },
+    );
+}
+
+#[test]
+fn and_int_as_left() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> bool {
+                return 3 && true;
+            }
+        "##},
+        SourceLocation {
+            index: 35,
+            line: 2,
+            column: 11,
+        },
+    );
+}
+
+#[test]
+fn and_int_as_right() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> bool {
+                return false && 8;
+            }
+        "##},
+        SourceLocation {
+            index: 44,
+            line: 2,
+            column: 20,
         },
     );
 }

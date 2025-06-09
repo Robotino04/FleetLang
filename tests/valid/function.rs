@@ -242,12 +242,12 @@ fn precedence() {
             let three = () -> i32 {
                 return 3;
             }
-            let main = () -> i32 {
+            let main = () -> bool {
                 return !three();
             }
         "##},
         "main",
-        0,
+        false,
     );
 }
 

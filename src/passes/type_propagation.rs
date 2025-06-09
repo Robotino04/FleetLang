@@ -4,13 +4,13 @@ use itertools::{EitherOrBoth, Itertools};
 
 use crate::{
     ast::{
-        AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
-        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, I32Type, IfStatement, NumberExpression,
-        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression,
+        BoolType, BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody,
+        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
+        IfStatement, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement,
+        SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -21,8 +21,20 @@ type AnyResult<T> = ::core::result::Result<T, Box<dyn Error>>;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeType {
     I32,
+    Boolean,
     Unit,
     Unknown,
+}
+
+impl RuntimeType {
+    pub fn is_numeric(self) -> bool {
+        match self {
+            RuntimeType::I32 => true,
+            RuntimeType::Unit => false,
+            RuntimeType::Boolean => false,
+            RuntimeType::Unknown => false,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -95,6 +107,7 @@ pub struct TypePropagator<'a> {
     function_list: HashMap<String, Rc<RefCell<Function>>>,
     referenced_function: PerNodeData<Rc<RefCell<Function>>>,
     id_generator: &'a mut IdGenerator,
+    current_function: Option<Rc<RefCell<Function>>>,
 }
 
 impl<'a> TypePropagator<'a> {
@@ -107,6 +120,7 @@ impl<'a> TypePropagator<'a> {
             function_list: HashMap::new(),
             referenced_function: PerNodeData::new(),
             id_generator,
+            current_function: None,
         }
     }
 
@@ -144,6 +158,28 @@ impl<'a> TypePropagator<'a> {
             self.errors.push(FleetError::from_node(
                 function_clone,
                 format!("Multiple functions named {name:?} defined"),
+                ErrorSeverity::Error,
+            ));
+        }
+    }
+
+    fn generate_mismatched_type_error_if(
+        &mut self,
+        condition: bool,
+        node: impl Into<AstNode>,
+        expression_type: impl AsRef<str>,
+        expected_name: impl AsRef<str>,
+        actual_type: RuntimeType,
+    ) {
+        if condition {
+            self.errors.push(FleetError::from_node(
+                node,
+                format!(
+                    "Expected {} to be {}. Got value of type {:?} instead",
+                    expression_type.as_ref(),
+                    expected_name.as_ref(),
+                    actual_type
+                ),
                 ErrorSeverity::Error,
             ));
         }
@@ -199,6 +235,13 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
     ) -> Self::FunctionDefinitionOutput {
         self.visit_type(return_type);
 
+        let this_function = self
+            .function_list
+            .get(name)
+            .expect("All functions should have been registered before traversing the tree")
+            .clone();
+        self.current_function = Some(this_function.clone());
+
         self.variable_scopes.push_child(); // the parameter scope
         for (param, _comma) in parameters {
             self.visit_simple_binding(param);
@@ -207,13 +250,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         self.visit_function_body(body);
         self.variable_scopes.pop();
 
-        self.referenced_function.insert(
-            id.clone(),
-            self.function_list
-                .get(name)
-                .expect("All functions should have been registered before traversing the tree")
-                .clone(),
-        );
+        self.referenced_function.insert(id.clone(), this_function);
     }
 
     fn visit_statement_function_body(
@@ -326,17 +363,35 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         self.variable_scopes.pop();
     }
 
-    fn visit_return_statement(
-        &mut self,
-        ReturnStatement {
+    fn visit_return_statement(&mut self, stmt: &mut ReturnStatement) -> Self::StatementOutput {
+        let stmt_clone = stmt.clone();
+        let ReturnStatement {
             return_token: _,
             value,
             semicolon_token: _,
-            id: _,
-        }: &mut ReturnStatement,
-    ) -> Self::StatementOutput {
-        if let Some(retvalue) = value {
-            self.visit_expression(retvalue);
+            id,
+        } = stmt;
+
+        let this_type = value
+            .as_mut()
+            .map(|value| self.visit_expression(value))
+            .unwrap_or(RuntimeType::Unit);
+
+        self.types.insert(*id, this_type);
+
+        let expected_type = self
+            .current_function
+            .as_ref()
+            .expect("Return statements should only appear inside functions")
+            .borrow()
+            .return_type;
+
+        if this_type != expected_type {
+            self.errors.push(FleetError::from_node(
+                stmt_clone.clone(),
+                format!("Expected this functions to return {expected_type:?}. Got {this_type:?}"),
+                ErrorSeverity::Error,
+            ));
         }
     }
 
@@ -379,10 +434,37 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             id: _,
         }: &mut IfStatement,
     ) -> Self::StatementOutput {
-        self.visit_expression(condition);
+        let cond_type = self.visit_expression(condition);
+
+        self.generate_mismatched_type_error_if(
+            !match cond_type {
+                RuntimeType::I32 => false,
+                RuntimeType::Unit => false,
+                RuntimeType::Boolean => true,
+                RuntimeType::Unknown => false,
+            },
+            condition.clone(),
+            "if condition",
+            "of type bool",
+            cond_type,
+        );
+
         self.visit_statement(if_body);
         for (_elif_token, elif_condition, elif_body) in elifs {
-            self.visit_expression(elif_condition);
+            let elif_type = self.visit_expression(elif_condition);
+            self.generate_mismatched_type_error_if(
+                !match elif_type {
+                    RuntimeType::I32 => false,
+                    RuntimeType::Unit => false,
+                    RuntimeType::Boolean => true,
+                    RuntimeType::Unknown => false,
+                },
+                elif_condition.clone(),
+                "elif condition",
+                "of type bool",
+                elif_type,
+            );
+
             self.visit_statement(elif_body);
         }
         if let Some((_else_token, else_body)) = else_ {
@@ -394,8 +476,20 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         &mut self,
         while_stmt: &mut WhileLoopStatement,
     ) -> Self::StatementOutput {
-        // TODO: check if condition is boolean
-        self.visit_expression(&mut while_stmt.condition);
+        let cond_type = self.visit_expression(&mut while_stmt.condition);
+
+        self.generate_mismatched_type_error_if(
+            !match cond_type {
+                RuntimeType::I32 => false,
+                RuntimeType::Unit => false,
+                RuntimeType::Boolean => true,
+                RuntimeType::Unknown => false,
+            },
+            while_stmt.condition.clone(),
+            "while condition",
+            "of type bool",
+            cond_type,
+        );
         self.visit_statement(&mut while_stmt.body);
     }
 
@@ -417,7 +511,19 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         self.visit_statement(initializer);
 
         if let Some(con) = condition {
-            self.visit_expression(con);
+            let cond_type = self.visit_expression(con);
+            self.generate_mismatched_type_error_if(
+                !match cond_type {
+                    RuntimeType::I32 => false,
+                    RuntimeType::Unit => false,
+                    RuntimeType::Boolean => true,
+                    RuntimeType::Unknown => false,
+                },
+                con.clone(),
+                "for condition",
+                "of type bool",
+                cond_type,
+            );
         }
         if let Some(inc) = incrementer {
             self.visit_expression(inc);
@@ -466,8 +572,20 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         }: &mut ThreadExecutor,
     ) -> Self::ExecutorOutput {
         self.visit_executor_host(host);
-        // TODO: check if index is numeric
-        self.visit_expression(index);
+        let index_type = self.visit_expression(index);
+
+        self.generate_mismatched_type_error_if(
+            !match index_type {
+                RuntimeType::I32 => true,
+                RuntimeType::Unit => false,
+                RuntimeType::Boolean => false,
+                RuntimeType::Unknown => false,
+            },
+            index.clone(),
+            "thread index",
+            "numeric",
+            index_type,
+        );
     }
 
     fn visit_number_expression(
@@ -481,6 +599,19 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         } = expression;
         self.types.insert_node(expression, RuntimeType::I32);
         return RuntimeType::I32;
+    }
+
+    fn visit_bool_expression(
+        &mut self,
+        expression: &mut crate::ast::BoolExpression,
+    ) -> Self::ExpressionOutput {
+        let BoolExpression {
+            value: _,
+            token: _,
+            id: _,
+        } = expression;
+        self.types.insert_node(expression, RuntimeType::Boolean);
+        return RuntimeType::Boolean;
     }
 
     fn visit_function_call_expression(
@@ -594,16 +725,91 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
 
     fn visit_unary_expression(
         &mut self,
-        UnaryExpression {
+        expression: &mut UnaryExpression,
+    ) -> Self::ExpressionOutput {
+        let expression_clone = expression.clone();
+        let UnaryExpression {
             operator_token: _,
-            operation: _,
+            operation,
             operand,
             id,
-        }: &mut UnaryExpression,
-    ) -> Self::ExpressionOutput {
+        } = expression;
+
         let type_ = self.visit_expression(operand);
-        self.types.insert(*id, type_);
-        return type_;
+
+        let is_ok = match operation {
+            UnaryOperation::BitwiseNot => type_.is_numeric(),
+            UnaryOperation::LogicalNot => type_.is_numeric() || type_ == RuntimeType::Boolean,
+            UnaryOperation::Negate => type_.is_numeric(),
+        };
+
+        if !is_ok {
+            let (verb, expected) = match operation {
+                UnaryOperation::BitwiseNot => ("bitwise negate", "a number"),
+                UnaryOperation::LogicalNot => ("logically negate", "a number or boolean"),
+                UnaryOperation::Negate => ("arithmetically negate", "a number"),
+            };
+            self.errors.push(FleetError::from_node(
+                expression_clone,
+                format! {"Cannot {verb} {type_:?}. Expected {expected}."},
+                ErrorSeverity::Error,
+            ));
+        }
+
+        let this_type = match operation {
+            UnaryOperation::BitwiseNot => type_,
+            UnaryOperation::LogicalNot => RuntimeType::Boolean,
+            UnaryOperation::Negate => type_,
+        };
+        self.types.insert(*id, this_type);
+        return this_type;
+    }
+
+    fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
+        let expression_clone = expression.clone();
+        let CastExpression {
+            operand,
+            as_token: _,
+            type_,
+            id,
+        } = expression;
+
+        let from_type = self.visit_expression(operand);
+        let to_type = self.visit_type(type_);
+
+        match (from_type, to_type) {
+            (RuntimeType::I32, RuntimeType::I32)
+            | (RuntimeType::Boolean, RuntimeType::Boolean)
+            | (RuntimeType::Unit, RuntimeType::Unit) => {
+                self.errors.push(FleetError::from_node(
+                    expression_clone,
+                    format!("Casting {from_type:?} to itself is redundant"),
+                    ErrorSeverity::Warning,
+                ));
+            }
+            (RuntimeType::I32, RuntimeType::I32) => {} // here for future iX to iX casts
+
+            (RuntimeType::I32, RuntimeType::Boolean) => {}
+            (RuntimeType::Boolean, RuntimeType::I32) => {}
+
+            (_, RuntimeType::Unit) | (RuntimeType::Unit, _) => {
+                self.errors.push(FleetError::from_node(
+                    expression_clone,
+                    format!("Cannot cast to or from Unit"),
+                    ErrorSeverity::Error,
+                ));
+            }
+            (_, RuntimeType::Unknown) | (RuntimeType::Unknown, _) => {
+                self.errors.push(FleetError::from_node(
+                    expression_clone,
+                    format!("Type of this expression is unknown"),
+                    ErrorSeverity::Error,
+                ));
+            }
+        }
+
+        self.types.insert(*id, to_type);
+        return to_type;
     }
 
     fn visit_binary_expression(
@@ -621,31 +827,105 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         let left_type = self.visit_expression(left);
         let right_type = self.visit_expression(right);
 
-        if left_type != right_type {
-            let (verb, preposition) = match operation {
-                BinaryOperation::Add => ("add", "to"),
-                BinaryOperation::Subtract => ("subtract", "from"),
-                BinaryOperation::Multiply => ("multiply", "by"),
-                BinaryOperation::Divide => ("divide", "by"),
-                BinaryOperation::Modulo => ("modulo", "by"),
-                BinaryOperation::GreaterThan => ("compare", ">"),
-                BinaryOperation::GreaterThanOrEqual => ("compare", ">="),
-                BinaryOperation::LessThan => ("compare", "<"),
-                BinaryOperation::LessThanOrEqual => ("compare", "<="),
-                BinaryOperation::Equal => ("compare", "=="),
-                BinaryOperation::NotEqual => ("compare", "!="),
-                BinaryOperation::LogicalAnd => ("logically AND", "with"),
-                BinaryOperation::LogicalOr => ("logically OR", "with"),
+        let is_left_ok = match operation {
+            BinaryOperation::Add
+            | BinaryOperation::Subtract
+            | BinaryOperation::Multiply
+            | BinaryOperation::Divide
+            | BinaryOperation::Modulo
+            | BinaryOperation::GreaterThan
+            | BinaryOperation::GreaterThanOrEqual
+            | BinaryOperation::LessThan
+            | BinaryOperation::LessThanOrEqual => right_type.is_numeric(),
+            BinaryOperation::Equal | BinaryOperation::NotEqual => {
+                right_type.is_numeric() || right_type == RuntimeType::Boolean
+            }
+            BinaryOperation::LogicalAnd | BinaryOperation::LogicalOr => {
+                left_type == RuntimeType::Boolean
+            }
+        };
+
+        let is_right_ok = match operation {
+            BinaryOperation::Add
+            | BinaryOperation::Subtract
+            | BinaryOperation::Multiply
+            | BinaryOperation::Divide
+            | BinaryOperation::Modulo
+            | BinaryOperation::GreaterThan
+            | BinaryOperation::GreaterThanOrEqual
+            | BinaryOperation::LessThan
+            | BinaryOperation::LessThanOrEqual => right_type.is_numeric(),
+            BinaryOperation::Equal | BinaryOperation::NotEqual => {
+                right_type.is_numeric() || right_type == RuntimeType::Boolean
+            }
+            BinaryOperation::LogicalAnd | BinaryOperation::LogicalOr => {
+                right_type == RuntimeType::Boolean
+            }
+        };
+
+        if left_type != right_type || !is_left_ok || !is_right_ok {
+            let (verb, preposition, l_expected, r_expected) = match operation {
+                BinaryOperation::Add => ("add", "to", "number", "number"),
+                BinaryOperation::Subtract => ("subtract", "from", "number", "number"),
+                BinaryOperation::Multiply => ("multiply", "by", "number", "number"),
+                BinaryOperation::Divide => ("divide", "by", "number", "number"),
+                BinaryOperation::Modulo => ("modulo", "by", "number", "number"),
+                BinaryOperation::GreaterThan => ("compare", ">", "number", "number"),
+                BinaryOperation::GreaterThanOrEqual => ("compare", ">=", "number", "number"),
+                BinaryOperation::LessThan => ("compare", "<", "number", "number"),
+                BinaryOperation::LessThanOrEqual => ("compare", "<=", "number", "number"),
+                BinaryOperation::Equal => {
+                    ("compare", "==", "number or boolean", "number or boolean")
+                }
+                BinaryOperation::NotEqual => {
+                    ("compare", "!=", "number or boolean", "number or boolean")
+                }
+                BinaryOperation::LogicalAnd => ("logically AND", "with", "boolean", "boolean"),
+                BinaryOperation::LogicalOr => ("logically OR", "with", "boolean", "boolean"),
             };
-            self.errors.push(FleetError::from_node(
-                expression_clone,
-                format! {"Cannot {verb} {left_type:?} {preposition} {right_type:?}"},
-                ErrorSeverity::Error,
-            ));
+            if !is_left_ok {
+                self.errors.push(FleetError::from_node(
+                    (**left).clone(),
+                    format!("Cannot {verb} {left_type:?}. Expected {l_expected}."),
+                    ErrorSeverity::Error,
+                ));
+            }
+            if !is_right_ok {
+                self.errors.push(FleetError::from_node(
+                    (**right).clone(),
+                    format!("Cannot {verb} {preposition} {right_type:?}. Expected {r_expected}."),
+                    ErrorSeverity::Error,
+                ));
+            }
+            if is_left_ok && is_right_ok && left_type != right_type {
+                self.errors.push(FleetError::from_node(
+                    expression_clone,
+                    format!(
+                        "Cannot {} {:?} {} {:?}. Expected {} and {}.",
+                        verb, left_type, preposition, right_type, l_expected, r_expected
+                    ),
+                    ErrorSeverity::Error,
+                ));
+            }
         }
 
-        self.types.insert(*id, left_type);
-        return left_type;
+        let this_type = match operation {
+            BinaryOperation::Add
+            | BinaryOperation::Subtract
+            | BinaryOperation::Multiply
+            | BinaryOperation::Divide
+            | BinaryOperation::Modulo => left_type,
+            BinaryOperation::GreaterThan
+            | BinaryOperation::GreaterThanOrEqual
+            | BinaryOperation::LessThan
+            | BinaryOperation::LessThanOrEqual
+            | BinaryOperation::Equal
+            | BinaryOperation::NotEqual
+            | BinaryOperation::LogicalAnd
+            | BinaryOperation::LogicalOr => RuntimeType::Boolean,
+        };
+        self.types.insert(*id, this_type);
+        return this_type;
     }
 
     fn visit_variable_assignment_expression(
@@ -692,5 +972,9 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
 
     fn visit_unit_type(&mut self, _unit_type: &mut UnitType) -> Self::TypeOutput {
         return RuntimeType::Unit;
+    }
+
+    fn visit_bool_type(&mut self, _bool_type: &mut BoolType) -> Self::TypeOutput {
+        return RuntimeType::Boolean;
     }
 }

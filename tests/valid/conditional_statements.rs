@@ -1,7 +1,7 @@
 use fleet::tokenizer::SourceLocation;
 use indoc::indoc;
 
-use crate::common::{assert_compile_and_return_value, assert_compile_and_warning};
+use crate::common::{assert_compile_and_return_value, assert_compile_and_warning, assert_compile_error};
 
 #[test]
 fn if_else() {
@@ -9,7 +9,7 @@ fn if_else() {
         indoc! {r##"
             let main = () -> i32 {
                 let a: i32 = 0;
-                if a {
+                if a != 0 {
                     return 1;
                 }
                 else {
@@ -29,10 +29,10 @@ fn nested_1() {
             let main = () -> i32 {
                 let a: i32 = 1;
                 let b: i32 = 0;
-                if a {
+                if a != 0 {
                     b = 1;
                 }
-                elif b {
+                elif b != 0 {
                     b = 2;
                 }
                 return b;
@@ -50,10 +50,10 @@ fn nested_2() {
             let main = () -> i32 {
                 let a: i32 = 0;
                 let b: i32 = 1;
-                if a {
+                if a != 0 {
                     b = 1;
                 }
-                elif b {
+                elif b != 0 {
                     b = 2;
                 }
                 return b;
@@ -70,8 +70,8 @@ fn nested_3() {
         indoc! {r##"
             let main = () -> i32 {
                 let a: i32 = 0;
-                if 1 {
-                    if 2 {
+                if true {
+                    if true {
                         a = 3;
                     }
                     else {
@@ -92,8 +92,8 @@ fn nested_4() {
         indoc! {r##"
             let main = () -> i32 {
                 let a: i32 = 0;
-                if 1 {
-                    if 0 {
+                if true {
+                    if false {
                         a = 3;
                     }
                     else {
@@ -114,8 +114,8 @@ fn nested_5() {
         indoc! {r##"
             let main = () -> i32 {
                 let a: i32 = 0;
-                if 0 {
-                    if 0 {
+                if false {
+                    if false {
                         a = 3;
                     }
                     else {
@@ -140,7 +140,7 @@ fn if_not_taken() {
             let main = () -> i32 {
                 let a: i32 = 0;
                 let b: i32 = 2;
-                if a {
+                if a != 0 {
                     b = 1;
                 }
                 return b;
@@ -158,7 +158,7 @@ fn if_taken() {
             let main = () -> i32 {
                 let a: i32 = 1;
                 let b: i32 = 0;
-                if a {
+                if a != 0 {
                     b = 1;
                 }
                 return b;
@@ -176,13 +176,13 @@ fn multiple_if() {
             let main = () -> i32 {
                 let a: i32 = 0;
                 let b: i32 = 0;
-                if a {
+                if a != 0 {
                     a = 2;
                 }
                 else {
                     a = 3;
                 }
-                if b {
+                if b != 0 {
                     b = 4;
                 }
                 else {
@@ -202,10 +202,10 @@ fn empty_elif_with_else() {
         indoc! {r##"
             let main = () -> i32 {
                 let a: i32 = 0;
-                if a {
+                if a != 0 {
                     a = 1;
                 }
-                elif 1 {
+                elif true {
                 }
                 else {
                     a = 3;
@@ -224,10 +224,10 @@ fn empty_elif_without_else() {
         indoc! {r##"
             let main = () -> i32 {
                 let a: i32 = 0;
-                if a {
+                if a != 0 {
                     a = 1;
                 }
-                elif 1 {
+                elif true {
                 }
                 return a;
             }
@@ -242,10 +242,10 @@ fn elif_all_paths_terminate() {
     assert_compile_and_return_value(
         indoc! {r##"
             let main = () -> i32 {
-                if 0 {
+                if false {
                     return 0;
                 }
-                elif 2 {
+                elif true {
                     return 3;
                 }
                 else {
@@ -263,13 +263,13 @@ fn multi_elif_all_paths_terminate() {
     assert_compile_and_return_value(
         indoc! {r##"
             let main = () -> i32 {
-                if 0 {
+                if false {
                     return 0;
                 }
-                elif 0 {
+                elif false {
                     return 3;
                 }
-                elif 3 {
+                elif true {
                     return 7;
                 }
                 else {
@@ -288,7 +288,7 @@ fn unreachable_after_if() {
         indoc! {r##"
             let main = () -> i32 {
                 let a: i32 = 0;
-                if 1 {
+                if true {
                     return 1;
                 }
                 else {
@@ -298,9 +298,54 @@ fn unreachable_after_if() {
             }
         "##},
         SourceLocation {
-            index: 117,
+            index: 120,
             line: 9,
             column: 4,
+        },
+    );
+}
+
+#[test]
+fn i32_as_if_condition() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                if 8 {
+                    return 1;
+                }
+                else {
+                    return 3;
+                }
+            }
+        "##},
+        SourceLocation {
+            index: 30,
+            line: 2,
+            column: 7,
+        },
+    );
+}
+
+#[test]
+fn i32_as_elif_condition() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                if false {
+                    return 1;
+                }
+                elif 69 {
+                    return 2;
+                }
+                else {
+                    return 3;
+                }
+            }
+        "##},
+        SourceLocation {
+            index: 71,
+            line: 5,
+            column: 9,
         },
     );
 }

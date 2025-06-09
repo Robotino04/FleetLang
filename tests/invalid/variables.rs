@@ -197,3 +197,37 @@ fn unit_variable() {
         },
     );
 }
+
+#[test]
+fn i32_assigned_to_bool() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> bool {
+                let a: bool = 4;
+                return a;
+            }
+        "##},
+        SourceLocation {
+            index: 28,
+            line: 2,
+            column: 4,
+        },
+    );
+}
+
+#[test]
+fn bool_assigned_to_i32() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a: i32 = true;
+                return a;
+            }
+        "##},
+        SourceLocation {
+            index: 27,
+            line: 2,
+            column: 4,
+        },
+    );
+}

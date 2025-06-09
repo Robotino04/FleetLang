@@ -167,3 +167,39 @@ fn too_many_for_clauses() {
         },
     );
 }
+
+#[test]
+fn i32_as_while_condition() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                while 3 {
+                }
+                return 0;
+            }
+        "##},
+        SourceLocation {
+            index: 33,
+            line: 2,
+            column: 10,
+        },
+    );
+}
+
+#[test]
+fn i32_as_for_condition() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                for (let i: i32 = 2; i; i = i + 1) {
+                }
+                return 0;
+            }
+        "##},
+        SourceLocation {
+            index: 48,
+            line: 2,
+            column: 25,
+        },
+    );
+}

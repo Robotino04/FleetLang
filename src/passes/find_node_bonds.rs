@@ -1,11 +1,12 @@
 use crate::{
     ast::{
-        AstNode, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
-        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
-        GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, Program,
-        ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody,
-        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+        AstNode, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement,
+        CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
+        NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        WhileLoopStatement,
     },
     tokenizer::SourceLocation,
 };
@@ -147,7 +148,20 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
         }) => {
             return (operator_token.start, find_node_bounds(*operand).1);
         }
+        AstNode::CastExpression(CastExpression {
+            operand,
+            as_token: _,
+            type_,
+            id: _,
+        }) => {
+            return (find_node_bounds(*operand).0, find_node_bounds(type_).1);
+        }
         AstNode::NumberExpression(NumberExpression {
+            value: _,
+            token,
+            id: _,
+        }) => (token.start, token.end),
+        AstNode::BoolExpression(BoolExpression {
             value: _,
             token,
             id: _,
@@ -193,5 +207,6 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             close_paren_token,
             id: _,
         }) => (open_paren_token.start, close_paren_token.end),
+        AstNode::BoolType(BoolType { token, id: _ }) => (token.start, token.end),
     }
 }

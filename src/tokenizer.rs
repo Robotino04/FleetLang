@@ -78,6 +78,11 @@ pub enum Keyword {
 
     Let,
     I32,
+    Bool,
+    As,
+
+    True,
+    False,
 
     Return,
     If,
@@ -484,6 +489,11 @@ impl<'errors> Tokenizer<'errors> {
                             "extern" => TokenType::Keyword(Keyword::Extern),
 
                             "i32" => TokenType::Keyword(Keyword::I32),
+                            "bool" => TokenType::Keyword(Keyword::Bool),
+                            "as" => TokenType::Keyword(Keyword::As),
+
+                            "true" => TokenType::Keyword(Keyword::True),
+                            "false" => TokenType::Keyword(Keyword::False),
                             _ => TokenType::Identifier(lexeme.to_string()),
                         },
 

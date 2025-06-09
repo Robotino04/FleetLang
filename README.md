@@ -26,7 +26,6 @@
 - sum types
 - i8, i16, i64
 - f32, f64
-- bool
 - comptime evaluation
 - comptime type eval for generics (similar to zig/hblang)
 

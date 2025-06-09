@@ -1,7 +1,7 @@
 use fleet::tokenizer::SourceLocation;
 use indoc::indoc;
 
-use crate::common::assert_parser_or_tokenizer_error;
+use crate::common::{assert_compile_error, assert_parser_or_tokenizer_error};
 
 #[test]
 fn missing_operand() {
@@ -61,6 +61,38 @@ fn minus_after_operand() {
             index: 36,
             line: 2,
             column: 13,
+        },
+    );
+}
+
+#[test]
+fn binary_not_bool() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> bool {
+                return ~true;
+            }
+        "##},
+        SourceLocation {
+            index: 35,
+            line: 2,
+            column: 11,
+        },
+    );
+}
+
+#[test]
+fn minus_bool() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> bool {
+                return -false;
+            }
+        "##},
+        SourceLocation {
+            index: 35,
+            line: 2,
+            column: 11,
         },
     );
 }

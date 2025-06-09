@@ -1,7 +1,9 @@
 use fleet::tokenizer::SourceLocation;
 use indoc::indoc;
 
-use crate::common::{assert_compile_error, assert_compile_error_no_formatting, assert_parser_or_tokenizer_error};
+use crate::common::{
+    assert_compile_error, assert_compile_error_no_formatting, assert_parser_or_tokenizer_error,
+};
 
 #[test]
 fn missing_main() {
@@ -334,6 +336,38 @@ fn unit_function_in_expression() {
             index: 69,
             line: 5,
             column: 11,
+        },
+    );
+}
+
+#[test]
+fn return_bool_instead_of_i32() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                return true;
+            }
+        "##},
+        SourceLocation {
+            index: 27,
+            line: 2,
+            column: 4,
+        },
+    );
+}
+
+#[test]
+fn return_i32_instead_of_bool() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> bool {
+                return 1234;
+            }
+        "##},
+        SourceLocation {
+            index: 28,
+            line: 2,
+            column: 4,
         },
     );
 }

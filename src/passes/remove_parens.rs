@@ -1,5 +1,8 @@
 use crate::ast::{
-    Associativity, AstVisitor, BinaryExpression, Expression, ExpressionStatement, ForLoopStatement, FunctionCallExpression, GroupingExpression, IfStatement, ReturnStatement, SimpleBinding, ThreadExecutor, UnaryExpression, VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement
+    Associativity, AstVisitor, BinaryExpression, Expression, ExpressionStatement, ForLoopStatement,
+    FunctionCallExpression, GroupingExpression, IfStatement, ReturnStatement, SimpleBinding,
+    ThreadExecutor, UnaryExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+    WhileLoopStatement,
 };
 
 use super::{
@@ -184,6 +187,9 @@ impl PartialAstVisitor for RemoveParensPass {
             Expression::Number(number_expression) => {
                 self.partial_visit_number_expression(number_expression)
             }
+            Expression::Bool(bool_expression) => {
+                self.partial_visit_bool_expression(bool_expression)
+            }
             Expression::FunctionCall(function_call_expression) => {
                 self.partial_visit_function_call_expression(function_call_expression)
             }
@@ -192,6 +198,9 @@ impl PartialAstVisitor for RemoveParensPass {
             }
             Expression::Unary(unary_expression) => {
                 self.partial_visit_unary_expression(unary_expression)
+            }
+            Expression::Cast(cast_expression) => {
+                self.partial_visit_cast_expression(cast_expression)
             }
             Expression::Binary(binary_expression) => {
                 self.partial_visit_binary_expression(binary_expression)
@@ -202,10 +211,7 @@ impl PartialAstVisitor for RemoveParensPass {
         }
     }
 
-    fn partial_visit_function_call_expression(
-        &mut self,
-        expression: &mut FunctionCallExpression,
-    ) {
+    fn partial_visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
         for (arg, _comma) in &mut expression.arguments {
             self.parent_precedence = Expression::TOP_PRECEDENCE;
             self.parent_associativity = Associativity::Both;

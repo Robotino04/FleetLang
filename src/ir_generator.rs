@@ -21,13 +21,13 @@ use itertools::Itertools;
 
 use crate::{
     ast::{
-        AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
-        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
-        NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, WhileLoopStatement,
+        AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
+        BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionBody, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
+        IfStatement, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement,
+        SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     escape::unescape,
     infra::{ErrorSeverity, FleetError},
@@ -70,6 +70,7 @@ pub struct IrGenerator<'a, 'errors> {
     variable_storage: HashMap<VariableID, VariableStorage<'a>>,
     function_data: PerNodeData<Rc<RefCell<Function>>>,
     function_locations: HashMap<FunctionID, FunctionLocation<'a>>,
+    type_data: PerNodeData<RuntimeType>,
 
     break_block: Option<BasicBlock<'a>>,
     skip_block: Option<BasicBlock<'a>>,
@@ -81,6 +82,7 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
         function_termination: PerNodeData<FunctionTermination>,
         variable_data: PerNodeData<Rc<RefCell<Variable>>>,
         function_data: PerNodeData<Rc<RefCell<Function>>>,
+        type_data: PerNodeData<RuntimeType>,
     ) -> Self {
         let module = context.create_module("module");
         let builder = context.create_builder();
@@ -95,6 +97,7 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
             variable_storage: HashMap::new(),
             function_data,
             function_locations: HashMap::new(),
+            type_data,
             break_block: None,
             skip_block: None,
         }
@@ -130,6 +133,7 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
         match type_ {
             RuntimeType::I32 => self.context.i32_type().into(),
             RuntimeType::Unit => self.context.void_type().into(),
+            RuntimeType::Boolean => self.context.bool_type().into(),
             RuntimeType::Unknown => panic!("Unknown types should have caused errors earlier."),
         }
     }
@@ -224,7 +228,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                 start: SourceLocation::start(),
                 end: program
                     .functions
-                    .last()
+                    .first()
                     .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
                 message: format!(
                     "LLVM module is invalid: {}\nModule dump:\n{}",
@@ -339,6 +343,15 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             }
             FunctionBody::Statement(_) => {}
         };
+
+        if !ir_function.verify(false) {
+            self.errors.push(FleetError::from_node(
+                function.clone(),
+                "The IR generated for this function is invalid. See the ".to_string()
+                    + "global error at the start of the file for more info",
+                ErrorSeverity::Error,
+            ));
+        }
 
         return Ok(ir_function);
     }
@@ -514,12 +527,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         let condition_value = self
             .visit_expression(&mut if_stmt.condition)?
             .expect("Somehow passed a Unit value to an if condition");
-        let condition_value = self.builder.build_int_compare(
-            IntPredicate::NE,
-            condition_value.into_int_value(),
-            condition_value.get_type().const_zero().into_int_value(),
-            "if_condition",
-        )?;
+        let condition_value = condition_value.into_int_value();
 
         self.builder
             .build_conditional_branch(condition_value, body_block, next_block)?;
@@ -548,12 +556,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             let condition_value = self
                 .visit_expression(condition)?
                 .expect("Somehow passed a Unit value to an elif condition");
-            let condition_value = self.builder.build_int_compare(
-                IntPredicate::NE,
-                condition_value.into_int_value(),
-                condition_value.get_type().const_zero().into_int_value(),
-                "if_condition",
-            )?;
+            let condition_value = condition_value.into_int_value();
 
             let body_block = self
                 .context
@@ -637,15 +640,11 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             .visit_expression(condition)?
             .expect("Somehow passed a Unit value as a while condition");
 
-        let cond_booleanized = self.builder.build_int_compare(
-            IntPredicate::EQ,
-            cond_value.get_type().into_int_type().const_zero(),
+        self.builder.build_conditional_branch(
             cond_value.into_int_value(),
-            "while_condition",
+            body_block,
+            end_block,
         )?;
-
-        self.builder
-            .build_conditional_branch(cond_booleanized, end_block, body_block)?;
 
         self.builder.position_at_end(body_block);
         {
@@ -714,15 +713,11 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             )))?
             .expect("Somehow passed a Unit value as a while condition");
 
-        let cond_booleanized = self.builder.build_int_compare(
-            IntPredicate::EQ,
-            cond_value.get_type().into_int_type().const_zero(),
+        self.builder.build_conditional_branch(
             cond_value.into_int_value(),
-            "for_condition",
+            body_block,
+            end_block,
         )?;
-
-        self.builder
-            .build_conditional_branch(cond_booleanized, end_block, body_block)?;
 
         self.builder.position_at_end(body_block);
 
@@ -814,6 +809,22 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             self.context
                 .i32_type()
                 .const_int(*value as u64, false)
+                .as_basic_value_enum(),
+        ));
+    }
+
+    fn visit_bool_expression(
+        &mut self,
+        BoolExpression {
+            value,
+            token: _,
+            id: _,
+        }: &mut BoolExpression,
+    ) -> Self::ExpressionOutput {
+        return Ok(Some(
+            self.context
+                .bool_type()
+                .const_int(if *value { 1 } else { 0 }, false)
                 .as_basic_value_enum(),
         ));
     }
@@ -929,15 +940,11 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             )),
             UnaryOperation::LogicalNot => Ok(Some(
                 self.builder
-                    .build_int_z_extend(
-                        self.builder.build_int_compare::<IntValue>(
-                            IntPredicate::EQ,
-                            value.into_int_value(),
-                            value.get_type().into_int_type().const_zero(),
-                            "logical_not",
-                        )?,
-                        value.get_type().into_int_type(),
-                        "cast",
+                    .build_int_compare::<IntValue>(
+                        IntPredicate::EQ,
+                        value.into_int_value(),
+                        value.into_int_value().get_type().const_zero(),
+                        "logical_not",
                     )?
                     .into(),
             )),
@@ -947,6 +954,88 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                     .into(),
             )),
         };
+    }
+
+    fn visit_cast_expression(
+        &mut self,
+        CastExpression {
+            operand,
+            as_token: _,
+            type_,
+            id,
+        }: &mut CastExpression,
+    ) -> Self::ExpressionOutput {
+        let value = self.visit_expression(&mut *operand)?;
+        let value_type = self
+            .type_data
+            .get_node(&**operand)
+            .expect("type data should exist before calling ir_generator")
+            .clone();
+
+        let target_type = self
+            .type_data
+            .get(id)
+            .expect("type data should exist before calling ir_generator")
+            .clone();
+
+        match target_type {
+            RuntimeType::I32 => {
+                let expected_type = self.visit_type(type_)?.into_int_type();
+                let value = value
+                    .expect("Somehow tried to cast Unit to bool")
+                    .into_int_value();
+
+                if expected_type.get_bit_width() <= value.get_type().get_bit_width() {
+                    return Ok(Some(
+                        self.builder
+                            .build_int_truncate_or_bit_cast(
+                                value,
+                                expected_type,
+                                &format!("as_{target_type:?}"),
+                            )?
+                            .into(),
+                    ));
+                } else {
+                    if value_type == RuntimeType::Boolean {
+                        return Ok(Some(
+                            self.builder
+                                .build_int_z_extend(
+                                    value,
+                                    expected_type,
+                                    &format!("as_{target_type:?}"),
+                                )?
+                                .into(),
+                        ));
+                    } else {
+                        return Ok(Some(
+                            self.builder
+                                .build_int_s_extend(
+                                    value,
+                                    expected_type,
+                                    &format!("as_{target_type:?}"),
+                                )?
+                                .into(),
+                        ));
+                    }
+                }
+            }
+            RuntimeType::Boolean => {
+                let expected_type = self.visit_type(type_)?.into_int_type();
+                let value = value
+                    .expect("Somehow tried to cast Unit to bool")
+                    .into_int_value();
+
+                return Ok(Some(
+                    self.builder
+                        .build_int_truncate_or_bit_cast(value, expected_type, "as_bool")?
+                        .into(),
+                ));
+            }
+            RuntimeType::Unit => return Ok(None),
+            RuntimeType::Unknown => {
+                unreachable!("ir_generator shouldn't run if there are unknown types")
+            }
+        }
     }
 
     fn visit_binary_expression(
@@ -1037,15 +1126,11 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                 let right_value = right_value_gen(self)?;
                 Ok(Some(
                     self.builder
-                        .build_int_z_extend(
-                            self.builder.build_int_compare::<IntValue>(
-                                IntPredicate::SLT,
-                                left_value.into_int_value(),
-                                right_value.into_int_value(),
-                                "less_than",
-                            )?,
-                            left_value.get_type().into_int_type(),
-                            "extent_from_i1",
+                        .build_int_compare::<IntValue>(
+                            IntPredicate::SLT,
+                            left_value.into_int_value(),
+                            right_value.into_int_value(),
+                            "less_than",
                         )?
                         .into(),
                 ))
@@ -1054,15 +1139,11 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                 let right_value = right_value_gen(self)?;
                 Ok(Some(
                     self.builder
-                        .build_int_z_extend(
-                            self.builder.build_int_compare::<IntValue>(
-                                IntPredicate::SLE,
-                                left_value.into_int_value(),
-                                right_value.into_int_value(),
-                                "less_than_or_equal",
-                            )?,
-                            left_value.get_type().into_int_type(),
-                            "extent_from_i1",
+                        .build_int_compare::<IntValue>(
+                            IntPredicate::SLE,
+                            left_value.into_int_value(),
+                            right_value.into_int_value(),
+                            "less_than_or_equal",
                         )?
                         .into(),
                 ))
@@ -1071,15 +1152,11 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                 let right_value = right_value_gen(self)?;
                 Ok(Some(
                     self.builder
-                        .build_int_z_extend(
-                            self.builder.build_int_compare::<IntValue>(
-                                IntPredicate::SGT,
-                                left_value.into_int_value(),
-                                right_value.into_int_value(),
-                                "greater_than",
-                            )?,
-                            left_value.get_type().into_int_type(),
-                            "extent_from_i1",
+                        .build_int_compare::<IntValue>(
+                            IntPredicate::SGT,
+                            left_value.into_int_value(),
+                            right_value.into_int_value(),
+                            "greater_than",
                         )?
                         .into(),
                 ))
@@ -1088,15 +1165,11 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                 let right_value = right_value_gen(self)?;
                 Ok(Some(
                     self.builder
-                        .build_int_z_extend(
-                            self.builder.build_int_compare::<IntValue>(
-                                IntPredicate::SGE,
-                                left_value.into_int_value(),
-                                right_value.into_int_value(),
-                                "greater_than_or_equal",
-                            )?,
-                            left_value.get_type().into_int_type(),
-                            "extent_from_i1",
+                        .build_int_compare::<IntValue>(
+                            IntPredicate::SGE,
+                            left_value.into_int_value(),
+                            right_value.into_int_value(),
+                            "greater_than_or_equal",
                         )?
                         .into(),
                 ))
@@ -1105,15 +1178,11 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                 let right_value = right_value_gen(self)?;
                 Ok(Some(
                     self.builder
-                        .build_int_z_extend(
-                            self.builder.build_int_compare::<IntValue>(
-                                IntPredicate::EQ,
-                                left_value.into_int_value(),
-                                right_value.into_int_value(),
-                                "equal",
-                            )?,
-                            left_value.get_type().into_int_type(),
-                            "extent_from_i1",
+                        .build_int_compare::<IntValue>(
+                            IntPredicate::EQ,
+                            left_value.into_int_value(),
+                            right_value.into_int_value(),
+                            "equal",
                         )?
                         .into(),
                 ))
@@ -1122,15 +1191,11 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                 let right_value = right_value_gen(self)?;
                 Ok(Some(
                     self.builder
-                        .build_int_z_extend(
-                            self.builder.build_int_compare::<IntValue>(
-                                IntPredicate::NE,
-                                left_value.into_int_value(),
-                                right_value.into_int_value(),
-                                "not_equal",
-                            )?,
-                            left_value.get_type().into_int_type(),
-                            "extent_from_i1",
+                        .build_int_compare::<IntValue>(
+                            IntPredicate::NE,
+                            left_value.into_int_value(),
+                            right_value.into_int_value(),
+                            "not_equal",
                         )?
                         .into(),
                 ))
@@ -1150,28 +1215,14 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
                 self.builder.position_at_end(current_block);
                 self.builder.build_conditional_branch(
-                    self.builder.build_int_compare::<IntValue>(
-                        IntPredicate::EQ,
-                        left_value.into_int_value(),
-                        left_value.get_type().into_int_type().const_zero(),
-                        "is_zero",
-                    )?,
-                    end_block,
+                    left_value.into_int_value(),
                     right_block,
+                    end_block,
                 )?;
 
                 self.builder.position_at_end(right_block);
                 let right_value = right_value_gen(self)?;
-                let bool_right_value = self.builder.build_int_z_extend(
-                    self.builder.build_int_compare(
-                        IntPredicate::NE,
-                        right_value.get_type().into_int_type().const_zero(),
-                        right_value.into_int_value(),
-                        "downcast_i1",
-                    )?,
-                    right_value.get_type().into_int_type(),
-                    "upcast",
-                )?;
+                let bool_right_value = right_value.into_int_value();
                 self.builder.build_unconditional_branch(end_block)?;
                 // needed because right_value may have generated new basic blocks and
                 // right_block isn't the branch source anymore
@@ -1209,28 +1260,14 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
                 self.builder.position_at_end(current_block);
                 self.builder.build_conditional_branch(
-                    self.builder.build_int_compare::<IntValue>(
-                        IntPredicate::EQ,
-                        left_value.into_int_value(),
-                        left_value.get_type().into_int_type().const_zero(),
-                        "is_zero",
-                    )?,
-                    right_block,
+                    left_value.into_int_value(),
                     end_block,
+                    right_block,
                 )?;
 
                 self.builder.position_at_end(right_block);
                 let right_value = right_value_gen(self)?;
-                let bool_right_value = self.builder.build_int_z_extend(
-                    self.builder.build_int_compare(
-                        IntPredicate::NE,
-                        right_value.get_type().into_int_type().const_zero(),
-                        right_value.into_int_value(),
-                        "downcast_i1",
-                    )?,
-                    right_value.get_type().into_int_type(),
-                    "upcast",
-                )?;
+                let bool_right_value = right_value.into_int_value();
                 self.builder.build_unconditional_branch(end_block)?;
                 // needed because right_value may have generated new basic blocks and
                 // right_block isn't the branch source anymore
@@ -1289,5 +1326,9 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
     fn visit_unit_type(&mut self, _unit_type: &mut UnitType) -> Self::TypeOutput {
         Ok(self.context.void_type().into())
+    }
+
+    fn visit_bool_type(&mut self, _bool_type: &mut BoolType) -> Self::TypeOutput {
+        Ok(self.context.bool_type().into())
     }
 }

@@ -168,7 +168,7 @@ fn return_in_while() {
     assert_compile_and_return_value(
         indoc! {r##"
             let main = () -> i32 {
-                while 1 {
+                while true {
                     return 2;
                 }
             }

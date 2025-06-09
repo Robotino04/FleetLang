@@ -1,12 +1,13 @@
 use crate::{
     ast::{
-        BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, Executor, ExecutorHost,
-        Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
-        NodeID, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, Type,
-        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+        BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
+        BreakStatement, CastExpression, Executor, ExecutorHost, Expression, ExpressionStatement,
+        ExternFunctionBody, ForLoopStatement, FunctionBody, FunctionCallExpression,
+        FunctionDefinition, GroupingExpression, I32Type, IfStatement, NodeID, NumberExpression,
+        OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
+        Statement, StatementFunctionBody, ThreadExecutor, Type, UnaryExpression, UnaryOperation,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::type_propagation::{FunctionID, VariableID},
@@ -474,6 +475,20 @@ impl<'errors> Parser<'errors> {
                     id: self.id_generator.next_node_id(),
                 }));
             }
+            Some(TokenType::Keyword(Keyword::True)) => {
+                return Ok(Expression::Bool(BoolExpression {
+                    value: true,
+                    token: expect!(self, TokenType::Keyword(Keyword::True))?,
+                    id: self.id_generator.next_node_id(),
+                }));
+            }
+            Some(TokenType::Keyword(Keyword::False)) => {
+                return Ok(Expression::Bool(BoolExpression {
+                    value: false,
+                    token: expect!(self, TokenType::Keyword(Keyword::False))?,
+                    id: self.id_generator.next_node_id(),
+                }));
+            }
 
             Some(TokenType::Identifier(name)) => {
                 let name_token = expect!(self, TokenType::Identifier(_))?;
@@ -549,13 +564,33 @@ impl<'errors> Parser<'errors> {
             None => unable_to_parse!(self, "unary expression"),
         }
     }
-    fn parse_product_expression(&mut self) -> Result<Expression> {
+    fn parse_cast_expression(&mut self) -> Result<Expression> {
         let mut left = self.parse_unary_expression()?;
+
+        while match self.current_token_type() {
+            Some(TokenType::Keyword(Keyword::As)) => {
+                let as_token = expect!(self, TokenType::Keyword(Keyword::As))?;
+                let type_ = self.parse_type()?;
+                left = Expression::Cast(CastExpression {
+                    operand: Box::new(left),
+                    as_token,
+                    type_,
+                    id: self.id_generator.next_node_id(),
+                });
+                true
+            }
+            _ => false,
+        } {}
+
+        return Ok(left);
+    }
+    fn parse_product_expression(&mut self) -> Result<Expression> {
+        let mut left = self.parse_cast_expression()?;
 
         while match self.current_token_type() {
             Some(TokenType::Star) => {
                 let operator_token = expect!(self, TokenType::Star)?;
-                let right = self.parse_unary_expression()?;
+                let right = self.parse_cast_expression()?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -567,7 +602,7 @@ impl<'errors> Parser<'errors> {
             }
             Some(TokenType::Slash) => {
                 let operator_token = expect!(self, TokenType::Slash)?;
-                let right = self.parse_unary_expression()?;
+                let right = self.parse_cast_expression()?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -579,7 +614,7 @@ impl<'errors> Parser<'errors> {
             }
             Some(TokenType::Percent) => {
                 let operator_token = expect!(self, TokenType::Percent)?;
-                let right = self.parse_unary_expression()?;
+                let right = self.parse_cast_expression()?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -807,6 +842,10 @@ impl<'errors> Parser<'errors> {
         match self.current_token_type() {
             Some(TokenType::Keyword(Keyword::I32)) => Ok(Type::I32(I32Type {
                 token: expect!(self, TokenType::Keyword(Keyword::I32))?,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::Keyword(Keyword::Bool)) => Ok(Type::Bool(BoolType {
+                token: expect!(self, TokenType::Keyword(Keyword::Bool))?,
                 id: self.id_generator.next_node_id(),
             })),
             Some(TokenType::OpenParen) => Ok(Type::Unit(UnitType {

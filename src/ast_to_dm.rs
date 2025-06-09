@@ -1,10 +1,10 @@
 use crate::{
     ast::{
-        AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
-        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
-        GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, Program,
-        ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody,
-        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        AstVisitor, BinaryExpression, BlockStatement, BoolType, BreakStatement, CastExpression,
+        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+        FunctionDefinition, GroupingExpression, I32Type, IfStatement, NumberExpression,
+        OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
+        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     document_model::DocumentElement,
@@ -87,6 +87,10 @@ impl AstToDocumentModelConverter {
             Keyword::Self_ => "self",
             Keyword::Let => "let",
             Keyword::I32 => "i32",
+            Keyword::Bool => "bool",
+            Keyword::As => "as",
+            Keyword::True => "true",
+            Keyword::False => "false",
             Keyword::Return => "return",
             Keyword::If => "if",
             Keyword::Elif => "elif",
@@ -587,6 +591,13 @@ impl AstVisitor for AstToDocumentModelConverter {
         self.token_to_element(&expression.token)
     }
 
+    fn visit_bool_expression(
+        &mut self,
+        expression: &mut crate::ast::BoolExpression,
+    ) -> Self::ExpressionOutput {
+        self.token_to_element(&expression.token)
+    }
+
     fn visit_function_call_expression(
         &mut self,
         FunctionCallExpression {
@@ -679,6 +690,25 @@ impl AstVisitor for AstToDocumentModelConverter {
         ])
     }
 
+    fn visit_cast_expression(
+        &mut self,
+        CastExpression {
+            operand,
+            as_token,
+            type_,
+            id: _,
+        }: &mut CastExpression,
+    ) -> Self::ExpressionOutput {
+        DocumentElement::spaced_concatentation(
+            DocumentElement::CollapsableSpace,
+            vec![
+                self.visit_expression(operand),
+                self.token_to_element(as_token),
+                self.visit_type(type_),
+            ],
+        )
+    }
+
     fn visit_binary_expression(
         &mut self,
         BinaryExpression {
@@ -729,5 +759,9 @@ impl AstVisitor for AstToDocumentModelConverter {
             DocumentElement::double_space_eater(),
             self.token_to_element(&unit_type.close_paren_token),
         ])
+    }
+
+    fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
+        self.token_to_element(&bool_type.token)
     }
 }

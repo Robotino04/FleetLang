@@ -6,12 +6,12 @@ use crate::common::assert_compile_and_return_value;
 fn eq_false() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return 1 == 2;
             }
         "##},
         "main",
-        0,
+        false,
     );
 }
 
@@ -19,12 +19,12 @@ fn eq_false() {
 fn eq_true() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return 1 == 1;
             }
         "##},
         "main",
-        1,
+        true,
     );
 }
 
@@ -32,12 +32,12 @@ fn eq_true() {
 fn ge_false() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return 1 >= 2;
             }
         "##},
         "main",
-        0,
+        false,
     );
 }
 
@@ -45,12 +45,12 @@ fn ge_false() {
 fn ge_true() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return 1 >= 1;
             }
         "##},
         "main",
-        1,
+        true,
     );
 }
 
@@ -58,12 +58,12 @@ fn ge_true() {
 fn gt_false() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return 1 > 2;
             }
         "##},
         "main",
-        0,
+        false,
     );
 }
 
@@ -71,12 +71,12 @@ fn gt_false() {
 fn gt_true() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return 1 > 0;
             }
         "##},
         "main",
-        1,
+        true,
     );
 }
 
@@ -84,12 +84,12 @@ fn gt_true() {
 fn le_false() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return 1 <= -1;
             }
         "##},
         "main",
-        0,
+        false,
     );
 }
 
@@ -97,12 +97,12 @@ fn le_false() {
 fn le_true() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return 0 <= 2;
             }
         "##},
         "main",
-        1,
+        true,
     );
 }
 
@@ -110,12 +110,12 @@ fn le_true() {
 fn lt_false() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return 2 < 1;
             }
         "##},
         "main",
-        0,
+        false,
     );
 }
 
@@ -123,12 +123,12 @@ fn lt_false() {
 fn ne_false() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return 0 != 0;
             }
         "##},
         "main",
-        0,
+        false,
     );
 }
 
@@ -136,12 +136,12 @@ fn ne_false() {
 fn ne_true() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return -1 != -2;
             }
         "##},
         "main",
-        1,
+        true,
     );
 }
 
@@ -149,12 +149,12 @@ fn ne_true() {
 fn and_false() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
-                return 1 && 0;
+            let main = () -> bool {
+                return true && false;
             }
         "##},
         "main",
-        0,
+        false,
     );
 }
 
@@ -162,12 +162,12 @@ fn and_false() {
 fn and_true() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
-                return 1 && -1;
+            let main = () -> bool {
+                return true && true;
             }
         "##},
         "main",
-        1,
+        true,
     );
 }
 
@@ -175,12 +175,12 @@ fn and_true() {
 fn or_false() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
-                return 0 || 0;
+            let main = () -> bool {
+                return false || false;
             }
         "##},
         "main",
-        0,
+        false,
     );
 }
 
@@ -188,12 +188,12 @@ fn or_false() {
 fn or_true() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
-                return 1 || 0;
+            let main = () -> bool {
+                return true || false;
             }
         "##},
         "main",
-        1,
+        true,
     );
 }
 
@@ -201,12 +201,12 @@ fn or_true() {
 fn precedence_1() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
-                return 1 || 0 && 2;
+            let main = () -> bool {
+                return true || false && true;
             }
         "##},
         "main",
-        1,
+        true,
     );
 }
 
@@ -214,12 +214,12 @@ fn precedence_1() {
 fn precedence_2() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
-                return (1 || 0) && 0;
+            let main = () -> bool {
+                return (true || false) && false;
             }
         "##},
         "main",
-        0,
+        false,
     );
 }
 
@@ -227,12 +227,12 @@ fn precedence_2() {
 fn precedence_3() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
-                return 2 == 2 > 0;
+            let main = () -> bool {
+                return true == 3 >= 2;
             }
         "##},
         "main",
-        0,
+        true,
     );
 }
 
@@ -240,12 +240,12 @@ fn precedence_3() {
 fn precedence_4() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
-                return 2 == 2 || 0;
+            let main = () -> bool {
+                return 2 == 2 || false;
             }
         "##},
         "main",
-        1,
+        true,
     );
 }
 
@@ -254,9 +254,9 @@ fn and_short_circuit() {
     assert_compile_and_return_value(
         indoc! {r##"
             let main = () -> i32 {
-                let a: i32 = 0;
+                let a: bool = false;
                 let b: i32 = 0;
-                a && (b = 5);
+                a && (b = 5) as bool;
                 return b;
             }
         "##},
@@ -270,9 +270,9 @@ fn or_short_circuit() {
     assert_compile_and_return_value(
         indoc! {r##"
             let main = () -> i32 {
-                let a: i32 = 1;
+                let a: bool = true;
                 let b: i32 = 0;
-                a || (b = 5);
+                a || (b = 5) as bool;
                 return b;
             }
         "##},
@@ -287,7 +287,7 @@ fn multi_short_circuit() {
         indoc! {r##"
             let main = () -> i32 {
                 let a: i32 = 0;
-                a || (a = 3) || (a = 4);
+                a as bool || (a = 3) as bool || (a = 4) as bool;
                 return a;
             }
         "##},

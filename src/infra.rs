@@ -428,6 +428,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
         function_terminations.clone(),
         variable_data.clone(),
         function_data.clone(),
+        type_data.clone(),
     );
     let module = match ir_generator.visit_program(&mut program) {
         Ok(module) => module,

@@ -42,28 +42,28 @@ fn negative_5() {
 }
 
 #[test]
-fn not_0() {
+fn not_false() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
-                return !0;
+            let main = () -> bool {
+                return !false;
             }
         "##},
         "main",
-        1,
+        true,
     );
 }
 
 #[test]
-fn not_5() {
+fn not_true() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
-                return !5;
+            let main = () -> bool {
+                return !true;
             }
         "##},
         "main",
-        0,
+        false,
     );
 }
 
@@ -71,12 +71,12 @@ fn not_5() {
 fn nested_1() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return !-3;
             }
         "##},
         "main",
-        0,
+        false,
     );
 }
 

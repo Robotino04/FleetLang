@@ -6,13 +6,13 @@ use std::rc::Rc;
 use std::sync::LazyLock;
 
 use fleet::ast::{
-    AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
-    ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-    FunctionDefinition, GroupingExpression, HasID, I32Type, IfStatement, NodeID, NumberExpression,
-    OnStatement, PerNodeData, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
-    StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
-    VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-    WhileLoopStatement,
+    AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression,
+    BoolType, BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody,
+    ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, HasID,
+    I32Type, IfStatement, NodeID, NumberExpression, OnStatement, PerNodeData, ReturnStatement,
+    SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor,
+    UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+    VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
 };
 use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
 use fleet::passes::find_containing_node::FindContainingNodePass;
@@ -93,6 +93,7 @@ fn stringify_runtime_type(type_: RuntimeType) -> &'static str {
     match type_ {
         RuntimeType::I32 => "i32",
         RuntimeType::Unit => "()",
+        RuntimeType::Boolean => "bool",
         RuntimeType::Unknown => "/* type unknown */",
     }
 }
@@ -274,7 +275,6 @@ impl Backend {
             AstNode::SkipStatement(_skip_statement) => {
                 ("".to_string(), "`skip` statement".to_string())
             }
-
             AstNode::SelfExecutorHost(SelfExecutorHost { .. }) => {
                 ("self".to_string(), "`self` executor host".to_string())
             }
@@ -319,6 +319,19 @@ impl Backend {
                 },
                 "unary expression".to_string(),
             ),
+            AstNode::CastExpression(CastExpression {
+                operand,
+                as_token: _,
+                type_: _,
+                id,
+            }) => (
+                {
+                    let from_type = self.get_type_as_hover(operand.get_id(), type_data);
+                    let to_type = self.get_type_as_hover(id, type_data);
+                    format!("{from_type} as {to_type}")
+                },
+                "type cast".to_string(),
+            ),
             AstNode::NumberExpression(NumberExpression {
                 value,
                 token: _,
@@ -326,6 +339,14 @@ impl Backend {
             }) => (
                 format!("{value} {}", self.get_type_as_hover(id, type_data)),
                 "number literal".to_string(),
+            ),
+            AstNode::BoolExpression(BoolExpression {
+                value,
+                token: _,
+                id,
+            }) => (
+                format!("{value} {}", self.get_type_as_hover(id, type_data)),
+                "boolean literal".to_string(),
             ),
             AstNode::BinaryExpression(BinaryExpression {
                 left,
@@ -376,7 +397,6 @@ impl Backend {
                 ),
                 "expression grouping".to_string(),
             ),
-
             AstNode::FunctionCallExpression(FunctionCallExpression {
                 name,
                 name_token: _,
@@ -442,6 +462,9 @@ impl Backend {
                 close_paren_token: _,
                 id: _,
             }) => (format!("()"), "type".to_string()),
+            AstNode::BoolType(BoolType { token: _, id: _ }) => {
+                (format!("bool"), "type".to_string())
+            }
         }
     }
 
@@ -845,6 +868,17 @@ impl AstVisitor for ExtractSemanticTokensPass {
         self.build_semantic_token(token, SemanticTokenType::NUMBER, vec![]);
     }
 
+    fn visit_bool_expression(
+        &mut self,
+        BoolExpression {
+            value: _,
+            token,
+            id: _,
+        }: &mut BoolExpression,
+    ) -> Self::ExpressionOutput {
+        self.build_semantic_token(token, SemanticTokenType::KEYWORD, vec![]);
+    }
+
     fn visit_function_call_expression(
         &mut self,
         FunctionCallExpression {
@@ -905,6 +939,20 @@ impl AstVisitor for ExtractSemanticTokensPass {
         self.visit_expression(operand);
     }
 
+    fn visit_cast_expression(
+        &mut self,
+        CastExpression {
+            operand,
+            as_token,
+            type_,
+            id: _,
+        }: &mut CastExpression,
+    ) -> Self::ExpressionOutput {
+        self.visit_expression(operand);
+        self.build_semantic_token(as_token, SemanticTokenType::KEYWORD, vec![]);
+        self.visit_type(type_);
+    }
+
     fn visit_binary_expression(
         &mut self,
         BinaryExpression {
@@ -953,6 +1001,10 @@ impl AstVisitor for ExtractSemanticTokensPass {
     ) -> Self::TypeOutput {
         self.build_comment_tokens_only(open_paren_token);
         self.build_comment_tokens_only(close_paren_token);
+    }
+
+    fn visit_bool_type(&mut self, BoolType { token, id: _ }: &mut BoolType) -> Self::TypeOutput {
+        self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
     }
 }
 

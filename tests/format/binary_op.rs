@@ -197,14 +197,14 @@ fn collapse_paren() {
 
 #[test]
 fn collapse_nested_paren() {
-    assert_formatting_and_same_behaviour::<i32>(
+    assert_formatting_and_same_behaviour::<bool>(
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return !  (  (  1  +  2   )    *   4 )  ;
             }"##
         },
         indoc! {r##"
-            let main = () -> i32 {
+            let main = () -> bool {
                 return !((1 + 2) * 4);
             }"##
         },

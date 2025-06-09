@@ -71,13 +71,13 @@ fn remove_parens_initializer() {
     assert_formatting_and_same_behaviour::<i32>(
         indoc! {r##"
             let main = () -> i32 {
-                let a: i32 = ((5 / 2) && 9);
+                let a: i32 = ((5 / 2) + 9);
                 return a;
             }"##
         },
         indoc! {r##"
             let main = () -> i32 {
-                let a: i32 = 5 / 2 && 9;
+                let a: i32 = 5 / 2 + 9;
                 return a;
             }"##
         },
@@ -91,14 +91,14 @@ fn remove_parens_assignment() {
         indoc! {r##"
             let main = () -> i32 {
                 let a: i32 = 0;
-                a = ((5 / 2) && 9);
+                a = ((5 / 2) + 9);
                 return a;
             }"##
         },
         indoc! {r##"
             let main = () -> i32 {
                 let a: i32 = 0;
-                a = 5 / 2 && 9;
+                a = 5 / 2 + 9;
                 return a;
             }"##
         },

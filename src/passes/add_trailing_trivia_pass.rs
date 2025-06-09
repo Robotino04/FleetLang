@@ -1,11 +1,12 @@
 use crate::{
     ast::{
-        AstVisitor, BinaryExpression, BlockStatement, BreakStatement, ExpressionStatement,
-        ExternFunctionBody, ForLoopStatement, FunctionBody, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, I32Type, IfStatement, NumberExpression,
-        OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
-        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+        AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement,
+        CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
+        NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -169,6 +170,10 @@ impl AstVisitor for AddTrailingTriviaPass {
         self.add_trailing_trivia_to_token(&mut expression.token);
     }
 
+    fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput {
+        self.add_trailing_trivia_to_token(&mut expression.token);
+    }
+
     fn visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
         self.add_trailing_trivia_to_token(&mut expression.close_paren_token);
     }
@@ -183,6 +188,10 @@ impl AstVisitor for AddTrailingTriviaPass {
 
     fn visit_unary_expression(&mut self, expression: &mut UnaryExpression) {
         self.visit_expression(&mut expression.operand);
+    }
+
+    fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
+        self.visit_type(&mut expression.type_);
     }
 
     fn visit_binary_expression(&mut self, expression: &mut BinaryExpression) {
@@ -202,5 +211,9 @@ impl AstVisitor for AddTrailingTriviaPass {
 
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
         self.add_trailing_trivia_to_token(&mut unit_type.close_paren_token);
+    }
+
+    fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
+        self.add_trailing_trivia_to_token(&mut bool_type.token);
     }
 }
