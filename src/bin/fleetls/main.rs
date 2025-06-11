@@ -1157,6 +1157,11 @@ impl LanguageServer for Backend {
             params.text_document.uri,
             params.content_changes[0].text.clone(),
         );
+
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            let _ = client.semantic_tokens_refresh().await;
+        });
     }
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         eprintln!("{}", "-".repeat(80));
@@ -1166,6 +1171,11 @@ impl LanguageServer for Backend {
             .write()
             .unwrap()
             .insert(params.text_document.uri, params.text_document.text);
+
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            let _ = client.semantic_tokens_refresh().await;
+        });
     }
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         eprintln!("{}", "-".repeat(80));
@@ -1331,6 +1341,19 @@ impl LanguageServer for Backend {
                     data: None,
                 })?;
 
+        let new_text = format_program(program.clone(), id_generator.clone());
+        self.documents
+            .write()
+            .unwrap()
+            .insert(params.text_document.uri, new_text.clone());
+
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            let _ = client.semantic_tokens_refresh().await;
+        });
+
+        let doc_end = SourceLocation::end(text.clone());
+
         return Ok(Some(vec![TextEdit {
             range: Range {
                 start: Position {
@@ -1338,13 +1361,14 @@ impl LanguageServer for Backend {
                     character: 0,
                 },
                 end: Position {
-                    line: text.chars().filter(|c| *c == '\n').count() as u32,
-                    character: text.split('\n').last().unwrap().chars().count() as u32,
+                    line: doc_end.line /* +1 -1 */ as u32,
+                    character: 0 as u32,
                 },
             },
-            new_text: format_program(program.clone(), id_generator.clone()),
+            new_text,
         }]));
     }
+
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         eprintln!("{}", "-".repeat(80));
         eprintln!("{params:#?}");
