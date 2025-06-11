@@ -203,11 +203,6 @@ impl<'errors> Tokenizer<'errors> {
             self.unk_char_token.type_ =
                 TokenType::UnknownCharacters(self.unk_char_accumulator.clone());
             self.tokens.push(self.unk_char_token.clone());
-            self.errors.push(FleetError::from_token(
-                &self.unk_char_token,
-                "Unrecognized characters",
-                ErrorSeverity::Error,
-            ));
 
             self.unk_char_token.start = self.current_location;
             self.advance();
@@ -585,11 +580,6 @@ impl<'errors> Tokenizer<'errors> {
             self.unk_char_token.type_ =
                 TokenType::UnknownCharacters(self.unk_char_accumulator.clone());
             self.tokens.push(self.unk_char_token.clone());
-            self.errors.push(FleetError::from_token(
-                &self.unk_char_token,
-                "Unrecognized characters",
-                ErrorSeverity::Error,
-            ));
         }
 
         if let Some(token) = self.tokens.last_mut() {
@@ -643,6 +633,20 @@ impl<'errors> Tokenizer<'errors> {
                 } else {
                     break;
                 }
+            }
+        }
+
+        for token in &self.tokens {
+            if let Token {
+                type_: TokenType::UnknownCharacters(_),
+                ..
+            } = token
+            {
+                self.errors.push(FleetError::from_token(
+                    token,
+                    "Unrecognized characters",
+                    ErrorSeverity::Error,
+                ));
             }
         }
 

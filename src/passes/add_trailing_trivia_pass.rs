@@ -20,7 +20,7 @@ impl AddTrailingTriviaPass {
         Self { new_trivia }
     }
 
-    fn add_trailing_trivia_to_token(&mut self, token: &mut Token) {
+    pub fn visit_token(&mut self, token: &mut Token) {
         token.trailing_trivia.extend(self.new_trivia.clone());
         self.new_trivia.clear();
     }
@@ -68,7 +68,7 @@ impl AstVisitor for AddTrailingTriviaPass {
             semicolon_token, ..
         }: &mut ExternFunctionBody,
     ) -> Self::FunctionBodyOutput {
-        self.add_trailing_trivia_to_token(semicolon_token);
+        self.visit_token(semicolon_token);
     }
 
     fn visit_simple_binding(
@@ -84,7 +84,7 @@ impl AstVisitor for AddTrailingTriviaPass {
             semicolon_token, ..
         }: &mut ExpressionStatement,
     ) {
-        self.add_trailing_trivia_to_token(semicolon_token);
+        self.visit_token(semicolon_token);
     }
 
     fn visit_on_statement(&mut self, OnStatement { body, .. }: &mut OnStatement) {
@@ -97,7 +97,7 @@ impl AstVisitor for AddTrailingTriviaPass {
             close_brace_token, ..
         }: &mut BlockStatement,
     ) {
-        self.add_trailing_trivia_to_token(close_brace_token);
+        self.visit_token(close_brace_token);
     }
 
     fn visit_return_statement(
@@ -106,7 +106,7 @@ impl AstVisitor for AddTrailingTriviaPass {
             semicolon_token, ..
         }: &mut ReturnStatement,
     ) {
-        self.add_trailing_trivia_to_token(semicolon_token);
+        self.visit_token(semicolon_token);
     }
 
     fn visit_variable_definition_statement(
@@ -115,7 +115,7 @@ impl AstVisitor for AddTrailingTriviaPass {
             semicolon_token, ..
         }: &mut VariableDefinitionStatement,
     ) {
-        self.add_trailing_trivia_to_token(semicolon_token);
+        self.visit_token(semicolon_token);
     }
 
     fn visit_if_statement(
@@ -151,39 +151,39 @@ impl AstVisitor for AddTrailingTriviaPass {
     }
 
     fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
-        self.add_trailing_trivia_to_token(&mut break_stmt.break_token);
+        self.visit_token(&mut break_stmt.break_token);
     }
 
     fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
-        self.add_trailing_trivia_to_token(&mut skip_stmt.skip_token);
+        self.visit_token(&mut skip_stmt.skip_token);
     }
 
     fn visit_self_executor_host(&mut self, executor_host: &mut SelfExecutorHost) {
-        self.add_trailing_trivia_to_token(&mut executor_host.token);
+        self.visit_token(&mut executor_host.token);
     }
 
     fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) {
-        self.add_trailing_trivia_to_token(&mut executor.close_bracket_token);
+        self.visit_token(&mut executor.close_bracket_token);
     }
 
     fn visit_number_expression(&mut self, expression: &mut NumberExpression) {
-        self.add_trailing_trivia_to_token(&mut expression.token);
+        self.visit_token(&mut expression.token);
     }
 
     fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput {
-        self.add_trailing_trivia_to_token(&mut expression.token);
+        self.visit_token(&mut expression.token);
     }
 
     fn visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
-        self.add_trailing_trivia_to_token(&mut expression.close_paren_token);
+        self.visit_token(&mut expression.close_paren_token);
     }
 
     fn visit_grouping_expression(&mut self, expression: &mut GroupingExpression) {
-        self.add_trailing_trivia_to_token(&mut expression.close_paren_token);
+        self.visit_token(&mut expression.close_paren_token);
     }
 
     fn visit_variable_access_expression(&mut self, expression: &mut VariableAccessExpression) {
-        self.add_trailing_trivia_to_token(&mut expression.name_token);
+        self.visit_token(&mut expression.name_token);
     }
 
     fn visit_unary_expression(&mut self, expression: &mut UnaryExpression) {
@@ -206,14 +206,14 @@ impl AstVisitor for AddTrailingTriviaPass {
     }
 
     fn visit_i32_type(&mut self, i32_type: &mut I32Type) {
-        self.add_trailing_trivia_to_token(&mut i32_type.token);
+        self.visit_token(&mut i32_type.token);
     }
 
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
-        self.add_trailing_trivia_to_token(&mut unit_type.close_paren_token);
+        self.visit_token(&mut unit_type.close_paren_token);
     }
 
     fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
-        self.add_trailing_trivia_to_token(&mut bool_type.token);
+        self.visit_token(&mut bool_type.token);
     }
 }

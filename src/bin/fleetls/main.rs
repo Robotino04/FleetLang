@@ -935,7 +935,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
             id: _,
         }: &mut UnaryExpression,
     ) -> Self::ExpressionOutput {
-        self.build_comment_tokens_only(operator_token);
+        self.build_semantic_token(operator_token, SemanticTokenType::OPERATOR, vec![]);
         self.visit_expression(operand);
     }
 
@@ -964,7 +964,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
         }: &mut BinaryExpression,
     ) -> Self::ExpressionOutput {
         self.visit_expression(left);
-        self.build_comment_tokens_only(operator_token);
+        self.build_semantic_token(operator_token, SemanticTokenType::OPERATOR, vec![]);
         self.visit_expression(right);
     }
 

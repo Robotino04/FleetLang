@@ -20,7 +20,7 @@ impl AddLeadingTriviaPass {
         Self { new_trivia }
     }
 
-    fn add_leading_trivia_to_token(&mut self, token: &mut Token) {
+    pub fn visit_token(&mut self, token: &mut Token) {
         self.new_trivia.extend(token.leading_trivia.clone());
         token.leading_trivia = self.new_trivia.clone();
         self.new_trivia.clear();
@@ -47,7 +47,7 @@ impl AstVisitor for AddLeadingTriviaPass {
     }
 
     fn visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
-        self.add_leading_trivia_to_token(&mut function_definition.name_token);
+        self.visit_token(&mut function_definition.let_token);
     }
 
     fn visit_statement_function_body(
@@ -61,14 +61,14 @@ impl AstVisitor for AddLeadingTriviaPass {
         &mut self,
         ExternFunctionBody { at_token, .. }: &mut ExternFunctionBody,
     ) -> Self::FunctionBodyOutput {
-        self.add_leading_trivia_to_token(at_token);
+        self.visit_token(at_token);
     }
 
     fn visit_simple_binding(
         &mut self,
         SimpleBinding { name_token, .. }: &mut SimpleBinding,
     ) -> Self::SimpleBindingOutput {
-        self.add_leading_trivia_to_token(name_token);
+        self.visit_token(name_token);
     }
 
     fn visit_expression_statement(
@@ -79,7 +79,7 @@ impl AstVisitor for AddLeadingTriviaPass {
     }
 
     fn visit_on_statement(&mut self, OnStatement { on_token, .. }: &mut OnStatement) {
-        self.add_leading_trivia_to_token(on_token);
+        self.visit_token(on_token);
     }
 
     fn visit_block_statement(
@@ -88,14 +88,14 @@ impl AstVisitor for AddLeadingTriviaPass {
             open_brace_token, ..
         }: &mut BlockStatement,
     ) {
-        self.add_leading_trivia_to_token(open_brace_token);
+        self.visit_token(open_brace_token);
     }
 
     fn visit_return_statement(
         &mut self,
         ReturnStatement { return_token, .. }: &mut ReturnStatement,
     ) {
-        self.add_leading_trivia_to_token(return_token);
+        self.visit_token(return_token);
     }
 
     fn visit_variable_definition_statement(
@@ -106,33 +106,33 @@ impl AstVisitor for AddLeadingTriviaPass {
     }
 
     fn visit_if_statement(&mut self, IfStatement { if_token, .. }: &mut IfStatement) {
-        self.add_leading_trivia_to_token(if_token);
+        self.visit_token(if_token);
     }
 
     fn visit_while_loop_statement(
         &mut self,
         while_stmt: &mut WhileLoopStatement,
     ) -> Self::StatementOutput {
-        self.add_leading_trivia_to_token(&mut while_stmt.while_token);
+        self.visit_token(&mut while_stmt.while_token);
     }
 
     fn visit_for_loop_statement(
         &mut self,
         for_stmt: &mut ForLoopStatement,
     ) -> Self::StatementOutput {
-        self.add_leading_trivia_to_token(&mut for_stmt.for_token);
+        self.visit_token(&mut for_stmt.for_token);
     }
 
     fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
-        self.add_leading_trivia_to_token(&mut break_stmt.break_token);
+        self.visit_token(&mut break_stmt.break_token);
     }
 
     fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
-        self.add_leading_trivia_to_token(&mut skip_stmt.skip_token);
+        self.visit_token(&mut skip_stmt.skip_token);
     }
 
     fn visit_self_executor_host(&mut self, executor_host: &mut SelfExecutorHost) {
-        self.add_leading_trivia_to_token(&mut executor_host.token);
+        self.visit_token(&mut executor_host.token);
     }
 
     fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) {
@@ -140,27 +140,27 @@ impl AstVisitor for AddLeadingTriviaPass {
     }
 
     fn visit_number_expression(&mut self, expression: &mut NumberExpression) {
-        self.add_leading_trivia_to_token(&mut expression.token);
+        self.visit_token(&mut expression.token);
     }
 
     fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput {
-        self.add_leading_trivia_to_token(&mut expression.token);
+        self.visit_token(&mut expression.token);
     }
 
     fn visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
-        self.add_leading_trivia_to_token(&mut expression.name_token);
+        self.visit_token(&mut expression.name_token);
     }
 
     fn visit_grouping_expression(&mut self, expression: &mut GroupingExpression) {
-        self.add_leading_trivia_to_token(&mut expression.open_paren_token);
+        self.visit_token(&mut expression.open_paren_token);
     }
 
     fn visit_variable_access_expression(&mut self, expression: &mut VariableAccessExpression) {
-        self.add_leading_trivia_to_token(&mut expression.name_token);
+        self.visit_token(&mut expression.name_token);
     }
 
     fn visit_unary_expression(&mut self, expression: &mut UnaryExpression) {
-        self.add_leading_trivia_to_token(&mut expression.operator_token);
+        self.visit_token(&mut expression.operator_token);
     }
 
     fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
@@ -175,18 +175,18 @@ impl AstVisitor for AddLeadingTriviaPass {
         &mut self,
         expression: &mut VariableAssignmentExpression,
     ) {
-        self.add_leading_trivia_to_token(&mut expression.name_token);
+        self.visit_token(&mut expression.name_token);
     }
 
     fn visit_i32_type(&mut self, i32_type: &mut I32Type) {
-        self.add_leading_trivia_to_token(&mut i32_type.token);
+        self.visit_token(&mut i32_type.token);
     }
 
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
-        self.add_leading_trivia_to_token(&mut unit_type.open_paren_token);
+        self.visit_token(&mut unit_type.open_paren_token);
     }
 
     fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
-        self.add_leading_trivia_to_token(&mut bool_type.token);
+        self.visit_token(&mut bool_type.token);
     }
 }
