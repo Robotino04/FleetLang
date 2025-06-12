@@ -2,7 +2,7 @@ use crate::{
     ast::{
         AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement,
         CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, IntType, IfStatement,
         NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
         SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
@@ -178,8 +178,8 @@ impl AstVisitor for AddLeadingTriviaPass {
         self.visit_token(&mut expression.name_token);
     }
 
-    fn visit_i32_type(&mut self, i32_type: &mut I32Type) {
-        self.visit_token(&mut i32_type.token);
+    fn visit_int_type(&mut self, int_type: &mut IntType) {
+        self.visit_token(&mut int_type.token);
     }
 
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {

@@ -9,7 +9,7 @@ use fleet::ast::{
     AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression,
     BoolType, BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody,
     ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, HasID,
-    I32Type, IfStatement, NodeID, NumberExpression, OnStatement, PerNodeData, ReturnStatement,
+    IfStatement, IntType, NodeID, NumberExpression, OnStatement, PerNodeData, ReturnStatement,
     SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor,
     UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
     VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
@@ -89,21 +89,12 @@ fn token_length(start: SourceLocation, end: SourceLocation) -> u32 {
     (end.index - start.index) as u32
 }
 
-fn stringify_runtime_type(type_: RuntimeType) -> &'static str {
-    match type_ {
-        RuntimeType::I32 => "i32",
-        RuntimeType::Unit => "()",
-        RuntimeType::Boolean => "bool",
-        RuntimeType::Unknown => "/* type unknown */",
-    }
-}
-
 impl Backend {
     fn format_option_type(&self, type_: Option<Option<RuntimeType>>) -> String {
         type_
             .as_ref()
             .map(|td| {
-                td.map(|t| stringify_runtime_type(t).to_string())
+                td.map(|t| t.to_string())
                     .unwrap_or("/* missing type data*/".to_string())
             })
             .unwrap_or("/* type data unavailable */".to_string())
@@ -111,16 +102,20 @@ impl Backend {
     fn get_type_as_hover(
         &self,
         id: NodeID,
-        type_data: &Option<PerNodeData<RuntimeType>>,
+        type_data: &Option<PerNodeData<Rc<RefCell<RuntimeType>>>>,
     ) -> String {
-        self.format_option_type(type_data.as_ref().map(|td| td.get(&id).cloned()))
+        self.format_option_type(
+            type_data
+                .as_ref()
+                .map(|td| td.get(&id).map(|id_t| id_t.borrow().clone())),
+        )
     }
     fn generate_node_hover(
         &self,
         node: impl Into<AstNode>,
         variable_data: &Option<PerNodeData<Rc<RefCell<Variable>>>>,
         function_data: &Option<PerNodeData<Rc<RefCell<Function>>>>,
-        type_data: &Option<PerNodeData<RuntimeType>>,
+        type_data: &Option<PerNodeData<Rc<RefCell<RuntimeType>>>>,
     ) -> (String, String) {
         match node.into() {
             AstNode::Program(_) => ("".to_string(), "program".to_string()),
@@ -407,7 +402,8 @@ impl Backend {
             }) => {
                 let ref_func = function_data.as_ref().map(|fd| fd.get(&id));
                 let return_type = self.format_option_type(
-                    ref_func.map(|func| func.map(|func| func.borrow().return_type.clone())),
+                    ref_func
+                        .map(|func| func.map(|func| func.borrow().return_type.borrow().clone())),
                 );
                 let parameters = ref_func
                     .map(|func| {
@@ -416,7 +412,7 @@ impl Backend {
                                 func.borrow()
                                     .parameter_types
                                     .iter()
-                                    .map(|param| stringify_runtime_type(*param).to_string()),
+                                    .map(|param| param.borrow().to_string()),
                                 ", ".to_string(),
                             )
                             .collect::<String>()
@@ -456,7 +452,11 @@ impl Backend {
                     "variable assignment".to_string(),
                 )
             }
-            AstNode::I32Type(I32Type { token: _, id: _ }) => (format!("i32"), "type".to_string()),
+            AstNode::IntType(IntType {
+                token: _,
+                type_,
+                id: _,
+            }) => (type_.to_string(), "type".to_string()),
             AstNode::UnitType(UnitType {
                 open_paren_token: _,
                 close_paren_token: _,
@@ -473,7 +473,7 @@ impl Backend {
         node_hierarchy: &Vec<AstNode>,
         variable_data: &Option<PerNodeData<Rc<RefCell<Variable>>>>,
         function_data: &Option<PerNodeData<Rc<RefCell<Function>>>>,
-        type_data: &Option<PerNodeData<RuntimeType>>,
+        type_data: &Option<PerNodeData<Rc<RefCell<RuntimeType>>>>,
         terminations: &Option<PerNodeData<FunctionTermination>>,
         hovered_token: &Option<Token>,
     ) -> String {
@@ -987,7 +987,14 @@ impl AstVisitor for ExtractSemanticTokensPass {
         self.visit_expression(right);
     }
 
-    fn visit_i32_type(&mut self, I32Type { token, id: _ }: &mut I32Type) {
+    fn visit_int_type(
+        &mut self,
+        IntType {
+            token,
+            type_: _,
+            id: _,
+        }: &mut IntType,
+    ) {
         self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
     }
 

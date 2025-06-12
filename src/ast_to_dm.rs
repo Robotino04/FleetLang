@@ -2,7 +2,7 @@ use crate::{
     ast::{
         AstVisitor, BinaryExpression, BlockStatement, BoolType, BreakStatement, CastExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, I32Type, IfStatement, NumberExpression,
+        FunctionDefinition, GroupingExpression, IntType, IfStatement, NumberExpression,
         OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
         StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
@@ -86,7 +86,10 @@ impl AstToDocumentModelConverter {
             Keyword::On => "on",
             Keyword::Self_ => "self",
             Keyword::Let => "let",
+            Keyword::I8 => "i8",
+            Keyword::I16 => "i16",
             Keyword::I32 => "i32",
+            Keyword::I64 => "i64",
             Keyword::Bool => "bool",
             Keyword::As => "as",
             Keyword::True => "true",
@@ -749,7 +752,7 @@ impl AstVisitor for AstToDocumentModelConverter {
         )
     }
 
-    fn visit_i32_type(&mut self, type_: &mut I32Type) -> Self::TypeOutput {
+    fn visit_int_type(&mut self, type_: &mut IntType) -> Self::TypeOutput {
         self.token_to_element(&type_.token)
     }
 

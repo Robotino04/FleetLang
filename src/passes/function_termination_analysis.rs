@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement
+        AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, IntType, IfStatement, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement
     },
     infra::{ErrorSeverity, FleetError},
     tokenizer::SourceLocation,
@@ -382,7 +382,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         return term;
     }
 
-    fn visit_i32_type(&mut self, type_: &mut I32Type) -> Self::TypeOutput {
+    fn visit_int_type(&mut self, type_: &mut IntType) -> Self::TypeOutput {
         self.termination
             .insert_node(type_, FunctionTermination::DoesntTerminate);
         return FunctionTermination::DoesntTerminate;

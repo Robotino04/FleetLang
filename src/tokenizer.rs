@@ -5,7 +5,9 @@ use crate::infra::{ErrorSeverity, FleetError};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Token {
     pub type_: TokenType,
+    /// inclusive
     pub start: SourceLocation,
+    /// non-inclusive
     pub end: SourceLocation,
 
     // https://langdev.stackexchange.com/questions/2289/preserving-comments-in-ast
@@ -77,7 +79,10 @@ pub enum Keyword {
     Self_,
 
     Let,
+    I8,
+    I16,
     I32,
+    I64,
     Bool,
     As,
 
@@ -132,7 +137,7 @@ impl SourceLocation {
         SourceLocation {
             index: src.as_ref().len() - 1,
             line: src.as_ref().chars().filter(|c| *c == '\n').count() + 1,
-            column: src.as_ref().split("\n").last().unwrap_or("").len(),
+            column: src.as_ref().split("\n").last().unwrap_or("").len() + 1,
         }
     }
 }
@@ -483,7 +488,10 @@ impl<'errors> Tokenizer<'errors> {
 
                             "extern" => TokenType::Keyword(Keyword::Extern),
 
+                            "i8" => TokenType::Keyword(Keyword::I8),
+                            "i16" => TokenType::Keyword(Keyword::I16),
                             "i32" => TokenType::Keyword(Keyword::I32),
+                            "i64" => TokenType::Keyword(Keyword::I64),
                             "bool" => TokenType::Keyword(Keyword::Bool),
                             "as" => TokenType::Keyword(Keyword::As),
 

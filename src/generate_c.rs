@@ -1,13 +1,16 @@
 use itertools::Itertools;
 
-use crate::ast::{
-    AstNode, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
-    CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
-    FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
-    NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, SimpleBinding,
-    StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
-    VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-    WhileLoopStatement,
+use crate::{
+    ast::{
+        AstNode, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
+        CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement, IntType,
+        NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        WhileLoopStatement,
+    },
+    passes::type_propagation::RuntimeType,
 };
 
 fn generate_function_declaration(function: &FunctionDefinition, mut prefix: String) -> String {
@@ -353,7 +356,22 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
         }) => {
             return format!("(fleet_{name} = {})", generate_c(*right),);
         }
-        AstNode::I32Type(I32Type { token: _, id: _ }) => "int32_t".to_string(),
+        AstNode::IntType(IntType {
+            token: _,
+            type_,
+            id: _,
+        }) => match type_ {
+            RuntimeType::I8 => "int8_t",
+            RuntimeType::I16 => "int16_t",
+            RuntimeType::I32 => "int32_t",
+            RuntimeType::I64 => "int64_t",
+            RuntimeType::UnsizedInt => unreachable!("not sized int type"),
+            RuntimeType::Boolean => unreachable!("not sized int type"),
+            RuntimeType::Unit => unreachable!("not sized int type"),
+            RuntimeType::Unknown => unreachable!("not sized int type"),
+            RuntimeType::Error => unreachable!("not sized int type"),
+        }
+        .to_string(),
         AstNode::UnitType(UnitType {
             open_paren_token: _,
             close_paren_token: _,

@@ -3,14 +3,14 @@ use crate::{
         BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
         BreakStatement, CastExpression, Executor, ExecutorHost, Expression, ExpressionStatement,
         ExternFunctionBody, ForLoopStatement, FunctionBody, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, I32Type, IfStatement, NodeID, NumberExpression,
+        FunctionDefinition, GroupingExpression, IfStatement, IntType, NodeID, NumberExpression,
         OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
         Statement, StatementFunctionBody, ThreadExecutor, Type, UnaryExpression, UnaryOperation,
         UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
-    passes::type_propagation::{FunctionID, VariableID},
+    passes::type_propagation::{FunctionID, RuntimeType, VariableID},
     tokenizer::{Keyword, Token, TokenType},
 };
 
@@ -840,8 +840,24 @@ impl<'errors> Parser<'errors> {
 
     pub fn parse_type(&mut self) -> Result<Type> {
         match self.current_token_type() {
-            Some(TokenType::Keyword(Keyword::I32)) => Ok(Type::I32(I32Type {
+            Some(TokenType::Keyword(Keyword::I8)) => Ok(Type::Int(IntType {
+                token: expect!(self, TokenType::Keyword(Keyword::I8))?,
+                type_: RuntimeType::I8,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::Keyword(Keyword::I16)) => Ok(Type::Int(IntType {
+                token: expect!(self, TokenType::Keyword(Keyword::I16))?,
+                type_: RuntimeType::I16,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::Keyword(Keyword::I32)) => Ok(Type::Int(IntType {
                 token: expect!(self, TokenType::Keyword(Keyword::I32))?,
+                type_: RuntimeType::I32,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::Keyword(Keyword::I64)) => Ok(Type::Int(IntType {
+                token: expect!(self, TokenType::Keyword(Keyword::I64))?,
+                type_: RuntimeType::I64,
                 id: self.id_generator.next_node_id(),
             })),
             Some(TokenType::Keyword(Keyword::Bool)) => Ok(Type::Bool(BoolType {

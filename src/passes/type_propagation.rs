@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, error::Error, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, error::Error, fmt::Display, rc::Rc};
 
 use itertools::{EitherOrBoth, Itertools};
 
@@ -6,8 +6,8 @@ use crate::{
     ast::{
         AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression,
         BoolType, BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody,
-        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
-        IfStatement, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement,
+        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression,
+        IfStatement, IntType, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor,
         UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
@@ -20,19 +20,106 @@ type AnyResult<T> = ::core::result::Result<T, Box<dyn Error>>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeType {
+    I8,
+    I16,
     I32,
+    I64,
+    UnsizedInt,
     Boolean,
     Unit,
     Unknown,
+    Error,
+}
+
+impl Display for RuntimeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            RuntimeType::I8 => "i8",
+            RuntimeType::I16 => "i16",
+            RuntimeType::I32 => "i32",
+            RuntimeType::I64 => "i64",
+            RuntimeType::UnsizedInt => "{unsized int}",
+            RuntimeType::Unit => "()",
+            RuntimeType::Boolean => "bool",
+            RuntimeType::Unknown => "{unknown}",
+            RuntimeType::Error => "{error}",
+        })?;
+        Ok(())
+    }
 }
 
 impl RuntimeType {
     pub fn is_numeric(self) -> bool {
         match self {
+            RuntimeType::I8 => true,
+            RuntimeType::I16 => true,
             RuntimeType::I32 => true,
+            RuntimeType::I64 => true,
+            RuntimeType::UnsizedInt => true,
             RuntimeType::Unit => false,
             RuntimeType::Boolean => false,
             RuntimeType::Unknown => false,
+            RuntimeType::Error => false,
+        }
+    }
+    pub fn is_boolean(self) -> bool {
+        match self {
+            RuntimeType::I8 => false,
+            RuntimeType::I16 => false,
+            RuntimeType::I32 => false,
+            RuntimeType::I64 => false,
+            RuntimeType::UnsizedInt => false,
+            RuntimeType::Boolean => true,
+            RuntimeType::Unit => false,
+            RuntimeType::Unknown => false,
+            RuntimeType::Error => false,
+        }
+    }
+
+    /// true means the specialization succeeded
+    pub fn specialize_int_size(&mut self) -> bool {
+        match self {
+            RuntimeType::I8 => true,
+            RuntimeType::I16 => true,
+            RuntimeType::I32 => true,
+            RuntimeType::I64 => true,
+            RuntimeType::UnsizedInt => {
+                *self = RuntimeType::I32;
+                true
+            }
+            RuntimeType::Boolean => false,
+            RuntimeType::Unit => false,
+            RuntimeType::Unknown => false,
+            RuntimeType::Error => true,
+        }
+    }
+
+    /// true means a specialization happened
+    pub fn specialize_from(
+        this: &Rc<RefCell<RuntimeType>>,
+        other: &Rc<RefCell<RuntimeType>>,
+    ) -> bool {
+        let mut this_borrow = this.borrow_mut();
+        match *this_borrow {
+            RuntimeType::I8 => false,
+            RuntimeType::I16 => false,
+            RuntimeType::I32 => false,
+            RuntimeType::I64 => false,
+            RuntimeType::UnsizedInt => {
+                if other.borrow().is_numeric() {
+                    *this_borrow = *other.borrow();
+                    true
+                } else {
+                    false
+                }
+            }
+            RuntimeType::Boolean => false,
+            RuntimeType::Unit => false,
+            RuntimeType::Unknown => {
+                *this_borrow = *other.borrow();
+                true
+            }
+            RuntimeType::Error => true,
         }
     }
 }
@@ -46,15 +133,15 @@ pub struct FunctionID(pub u64);
 #[derive(Clone, Debug)]
 pub struct Variable {
     pub name: String,
-    pub type_: RuntimeType,
+    pub type_: Rc<RefCell<RuntimeType>>,
     pub id: VariableID,
 }
 
 #[derive(Clone, Debug)]
 pub struct Function {
     pub name: String,
-    pub return_type: RuntimeType,
-    pub parameter_types: Vec<RuntimeType>,
+    pub return_type: Rc<RefCell<RuntimeType>>, // TODO: type inference
+    pub parameter_types: Vec<Rc<RefCell<RuntimeType>>>,
     pub id: FunctionID,
 }
 
@@ -100,7 +187,7 @@ impl VariableScopeStack {
 }
 
 pub struct TypePropagator<'a> {
-    types: PerNodeData<RuntimeType>,
+    types: PerNodeData<Rc<RefCell<RuntimeType>>>,
     errors: &'a mut Vec<FleetError>,
     variable_scopes: VariableScopeStack,
     referenced_variable: PerNodeData<Rc<RefCell<Variable>>>,
@@ -175,7 +262,7 @@ impl<'a> TypePropagator<'a> {
             self.errors.push(FleetError::from_node(
                 node,
                 format!(
-                    "Expected {} to be {}. Got value of type {:?} instead",
+                    "Expected {} to be {}. Got value of type {} instead",
                     expression_type.as_ref(),
                     expected_name.as_ref(),
                     actual_type
@@ -188,20 +275,20 @@ impl<'a> TypePropagator<'a> {
 
 impl<'errors> AstVisitor for TypePropagator<'errors> {
     type ProgramOutput = (
-        PerNodeData<RuntimeType>,
+        PerNodeData<Rc<RefCell<RuntimeType>>>,
         PerNodeData<Rc<RefCell<Variable>>>,
         PerNodeData<Rc<RefCell<Function>>>,
     );
     type FunctionDefinitionOutput = ();
     type FunctionBodyOutput = ();
-    type SimpleBindingOutput = RuntimeType;
+    type SimpleBindingOutput = Rc<RefCell<RuntimeType>>;
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
 
-    type ExpressionOutput = RuntimeType;
+    type ExpressionOutput = Rc<RefCell<RuntimeType>>;
 
-    type TypeOutput = RuntimeType;
+    type TypeOutput = Rc<RefCell<RuntimeType>>;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         for f in &mut program.functions {
@@ -289,19 +376,19 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         let defined_type = self.visit_type(type_);
         if let Err(_) = self.variable_scopes.try_insert(Variable {
             name: name.clone(),
-            type_: defined_type,
+            type_: defined_type.clone(),
             id: self.id_generator.next_variable_id(),
         }) {
             self.errors.push(FleetError::from_node(
                 simple_binding_clone,
                 format!(
-                    "A variable named {:?} was already defined in this scope",
+                    "A variable named {} was already defined in this scope",
                     name.clone()
                 ),
                 ErrorSeverity::Error,
             ));
         }
-        if defined_type == RuntimeType::Unit {
+        if *defined_type.borrow() == RuntimeType::Unit {
             self.errors.push(FleetError::from_node(
                 type_.clone(),
                 format!("Variables cannot have Unit type"),
@@ -327,7 +414,8 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             id: _,
         }: &mut ExpressionStatement,
     ) -> Self::StatementOutput {
-        self.visit_expression(expression);
+        let type_ = self.visit_expression(expression);
+        type_.borrow_mut().specialize_int_size();
     }
 
     fn visit_on_statement(
@@ -375,21 +463,31 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         let this_type = value
             .as_mut()
             .map(|value| self.visit_expression(value))
-            .unwrap_or(RuntimeType::Unit);
+            .unwrap_or(Rc::new(RefCell::new(RuntimeType::Unit)));
 
-        self.types.insert(*id, this_type);
+        self.types.insert(*id, this_type.clone());
 
         let expected_type = self
             .current_function
             .as_ref()
             .expect("Return statements should only appear inside functions")
             .borrow()
-            .return_type;
+            .return_type
+            .clone();
+
+        RuntimeType::specialize_from(&this_type, &expected_type);
+        RuntimeType::specialize_from(&expected_type, &this_type);
+        this_type.borrow_mut().specialize_int_size();
+        expected_type.borrow_mut().specialize_int_size();
 
         if this_type != expected_type {
             self.errors.push(FleetError::from_node(
                 stmt_clone.clone(),
-                format!("Expected this functions to return {expected_type:?}. Got {this_type:?}"),
+                format!(
+                    "Expected this functions to return {}. Got {}",
+                    expected_type.borrow(),
+                    this_type.borrow()
+                ),
                 ErrorSeverity::Error,
             ));
         }
@@ -412,13 +510,21 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         // evaluated before the binding so it can potentially access variables that gets shadowed
         // by this binding
         let value_type = self.visit_expression(value);
-
         let defined_type = self.visit_simple_binding(binding);
+
+        RuntimeType::specialize_from(&defined_type, &value_type);
+        RuntimeType::specialize_from(&value_type, &defined_type);
+
         if value_type != defined_type {
             self.errors.push(FleetError::from_node(
                 stmt_clone.clone(),
-                format!("Variable {:?} is defined as type {defined_type:?}, but the initializer value has type {value_type:?}", binding.name),
-                ErrorSeverity::Error
+                format!(
+                    "Variable {:?} is defined as type {}, but the initializer value has type {}",
+                    binding.name,
+                    defined_type.borrow(),
+                    value_type.borrow()
+                ),
+                ErrorSeverity::Error,
             ));
         }
     }
@@ -437,32 +543,22 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         let cond_type = self.visit_expression(condition);
 
         self.generate_mismatched_type_error_if(
-            !match cond_type {
-                RuntimeType::I32 => false,
-                RuntimeType::Unit => false,
-                RuntimeType::Boolean => true,
-                RuntimeType::Unknown => false,
-            },
+            !cond_type.borrow().is_boolean(),
             condition.clone(),
             "if condition",
             "of type bool",
-            cond_type,
+            *cond_type.borrow(),
         );
 
         self.visit_statement(if_body);
         for (_elif_token, elif_condition, elif_body) in elifs {
             let elif_type = self.visit_expression(elif_condition);
             self.generate_mismatched_type_error_if(
-                !match elif_type {
-                    RuntimeType::I32 => false,
-                    RuntimeType::Unit => false,
-                    RuntimeType::Boolean => true,
-                    RuntimeType::Unknown => false,
-                },
+                !elif_type.borrow().is_boolean(),
                 elif_condition.clone(),
                 "elif condition",
                 "of type bool",
-                elif_type,
+                *elif_type.borrow(),
             );
 
             self.visit_statement(elif_body);
@@ -479,16 +575,11 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         let cond_type = self.visit_expression(&mut while_stmt.condition);
 
         self.generate_mismatched_type_error_if(
-            !match cond_type {
-                RuntimeType::I32 => false,
-                RuntimeType::Unit => false,
-                RuntimeType::Boolean => true,
-                RuntimeType::Unknown => false,
-            },
+            !cond_type.borrow().is_boolean(),
             while_stmt.condition.clone(),
             "while condition",
             "of type bool",
-            cond_type,
+            *cond_type.borrow(),
         );
         self.visit_statement(&mut while_stmt.body);
     }
@@ -513,16 +604,11 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         if let Some(con) = condition {
             let cond_type = self.visit_expression(con);
             self.generate_mismatched_type_error_if(
-                !match cond_type {
-                    RuntimeType::I32 => false,
-                    RuntimeType::Unit => false,
-                    RuntimeType::Boolean => true,
-                    RuntimeType::Unknown => false,
-                },
+                !cond_type.borrow().is_boolean(),
                 con.clone(),
                 "for condition",
                 "of type bool",
-                cond_type,
+                *cond_type.borrow(),
             );
         }
         if let Some(inc) = incrementer {
@@ -575,16 +661,11 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         let index_type = self.visit_expression(index);
 
         self.generate_mismatched_type_error_if(
-            !match index_type {
-                RuntimeType::I32 => true,
-                RuntimeType::Unit => false,
-                RuntimeType::Boolean => false,
-                RuntimeType::Unknown => false,
-            },
+            !index_type.borrow().is_numeric(),
             index.clone(),
             "thread index",
             "numeric",
-            index_type,
+            *index_type.borrow(),
         );
     }
 
@@ -597,8 +678,9 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             token: _,
             id: _,
         } = expression;
-        self.types.insert_node(expression, RuntimeType::I32);
-        return RuntimeType::I32;
+        let type_ = Rc::new(RefCell::new(RuntimeType::UnsizedInt));
+        self.types.insert_node(expression, type_.clone());
+        return type_;
     }
 
     fn visit_bool_expression(
@@ -610,8 +692,9 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             token: _,
             id: _,
         } = expression;
-        self.types.insert_node(expression, RuntimeType::Boolean);
-        return RuntimeType::Boolean;
+        let type_ = Rc::new(RefCell::new(RuntimeType::Boolean));
+        self.types.insert_node(expression, type_.clone());
+        return type_;
     }
 
     fn visit_function_call_expression(
@@ -638,7 +721,8 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             for (arg, _comma) in &mut expression.arguments {
                 self.visit_expression(arg);
             }
-            return RuntimeType::Unknown;
+
+            return Rc::new(RefCell::new(RuntimeType::Error));
         };
         self.referenced_function.insert(*id, ref_function.clone());
         let ref_function = ref_function.borrow();
@@ -647,20 +731,24 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
 
         let self_shared = RefCell::new(&mut *self);
 
-        expression
+        for (i, types) in expression
             .arguments
             .iter_mut()
             .map(|(arg, _comma)| (self_shared.borrow_mut().visit_expression(arg), arg))
             .zip_longest(ref_function.parameter_types.iter())
             .enumerate()
-            .for_each(|(i, types)| match types {
+        {
+            match types {
                 EitherOrBoth::Both((arg_type, arg), param_type) => {
+                    RuntimeType::specialize_from(&arg_type, param_type);
                     if arg_type != *param_type {
                         self_shared.borrow_mut().errors.push(FleetError::from_node(
                             arg.clone(),
                             format!(
-                                "{name:?} expects a value of type {param_type:?}\
-                                as argument {i}. Got {arg_type:?}"
+                                "{name:?} expects a value of type {} as argument {}. Got {}",
+                                param_type.borrow(),
+                                i + 1,
+                                arg_type.borrow()
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -677,16 +765,19 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                     self_shared.borrow_mut().errors.push(FleetError::from_token(
                         close_paren_token,
                         format!(
-                            "{name:?} is missing parameter {} of type {param_type:?}",
-                            i + 1
+                            "{name:?} is missing parameter {} of type {}",
+                            i + 1,
+                            param_type.borrow()
                         ),
                         ErrorSeverity::Error,
                     ));
                 }
-            });
+            }
+        }
 
-        self.types.insert_node(expression, ref_function.return_type);
-        return ref_function.return_type;
+        self.types
+            .insert_node(expression, ref_function.return_type.clone());
+        return ref_function.return_type.clone();
     }
 
     fn visit_grouping_expression(
@@ -694,8 +785,8 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         expression: &mut GroupingExpression,
     ) -> Self::ExpressionOutput {
         let type_ = self.visit_expression(&mut expression.subexpression);
-        self.types.insert_node(expression, type_);
-        return type_;
+        self.types.insert_node(expression, type_.clone());
+        return type_.clone();
     }
 
     fn visit_variable_access_expression(
@@ -714,13 +805,12 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                 format!("No variable named {name:?} is defined"),
                 ErrorSeverity::Error,
             ));
-            return RuntimeType::Unknown;
+            return Rc::new(RefCell::new(RuntimeType::Unknown));
         };
         self.referenced_variable.insert(*id, ref_variable.clone());
-        let ref_variable = ref_variable.borrow();
 
-        self.types.insert(*id, ref_variable.type_);
-        return ref_variable.type_;
+        self.types.insert(*id, ref_variable.borrow().type_.clone());
+        return ref_variable.borrow().type_.clone();
     }
 
     fn visit_unary_expression(
@@ -736,11 +826,27 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         } = expression;
 
         let type_ = self.visit_expression(operand);
+        let this_type = match operation {
+            UnaryOperation::BitwiseNot => type_.clone(),
+            UnaryOperation::LogicalNot => {
+                type_.borrow_mut().specialize_int_size();
+                Rc::new(RefCell::new(RuntimeType::Boolean))
+            }
+            UnaryOperation::Negate => type_.clone(),
+        };
 
         let is_ok = match operation {
-            UnaryOperation::BitwiseNot => type_.is_numeric(),
-            UnaryOperation::LogicalNot => type_.is_numeric() || type_ == RuntimeType::Boolean,
-            UnaryOperation::Negate => type_.is_numeric(),
+            UnaryOperation::BitwiseNot => {
+                type_.borrow().is_numeric() || *type_.borrow() == RuntimeType::Unknown
+            }
+            UnaryOperation::LogicalNot => {
+                type_.borrow().is_numeric()
+                    || type_.borrow().is_boolean()
+                    || *type_.borrow() == RuntimeType::Unknown
+            }
+            UnaryOperation::Negate => {
+                type_.borrow().is_numeric() || *type_.borrow() == RuntimeType::Unknown
+            }
         };
 
         if !is_ok {
@@ -751,17 +857,11 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             };
             self.errors.push(FleetError::from_node(
                 expression_clone,
-                format! {"Cannot {verb} {type_:?}. Expected {expected}."},
+                format!("Cannot {verb} {}. Expected {expected}.", type_.borrow()),
                 ErrorSeverity::Error,
             ));
         }
-
-        let this_type = match operation {
-            UnaryOperation::BitwiseNot => type_,
-            UnaryOperation::LogicalNot => RuntimeType::Boolean,
-            UnaryOperation::Negate => type_,
-        };
-        self.types.insert(*id, this_type);
+        self.types.insert(*id, this_type.clone());
         return this_type;
     }
 
@@ -777,38 +877,44 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         let from_type = self.visit_expression(operand);
         let to_type = self.visit_type(type_);
 
-        match (from_type, to_type) {
-            (RuntimeType::I32, RuntimeType::I32)
-            | (RuntimeType::Boolean, RuntimeType::Boolean)
-            | (RuntimeType::Unit, RuntimeType::Unit) => {
+        let from_clone = *from_type.borrow();
+        let to_clone = *to_type.borrow();
+        use RuntimeType::*;
+        match (from_clone, to_clone) {
+            (_, Error) | (Error, _) => {}
+
+            (I8, I8) | (I16, I16) | (I32, I32) | (I64, I64) | (Boolean, Boolean) | (Unit, Unit) => {
                 self.errors.push(FleetError::from_node(
                     expression_clone,
-                    format!("Casting {from_type:?} to itself is redundant"),
+                    format!("Casting {} to itself is redundant", from_type.borrow()),
                     ErrorSeverity::Warning,
                 ));
             }
-            (RuntimeType::I32, RuntimeType::I32) => {} // here for future iX to iX casts
+            (I8 | I16 | I32 | I64 | UnsizedInt, I8 | I16 | I32 | I64 | UnsizedInt) => {
+                RuntimeType::specialize_from(&from_type, &to_type);
+            }
 
-            (RuntimeType::I32, RuntimeType::Boolean) => {}
-            (RuntimeType::Boolean, RuntimeType::I32) => {}
+            (I8 | I16 | I32 | I64 | UnsizedInt, Boolean) => {
+                from_type.borrow_mut().specialize_int_size();
+            }
+            (Boolean, I8 | I16 | I32 | I64 | UnsizedInt) => {}
 
-            (_, RuntimeType::Unit) | (RuntimeType::Unit, _) => {
+            (_, Unit) | (Unit, _) => {
                 self.errors.push(FleetError::from_node(
                     expression_clone,
                     format!("Cannot cast to or from Unit"),
                     ErrorSeverity::Error,
                 ));
             }
-            (_, RuntimeType::Unknown) | (RuntimeType::Unknown, _) => {
-                self.errors.push(FleetError::from_node(
-                    expression_clone,
-                    format!("Type of this expression is unknown"),
-                    ErrorSeverity::Error,
-                ));
+            (_, Unknown) => {
+                RuntimeType::specialize_from(&to_type, &from_type);
+            }
+            (Unknown, _) => {
+                RuntimeType::specialize_from(&from_type, &to_type);
             }
         }
 
-        self.types.insert(*id, to_type);
+        self.types.insert(*id, to_type.clone());
         return to_type;
     }
 
@@ -827,6 +933,12 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         let left_type = self.visit_expression(left);
         let right_type = self.visit_expression(right);
 
+        RuntimeType::specialize_from(&right_type, &left_type);
+        RuntimeType::specialize_from(&left_type, &right_type);
+
+        right_type.borrow_mut().specialize_int_size();
+        left_type.borrow_mut().specialize_int_size();
+
         let is_left_ok = match operation {
             BinaryOperation::Add
             | BinaryOperation::Subtract
@@ -836,12 +948,17 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             | BinaryOperation::GreaterThan
             | BinaryOperation::GreaterThanOrEqual
             | BinaryOperation::LessThan
-            | BinaryOperation::LessThanOrEqual => right_type.is_numeric(),
+            | BinaryOperation::LessThanOrEqual => {
+                left_type.borrow().is_numeric() || *left_type.borrow() == RuntimeType::Unknown
+            }
             BinaryOperation::Equal | BinaryOperation::NotEqual => {
-                right_type.is_numeric() || right_type == RuntimeType::Boolean
+                left_type.borrow().is_numeric()
+                    || *left_type.borrow() == RuntimeType::Boolean
+                    || *left_type.borrow() == RuntimeType::Unknown
             }
             BinaryOperation::LogicalAnd | BinaryOperation::LogicalOr => {
-                left_type == RuntimeType::Boolean
+                *left_type.borrow() == RuntimeType::Boolean
+                    || *left_type.borrow() == RuntimeType::Unknown
             }
         };
 
@@ -854,12 +971,17 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             | BinaryOperation::GreaterThan
             | BinaryOperation::GreaterThanOrEqual
             | BinaryOperation::LessThan
-            | BinaryOperation::LessThanOrEqual => right_type.is_numeric(),
+            | BinaryOperation::LessThanOrEqual => {
+                right_type.borrow().is_numeric() || *right_type.borrow() == RuntimeType::Unknown
+            }
             BinaryOperation::Equal | BinaryOperation::NotEqual => {
-                right_type.is_numeric() || right_type == RuntimeType::Boolean
+                right_type.borrow().is_numeric()
+                    || *right_type.borrow() == RuntimeType::Boolean
+                    || *right_type.borrow() == RuntimeType::Unknown
             }
             BinaryOperation::LogicalAnd | BinaryOperation::LogicalOr => {
-                right_type == RuntimeType::Boolean
+                *right_type.borrow() == RuntimeType::Boolean
+                    || *right_type.borrow() == RuntimeType::Unknown
             }
         };
 
@@ -886,14 +1008,20 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             if !is_left_ok {
                 self.errors.push(FleetError::from_node(
                     (**left).clone(),
-                    format!("Cannot {verb} {left_type:?}. Expected {l_expected}."),
+                    format!(
+                        "Cannot {verb} {}. Expected {l_expected}.",
+                        left_type.borrow()
+                    ),
                     ErrorSeverity::Error,
                 ));
             }
             if !is_right_ok {
                 self.errors.push(FleetError::from_node(
                     (**right).clone(),
-                    format!("Cannot {verb} {preposition} {right_type:?}. Expected {r_expected}."),
+                    format!(
+                        "Cannot {verb} {preposition} {}. Expected {r_expected}.",
+                        right_type.borrow()
+                    ),
                     ErrorSeverity::Error,
                 ));
             }
@@ -901,8 +1029,13 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                 self.errors.push(FleetError::from_node(
                     expression_clone,
                     format!(
-                        "Cannot {} {:?} {} {:?}. Expected {} and {}.",
-                        verb, left_type, preposition, right_type, l_expected, r_expected
+                        "Cannot {} {} {} {}. Expected {} and {}.",
+                        verb,
+                        left_type.borrow(),
+                        preposition,
+                        right_type.borrow(),
+                        l_expected,
+                        r_expected
                     ),
                     ErrorSeverity::Error,
                 ));
@@ -922,9 +1055,9 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             | BinaryOperation::Equal
             | BinaryOperation::NotEqual
             | BinaryOperation::LogicalAnd
-            | BinaryOperation::LogicalOr => RuntimeType::Boolean,
+            | BinaryOperation::LogicalOr => Rc::new(RefCell::new(RuntimeType::Boolean)),
         };
-        self.types.insert(*id, this_type);
+        self.types.insert(*id, this_type.clone());
         return this_type;
     }
 
@@ -946,35 +1079,60 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                 format!("No variable named {name:?} is defined"),
                 ErrorSeverity::Error,
             ));
-            return RuntimeType::Unknown;
+            return Rc::new(RefCell::new(RuntimeType::Unknown));
         };
         self.referenced_variable.insert(*id, ref_variable.clone());
-        let ref_variable = ref_variable.borrow();
 
-        let defined_type = ref_variable.type_;
-
+        let defined_type = ref_variable.borrow().type_.clone();
         let right_type = self.visit_expression(right);
+
+        RuntimeType::specialize_from(&right_type, &defined_type);
+
         if right_type != defined_type {
             self.errors.push(FleetError::from_node(
                 expression_clone.clone(),
-                    format!("Cannot assign value of type {right_type:?} to variable {name:?} defined as type {defined_type:?}"),
-                ErrorSeverity::Error
+                format!(
+                    "Cannot assign value of type {} to variable {name:?} defined as type {}",
+                    right_type.borrow(),
+                    defined_type.borrow()
+                ),
+                ErrorSeverity::Error,
             ));
         }
 
-        self.types.insert_node(expression, defined_type);
+        self.types.insert_node(expression, defined_type.clone());
         return defined_type;
     }
 
-    fn visit_i32_type(&mut self, _type: &mut I32Type) -> Self::TypeOutput {
-        return RuntimeType::I32;
+    fn visit_int_type(
+        &mut self,
+        IntType {
+            token: _,
+            type_,
+            id,
+        }: &mut IntType,
+    ) -> Self::TypeOutput {
+        let t = Rc::new(RefCell::new(*type_));
+        self.types.insert(*id, t.clone());
+        return t;
     }
 
-    fn visit_unit_type(&mut self, _unit_type: &mut UnitType) -> Self::TypeOutput {
-        return RuntimeType::Unit;
+    fn visit_unit_type(
+        &mut self,
+        UnitType {
+            open_paren_token: _,
+            close_paren_token: _,
+            id,
+        }: &mut UnitType,
+    ) -> Self::TypeOutput {
+        let t = Rc::new(RefCell::new(RuntimeType::Unit));
+        self.types.insert(*id, t.clone());
+        return t;
     }
 
-    fn visit_bool_type(&mut self, _bool_type: &mut BoolType) -> Self::TypeOutput {
-        return RuntimeType::Boolean;
+    fn visit_bool_type(&mut self, BoolType { token: _, id }: &mut BoolType) -> Self::TypeOutput {
+        let t = Rc::new(RefCell::new(RuntimeType::Boolean));
+        self.types.insert(*id, t.clone());
+        return t;
     }
 }

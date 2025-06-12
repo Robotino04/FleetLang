@@ -23,8 +23,8 @@ use crate::{
     ast::{
         AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
         BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionBody, FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type,
-        IfStatement, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement,
+        FunctionBody, FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement,
+        IntType, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor,
         UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
@@ -70,7 +70,7 @@ pub struct IrGenerator<'a, 'errors> {
     variable_storage: HashMap<VariableID, VariableStorage<'a>>,
     function_data: PerNodeData<Rc<RefCell<Function>>>,
     function_locations: HashMap<FunctionID, FunctionLocation<'a>>,
-    type_data: PerNodeData<RuntimeType>,
+    type_data: PerNodeData<Rc<RefCell<RuntimeType>>>,
 
     break_block: Option<BasicBlock<'a>>,
     skip_block: Option<BasicBlock<'a>>,
@@ -82,7 +82,7 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
         function_termination: PerNodeData<FunctionTermination>,
         variable_data: PerNodeData<Rc<RefCell<Variable>>>,
         function_data: PerNodeData<Rc<RefCell<Function>>>,
-        type_data: PerNodeData<RuntimeType>,
+        type_data: PerNodeData<Rc<RefCell<RuntimeType>>>,
     ) -> Self {
         let module = context.create_module("module");
         let builder = context.create_builder();
@@ -131,10 +131,19 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
 
     fn runtime_type_to_llvm(&self, type_: RuntimeType) -> AnyTypeEnum<'a> {
         match type_ {
+            RuntimeType::I8 => self.context.i8_type().into(),
+            RuntimeType::I16 => self.context.i16_type().into(),
             RuntimeType::I32 => self.context.i32_type().into(),
+            RuntimeType::I64 => self.context.i64_type().into(),
+            RuntimeType::UnsizedInt => {
+                unreachable!("Unsized ints should have caused errors earlier")
+            }
             RuntimeType::Unit => self.context.void_type().into(),
             RuntimeType::Boolean => self.context.bool_type().into(),
-            RuntimeType::Unknown => panic!("Unknown types should have caused errors earlier."),
+            RuntimeType::Unknown => {
+                unreachable!("Unknown types should have caused errors earlier")
+            }
+            RuntimeType::Error => unreachable!("Error types should have caused errors earlier"),
         }
     }
 
@@ -165,20 +174,22 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
                             .get(&param.id)
                             .expect("parameters should have variables assigned by now")
                     })
-                    .map(|var| match self.runtime_type_to_llvm(var.borrow().type_) {
-                        AnyTypeEnum::ArrayType(array_type) => array_type.into(),
-                        AnyTypeEnum::FloatType(float_type) => float_type.into(),
-                        AnyTypeEnum::FunctionType(_function_type) => {
-                            panic!("cannot have function types as parameter")
-                        }
-                        AnyTypeEnum::IntType(int_type) => int_type.into(),
-                        AnyTypeEnum::PointerType(pointer_type) => pointer_type.into(),
-                        AnyTypeEnum::StructType(struct_type) => struct_type.into(),
-                        AnyTypeEnum::VectorType(vector_type) => vector_type.into(),
-                        AnyTypeEnum::VoidType(_void_type) => {
-                            panic!("cannot unit type as parameter")
-                        }
-                    })
+                    .map(
+                        |var| match self.runtime_type_to_llvm(*var.borrow().type_.borrow()) {
+                            AnyTypeEnum::ArrayType(array_type) => array_type.into(),
+                            AnyTypeEnum::FloatType(float_type) => float_type.into(),
+                            AnyTypeEnum::FunctionType(_function_type) => {
+                                panic!("cannot have function types as parameter")
+                            }
+                            AnyTypeEnum::IntType(int_type) => int_type.into(),
+                            AnyTypeEnum::PointerType(pointer_type) => pointer_type.into(),
+                            AnyTypeEnum::StructType(struct_type) => struct_type.into(),
+                            AnyTypeEnum::VectorType(vector_type) => vector_type.into(),
+                            AnyTypeEnum::VoidType(_void_type) => {
+                                panic!("cannot unit type as parameter")
+                            }
+                        },
+                    )
                     .collect_vec()
                     .as_slice(),
                 false,
@@ -802,12 +813,18 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         NumberExpression {
             value,
             token: _,
-            id: _,
+            id,
         }: &mut NumberExpression,
     ) -> Self::ExpressionOutput {
+        let type_ = self
+            .type_data
+            .get(id)
+            .expect("type data should exist before running ir_generator")
+            .clone();
+
         return Ok(Some(
-            self.context
-                .i32_type()
+            self.runtime_type_to_llvm(*type_.borrow())
+                .into_int_type()
                 .const_int(*value as u64, false)
                 .as_basic_value_enum(),
         ));
@@ -910,12 +927,14 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                     )
                 )
             });
-        return Ok(Some(match self.runtime_type_to_llvm(var.borrow().type_) {
-            AnyTypeEnum::IntType(int_type) => {
-                self.builder.build_load(int_type, storage.0.clone(), name)
-            }
-            _ => todo!(),
-        }?));
+        return Ok(Some(
+            match self.runtime_type_to_llvm(*var.borrow().type_.borrow()) {
+                AnyTypeEnum::IntType(int_type) => {
+                    self.builder.build_load(int_type, storage.0.clone(), name)
+                }
+                _ => todo!(),
+            }?,
+        ));
     }
 
     fn visit_unary_expression(
@@ -978,8 +997,8 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             .expect("type data should exist before calling ir_generator")
             .clone();
 
-        match target_type {
-            RuntimeType::I32 => {
+        match *target_type.borrow() {
+            RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64 => {
                 let expected_type = self.visit_type(type_)?.into_int_type();
                 let value = value
                     .expect("Somehow tried to cast Unit to bool")
@@ -996,7 +1015,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                             .into(),
                     ));
                 } else {
-                    if value_type == RuntimeType::Boolean {
+                    if value_type.borrow().is_boolean() {
                         return Ok(Some(
                             self.builder
                                 .build_int_z_extend(
@@ -1034,6 +1053,12 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             RuntimeType::Unit => return Ok(None),
             RuntimeType::Unknown => {
                 unreachable!("ir_generator shouldn't run if there are unknown types")
+            }
+            RuntimeType::Error => {
+                unreachable!("ir_generator shouldn't run if there are error types")
+            }
+            RuntimeType::UnsizedInt => {
+                unreachable!("ir_generator shouldn't run if there are unsized int types")
             }
         }
     }
@@ -1320,15 +1345,59 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         return Ok(Some(right_value));
     }
 
-    fn visit_i32_type(&mut self, _type: &mut I32Type) -> Self::TypeOutput {
-        Ok(self.context.i32_type().into())
+    fn visit_int_type(
+        &mut self,
+        IntType {
+            token: _,
+            type_,
+            id,
+        }: &mut IntType,
+    ) -> Self::TypeOutput {
+        let infered_type = self
+            .type_data
+            .get(id)
+            .expect("type data should exist before calling ir_generator");
+
+        assert_eq!(
+            *type_,
+            *infered_type.borrow(),
+            "Inferred type (right) of IntType doesn't match its actual type (left)"
+        );
+        Ok(self.runtime_type_to_llvm(*type_))
     }
 
-    fn visit_unit_type(&mut self, _unit_type: &mut UnitType) -> Self::TypeOutput {
+    fn visit_unit_type(
+        &mut self,
+        UnitType {
+            open_paren_token: _,
+            close_paren_token: _,
+            id,
+        }: &mut UnitType,
+    ) -> Self::TypeOutput {
+        let infered_type = self
+            .type_data
+            .get(id)
+            .expect("type data should exist before calling ir_generator");
+
+        assert_eq!(
+            RuntimeType::Unit,
+            *infered_type.borrow(),
+            "Inferred type (right) of UnitType doesn't match its actual type (left)"
+        );
         Ok(self.context.void_type().into())
     }
 
-    fn visit_bool_type(&mut self, _bool_type: &mut BoolType) -> Self::TypeOutput {
+    fn visit_bool_type(&mut self, BoolType { token: _, id }: &mut BoolType) -> Self::TypeOutput {
+        let infered_type = self
+            .type_data
+            .get(id)
+            .expect("type data should exist before calling ir_generator");
+
+        assert_eq!(
+            RuntimeType::Boolean,
+            *infered_type.borrow(),
+            "Inferred type (right) of BoolType doesn't match its actual type (left)"
+        );
         Ok(self.context.bool_type().into())
     }
 }

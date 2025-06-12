@@ -3,7 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::tokenizer::Token;
+use crate::{passes::type_propagation::RuntimeType, tokenizer::Token};
 
 #[derive(Clone, Debug)]
 pub enum AstNode {
@@ -40,7 +40,7 @@ pub enum AstNode {
     BinaryExpression(BinaryExpression),
     VariableAssignmentExpression(VariableAssignmentExpression),
 
-    I32Type(I32Type),
+    IntType(IntType),
     UnitType(UnitType),
     BoolType(BoolType),
 }
@@ -95,7 +95,7 @@ impl HasID for AstNode {
                 variable_assignment_expression.get_id()
             }
 
-            AstNode::I32Type(i32_type) => i32_type.get_id(),
+            AstNode::IntType(int_type) => int_type.get_id(),
             AstNode::UnitType(unit_type) => unit_type.get_id(),
             AstNode::BoolType(bool_type) => bool_type.get_id(),
         }
@@ -304,13 +304,13 @@ pub trait AstVisitor {
     // types
     fn visit_type(&mut self, type_: &mut Type) -> Self::TypeOutput {
         match type_ {
-            Type::I32(i32_type) => self.visit_i32_type(i32_type),
+            Type::Int(int_type) => self.visit_int_type(int_type),
             Type::Unit(unit_type) => self.visit_unit_type(unit_type),
             Type::Bool(bool_type) => self.visit_bool_type(bool_type),
         }
     }
 
-    fn visit_i32_type(&mut self, i32_type: &mut I32Type) -> Self::TypeOutput;
+    fn visit_int_type(&mut self, int_type: &mut IntType) -> Self::TypeOutput;
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput;
     fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput;
 }
@@ -393,12 +393,13 @@ impl HasID for FunctionBody {
 }
 
 #[derive(Clone, Debug)]
-pub struct I32Type {
+pub struct IntType {
     pub token: Token,
+    pub type_: RuntimeType,
     pub id: NodeID,
 }
 
-generate_ast_requirements!(I32Type, unwrap_i32_type);
+generate_ast_requirements!(IntType, unwrap_int_type);
 
 #[derive(Clone, Debug)]
 pub struct UnitType {
@@ -419,7 +420,7 @@ generate_ast_requirements!(BoolType, unwrap_bool_type);
 
 #[derive(Clone, Debug)]
 pub enum Type {
-    I32(I32Type),
+    Int(IntType),
     Unit(UnitType),
     Bool(BoolType),
 }
@@ -427,7 +428,7 @@ pub enum Type {
 impl From<Type> for AstNode {
     fn from(value: Type) -> Self {
         match value {
-            Type::I32(i32_type) => i32_type.into(),
+            Type::Int(int_type) => int_type.into(),
             Type::Unit(unit_type) => unit_type.into(),
             Type::Bool(bool_type) => bool_type.into(),
         }
@@ -437,7 +438,7 @@ impl From<Type> for AstNode {
 impl HasID for Type {
     fn get_id(&self) -> NodeID {
         match self {
-            Type::I32(i32_type) => i32_type.get_id(),
+            Type::Int(int_type) => int_type.get_id(),
             Type::Unit(unit_type) => unit_type.get_id(),
             Type::Bool(bool_type) => bool_type.get_id(),
         }

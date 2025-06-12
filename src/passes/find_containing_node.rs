@@ -2,7 +2,7 @@ use crate::{
     ast::{
         AstNode, AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType,
         BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement, IntType,
         NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
         SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
@@ -28,12 +28,19 @@ impl FindContainingNodePass {
 
     fn visit_token(&mut self, token: &Token) -> Result<(SourceLocation, SourceLocation), ()> {
         if (token.start.line..=token.end.line).contains(&self.search_position.line)
-            && (token.start.column..token.end.column).contains(&self.search_position.column)
+            && (token.start.column..token.end.column.saturating_sub(1))
+                .contains(&self.search_position.column)
         {
             self.token = Some(token.clone());
             return Err(());
         }
-        return Ok((token.start, token.end));
+        return Ok((
+            token.start,
+            SourceLocation {
+                column: token.end.column.saturating_sub(1),
+                ..token.end
+            },
+        ));
     }
 }
 
@@ -546,12 +553,11 @@ impl AstVisitor for FindContainingNodePass {
         return Ok((left_bound, right_bound));
     }
 
-    fn visit_i32_type(&mut self, type_: &mut I32Type) -> Self::TypeOutput {
+    fn visit_int_type(&mut self, type_: &mut IntType) -> Self::TypeOutput {
         self.node_hierarchy.push(type_.clone().into());
 
         let (left_bound, right_bound) = self.visit_token(&type_.token)?;
 
-        self.node_hierarchy.pop();
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());
         }
@@ -566,7 +572,6 @@ impl AstVisitor for FindContainingNodePass {
         let left_bound = self.visit_token(&unit_type.open_paren_token)?.0;
         let right_bound = self.visit_token(&unit_type.close_paren_token)?.1;
 
-        self.node_hierarchy.pop();
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());
         }
@@ -580,7 +585,6 @@ impl AstVisitor for FindContainingNodePass {
 
         let (left_bound, right_bound) = self.visit_token(&bool_type.token)?;
 
-        self.node_hierarchy.pop();
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());
         }

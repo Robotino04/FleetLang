@@ -2,7 +2,7 @@ use crate::ast::{
     AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement,
     CastExpression, Executor, ExecutorHost, Expression, ExpressionStatement, ExternFunctionBody,
     ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition, GroupingExpression,
-    I32Type, IfStatement, NumberExpression, OnStatement, Program, ReturnStatement,
+    IntType, IfStatement, NumberExpression, OnStatement, Program, ReturnStatement,
     SelfExecutorHost, SimpleBinding, SkipStatement, Statement, StatementFunctionBody,
     ThreadExecutor, Type, UnaryExpression, UnitType, VariableAccessExpression,
     VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
@@ -287,12 +287,12 @@ pub trait PartialAstVisitor {
 
     fn partial_visit_type(&mut self, type_: &mut Type) {
         match type_ {
-            Type::I32(i32_type) => self.partial_visit_i32_type(i32_type),
+            Type::Int(int_type) => self.partial_visit_int_type(int_type),
             Type::Unit(unit_type) => self.partial_visit_unit_type(unit_type),
             Type::Bool(bool_type) => self.partial_visit_bool_type(bool_type),
         }
     }
-    fn partial_visit_i32_type(&mut self, _i32_type: &mut I32Type) {}
+    fn partial_visit_int_type(&mut self, _int_type: &mut IntType) {}
     fn partial_visit_unit_type(&mut self, _unit_type: &mut UnitType) {}
     fn partial_visit_bool_type(&mut self, _bool_type: &mut BoolType) {}
 }
@@ -475,8 +475,8 @@ where
         self.partial_visit_type(type_);
     }
 
-    fn visit_i32_type(&mut self, i32_type: &mut I32Type) -> Self::TypeOutput {
-        self.partial_visit_i32_type(i32_type);
+    fn visit_int_type(&mut self, int_type: &mut IntType) -> Self::TypeOutput {
+        self.partial_visit_int_type(int_type);
     }
 
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {

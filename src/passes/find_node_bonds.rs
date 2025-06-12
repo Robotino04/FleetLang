@@ -2,7 +2,7 @@ use crate::{
     ast::{
         AstNode, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement,
         CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, I32Type, IfStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement, IntType,
         NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
         SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
@@ -201,7 +201,11 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             id: _,
         }) => (name_token.start, find_node_bounds(*right).1),
 
-        AstNode::I32Type(I32Type { token, id: _ }) => (token.start, token.end),
+        AstNode::IntType(IntType {
+            token,
+            type_: _,
+            id: _,
+        }) => (token.start, token.end),
         AstNode::UnitType(UnitType {
             open_paren_token,
             close_paren_token,

@@ -167,7 +167,7 @@ pub enum CompileStatus<'a> {
         program: Program,
         id_generator: IdGenerator,
         function_terminations: PerNodeData<FunctionTermination>,
-        type_data: PerNodeData<RuntimeType>,
+        type_data: PerNodeData<Rc<RefCell<RuntimeType>>>,
         variable_data: PerNodeData<Rc<RefCell<Variable>>>,
         function_data: PerNodeData<Rc<RefCell<Function>>>,
     },
@@ -178,7 +178,7 @@ pub enum CompileStatus<'a> {
         program: Program,
         id_generator: IdGenerator,
         function_terminations: PerNodeData<FunctionTermination>,
-        type_data: PerNodeData<RuntimeType>,
+        type_data: PerNodeData<Rc<RefCell<RuntimeType>>>,
         variable_data: PerNodeData<Rc<RefCell<Variable>>>,
         function_data: PerNodeData<Rc<RefCell<Function>>>,
     },
@@ -189,7 +189,7 @@ pub enum CompileStatus<'a> {
         program: Program,
         id_generator: IdGenerator,
         function_terminations: PerNodeData<FunctionTermination>,
-        type_data: PerNodeData<RuntimeType>,
+        type_data: PerNodeData<Rc<RefCell<RuntimeType>>>,
         variable_data: PerNodeData<Rc<RefCell<Variable>>>,
         function_data: PerNodeData<Rc<RefCell<Function>>>,
         partial_module: Option<Module<'a>>,
@@ -201,7 +201,7 @@ pub enum CompileStatus<'a> {
         program: Program,
         id_generator: IdGenerator,
         function_terminations: PerNodeData<FunctionTermination>,
-        type_data: PerNodeData<RuntimeType>,
+        type_data: PerNodeData<Rc<RefCell<RuntimeType>>>,
         variable_data: PerNodeData<Rc<RefCell<Variable>>>,
         function_data: PerNodeData<Rc<RefCell<Function>>>,
         module: Module<'a>,
@@ -283,7 +283,7 @@ impl<'a> CompileStatus<'a> {
             } => Some(function_terminations),
         }
     }
-    pub fn type_data(&self) -> Option<&PerNodeData<RuntimeType>> {
+    pub fn type_data(&self) -> Option<&PerNodeData<Rc<RefCell<RuntimeType>>>> {
         match &self {
             CompileStatus::TokenizerFailure {} => None,
             CompileStatus::ParserFailure { tokens: _ } => None,
