@@ -1,6 +1,5 @@
 use std::{
-    collections::HashMap,
-    ops::{Deref, DerefMut},
+    cell::RefCell, collections::HashMap, ops::{Deref, DerefMut}, rc::Rc
 };
 
 use crate::{passes::type_propagation::RuntimeType, tokenizer::Token};
@@ -43,6 +42,7 @@ pub enum AstNode {
     IntType(IntType),
     UnitType(UnitType),
     BoolType(BoolType),
+    IdkType(IdkType),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -98,6 +98,7 @@ impl HasID for AstNode {
             AstNode::IntType(int_type) => int_type.get_id(),
             AstNode::UnitType(unit_type) => unit_type.get_id(),
             AstNode::BoolType(bool_type) => bool_type.get_id(),
+            AstNode::IdkType(idk_type) => idk_type.get_id(),
         }
     }
 }
@@ -307,12 +308,14 @@ pub trait AstVisitor {
             Type::Int(int_type) => self.visit_int_type(int_type),
             Type::Unit(unit_type) => self.visit_unit_type(unit_type),
             Type::Bool(bool_type) => self.visit_bool_type(bool_type),
+            Type::Idk(idk_type) => self.visit_idk_type(idk_type),
         }
     }
 
     fn visit_int_type(&mut self, int_type: &mut IntType) -> Self::TypeOutput;
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput;
     fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput;
+    fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput;
 }
 
 #[derive(Clone, Debug)]
@@ -326,8 +329,7 @@ generate_ast_requirements!(Program, unwrap_program);
 pub struct SimpleBinding {
     pub name_token: Token,
     pub name: String,
-    pub colon_token: Token,
-    pub type_: Type,
+    pub type_: Option<(Token, Type)>,
     pub id: NodeID,
 }
 generate_ast_requirements!(SimpleBinding, unwrap_simple_binding);
@@ -342,7 +344,7 @@ pub struct FunctionDefinition {
     pub parameters: Vec<(SimpleBinding, Option<Token>)>,
     pub close_paren_token: Token,
     pub right_arrow_token: Token,
-    pub return_type: Type,
+    pub return_type: Option<Type>,
 
     pub body: FunctionBody,
 
@@ -419,10 +421,20 @@ pub struct BoolType {
 generate_ast_requirements!(BoolType, unwrap_bool_type);
 
 #[derive(Clone, Debug)]
+pub struct IdkType {
+    pub type_: Rc<RefCell<RuntimeType>>,
+    pub token: Token,
+    pub id: NodeID,
+}
+
+generate_ast_requirements!(IdkType, unwrap_idk_type);
+
+#[derive(Clone, Debug)]
 pub enum Type {
     Int(IntType),
     Unit(UnitType),
     Bool(BoolType),
+    Idk(IdkType),
 }
 
 impl From<Type> for AstNode {
@@ -431,6 +443,7 @@ impl From<Type> for AstNode {
             Type::Int(int_type) => int_type.into(),
             Type::Unit(unit_type) => unit_type.into(),
             Type::Bool(bool_type) => bool_type.into(),
+            Type::Idk(idk_type) => idk_type.into(),
         }
     }
 }
@@ -441,6 +454,7 @@ impl HasID for Type {
             Type::Int(int_type) => int_type.get_id(),
             Type::Unit(unit_type) => unit_type.get_id(),
             Type::Bool(bool_type) => bool_type.get_id(),
+            Type::Idk(idk_type) => idk_type.get_id(),
         }
     }
 }

@@ -24,10 +24,11 @@
 - arrays
 - structs
 - sum types
-- i8, i16, i64
 - f32, f64
 - comptime evaluation
 - comptime type eval for generics (similar to zig/hblang)
+- use constraint based type inference, `Rc<RefCell<Rc<RefCell<>>>>` or <https://en.wikipedia.org/wiki/Disjoint-set_data_structure>
+- use AstVisitor for `generate_c`
 
 
 ## Building

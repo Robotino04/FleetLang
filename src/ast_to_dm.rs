@@ -2,7 +2,7 @@ use crate::{
     ast::{
         AstVisitor, BinaryExpression, BlockStatement, BoolType, BreakStatement, CastExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, IntType, IfStatement, NumberExpression,
+        FunctionDefinition, GroupingExpression, IdkType, IfStatement, IntType, NumberExpression,
         OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
         StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
@@ -91,6 +91,7 @@ impl AstToDocumentModelConverter {
             Keyword::I32 => "i32",
             Keyword::I64 => "i64",
             Keyword::Bool => "bool",
+            Keyword::Idk => "idk",
             Keyword::As => "as",
             Keyword::True => "true",
             Keyword::False => "false",
@@ -250,7 +251,11 @@ impl AstVisitor for AstToDocumentModelConverter {
                     self.trivia_to_element(&close_paren_token.trailing_trivia),
                 ]),
                 self.token_to_element(right_arrow_token),
-                self.visit_type(return_type),
+                if let Some(return_type) = return_type {
+                    self.visit_type(return_type)
+                } else {
+                    DocumentElement::empty()
+                },
                 self.visit_function_body(body),
             ],
         )
@@ -290,7 +295,6 @@ impl AstVisitor for AstToDocumentModelConverter {
         SimpleBinding {
             name_token,
             name: _,
-            colon_token,
             type_,
             id: _,
         }: &mut SimpleBinding,
@@ -299,9 +303,18 @@ impl AstVisitor for AstToDocumentModelConverter {
             DocumentElement::CollapsableSpace,
             vec![
                 self.token_to_element(name_token),
-                DocumentElement::double_space_eater(),
-                self.token_to_element(colon_token),
-                self.visit_type(type_),
+                if let Some((colon_token, type_)) = type_ {
+                    DocumentElement::spaced_concatentation(
+                        DocumentElement::CollapsableSpace,
+                        vec![
+                            DocumentElement::double_space_eater(),
+                            self.token_to_element(colon_token),
+                            self.visit_type(type_),
+                        ],
+                    )
+                } else {
+                    DocumentElement::empty()
+                },
             ],
         )
     }
@@ -766,5 +779,9 @@ impl AstVisitor for AstToDocumentModelConverter {
 
     fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
         self.token_to_element(&bool_type.token)
+    }
+
+    fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {
+        self.token_to_element(&idk_type.token)
     }
 }

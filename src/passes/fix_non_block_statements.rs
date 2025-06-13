@@ -68,7 +68,9 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
             self.visit_simple_binding(param);
         }
 
-        self.visit_type(return_type);
+        if let Some(return_type) = return_type {
+            self.visit_type(return_type);
+        }
 
         let body_clone = body.clone();
         if let FunctionBody::Statement(stmt_body) = body {

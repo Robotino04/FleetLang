@@ -2,11 +2,11 @@ use crate::{
     ast::{
         AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement,
         CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement, IntType,
-        NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, IdkType, IfStatement,
+        IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -73,9 +73,15 @@ impl AstVisitor for AddTrailingTriviaPass {
 
     fn visit_simple_binding(
         &mut self,
-        SimpleBinding { type_, .. }: &mut SimpleBinding,
+        SimpleBinding {
+            type_, name_token, ..
+        }: &mut SimpleBinding,
     ) -> Self::SimpleBindingOutput {
-        self.visit_type(type_);
+        if let Some((_colon, type_)) = type_ {
+            self.visit_type(type_);
+        } else {
+            self.visit_token(name_token);
+        }
     }
 
     fn visit_expression_statement(
@@ -215,5 +221,9 @@ impl AstVisitor for AddTrailingTriviaPass {
 
     fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
         self.visit_token(&mut bool_type.token);
+    }
+
+    fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {
+        self.visit_token(&mut idk_type.token);
     }
 }

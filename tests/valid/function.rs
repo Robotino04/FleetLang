@@ -268,7 +268,6 @@ fn single_arg() {
 }
 
 #[test]
-#[ignore = "i8 is missing"]
 fn stack_pointer_alignment_direction() {
     assert_compile_and_return_value(
         indoc! {r##"
@@ -480,7 +479,7 @@ fn stack_pointer_alignment_direction() {
                 let name: i64 = 0;
                 let name_length: i32 = 0;
                 fill_stack();
-                return name_buffer_length - name - name_length;
+                return name_buffer_length - name as i32 - name_length;
             }
         "##},
         "main",

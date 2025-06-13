@@ -84,6 +84,7 @@ pub enum Keyword {
     I32,
     I64,
     Bool,
+    Idk,
     As,
 
     True,
@@ -493,6 +494,7 @@ impl<'errors> Tokenizer<'errors> {
                             "i32" => TokenType::Keyword(Keyword::I32),
                             "i64" => TokenType::Keyword(Keyword::I64),
                             "bool" => TokenType::Keyword(Keyword::Bool),
+                            "idk" => TokenType::Keyword(Keyword::Idk),
                             "as" => TokenType::Keyword(Keyword::As),
 
                             "true" => TokenType::Keyword(Keyword::True),

@@ -6,7 +6,7 @@ use crate::{
     ast::{
         AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression,
         BoolType, BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody,
-        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression,
+        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, IdkType,
         IfStatement, IntType, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor,
         UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
@@ -79,10 +79,10 @@ impl RuntimeType {
     /// true means the specialization succeeded
     pub fn specialize_int_size(&mut self) -> bool {
         match self {
-            RuntimeType::I8 => true,
-            RuntimeType::I16 => true,
-            RuntimeType::I32 => true,
-            RuntimeType::I64 => true,
+            RuntimeType::I8 => false,
+            RuntimeType::I16 => false,
+            RuntimeType::I32 => false,
+            RuntimeType::I64 => false,
             RuntimeType::UnsizedInt => {
                 *self = RuntimeType::I32;
                 true
@@ -227,7 +227,10 @@ impl<'a> TypePropagator<'a> {
             id: _,
         } = function;
 
-        let return_type = self.visit_type(return_type);
+        let return_type = return_type
+            .as_mut()
+            .map(|t| self.visit_type(t))
+            .unwrap_or(Rc::new(RefCell::new(RuntimeType::Unknown)));
         let parameter_types = parameters
             .iter_mut()
             .map(|(param, _comma)| self.visit_simple_binding(param))
@@ -320,13 +323,16 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             id,
         }: &mut FunctionDefinition,
     ) -> Self::FunctionDefinitionOutput {
-        self.visit_type(return_type);
-
         let this_function = self
             .function_list
             .get(name)
             .expect("All functions should have been registered before traversing the tree")
             .clone();
+
+        if let Some(return_type) = return_type {
+            self.visit_type(return_type);
+        }
+
         self.current_function = Some(this_function.clone());
 
         self.variable_scopes.push_child(); // the parameter scope
@@ -368,19 +374,22 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         let SimpleBinding {
             name_token: _,
             name,
-            colon_token: _,
             type_,
             id,
         } = simple_binding;
 
-        let defined_type = self.visit_type(type_);
+        let defined_type = if let Some((_colon, type_)) = type_ {
+            self.visit_type(type_)
+        } else {
+            Rc::new(RefCell::new(RuntimeType::Unknown))
+        };
         if let Err(_) = self.variable_scopes.try_insert(Variable {
             name: name.clone(),
             type_: defined_type.clone(),
             id: self.id_generator.next_variable_id(),
         }) {
             self.errors.push(FleetError::from_node(
-                simple_binding_clone,
+                simple_binding_clone.clone(),
                 format!(
                     "A variable named {} was already defined in this scope",
                     name.clone()
@@ -390,7 +399,10 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         }
         if *defined_type.borrow() == RuntimeType::Unit {
             self.errors.push(FleetError::from_node(
-                type_.clone(),
+                type_
+                    .clone()
+                    .map(|(_colon, type_)| Into::<AstNode>::into(type_.clone()))
+                    .unwrap_or(simple_binding_clone.into()),
                 format!("Variables cannot have Unit type"),
                 ErrorSeverity::Error,
             ));
@@ -465,8 +477,6 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             .map(|value| self.visit_expression(value))
             .unwrap_or(Rc::new(RefCell::new(RuntimeType::Unit)));
 
-        self.types.insert(*id, this_type.clone());
-
         let expected_type = self
             .current_function
             .as_ref()
@@ -479,6 +489,8 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         RuntimeType::specialize_from(&expected_type, &this_type);
         this_type.borrow_mut().specialize_int_size();
         expected_type.borrow_mut().specialize_int_size();
+
+        self.types.insert(*id, this_type.clone());
 
         if this_type != expected_type {
             self.errors.push(FleetError::from_node(
@@ -512,8 +524,9 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         let value_type = self.visit_expression(value);
         let defined_type = self.visit_simple_binding(binding);
 
-        RuntimeType::specialize_from(&defined_type, &value_type);
+        // order is important for {unknown} to {unknown assignments}
         RuntimeType::specialize_from(&value_type, &defined_type);
+        RuntimeType::specialize_from(&defined_type, &value_type);
 
         if value_type != defined_type {
             self.errors.push(FleetError::from_node(
@@ -725,25 +738,24 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             return Rc::new(RefCell::new(RuntimeType::Error));
         };
         self.referenced_function.insert(*id, ref_function.clone());
-        let ref_function = ref_function.borrow();
 
-        let num_expected_arguments = ref_function.parameter_types.len();
-
-        let self_shared = RefCell::new(&mut *self);
+        let num_expected_arguments = ref_function.borrow().parameter_types.len();
 
         for (i, types) in expression
             .arguments
             .iter_mut()
-            .map(|(arg, _comma)| (self_shared.borrow_mut().visit_expression(arg), arg))
-            .zip_longest(ref_function.parameter_types.iter())
+            .map(|(arg, _comma)| (self.visit_expression(arg), arg))
+            .collect_vec()
+            .iter()
+            .zip_longest(ref_function.borrow().parameter_types.iter())
             .enumerate()
         {
             match types {
                 EitherOrBoth::Both((arg_type, arg), param_type) => {
                     RuntimeType::specialize_from(&arg_type, param_type);
-                    if arg_type != *param_type {
-                        self_shared.borrow_mut().errors.push(FleetError::from_node(
-                            arg.clone(),
+                    if *arg_type != *param_type {
+                        self.errors.push(FleetError::from_node(
+                            (*arg).clone(),
                             format!(
                                 "{name:?} expects a value of type {} as argument {}. Got {}",
                                 param_type.borrow(),
@@ -755,14 +767,14 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                     }
                 }
                 EitherOrBoth::Left((_arg_type, arg)) => {
-                    self_shared.borrow_mut().errors.push(FleetError::from_node(
-                        arg.clone(),
+                    self.errors.push(FleetError::from_node(
+                        (*arg).clone(),
                         format!("{name:?} only has {num_expected_arguments} parameters"),
                         ErrorSeverity::Error,
                     ));
                 }
                 EitherOrBoth::Right(param_type) => {
-                    self_shared.borrow_mut().errors.push(FleetError::from_token(
+                    self.errors.push(FleetError::from_token(
                         close_paren_token,
                         format!(
                             "{name:?} is missing parameter {} of type {}",
@@ -776,8 +788,8 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         }
 
         self.types
-            .insert_node(expression, ref_function.return_type.clone());
-        return ref_function.return_type.clone();
+            .insert_node(expression, ref_function.borrow().return_type.clone());
+        return ref_function.borrow().return_type.clone();
     }
 
     fn visit_grouping_expression(
@@ -907,7 +919,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                 ));
             }
             (_, Unknown) => {
-                RuntimeType::specialize_from(&to_type, &from_type);
+                //RuntimeType::specialize_from(&to_type, &from_type);
             }
             (Unknown, _) => {
                 RuntimeType::specialize_from(&from_type, &to_type);
@@ -1112,6 +1124,10 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             id,
         }: &mut IntType,
     ) -> Self::TypeOutput {
+        // make sure function registration gets the same type as the full eval
+        if let Some(type_) = self.types.get(id) {
+            return type_.clone();
+        }
         let t = Rc::new(RefCell::new(*type_));
         self.types.insert(*id, t.clone());
         return t;
@@ -1125,14 +1141,33 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             id,
         }: &mut UnitType,
     ) -> Self::TypeOutput {
+        // make sure function registration gets the same type as the full eval
+        if let Some(type_) = self.types.get(id) {
+            return type_.clone();
+        }
         let t = Rc::new(RefCell::new(RuntimeType::Unit));
         self.types.insert(*id, t.clone());
         return t;
     }
 
     fn visit_bool_type(&mut self, BoolType { token: _, id }: &mut BoolType) -> Self::TypeOutput {
+        // make sure function registration gets the same type as the full eval
+        if let Some(type_) = self.types.get(id) {
+            return type_.clone();
+        }
         let t = Rc::new(RefCell::new(RuntimeType::Boolean));
         self.types.insert(*id, t.clone());
         return t;
+    }
+    fn visit_idk_type(
+        &mut self,
+        IdkType {
+            type_,
+            token: _,
+            id,
+        }: &mut IdkType,
+    ) -> Self::TypeOutput {
+        self.types.insert(*id, type_.clone());
+        return type_.clone();
     }
 }

@@ -11,6 +11,7 @@ use crate::{
     ir_generator::IrGenerator,
     parser::{IdGenerator, Parser},
     passes::{
+        err_missing_type_in_parameter::ErrMissingTypeInParam,
         find_node_bonds::find_node_bounds,
         fix_non_block_statements::FixNonBlockStatements,
         fix_trailing_comma::FixTrailingComma,
@@ -44,6 +45,7 @@ fn run_fix_passes(
     RemoveParensPass::new().visit_program(program);
     FixNonBlockStatements::new(errors, id_generator).visit_program(program);
     FixTrailingComma::new(errors, id_generator).visit_program(program);
+    ErrMissingTypeInParam::new(errors).visit_program(program);
 }
 
 impl FleetError {
@@ -435,7 +437,10 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
         Err(error) => {
             errors.push(FleetError {
                 start: SourceLocation::start(),
-                end: SourceLocation::end(src),
+                end: program
+                    .functions
+                    .first()
+                    .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
                 message: match error.source() {
                     Some(source) => format!("{} ({:?})", error.to_string(), source),
                     None => error.to_string(),

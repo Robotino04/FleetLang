@@ -2,11 +2,11 @@ use crate::{
     ast::{
         AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement,
         CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, IntType, IfStatement,
-        NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, IdkType, IfStatement,
+        IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -188,5 +188,9 @@ impl AstVisitor for AddLeadingTriviaPass {
 
     fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
         self.visit_token(&mut bool_type.token);
+    }
+
+    fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {
+        self.visit_token(&mut idk_type.token);
     }
 }

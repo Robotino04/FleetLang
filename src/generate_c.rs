@@ -4,8 +4,8 @@ use crate::{
     ast::{
         AstNode, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
         CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement, IntType,
-        NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, IdkType, IfStatement,
+        IntType, NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, SimpleBinding,
         StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
         WhileLoopStatement,
@@ -27,7 +27,7 @@ fn generate_function_declaration(function: &FunctionDefinition, mut prefix: Stri
         prefix = "".to_string();
     }
 
-    return generate_c(function.return_type.clone())
+    return "void".to_string() //generate_c(function.return_type.clone())
         + " "
         + &prefix
         + function.name.as_str()
@@ -124,11 +124,10 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
         AstNode::SimpleBinding(SimpleBinding {
             name_token: _,
             name,
-            colon_token: _,
-            type_,
+            type_: _,
             id: _,
         }) => {
-            return format!("{} fleet_{}", generate_c(type_), name);
+            return format!("{} fleet_{}", "int32_t" /*generate_c(type_)*/, name);
         }
         AstNode::ExpressionStatement(ExpressionStatement {
             expression,
@@ -378,5 +377,25 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             id: _,
         }) => "void".to_string(),
         AstNode::BoolType(BoolType { token: _, id: _ }) => "bool".to_string(),
+        AstNode::IdkType(IdkType {
+            type_,
+            token: _,
+            id: _,
+        }) => match *type_.borrow() {
+            RuntimeType::I8 => "int8_t",
+            RuntimeType::I16 => "int16_t",
+            RuntimeType::I32 => "int32_t",
+            RuntimeType::I64 => "int64_t",
+            RuntimeType::UnsizedInt => {
+                unreachable!("all types must be known before calling generate_c")
+            }
+            RuntimeType::Boolean => "bool",
+            RuntimeType::Unit => "void",
+            RuntimeType::Unknown => {
+                unreachable!("all types must be known before calling generate_c")
+            }
+            RuntimeType::Error => unreachable!("all types must be known before calling generate_c"),
+        }
+        .to_string(),
     }
 }

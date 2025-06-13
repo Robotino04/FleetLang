@@ -21,13 +21,14 @@ use itertools::Itertools;
 
 use crate::{
     ast::{
-        AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
-        BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionBody, FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement,
-        IntType, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor,
-        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+        AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression,
+        BoolType, BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody,
+        ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition,
+        GroupingExpression, HasID, IdkType, IfStatement, IntType, NumberExpression, OnStatement,
+        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
+        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        WhileLoopStatement,
     },
     escape::unescape,
     infra::{ErrorSeverity, FleetError},
@@ -103,6 +104,11 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
         }
     }
 
+    fn report_error<T>(&mut self, error: FleetError) -> Result<T> {
+        self.errors.push(error.clone());
+        return Err(error.message.into());
+    }
+
     fn make_into_function_type<'c>(
         &self,
         type_: AnyTypeEnum<'c>,
@@ -129,26 +135,58 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
         }
     }
 
-    fn runtime_type_to_llvm(&self, type_: RuntimeType) -> AnyTypeEnum<'a> {
-        match type_ {
+    fn runtime_type_to_llvm(
+        &mut self,
+        type_: RuntimeType,
+        error_node: impl Into<AstNode>,
+    ) -> Result<AnyTypeEnum<'a>> {
+        Ok(match type_ {
             RuntimeType::I8 => self.context.i8_type().into(),
             RuntimeType::I16 => self.context.i16_type().into(),
             RuntimeType::I32 => self.context.i32_type().into(),
             RuntimeType::I64 => self.context.i64_type().into(),
             RuntimeType::UnsizedInt => {
-                unreachable!("Unsized ints should have caused errors earlier")
+                return self.report_error(FleetError::from_node(
+                    error_node,
+                    "Unsized ints should have caused errors earlier",
+                    ErrorSeverity::Error,
+                ));
             }
             RuntimeType::Unit => self.context.void_type().into(),
             RuntimeType::Boolean => self.context.bool_type().into(),
             RuntimeType::Unknown => {
-                unreachable!("Unknown types should have caused errors earlier")
+                return self.report_error(FleetError::from_node(
+                    error_node,
+                    "Unknown types should have caused errors earlier",
+                    ErrorSeverity::Error,
+                ));
             }
-            RuntimeType::Error => unreachable!("Error types should have caused errors earlier"),
-        }
+            RuntimeType::Error => {
+                return self.report_error(FleetError::from_node(
+                    error_node,
+                    "Error types should have caused errors earlier",
+                    ErrorSeverity::Error,
+                ));
+            }
+        })
     }
 
     fn register_function(&mut self, function: &mut FunctionDefinition) -> Result<()> {
-        let return_type_ir = self.visit_type(&mut function.return_type)?;
+        let return_type_ir = function
+            .return_type
+            .as_mut()
+            .map(|t| self.visit_type(t))
+            .unwrap_or_else(|| {
+                let inferred_type = self
+                    .function_data
+                    .get(&function.get_id())
+                    .expect("Function data should exist before calling ir_generator")
+                    .borrow()
+                    .return_type
+                    .borrow()
+                    .clone();
+                self.runtime_type_to_llvm(inferred_type, function.clone())
+            })?;
 
         let name = match &function.body {
             FunctionBody::Extern(ExternFunctionBody {
@@ -162,38 +200,52 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
             FunctionBody::Statement(_) => function.name.clone(),
         };
 
+        let params = function
+            .parameters
+            .iter()
+            .map(|(param, _comma)| {
+                (
+                    param.clone(),
+                    self.variable_data
+                        .get(&param.id)
+                        .expect("parameters should have variables assigned by now")
+                        .clone(),
+                )
+            })
+            .collect_vec()
+            .iter()
+            .map(|(param, var)| -> Result<_> {
+                Ok(
+                    match self.runtime_type_to_llvm(*var.borrow().type_.borrow(), param.clone())? {
+                        AnyTypeEnum::ArrayType(array_type) => array_type.into(),
+                        AnyTypeEnum::FloatType(float_type) => float_type.into(),
+                        AnyTypeEnum::FunctionType(_function_type) => {
+                            return self.report_error(FleetError::from_node(
+                                param.clone(),
+                                "cannot have function types as parameter",
+                                ErrorSeverity::Error,
+                            ));
+                        }
+                        AnyTypeEnum::IntType(int_type) => int_type.into(),
+                        AnyTypeEnum::PointerType(pointer_type) => pointer_type.into(),
+                        AnyTypeEnum::StructType(struct_type) => struct_type.into(),
+                        AnyTypeEnum::VectorType(vector_type) => vector_type.into(),
+                        AnyTypeEnum::VoidType(_void_type) => {
+                            return self.report_error(FleetError::from_node(
+                                param.clone(),
+                                "cannot have unit type as parameter",
+                                ErrorSeverity::Error,
+                            ));
+                        }
+                    },
+                )
+            })
+            .flatten()
+            .collect_vec();
+
         let ir_function = self.module.add_function(
             &name,
-            self.make_into_function_type(
-                return_type_ir,
-                function
-                    .parameters
-                    .iter()
-                    .map(|(param, _comma)| {
-                        self.variable_data
-                            .get(&param.id)
-                            .expect("parameters should have variables assigned by now")
-                    })
-                    .map(
-                        |var| match self.runtime_type_to_llvm(*var.borrow().type_.borrow()) {
-                            AnyTypeEnum::ArrayType(array_type) => array_type.into(),
-                            AnyTypeEnum::FloatType(float_type) => float_type.into(),
-                            AnyTypeEnum::FunctionType(_function_type) => {
-                                panic!("cannot have function types as parameter")
-                            }
-                            AnyTypeEnum::IntType(int_type) => int_type.into(),
-                            AnyTypeEnum::PointerType(pointer_type) => pointer_type.into(),
-                            AnyTypeEnum::StructType(struct_type) => struct_type.into(),
-                            AnyTypeEnum::VectorType(vector_type) => vector_type.into(),
-                            AnyTypeEnum::VoidType(_void_type) => {
-                                panic!("cannot unit type as parameter")
-                            }
-                        },
-                    )
-                    .collect_vec()
-                    .as_slice(),
-                false,
-            )?,
+            self.make_into_function_type(return_type_ir, params.as_slice(), false)?,
             None,
         );
         let ref_function = self
@@ -259,7 +311,21 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
     ) -> Self::FunctionDefinitionOutput {
         eprintln!("Generating function {:?}", function.name);
 
-        let return_type_ir = self.visit_type(&mut function.return_type)?;
+        let return_type_ir = function
+            .return_type
+            .as_mut()
+            .map(|t| self.visit_type(t))
+            .unwrap_or_else(|| {
+                let inferred_type = self
+                    .function_data
+                    .get(&function.get_id())
+                    .expect("Function data should exist before calling ir_generator")
+                    .borrow()
+                    .return_type
+                    .borrow()
+                    .clone();
+                self.runtime_type_to_llvm(inferred_type, function.clone())
+            })?;
         let ir_function = self
             .function_locations
             .get(
@@ -393,7 +459,21 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         &mut self,
         simple_binding: &mut SimpleBinding,
     ) -> Self::SimpleBindingOutput {
-        let type_ = self.visit_type(&mut simple_binding.type_)?;
+        let type_ = simple_binding
+            .type_
+            .as_mut()
+            .map(|(_colon, type_)| self.visit_type(type_))
+            .unwrap_or_else(|| {
+                let inferred_type = self
+                    .variable_data
+                    .get(&simple_binding.id)
+                    .expect("variable data should exist before calling ir_generator")
+                    .borrow()
+                    .type_
+                    .borrow()
+                    .clone();
+                self.runtime_type_to_llvm(inferred_type, simple_binding.clone())
+            })?;
 
         let ptr = match type_ {
             AnyTypeEnum::ArrayType(array_type) => self
@@ -403,7 +483,11 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                 .builder
                 .build_alloca(float_type, &simple_binding.name)?,
             AnyTypeEnum::FunctionType(_function_type) => {
-                panic!("Somehow tried to bind a function type")
+                return self.report_error(FleetError::from_node(
+                    simple_binding.clone(),
+                    "Somehow tried to bind a function type",
+                    ErrorSeverity::Error,
+                ));
             }
             AnyTypeEnum::IntType(int_type) => {
                 self.builder.build_alloca(int_type, &simple_binding.name)?
@@ -418,7 +502,11 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                 .builder
                 .build_alloca(vector_type, &simple_binding.name)?,
             AnyTypeEnum::VoidType(_void_type) => {
-                panic!("Somehow tried to bind a void type")
+                return self.report_error(FleetError::from_node(
+                    simple_binding.clone(),
+                    "Somehow tried to bind a void type",
+                    ErrorSeverity::Error,
+                ));
             }
         };
 
@@ -489,7 +577,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                 Some(BasicValueEnum::PointerValue(pointer_value)) => Some(pointer_value),
                 Some(BasicValueEnum::StructValue(struct_value)) => Some(struct_value),
                 Some(BasicValueEnum::VectorValue(vector_value)) => Some(vector_value),
-                None => unreachable!("Unit functions should not return an expression"),
+                None => return Err("Unit functions should not return an expression".into()),
             })?;
         } else {
             self.builder.build_return(None)?;
@@ -808,14 +896,13 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         todo!()
     }
 
-    fn visit_number_expression(
-        &mut self,
-        NumberExpression {
+    fn visit_number_expression(&mut self, number: &mut NumberExpression) -> Self::ExpressionOutput {
+        let number_clone = number.clone();
+        let NumberExpression {
             value,
             token: _,
             id,
-        }: &mut NumberExpression,
-    ) -> Self::ExpressionOutput {
+        } = number;
         let type_ = self
             .type_data
             .get(id)
@@ -823,7 +910,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             .clone();
 
         return Ok(Some(
-            self.runtime_type_to_llvm(*type_.borrow())
+            self.runtime_type_to_llvm(*type_.borrow(), number_clone)?
                 .into_int_type()
                 .const_int(*value as u64, false)
                 .as_basic_value_enum(),
@@ -905,30 +992,36 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
     fn visit_variable_access_expression(
         &mut self,
-        VariableAccessExpression {
+        expr: &mut VariableAccessExpression,
+    ) -> Self::ExpressionOutput {
+        let expr_clone = expr.clone();
+        let VariableAccessExpression {
             name,
             name_token: _,
             id,
-        }: &mut VariableAccessExpression,
-    ) -> Self::ExpressionOutput {
-        let var = self.variable_data.get(id).expect(&format!(
-            "Variable data for {name:?} should exist before running ir_generator"
-        ));
+        } = expr;
 
-        let storage = self
-            .variable_storage
-            .get(&var.borrow().id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "Variables should have storage before being accessed.{}",
-                    format!(
-                        "\nVarData: {:#?}\nVarStorage: {:#?}\nThis ID: {id:?}",
-                        self.variable_data, self.variable_storage
-                    )
-                )
-            });
+        let var = self
+            .variable_data
+            .get(id)
+            .expect(&format!(
+                "Variable data for {name:?} should exist before running ir_generator"
+            ))
+            .clone();
+
+        let Some(storage) = self.variable_storage.get(&var.borrow().id) else {
+            return self.report_error(FleetError::from_node(
+                expr_clone,
+                format!(
+                    "Variables should have storage before being accessed.\nVarData: {:#?}\nVarStorage: {:#?}\nThis ID: {id:?}",
+                    self.variable_data, self.variable_storage
+                ),
+                ErrorSeverity::Error,
+            ));
+        };
+        let storage = storage.clone();
         return Ok(Some(
-            match self.runtime_type_to_llvm(*var.borrow().type_.borrow()) {
+            match self.runtime_type_to_llvm(*var.borrow().type_.borrow(), expr_clone)? {
                 AnyTypeEnum::IntType(int_type) => {
                     self.builder.build_load(int_type, storage.0.clone(), name)
                 }
@@ -1052,13 +1145,25 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             }
             RuntimeType::Unit => return Ok(None),
             RuntimeType::Unknown => {
-                unreachable!("ir_generator shouldn't run if there are unknown types")
+                return self.report_error(FleetError::from_node(
+                    type_.clone(),
+                    "ir_generator shouldn't run if there are unknown types",
+                    ErrorSeverity::Error,
+                ));
             }
             RuntimeType::Error => {
-                unreachable!("ir_generator shouldn't run if there are error types")
+                return self.report_error(FleetError::from_node(
+                    type_.clone(),
+                    "ir_generator shouldn't run if there are error types",
+                    ErrorSeverity::Error,
+                ));
             }
             RuntimeType::UnsizedInt => {
-                unreachable!("ir_generator shouldn't run if there are unsized int types")
+                return self.report_error(FleetError::from_node(
+                    type_.clone(),
+                    "ir_generator shouldn't run if there are unsized int types",
+                    ErrorSeverity::Error,
+                ));
             }
         }
     }
@@ -1345,14 +1450,13 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         return Ok(Some(right_value));
     }
 
-    fn visit_int_type(
-        &mut self,
-        IntType {
+    fn visit_int_type(&mut self, type_: &mut IntType) -> Self::TypeOutput {
+        let type_clone = type_.clone();
+        let IntType {
             token: _,
             type_,
             id,
-        }: &mut IntType,
-    ) -> Self::TypeOutput {
+        } = type_;
         let infered_type = self
             .type_data
             .get(id)
@@ -1363,7 +1467,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             *infered_type.borrow(),
             "Inferred type (right) of IntType doesn't match its actual type (left)"
         );
-        Ok(self.runtime_type_to_llvm(*type_))
+        Ok(self.runtime_type_to_llvm(*type_, type_clone)?)
     }
 
     fn visit_unit_type(
@@ -1399,5 +1503,29 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             "Inferred type (right) of BoolType doesn't match its actual type (left)"
         );
         Ok(self.context.bool_type().into())
+    }
+
+    fn visit_idk_type(&mut self, type_: &mut IdkType) -> Self::TypeOutput {
+        let type_clone = type_.clone();
+        let IdkType {
+            type_,
+            token: _,
+            id,
+        } = type_;
+        let infered_type = self
+            .type_data
+            .get(id)
+            .expect("type data should exist before calling ir_generator")
+            .clone();
+
+        assert_eq!(
+            *type_.borrow(),
+            *infered_type.borrow(),
+            "IdkType didn't get inferred before calling ir_generator"
+        );
+
+        return Ok(self
+            .runtime_type_to_llvm(*infered_type.borrow(), type_clone)
+            .map_err(|err| err)?);
     }
 }

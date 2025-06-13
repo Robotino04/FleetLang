@@ -2,11 +2,11 @@ use crate::{
     ast::{
         AstNode, AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType,
         BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement, IntType,
-        NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, IdkType, IfStatement,
+        IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::{SourceLocation, Token},
 };
@@ -102,7 +102,9 @@ impl AstVisitor for FindContainingNodePass {
         }
         self.visit_token(close_paren_token)?;
         self.visit_token(right_arrow_token)?;
-        self.visit_type(return_type)?;
+        if let Some(return_type) = return_type {
+            self.visit_type(return_type)?;
+        }
         let right_bound = self.visit_function_body(body)?.1;
 
         if left_bound <= self.search_position && self.search_position <= right_bound {
@@ -164,9 +166,11 @@ impl AstVisitor for FindContainingNodePass {
     fn visit_simple_binding(&mut self, binding: &mut SimpleBinding) -> Self::SimpleBindingOutput {
         self.node_hierarchy.push(binding.clone().into());
 
-        let left_bound = self.visit_token(&mut binding.name_token)?.0;
-        self.visit_token(&mut binding.colon_token)?;
-        let right_bound = self.visit_type(&mut binding.type_)?.1;
+        let (left_bound, mut right_bound) = self.visit_token(&mut binding.name_token)?;
+        if let Some((colon_token, type_)) = &mut binding.type_ {
+            self.visit_token(&colon_token)?;
+            right_bound = self.visit_type(type_)?.1;
+        }
 
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());
@@ -584,6 +588,19 @@ impl AstVisitor for FindContainingNodePass {
         self.node_hierarchy.push(bool_type.clone().into());
 
         let (left_bound, right_bound) = self.visit_token(&bool_type.token)?;
+
+        if left_bound <= self.search_position && self.search_position <= right_bound {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        return Ok((left_bound, right_bound));
+    }
+
+    fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {
+        self.node_hierarchy.push(idk_type.clone().into());
+
+        let (left_bound, right_bound) = self.visit_token(&idk_type.token)?;
 
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());

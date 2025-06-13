@@ -1,6 +1,12 @@
 use crate::{
     ast::{
-        AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, IntType, IfStatement, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement
+        AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement,
+        CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, IdkType, IfStatement,
+        IntType, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement,
+        SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor,
+        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     tokenizer::SourceLocation,
@@ -99,7 +105,9 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         let FunctionDefinition {
             return_type, body, ..
         } = function;
-        self.visit_type(return_type);
+        if let Some(return_type) = return_type {
+            self.visit_type(return_type);
+        }
         let body_termination = self.visit_function_body(body);
         self.termination.insert_node(function, body_termination);
         return body_termination;
@@ -137,7 +145,11 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         &mut self,
         simple_binding: &mut SimpleBinding,
     ) -> Self::SimpleBindingOutput {
-        let term = self.visit_type(&mut simple_binding.type_);
+        let term = if let Some((_colon, type_)) = &mut simple_binding.type_ {
+            self.visit_type(type_)
+        } else {
+            FunctionTermination::DoesntTerminate
+        };
         self.termination.insert_node(simple_binding, term);
         return term;
     }
@@ -351,10 +363,7 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         return term;
     }
 
-    fn visit_cast_expression(
-        &mut self,
-        expression: &mut CastExpression,
-    ) -> Self::ExpressionOutput {
+    fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
         let operand_term = self.visit_expression(&mut expression.operand);
         let type_term = self.visit_type(&mut expression.type_);
         let term = operand_term.or(type_term);
@@ -397,6 +406,12 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
     fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
         self.termination
             .insert_node(bool_type, FunctionTermination::DoesntTerminate);
+        return FunctionTermination::DoesntTerminate;
+    }
+
+    fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {
+        self.termination
+            .insert_node(idk_type, FunctionTermination::DoesntTerminate);
         return FunctionTermination::DoesntTerminate;
     }
 }

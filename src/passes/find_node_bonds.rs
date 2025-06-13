@@ -2,11 +2,11 @@ use crate::{
     ast::{
         AstNode, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement,
         CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, IfStatement, IntType,
-        NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, IdkType, IfStatement,
+        IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, WhileLoopStatement,
     },
     tokenizer::SourceLocation,
 };
@@ -45,10 +45,16 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
         AstNode::SimpleBinding(SimpleBinding {
             name_token,
             name: _,
-            colon_token: _,
             type_,
             id: _,
-        }) => (name_token.start, find_node_bounds(type_).1),
+        }) => (
+            name_token.start,
+            if let Some((_colon, type_)) = type_ {
+                find_node_bounds(type_).1
+            } else {
+                name_token.end
+            },
+        ),
         AstNode::ExpressionStatement(ExpressionStatement {
             expression,
             semicolon_token,
@@ -212,5 +218,10 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             id: _,
         }) => (open_paren_token.start, close_paren_token.end),
         AstNode::BoolType(BoolType { token, id: _ }) => (token.start, token.end),
+        AstNode::IdkType(IdkType {
+            type_: _,
+            token,
+            id: _,
+        }) => (token.start, token.end),
     }
 }

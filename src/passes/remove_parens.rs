@@ -1,8 +1,7 @@
 use crate::ast::{
     Associativity, AstVisitor, BinaryExpression, Expression, ExpressionStatement, ForLoopStatement,
-    FunctionCallExpression, GroupingExpression, IfStatement, ReturnStatement, SimpleBinding,
-    ThreadExecutor, UnaryExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-    WhileLoopStatement,
+    FunctionCallExpression, GroupingExpression, IfStatement, ReturnStatement, ThreadExecutor,
+    UnaryExpression, VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
 };
 
 use super::{
@@ -35,10 +34,6 @@ impl RemoveParensPass {
 impl RemoveParensPass {}
 
 impl PartialAstVisitor for RemoveParensPass {
-    fn partial_visit_simple_binding(&mut self, simple_binding: &mut SimpleBinding) {
-        self.visit_type(&mut simple_binding.type_);
-    }
-
     fn partial_visit_expression_statement(&mut self, expr_stmt: &mut ExpressionStatement) {
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;

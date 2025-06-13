@@ -118,22 +118,6 @@ fn missing_right_arrow() {
 }
 
 #[test]
-fn missing_return_type() {
-    assert_parser_or_tokenizer_error(
-        indoc! {r##"
-            let main = () -> {
-                return 0;
-            }
-        "##},
-        SourceLocation {
-            index: 17,
-            line: 1,
-            column: 17,
-        },
-    );
-}
-
-#[test]
 fn missing_open_brace() {
     // Parsing fails at the closing brace because a statement is also a valid function body
     assert_parser_or_tokenizer_error(

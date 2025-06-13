@@ -2,7 +2,7 @@ use crate::ast::{
     AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement,
     CastExpression, Executor, ExecutorHost, Expression, ExpressionStatement, ExternFunctionBody,
     ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition, GroupingExpression,
-    IntType, IfStatement, NumberExpression, OnStatement, Program, ReturnStatement,
+    IdkType, IfStatement, IntType, NumberExpression, OnStatement, Program, ReturnStatement,
     SelfExecutorHost, SimpleBinding, SkipStatement, Statement, StatementFunctionBody,
     ThreadExecutor, Type, UnaryExpression, UnitType, VariableAccessExpression,
     VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
@@ -18,7 +18,9 @@ pub trait PartialAstVisitor {
         }
     }
     fn partial_visit_simple_binding(&mut self, simple_binding: &mut SimpleBinding) {
-        self.partial_visit_type(&mut simple_binding.type_);
+        if let Some((_colon, type_)) = &mut simple_binding.type_ {
+            self.partial_visit_type(type_);
+        }
     }
 
     fn partial_visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
@@ -290,11 +292,13 @@ pub trait PartialAstVisitor {
             Type::Int(int_type) => self.partial_visit_int_type(int_type),
             Type::Unit(unit_type) => self.partial_visit_unit_type(unit_type),
             Type::Bool(bool_type) => self.partial_visit_bool_type(bool_type),
+            Type::Idk(idk_type) => self.partial_visit_idk_type(idk_type),
         }
     }
     fn partial_visit_int_type(&mut self, _int_type: &mut IntType) {}
     fn partial_visit_unit_type(&mut self, _unit_type: &mut UnitType) {}
     fn partial_visit_bool_type(&mut self, _bool_type: &mut BoolType) {}
+    fn partial_visit_idk_type(&mut self, _idk_type: &mut IdkType) {}
 }
 
 impl<T> AstVisitor for T
@@ -485,5 +489,8 @@ where
 
     fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
         self.partial_visit_bool_type(bool_type);
+    }
+    fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {
+        self.partial_visit_idk_type(idk_type);
     }
 }

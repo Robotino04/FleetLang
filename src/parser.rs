@@ -1,12 +1,14 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
     ast::{
         BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
         BreakStatement, CastExpression, Executor, ExecutorHost, Expression, ExpressionStatement,
         ExternFunctionBody, ForLoopStatement, FunctionBody, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, IfStatement, IntType, NodeID, NumberExpression,
-        OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
-        Statement, StatementFunctionBody, ThreadExecutor, Type, UnaryExpression, UnaryOperation,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        FunctionDefinition, GroupingExpression, IdkType, IfStatement, IntType, NodeID,
+        NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, Type, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
@@ -236,7 +238,10 @@ impl<'errors> Parser<'errors> {
 
         let close_paren_token = expect!(self, TokenType::CloseParen)?;
         let right_arrow_token = expect!(self, TokenType::SingleRightArrow)?;
-        let return_type = self.parse_type()?;
+        let mut moved_errors = vec![];
+        std::mem::swap(&mut moved_errors, self.errors);
+        let return_type = self.parse_type().ok();
+        std::mem::swap(&mut moved_errors, self.errors);
         let body = self.parse_function_body()?;
 
         Ok(FunctionDefinition {
@@ -282,11 +287,16 @@ impl<'errors> Parser<'errors> {
         let (name_token, name) =
             expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
 
+        let type_ = if self.current_token_type() == Some(TokenType::Colon) {
+            Some((expect!(self, TokenType::Colon)?, self.parse_type()?))
+        } else {
+            None
+        };
+
         return Ok(SimpleBinding {
             name_token,
             name,
-            colon_token: expect!(self, TokenType::Colon)?,
-            type_: self.parse_type()?,
+            type_,
             id: self.id_generator.next_node_id(),
         });
     }
@@ -862,6 +872,11 @@ impl<'errors> Parser<'errors> {
             })),
             Some(TokenType::Keyword(Keyword::Bool)) => Ok(Type::Bool(BoolType {
                 token: expect!(self, TokenType::Keyword(Keyword::Bool))?,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::Keyword(Keyword::Idk)) => Ok(Type::Idk(IdkType {
+                type_: Rc::new(RefCell::new(RuntimeType::Unknown)),
+                token: expect!(self, TokenType::Keyword(Keyword::Idk))?,
                 id: self.id_generator.next_node_id(),
             })),
             Some(TokenType::OpenParen) => Ok(Type::Unit(UnitType {

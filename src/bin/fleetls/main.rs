@@ -9,9 +9,9 @@ use fleet::ast::{
     AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression,
     BoolType, BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody,
     ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, HasID,
-    IfStatement, IntType, NodeID, NumberExpression, OnStatement, PerNodeData, ReturnStatement,
-    SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor,
-    UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+    IdkType, IfStatement, IntType, NodeID, NumberExpression, OnStatement, PerNodeData,
+    ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody,
+    ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
     VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
 };
 use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
@@ -130,7 +130,7 @@ impl Backend {
                 right_arrow_token: _,
                 return_type,
                 body: _,
-                id: _,
+                id,
             }) => (
                 format!(
                     "let {name} = ({}) -> {}",
@@ -146,8 +146,17 @@ impl Backend {
                         ", ".to_string()
                     )
                     .collect::<String>(),
-                    self.generate_node_hover(return_type, variable_data, function_data, type_data)
-                        .0
+                    return_type
+                        .map(|t| self
+                            .generate_node_hover(t, variable_data, function_data, type_data)
+                            .0)
+                        .unwrap_or_else(|| {
+                            let ref_func = function_data.as_ref().map(|fd| fd.get(&id));
+                            let return_type = self.format_option_type(ref_func.map(|func| {
+                                func.map(|func| func.borrow().return_type.borrow().clone())
+                            }));
+                            return return_type;
+                        })
                 ),
                 "function definition".to_string(),
             ),
@@ -170,14 +179,23 @@ impl Backend {
             AstNode::SimpleBinding(SimpleBinding {
                 name_token: _,
                 name,
-                colon_token: _,
                 type_,
-                id: _,
+                id,
             }) => (
                 format!(
                     "{name}: {}",
-                    self.generate_node_hover(type_, variable_data, function_data, type_data)
-                        .0
+                    type_
+                        .map(|(_colon, type_)| self
+                            .generate_node_hover(type_, variable_data, function_data, type_data)
+                            .0)
+                        .unwrap_or_else(|| {
+                            let ref_var = variable_data.as_ref().map(|fd| fd.get(&id));
+                            let type_ = self.format_option_type(
+                                ref_var
+                                    .map(|var| var.map(|var| var.borrow().type_.borrow().clone())),
+                            );
+                            return type_;
+                        })
                 ),
                 "simple binding".to_string(),
             ),
@@ -465,6 +483,14 @@ impl Backend {
             AstNode::BoolType(BoolType { token: _, id: _ }) => {
                 (format!("bool"), "type".to_string())
             }
+            AstNode::IdkType(IdkType {
+                type_: _,
+                token: _,
+                id,
+            }) => {
+                let type_ = self.get_type_as_hover(id, type_data);
+                (format!("{type_}"), "idk type".to_string())
+            }
         }
     }
 
@@ -656,7 +682,9 @@ impl AstVisitor for ExtractSemanticTokensPass {
 
         self.build_comment_tokens_only(close_paren_token);
         self.build_comment_tokens_only(right_arrow_token);
-        self.visit_type(return_type);
+        if let Some(return_type) = return_type {
+            self.visit_type(return_type);
+        }
         self.visit_function_body(body);
     }
 
@@ -697,8 +725,10 @@ impl AstVisitor for ExtractSemanticTokensPass {
             SemanticTokenType::VARIABLE,
             vec![SemanticTokenModifier::DEFINITION],
         );
-        self.build_comment_tokens_only(&mut simple_binding.colon_token);
-        self.visit_type(&mut simple_binding.type_);
+        if let Some((colon_token, type_)) = &mut simple_binding.type_ {
+            self.build_comment_tokens_only(colon_token);
+            self.visit_type(type_);
+        }
     }
 
     fn visit_expression_statement(
@@ -1011,6 +1041,17 @@ impl AstVisitor for ExtractSemanticTokensPass {
     }
 
     fn visit_bool_type(&mut self, BoolType { token, id: _ }: &mut BoolType) -> Self::TypeOutput {
+        self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
+    }
+
+    fn visit_idk_type(
+        &mut self,
+        IdkType {
+            type_: _,
+            token,
+            id: _,
+        }: &mut IdkType,
+    ) -> Self::TypeOutput {
         self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
     }
 }

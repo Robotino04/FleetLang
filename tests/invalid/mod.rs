@@ -5,5 +5,6 @@ mod conditional_statements;
 mod function;
 mod loops;
 mod sized_integers;
+mod type_inference;
 mod unary_op;
 mod variables;
