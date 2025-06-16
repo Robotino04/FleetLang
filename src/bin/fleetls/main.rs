@@ -6,13 +6,14 @@ use std::rc::Rc;
 use std::sync::LazyLock;
 
 use fleet::ast::{
-    AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression,
-    BoolType, BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody,
-    ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, HasID,
-    IdkType, IfStatement, IntType, NodeID, NumberExpression, OnStatement, PerNodeData,
+    ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
+    BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType, BreakStatement,
+    CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+    FunctionCallExpression, FunctionDefinition, GroupingExpression, GroupingLValue, HasID, IdkType,
+    IfStatement, IntType, NodeID, NumberExpression, OnStatement, PerNodeData, Program,
     ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody,
     ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-    VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+    VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
 };
 use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
 use fleet::passes::find_containing_node::FindContainingNodePass;
@@ -94,7 +95,8 @@ impl Backend {
         type_
             .as_ref()
             .map(|td| {
-                td.map(|t| t.to_string())
+                td.as_ref()
+                    .map(|t| t.to_string())
                     .unwrap_or("/* missing type data*/".to_string())
             })
             .unwrap_or("/* type data unavailable */".to_string())
@@ -361,6 +363,15 @@ impl Backend {
                 format!("{value} {}", self.get_type_as_hover(id, type_data)),
                 "boolean literal".to_string(),
             ),
+            AstNode::ArrayExpression(ArrayExpression {
+                open_bracket_token: _,
+                elements: _,
+                close_bracket_token: _,
+                id,
+            }) => (
+                format!("{}", self.get_type_as_hover(id, type_data)),
+                "array literal".to_string(),
+            ),
             AstNode::BinaryExpression(BinaryExpression {
                 left,
                 operator_token: _,
@@ -444,6 +455,21 @@ impl Backend {
                     "function call".to_string(),
                 )
             }
+            AstNode::ArrayIndexExpression(ArrayIndexExpression {
+                array,
+                open_bracket_token: _,
+                index,
+                close_bracket_token: _,
+                id,
+            }) => (
+                format!(
+                    "({})[{}] => {}",
+                    self.get_type_as_hover(array.get_id(), type_data),
+                    self.get_type_as_hover(index.get_id(), type_data),
+                    self.get_type_as_hover(id, type_data)
+                ),
+                "array index".to_string(),
+            ),
             AstNode::VariableAccessExpression(VariableAccessExpression {
                 name,
                 name_token: _,
@@ -457,19 +483,60 @@ impl Backend {
                 )
             }
             AstNode::VariableAssignmentExpression(VariableAssignmentExpression {
-                name,
-                name_token: _,
+                lvalue,
                 equal_token: _,
                 right: _,
-                id,
+                id: _,
             }) => {
-                let type_ = self.get_type_as_hover(id, type_data);
                 // TODO: once we have consteval, display the value here
                 (
-                    format!("let {name}: {type_} = ..."),
+                    self.generate_node_hover(lvalue, variable_data, function_data, type_data)
+                        .0,
                     "variable assignment".to_string(),
                 )
             }
+            AstNode::VariableLValue(VariableLValue {
+                name,
+                name_token: _,
+                id,
+            }) => {
+                // TODO: once we have consteval, display the value here
+                let type_ = self.get_type_as_hover(id, type_data);
+                (
+                    format!("let {name}: {type_} = ..."),
+                    "variable lvalue".to_string(),
+                )
+            }
+            AstNode::ArrayIndexLValue(ArrayIndexLValue {
+                array,
+                open_bracket_token: _,
+                index,
+                close_bracket_token: _,
+                id: _,
+            }) => {
+                // TODO: once we have consteval, display the value here
+                (
+                    format!(
+                        "let {}[{}] = ...",
+                        self.get_type_as_hover(array.get_id(), type_data),
+                        self.get_type_as_hover(index.get_id(), type_data)
+                    ),
+                    "array index lvalue".to_string(),
+                )
+            }
+            AstNode::GroupingLValue(GroupingLValue {
+                open_paren_token: _,
+                sublvalue,
+                close_paren_token: _,
+                id: _,
+            }) => (
+                format!(
+                    "({})",
+                    self.generate_node_hover(*sublvalue, variable_data, function_data, type_data)
+                        .0
+                ),
+                "lvalue grouping".to_string(),
+            ),
             AstNode::IntType(IntType {
                 token: _,
                 type_,
@@ -490,6 +557,16 @@ impl Backend {
             }) => {
                 let type_ = self.get_type_as_hover(id, type_data);
                 (format!("{type_}"), "idk type".to_string())
+            }
+            AstNode::ArrayType(ArrayType {
+                subtype: _,
+                open_bracket_token: _,
+                size: _,
+                close_bracket_token: _,
+                id,
+            }) => {
+                let type_ = self.get_type_as_hover(id, type_data);
+                (format!("{type_}"), "array type".to_string())
             }
         }
     }
@@ -634,12 +711,11 @@ impl AstVisitor for ExtractSemanticTokensPass {
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
-
     type ExpressionOutput = ();
-
+    type LValueOutput = ();
     type TypeOutput = ();
 
-    fn visit_program(mut self, program: &mut fleet::ast::Program) -> Self::ProgramOutput {
+    fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         for f in &mut program.functions {
             self.visit_function_definition(f);
         }
@@ -909,6 +985,25 @@ impl AstVisitor for ExtractSemanticTokensPass {
         self.build_semantic_token(token, SemanticTokenType::KEYWORD, vec![]);
     }
 
+    fn visit_array_expression(
+        &mut self,
+        ArrayExpression {
+            open_bracket_token,
+            elements,
+            close_bracket_token,
+            id: _,
+        }: &mut ArrayExpression,
+    ) -> Self::ExpressionOutput {
+        self.build_comment_tokens_only(open_bracket_token);
+        for (item, comma) in elements {
+            self.visit_expression(item);
+            if let Some(comma) = comma {
+                self.build_comment_tokens_only(comma);
+            }
+        }
+        self.build_comment_tokens_only(close_bracket_token);
+    }
+
     fn visit_function_call_expression(
         &mut self,
         FunctionCallExpression {
@@ -929,6 +1024,22 @@ impl AstVisitor for ExtractSemanticTokensPass {
             }
         }
         self.build_comment_tokens_only(close_paren_token);
+    }
+
+    fn visit_array_index_expression(
+        &mut self,
+        ArrayIndexExpression {
+            array,
+            open_bracket_token,
+            index,
+            close_bracket_token,
+            id: _,
+        }: &mut ArrayIndexExpression,
+    ) -> Self::ExpressionOutput {
+        self.visit_expression(array);
+        self.build_comment_tokens_only(open_bracket_token);
+        self.visit_expression(index);
+        self.build_comment_tokens_only(close_bracket_token);
     }
 
     fn visit_grouping_expression(
@@ -1001,20 +1112,60 @@ impl AstVisitor for ExtractSemanticTokensPass {
     fn visit_variable_assignment_expression(
         &mut self,
         VariableAssignmentExpression {
-            name: _,
-            name_token,
+            lvalue,
             equal_token,
             right,
             id: _,
         }: &mut VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
+        self.visit_lvalue(lvalue);
+        self.build_comment_tokens_only(equal_token);
+        self.visit_expression(right);
+    }
+
+    fn visit_variable_lvalue(
+        &mut self,
+        VariableLValue {
+            name: _,
+            name_token,
+            id: _,
+        }: &mut VariableLValue,
+    ) -> Self::LValueOutput {
         self.build_semantic_token(
             name_token,
             SemanticTokenType::VARIABLE,
             vec![SemanticTokenModifier::MODIFICATION],
         );
-        self.build_comment_tokens_only(equal_token);
-        self.visit_expression(right);
+    }
+
+    fn visit_array_index_lvalue(
+        &mut self,
+        ArrayIndexLValue {
+            array,
+            open_bracket_token,
+            index,
+            close_bracket_token,
+            id: _,
+        }: &mut ArrayIndexLValue,
+    ) -> Self::LValueOutput {
+        self.visit_lvalue(array);
+        self.build_comment_tokens_only(open_bracket_token);
+        self.visit_expression(index);
+        self.build_comment_tokens_only(close_bracket_token);
+    }
+
+    fn visit_grouping_lvalue(
+        &mut self,
+        GroupingLValue {
+            open_paren_token,
+            sublvalue,
+            close_paren_token,
+            id: _,
+        }: &mut GroupingLValue,
+    ) -> Self::LValueOutput {
+        self.build_comment_tokens_only(open_paren_token);
+        self.visit_lvalue(sublvalue);
+        self.build_comment_tokens_only(close_paren_token);
     }
 
     fn visit_int_type(
@@ -1053,6 +1204,24 @@ impl AstVisitor for ExtractSemanticTokensPass {
         }: &mut IdkType,
     ) -> Self::TypeOutput {
         self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
+    }
+
+    fn visit_array_type(
+        &mut self,
+        ArrayType {
+            subtype,
+            open_bracket_token,
+            size,
+            close_bracket_token,
+            id: _,
+        }: &mut ArrayType,
+    ) -> Self::TypeOutput {
+        self.visit_type(subtype);
+        self.build_comment_tokens_only(open_bracket_token);
+        if let Some(size) = size {
+            self.visit_expression(&mut *size);
+        }
+        self.build_comment_tokens_only(close_bracket_token);
     }
 }
 

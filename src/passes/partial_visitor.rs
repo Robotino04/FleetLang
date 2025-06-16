@@ -1,30 +1,60 @@
 use crate::ast::{
-    AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement,
-    CastExpression, Executor, ExecutorHost, Expression, ExpressionStatement, ExternFunctionBody,
-    ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition, GroupingExpression,
-    IdkType, IfStatement, IntType, NumberExpression, OnStatement, Program, ReturnStatement,
+    ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+    BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
+    Executor, ExecutorHost, Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+    FunctionBody, FunctionCallExpression, FunctionDefinition, GroupingExpression, GroupingLValue,
+    IdkType, IfStatement, IntType, LValue, NumberExpression, OnStatement, Program, ReturnStatement,
     SelfExecutorHost, SimpleBinding, SkipStatement, Statement, StatementFunctionBody,
     ThreadExecutor, Type, UnaryExpression, UnitType, VariableAccessExpression,
-    VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+    VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
 };
 
 pub trait PartialAstVisitor {
-    fn partial_visit_program(mut self, program: &mut Program)
+    fn partial_visit_program(mut self, Program { functions, id: _ }: &mut Program)
     where
         Self: Sized,
     {
-        for f in &mut program.functions {
+        for f in functions {
             self.partial_visit_function_definition(f);
         }
     }
-    fn partial_visit_simple_binding(&mut self, simple_binding: &mut SimpleBinding) {
-        if let Some((_colon, type_)) = &mut simple_binding.type_ {
+    fn partial_visit_simple_binding(
+        &mut self,
+        SimpleBinding {
+            name_token: _,
+            name: _,
+            type_,
+            id: _,
+        }: &mut SimpleBinding,
+    ) {
+        if let Some((_colon, type_)) = type_ {
             self.partial_visit_type(type_);
         }
     }
 
-    fn partial_visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
-        self.partial_visit_function_body(&mut function_definition.body);
+    fn partial_visit_function_definition(
+        &mut self,
+        FunctionDefinition {
+            let_token: _,
+            name: _,
+            name_token: _,
+            equal_token: _,
+            open_paren_token: _,
+            parameters,
+            close_paren_token: _,
+            right_arrow_token: _,
+            return_type,
+            body,
+            id: _,
+        }: &mut FunctionDefinition,
+    ) {
+        for (param, _comma) in parameters {
+            self.partial_visit_simple_binding(param);
+        }
+        if let Some(return_type) = return_type {
+            self.partial_visit_type(return_type);
+        }
+        self.partial_visit_function_body(body);
     }
 
     fn partial_visit_function_body(&mut self, function_body: &mut FunctionBody) {
@@ -85,8 +115,15 @@ pub trait PartialAstVisitor {
             Statement::Skip(skip_statement) => self.partial_visit_skip_statement(skip_statement),
         }
     }
-    fn partial_visit_expression_statement(&mut self, expr_stmt: &mut ExpressionStatement) {
-        self.partial_visit_expression(&mut expr_stmt.expression);
+    fn partial_visit_expression_statement(
+        &mut self,
+        ExpressionStatement {
+            expression,
+            semicolon_token: _,
+            id: _,
+        }: &mut ExpressionStatement,
+    ) {
+        self.partial_visit_expression(expression);
     }
 
     fn partial_visit_on_statement(
@@ -118,31 +155,56 @@ pub trait PartialAstVisitor {
         }
     }
 
-    fn partial_visit_return_statement(&mut self, return_stmt: &mut ReturnStatement) {
-        if let Some(retvalue) = &mut return_stmt.value {
+    fn partial_visit_return_statement(
+        &mut self,
+        ReturnStatement {
+            return_token: _,
+            value,
+            semicolon_token: _,
+            id: _,
+        }: &mut ReturnStatement,
+    ) {
+        if let Some(retvalue) = value {
             self.partial_visit_expression(retvalue);
         }
     }
 
     fn partial_visit_variable_definition_statement(
         &mut self,
-        vardef_stmt: &mut VariableDefinitionStatement,
+        VariableDefinitionStatement {
+            let_token: _,
+            binding,
+            equals_token: _,
+            value,
+            semicolon_token: _,
+            id: _,
+        }: &mut VariableDefinitionStatement,
     ) {
-        self.partial_visit_simple_binding(&mut vardef_stmt.binding);
-        self.partial_visit_expression(&mut vardef_stmt.value);
+        self.partial_visit_simple_binding(binding);
+        self.partial_visit_expression(value);
     }
 
-    fn partial_visit_if_statement(&mut self, if_stmt: &mut IfStatement) {
-        self.partial_visit_expression(&mut if_stmt.condition);
-        self.partial_visit_statement(&mut if_stmt.if_body);
+    fn partial_visit_if_statement(
+        &mut self,
+        IfStatement {
+            if_token: _,
+            condition,
+            if_body,
+            elifs,
+            else_,
+            id: _,
+        }: &mut IfStatement,
+    ) {
+        self.partial_visit_expression(condition);
+        self.partial_visit_statement(if_body);
 
-        for (_token, condition, body) in &mut if_stmt.elifs {
+        for (_token, condition, body) in elifs {
             self.partial_visit_expression(condition);
-            self.partial_visit_statement(&mut *body);
+            self.partial_visit_statement(body);
         }
 
-        if let Some((_, else_body)) = &mut if_stmt.else_ {
-            self.partial_visit_statement(&mut *else_body);
+        if let Some((_, else_body)) = else_ {
+            self.partial_visit_statement(else_body);
         }
     }
     fn partial_visit_while_loop_statement(
@@ -208,7 +270,11 @@ pub trait PartialAstVisitor {
             }
         }
     }
-    fn partial_visit_self_executor_host(&mut self, _executor_host: &mut SelfExecutorHost) {}
+    fn partial_visit_self_executor_host(
+        &mut self,
+        SelfExecutorHost { token: _, id: _ }: &mut SelfExecutorHost,
+    ) {
+    }
 
     fn partial_visit_executor(&mut self, executor: &mut Executor) {
         match executor {
@@ -217,9 +283,20 @@ pub trait PartialAstVisitor {
             }
         }
     }
-    fn partial_visit_thread_executor(&mut self, executor: &mut ThreadExecutor) {
-        self.partial_visit_executor_host(&mut executor.host);
-        self.partial_visit_expression(&mut executor.index);
+    fn partial_visit_thread_executor(
+        &mut self,
+        ThreadExecutor {
+            host,
+            dot_token: _,
+            thread_token: _,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id: _,
+        }: &mut ThreadExecutor,
+    ) {
+        self.partial_visit_executor_host(host);
+        self.partial_visit_expression(index);
     }
 
     // expressions
@@ -231,8 +308,14 @@ pub trait PartialAstVisitor {
             Expression::Bool(bool_expression) => {
                 self.partial_visit_bool_expression(bool_expression)
             }
+            Expression::Array(array_expression) => {
+                self.partial_visit_array_expression(array_expression)
+            }
             Expression::FunctionCall(function_call_expression) => {
                 self.partial_visit_function_call_expression(function_call_expression)
+            }
+            Expression::ArrayIndex(array_index_expression) => {
+                self.partial_visit_array_index_expression(array_index_expression)
             }
             Expression::Grouping(grouping_expression) => {
                 self.partial_visit_grouping_expression(grouping_expression)
@@ -254,37 +337,179 @@ pub trait PartialAstVisitor {
             }
         }
     }
-    fn partial_visit_number_expression(&mut self, _expression: &mut NumberExpression) {}
-    fn partial_visit_bool_expression(&mut self, _expression: &mut BoolExpression) {}
-    fn partial_visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
-        for (arg, _comma) in &mut expression.arguments {
+    fn partial_visit_number_expression(
+        &mut self,
+        NumberExpression {
+            value: _,
+            token: _,
+            id: _,
+        }: &mut NumberExpression,
+    ) {
+    }
+    fn partial_visit_bool_expression(
+        &mut self,
+        BoolExpression {
+            value: _,
+            token: _,
+            id: _,
+        }: &mut BoolExpression,
+    ) {
+    }
+    fn partial_visit_array_expression(
+        &mut self,
+        ArrayExpression {
+            open_bracket_token: _,
+            elements,
+            close_bracket_token: _,
+            id: _,
+        }: &mut ArrayExpression,
+    ) {
+        for (item, _comma) in elements {
+            self.partial_visit_expression(item);
+        }
+    }
+    fn partial_visit_function_call_expression(
+        &mut self,
+        FunctionCallExpression {
+            name: _,
+            name_token: _,
+            open_paren_token: _,
+            arguments,
+            close_paren_token: _,
+            id: _,
+        }: &mut FunctionCallExpression,
+    ) {
+        for (arg, _comma) in arguments {
             self.partial_visit_expression(arg);
         }
     }
-    fn partial_visit_grouping_expression(&mut self, expression: &mut GroupingExpression) {
-        self.partial_visit_expression(&mut *expression.subexpression);
+    fn partial_visit_array_index_expression(
+        &mut self,
+        ArrayIndexExpression {
+            array,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id: _,
+        }: &mut ArrayIndexExpression,
+    ) {
+        self.partial_visit_expression(array);
+        self.partial_visit_expression(index);
+    }
+    fn partial_visit_grouping_expression(
+        &mut self,
+        GroupingExpression {
+            open_paren_token: _,
+            subexpression,
+            close_paren_token: _,
+            id: _,
+        }: &mut GroupingExpression,
+    ) {
+        self.partial_visit_expression(subexpression);
     }
     fn partial_visit_variable_access_expression(
         &mut self,
-        _expression: &mut VariableAccessExpression,
+        VariableAccessExpression {
+            name: _,
+            name_token: _,
+            id: _,
+        }: &mut VariableAccessExpression,
     ) {
     }
-    fn partial_visit_unary_expression(&mut self, expression: &mut UnaryExpression) {
-        self.partial_visit_expression(&mut *expression.operand);
+    fn partial_visit_unary_expression(
+        &mut self,
+        UnaryExpression {
+            operator_token: _,
+            operation: _,
+            operand,
+            id: _,
+        }: &mut UnaryExpression,
+    ) {
+        self.partial_visit_expression(operand);
     }
-    fn partial_visit_cast_expression(&mut self, expression: &mut CastExpression) {
-        self.partial_visit_expression(&mut *expression.operand);
-        self.partial_visit_type(&mut expression.type_);
+    fn partial_visit_cast_expression(
+        &mut self,
+        CastExpression {
+            operand,
+            as_token: _,
+            type_,
+            id: _,
+        }: &mut CastExpression,
+    ) {
+        self.partial_visit_expression(operand);
+        self.partial_visit_type(type_);
     }
-    fn partial_visit_binary_expression(&mut self, expression: &mut BinaryExpression) {
-        self.partial_visit_expression(&mut *expression.left);
-        self.partial_visit_expression(&mut *expression.right);
+    fn partial_visit_binary_expression(
+        &mut self,
+        BinaryExpression {
+            left,
+            operator_token: _,
+            operation: _,
+            right,
+            id: _,
+        }: &mut BinaryExpression,
+    ) {
+        self.partial_visit_expression(left);
+        self.partial_visit_expression(right);
     }
     fn partial_visit_variable_assignment_expression(
         &mut self,
-        expression: &mut VariableAssignmentExpression,
+        VariableAssignmentExpression {
+            lvalue,
+            equal_token: _,
+            right,
+            id: _,
+        }: &mut VariableAssignmentExpression,
     ) {
-        self.partial_visit_expression(&mut *expression.right)
+        self.partial_visit_lvalue(&mut *lvalue);
+        self.partial_visit_expression(&mut **right);
+    }
+
+    fn partial_visit_lvalue(&mut self, lvalue: &mut LValue) {
+        match lvalue {
+            LValue::Variable(variable_lvalue) => {
+                self.partial_visit_variable_lvalue(variable_lvalue)
+            }
+            LValue::ArrayIndex(array_index_lvalue) => {
+                self.partial_visit_array_index_lvalue(array_index_lvalue)
+            }
+            LValue::Grouping(grouping_lvalue) => {
+                self.partial_visit_grouping_lvalue(grouping_lvalue)
+            }
+        }
+    }
+    fn partial_visit_variable_lvalue(
+        &mut self,
+        VariableLValue {
+            name: _,
+            name_token: _,
+            id: _,
+        }: &mut VariableLValue,
+    ) {
+    }
+    fn partial_visit_array_index_lvalue(
+        &mut self,
+        ArrayIndexLValue {
+            array,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id: _,
+        }: &mut ArrayIndexLValue,
+    ) {
+        self.partial_visit_lvalue(&mut *array);
+        self.partial_visit_expression(&mut *index);
+    }
+    fn partial_visit_grouping_lvalue(
+        &mut self,
+        GroupingLValue {
+            open_paren_token: _,
+            sublvalue,
+            close_paren_token: _,
+            id: _,
+        }: &mut GroupingLValue,
+    ) {
+        self.partial_visit_lvalue(&mut *sublvalue);
     }
 
     fn partial_visit_type(&mut self, type_: &mut Type) {
@@ -293,12 +518,52 @@ pub trait PartialAstVisitor {
             Type::Unit(unit_type) => self.partial_visit_unit_type(unit_type),
             Type::Bool(bool_type) => self.partial_visit_bool_type(bool_type),
             Type::Idk(idk_type) => self.partial_visit_idk_type(idk_type),
+            Type::Array(array_type) => self.partial_visit_array_type(array_type),
         }
     }
-    fn partial_visit_int_type(&mut self, _int_type: &mut IntType) {}
-    fn partial_visit_unit_type(&mut self, _unit_type: &mut UnitType) {}
-    fn partial_visit_bool_type(&mut self, _bool_type: &mut BoolType) {}
-    fn partial_visit_idk_type(&mut self, _idk_type: &mut IdkType) {}
+    fn partial_visit_int_type(
+        &mut self,
+        IntType {
+            token: _,
+            type_: _,
+            id: _,
+        }: &mut IntType,
+    ) {
+    }
+    fn partial_visit_unit_type(
+        &mut self,
+        UnitType {
+            open_paren_token: _,
+            close_paren_token: _,
+            id: _,
+        }: &mut UnitType,
+    ) {
+    }
+    fn partial_visit_bool_type(&mut self, BoolType { token: _, id: _ }: &mut BoolType) {}
+    fn partial_visit_idk_type(
+        &mut self,
+        IdkType {
+            type_: _,
+            token: _,
+            id: _,
+        }: &mut IdkType,
+    ) {
+    }
+    fn partial_visit_array_type(
+        &mut self,
+        ArrayType {
+            subtype,
+            open_bracket_token: _,
+            size,
+            close_bracket_token: _,
+            id: _,
+        }: &mut ArrayType,
+    ) {
+        self.partial_visit_type(subtype);
+        if let Some(size) = size {
+            self.partial_visit_expression(size);
+        }
+    }
 }
 
 impl<T> AstVisitor for T
@@ -313,7 +578,7 @@ where
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
     type ExpressionOutput = ();
-
+    type LValueOutput = ();
     type TypeOutput = ();
 
     fn visit_program(self, program: &mut Program) -> Self::ProgramOutput {
@@ -425,8 +690,15 @@ where
     ) -> Self::ExpressionOutput {
         self.partial_visit_number_expression(expression);
     }
+
     fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput {
         self.partial_visit_bool_expression(expression);
+    }
+    fn visit_array_expression(
+        &mut self,
+        expression: &mut ArrayExpression,
+    ) -> Self::ExpressionOutput {
+        self.partial_visit_array_expression(expression);
     }
 
     fn visit_function_call_expression(
@@ -434,6 +706,13 @@ where
         expression: &mut FunctionCallExpression,
     ) -> Self::ExpressionOutput {
         self.partial_visit_function_call_expression(expression);
+    }
+
+    fn visit_array_index_expression(
+        &mut self,
+        expression: &mut ArrayIndexExpression,
+    ) -> Self::ExpressionOutput {
+        self.partial_visit_array_index_expression(expression);
     }
 
     fn visit_grouping_expression(
@@ -456,10 +735,10 @@ where
     ) -> Self::ExpressionOutput {
         self.partial_visit_unary_expression(expression);
     }
-
     fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
         self.partial_visit_cast_expression(expression);
     }
+
     fn visit_binary_expression(
         &mut self,
         expression: &mut BinaryExpression,
@@ -472,6 +751,22 @@ where
         expression: &mut VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
         self.partial_visit_variable_assignment_expression(expression);
+    }
+
+    fn visit_lvalue(&mut self, lvalue: &mut LValue) -> Self::LValueOutput {
+        self.partial_visit_lvalue(lvalue);
+    }
+
+    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
+        self.partial_visit_variable_lvalue(lvalue);
+    }
+
+    fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
+        self.partial_visit_array_index_lvalue(lvalue);
+    }
+
+    fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {
+        self.partial_visit_grouping_lvalue(lvalue);
     }
 
     // types
@@ -490,7 +785,12 @@ where
     fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
         self.partial_visit_bool_type(bool_type);
     }
+
     fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {
         self.partial_visit_idk_type(idk_type);
+    }
+
+    fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
+        self.partial_visit_array_type(array_type);
     }
 }

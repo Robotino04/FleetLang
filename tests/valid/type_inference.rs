@@ -44,3 +44,18 @@ fn missing_variable_type() {
         true,
     );
 }
+
+#[test]
+#[ignore = "needs more powerful type inference"]
+fn missing_variable_type_int() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = 12345;
+                return a;
+            }
+        "##},
+        "main",
+        12345i32,
+    );
+}

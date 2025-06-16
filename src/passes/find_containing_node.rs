@@ -1,15 +1,14 @@
-use crate::{
-    ast::{
-        AstNode, AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType,
-        BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, IdkType, IfStatement,
-        IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, WhileLoopStatement,
-    },
-    tokenizer::{SourceLocation, Token},
+use crate::ast::{
+    ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
+    BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
+    ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+    FunctionDefinition, GroupingExpression, GroupingLValue, IdkType, IfStatement, IntType,
+    NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+    SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
+    VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+    VariableLValue, WhileLoopStatement,
 };
+use crate::tokenizer::{SourceLocation, Token};
 
 pub struct FindContainingNodePass {
     node_hierarchy: Vec<AstNode>,
@@ -44,18 +43,19 @@ impl FindContainingNodePass {
     }
 }
 
+type ResultRange = Result<(SourceLocation, SourceLocation), ()>;
+
 impl AstVisitor for FindContainingNodePass {
     type ProgramOutput = Result<(Vec<AstNode>, Option<Token>), ()>;
-    type FunctionDefinitionOutput = Result<(SourceLocation, SourceLocation), ()>;
-    type FunctionBodyOutput = Result<(SourceLocation, SourceLocation), ()>;
-    type SimpleBindingOutput = Result<(SourceLocation, SourceLocation), ()>;
-    type StatementOutput = Result<(SourceLocation, SourceLocation), ()>;
-    type ExecutorHostOutput = Result<(SourceLocation, SourceLocation), ()>;
-    type ExecutorOutput = Result<(SourceLocation, SourceLocation), ()>;
-
-    type ExpressionOutput = Result<(SourceLocation, SourceLocation), ()>;
-
-    type TypeOutput = Result<(SourceLocation, SourceLocation), ()>;
+    type FunctionDefinitionOutput = ResultRange;
+    type FunctionBodyOutput = ResultRange;
+    type SimpleBindingOutput = ResultRange;
+    type StatementOutput = ResultRange;
+    type ExecutorHostOutput = ResultRange;
+    type ExecutorOutput = ResultRange;
+    type ExpressionOutput = ResultRange;
+    type LValueOutput = ResultRange;
+    type TypeOutput = ResultRange;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         self.node_hierarchy.push(program.clone().into());
@@ -431,6 +431,31 @@ impl AstVisitor for FindContainingNodePass {
         return Ok((left_bound, right_bound));
     }
 
+    fn visit_array_expression(
+        &mut self,
+        expression: &mut ArrayExpression,
+    ) -> Self::ExpressionOutput {
+        self.node_hierarchy.push(expression.clone().into());
+
+        let left_bound = self.visit_token(&expression.open_bracket_token)?.0;
+
+        for (item, comma) in &mut expression.elements {
+            self.visit_expression(item)?;
+            if let Some(comma) = comma {
+                self.visit_token(comma)?;
+            }
+        }
+
+        let right_bound = self.visit_token(&expression.close_bracket_token)?.1;
+
+        if left_bound <= self.search_position && self.search_position <= right_bound {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        return Ok((left_bound, right_bound));
+    }
+
     fn visit_function_call_expression(
         &mut self,
         expression: &mut FunctionCallExpression,
@@ -446,6 +471,25 @@ impl AstVisitor for FindContainingNodePass {
             }
         }
         let right_bound = self.visit_token(&expression.close_paren_token)?.1;
+
+        if left_bound <= self.search_position && self.search_position <= right_bound {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        return Ok((left_bound, right_bound));
+    }
+
+    fn visit_array_index_expression(
+        &mut self,
+        expression: &mut ArrayIndexExpression,
+    ) -> Self::ExpressionOutput {
+        self.node_hierarchy.push(expression.clone().into());
+
+        let left_bound = self.visit_expression(&mut expression.array)?.0;
+        self.visit_token(&expression.open_bracket_token)?;
+        self.visit_expression(&mut expression.index)?;
+        let right_bound = self.visit_token(&expression.close_bracket_token)?.1;
 
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());
@@ -545,9 +589,53 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::ExpressionOutput {
         self.node_hierarchy.push(expression.clone().into());
 
-        let left_bound = self.visit_token(&expression.name_token)?.0;
+        let left_bound = self.visit_lvalue(&mut expression.lvalue)?.0;
         self.visit_token(&expression.equal_token)?;
         let right_bound = self.visit_expression(&mut expression.right)?.1;
+
+        if left_bound <= self.search_position && self.search_position <= right_bound {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        return Ok((left_bound, right_bound));
+    }
+
+    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
+        self.node_hierarchy.push(lvalue.clone().into());
+
+        let (left_bound, right_bound) = self.visit_token(&lvalue.name_token)?;
+
+        if left_bound <= self.search_position && self.search_position <= right_bound {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        return Ok((left_bound, right_bound));
+    }
+
+    fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
+        self.node_hierarchy.push(lvalue.clone().into());
+
+        let left_bound = self.visit_lvalue(&mut lvalue.array)?.0;
+        self.visit_token(&lvalue.open_bracket_token)?;
+        self.visit_expression(&mut lvalue.index)?;
+        let right_bound = self.visit_token(&lvalue.close_bracket_token)?.1;
+
+        if left_bound <= self.search_position && self.search_position <= right_bound {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        return Ok((left_bound, right_bound));
+    }
+
+    fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {
+        self.node_hierarchy.push(lvalue.clone().into());
+
+        let left_bound = self.visit_token(&lvalue.open_paren_token)?.0;
+        self.visit_lvalue(&mut lvalue.sublvalue)?;
+        let right_bound = self.visit_token(&lvalue.close_paren_token)?.1;
 
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());
@@ -601,6 +689,24 @@ impl AstVisitor for FindContainingNodePass {
         self.node_hierarchy.push(idk_type.clone().into());
 
         let (left_bound, right_bound) = self.visit_token(&idk_type.token)?;
+
+        if left_bound <= self.search_position && self.search_position <= right_bound {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        return Ok((left_bound, right_bound));
+    }
+
+    fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
+        self.node_hierarchy.push(array_type.clone().into());
+
+        let left_bound = self.visit_type(&mut array_type.subtype)?.0;
+        self.visit_token(&array_type.open_bracket_token)?;
+        if let Some(size) = &mut array_type.size {
+            self.visit_expression(size)?;
+        }
+        let right_bound = self.visit_token(&array_type.close_bracket_token)?.1;
 
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());

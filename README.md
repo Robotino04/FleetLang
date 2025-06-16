@@ -28,7 +28,9 @@
 - comptime evaluation
 - comptime type eval for generics (similar to zig/hblang)
 - use constraint based type inference, `Rc<RefCell<Rc<RefCell<>>>>` or <https://en.wikipedia.org/wiki/Disjoint-set_data_structure>
-- use AstVisitor for `generate_c`
+- use AstVisitor for `generate_c` and `find_node_bounds`
+- simplify `get_precedence` and `get_associativity` using impl or a trait
+- add way to get length of array
 
 
 ## Building

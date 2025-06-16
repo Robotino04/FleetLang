@@ -1,5 +1,5 @@
 use crate::{
-    ast::{AstVisitor, FunctionCallExpression},
+    ast::{ArrayExpression, AstVisitor, FunctionCallExpression},
     infra::FleetError,
     parser::IdGenerator,
 };
@@ -40,6 +40,27 @@ impl PartialAstVisitor for FixTrailingComma<'_> {
             if let Some(mut token) = comma.clone() {
                 token.leading_trivia.append(&mut token.trailing_trivia);
                 AddTrailingTriviaPass::new(token.leading_trivia).visit_expression(arg);
+            }
+            *comma = None;
+        }
+    }
+    fn partial_visit_array_expression(
+        &mut self,
+        ArrayExpression {
+            open_bracket_token: _,
+            elements,
+            close_bracket_token: _,
+            id: _,
+        }: &mut ArrayExpression,
+    ) {
+        for (item, _comma) in &mut *elements {
+            self.visit_expression(item);
+        }
+
+        if let Some((item, comma)) = elements.last_mut() {
+            if let Some(mut token) = comma.clone() {
+                token.leading_trivia.append(&mut token.trailing_trivia);
+                AddTrailingTriviaPass::new(token.leading_trivia).visit_expression(item);
             }
             *comma = None;
         }

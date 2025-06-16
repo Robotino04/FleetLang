@@ -1,12 +1,13 @@
 use crate::{
     ast::{
-        AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement,
-        CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, IdkType, IfStatement,
-        IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, WhileLoopStatement,
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
+        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+        FunctionDefinition, GroupingExpression, GroupingLValue, IdkType, IfStatement, IntType,
+        NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -35,9 +36,8 @@ impl AstVisitor for AddLeadingTriviaPass {
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
-
     type ExpressionOutput = ();
-
+    type LValueOutput = ();
     type TypeOutput = ();
 
     fn visit_program(mut self, program: &mut Program) {
@@ -63,7 +63,6 @@ impl AstVisitor for AddLeadingTriviaPass {
     ) -> Self::FunctionBodyOutput {
         self.visit_token(at_token);
     }
-
     fn visit_simple_binding(
         &mut self,
         SimpleBinding { name_token, .. }: &mut SimpleBinding,
@@ -147,8 +146,22 @@ impl AstVisitor for AddLeadingTriviaPass {
         self.visit_token(&mut expression.token);
     }
 
+    fn visit_array_expression(
+        &mut self,
+        expression: &mut ArrayExpression,
+    ) -> Self::ExpressionOutput {
+        self.visit_token(&mut expression.open_bracket_token);
+    }
+
     fn visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
         self.visit_token(&mut expression.name_token);
+    }
+
+    fn visit_array_index_expression(
+        &mut self,
+        expression: &mut ArrayIndexExpression,
+    ) -> Self::ExpressionOutput {
+        self.visit_expression(&mut expression.array);
     }
 
     fn visit_grouping_expression(&mut self, expression: &mut GroupingExpression) {
@@ -175,7 +188,19 @@ impl AstVisitor for AddLeadingTriviaPass {
         &mut self,
         expression: &mut VariableAssignmentExpression,
     ) {
-        self.visit_token(&mut expression.name_token);
+        self.visit_lvalue(&mut expression.lvalue);
+    }
+
+    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
+        self.visit_token(&mut lvalue.name_token);
+    }
+
+    fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
+        self.visit_lvalue(&mut lvalue.array);
+    }
+
+    fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {
+        self.visit_token(&mut lvalue.open_paren_token);
     }
 
     fn visit_int_type(&mut self, int_type: &mut IntType) {
@@ -192,5 +217,9 @@ impl AstVisitor for AddLeadingTriviaPass {
 
     fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {
         self.visit_token(&mut idk_type.token);
+    }
+
+    fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
+        self.visit_type(&mut array_type.subtype);
     }
 }

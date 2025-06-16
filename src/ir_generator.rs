@@ -7,7 +7,6 @@ use std::{
 };
 
 use inkwell::{
-    IntPredicate,
     basic_block::BasicBlock,
     builder::Builder,
     context::Context,
@@ -16,19 +15,21 @@ use inkwell::{
     values::{
         BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue,
     },
+    IntPredicate,
 };
 use itertools::Itertools;
 
 use crate::{
     ast::{
-        AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression,
-        BoolType, BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody,
-        ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition,
-        GroupingExpression, HasID, IdkType, IfStatement, IntType, NumberExpression, OnStatement,
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
+        BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
+        BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionBody, FunctionCallExpression, FunctionDefinition, GroupingExpression,
+        GroupingLValue, HasID, IdkType, IfStatement, IntType, NumberExpression, OnStatement,
         PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
         StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        VariableLValue, WhileLoopStatement,
     },
     escape::unescape,
     infra::{ErrorSeverity, FleetError},
@@ -58,6 +59,21 @@ impl<'a> DerefMut for VariableStorage<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
+}
+
+macro_rules! match_any_type_enum_as_basic_type {
+    ($enum_val:expr, $inner_var:pat => $code:block, function($func_id:pat) => $func:block, unit($unit_id:pat) => $unit:block) => {
+        match $enum_val {
+            AnyTypeEnum::ArrayType($inner_var) => $code,
+            AnyTypeEnum::FloatType($inner_var) => $code,
+            AnyTypeEnum::FunctionType($func_id) => $func,
+            AnyTypeEnum::IntType($inner_var) => $code,
+            AnyTypeEnum::PointerType($inner_var) => $code,
+            AnyTypeEnum::StructType($inner_var) => $code,
+            AnyTypeEnum::VectorType($inner_var) => $code,
+            AnyTypeEnum::VoidType($unit_id) => $unit,
+        }
+    };
 }
 
 pub struct IrGenerator<'a, 'errors> {
@@ -115,30 +131,24 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
         param_types: &[BasicMetadataTypeEnum<'c>],
         is_var_args: bool,
     ) -> Result<FunctionType<'c>> {
-        match type_ {
-            AnyTypeEnum::ArrayType(array_type) => Ok(array_type.fn_type(param_types, is_var_args)),
-            AnyTypeEnum::FloatType(float_type) => Ok(float_type.fn_type(param_types, is_var_args)),
-            AnyTypeEnum::FunctionType(_) => {
+        match_any_type_enum_as_basic_type!(
+            type_,
+            type_ => {
+                Ok(type_.fn_type(param_types, is_var_args))
+            },
+            function(_) => {
                 Err("Tried to make a function type into a function type again".into())
+            },
+            unit(void_type) => {
+                Ok(void_type.fn_type(param_types, is_var_args))
             }
-            AnyTypeEnum::IntType(int_type) => Ok(int_type.fn_type(param_types, is_var_args)),
-            AnyTypeEnum::PointerType(pointer_type) => {
-                Ok(pointer_type.fn_type(param_types, is_var_args))
-            }
-            AnyTypeEnum::StructType(struct_type) => {
-                Ok(struct_type.fn_type(param_types, is_var_args))
-            }
-            AnyTypeEnum::VectorType(vector_type) => {
-                Ok(vector_type.fn_type(param_types, is_var_args))
-            }
-            AnyTypeEnum::VoidType(void_type) => Ok(void_type.fn_type(param_types, is_var_args)),
-        }
+        )
     }
 
     fn runtime_type_to_llvm(
         &mut self,
         type_: RuntimeType,
-        error_node: impl Into<AstNode>,
+        error_node: impl Into<AstNode> + Clone,
     ) -> Result<AnyTypeEnum<'a>> {
         Ok(match type_ {
             RuntimeType::I8 => self.context.i8_type().into(),
@@ -167,6 +177,43 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
                     "Error types should have caused errors earlier",
                     ErrorSeverity::Error,
                 ));
+            }
+            RuntimeType::ArrayOf {
+                subtype: inner_type,
+                size,
+            } => {
+                let inner_type_ir =
+                    self.runtime_type_to_llvm(inner_type.borrow().clone(), error_node.clone())?;
+
+                let Some(size) = size else {
+                    return self.report_error(FleetError::from_node(
+                        error_node,
+                        "Array doesn't have a known size",
+                        ErrorSeverity::Error,
+                    ));
+                };
+
+                match_any_type_enum_as_basic_type!(
+                    inner_type_ir,
+                    type_ => {
+                        type_.array_type(size as u32)
+                    },
+                    function(_) => {
+                        return self.report_error(FleetError::from_node(
+                            error_node,
+                            "Cannot have array of functions",
+                            ErrorSeverity::Error,
+                        ));
+                    },
+                    unit(_) => {
+                        return self.report_error(FleetError::from_node(
+                            error_node,
+                            "Cannot have array of Unit",
+                            ErrorSeverity::Error,
+                        ));
+                    }
+                )
+                .into()
             }
         })
     }
@@ -215,30 +262,26 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
             .collect_vec()
             .iter()
             .map(|(param, var)| -> Result<_> {
-                Ok(
-                    match self.runtime_type_to_llvm(*var.borrow().type_.borrow(), param.clone())? {
-                        AnyTypeEnum::ArrayType(array_type) => array_type.into(),
-                        AnyTypeEnum::FloatType(float_type) => float_type.into(),
-                        AnyTypeEnum::FunctionType(_function_type) => {
-                            return self.report_error(FleetError::from_node(
-                                param.clone(),
-                                "cannot have function types as parameter",
-                                ErrorSeverity::Error,
-                            ));
-                        }
-                        AnyTypeEnum::IntType(int_type) => int_type.into(),
-                        AnyTypeEnum::PointerType(pointer_type) => pointer_type.into(),
-                        AnyTypeEnum::StructType(struct_type) => struct_type.into(),
-                        AnyTypeEnum::VectorType(vector_type) => vector_type.into(),
-                        AnyTypeEnum::VoidType(_void_type) => {
-                            return self.report_error(FleetError::from_node(
-                                param.clone(),
-                                "cannot have unit type as parameter",
-                                ErrorSeverity::Error,
-                            ));
-                        }
+                Ok(match_any_type_enum_as_basic_type!(
+                    self.runtime_type_to_llvm(var.borrow().type_.borrow().clone(), param.clone())?,
+                    type_ => {
+                        type_.into()
                     },
-                )
+                    function(_) => {
+                        return self.report_error(FleetError::from_node(
+                            param.clone(),
+                            "cannot have function types as parameter",
+                            ErrorSeverity::Error,
+                        ));
+                    },
+                    unit(_) => {
+                        return self.report_error(FleetError::from_node(
+                            param.clone(),
+                            "cannot have unit type as parameter",
+                            ErrorSeverity::Error,
+                        ));
+                    }
+                ))
             })
             .flatten()
             .collect_vec();
@@ -270,9 +313,8 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
     type StatementOutput = Result<()>;
     type ExecutorHostOutput = Result<()>;
     type ExecutorOutput = Result<()>;
-
     type ExpressionOutput = Result<Option<BasicValueEnum<'a>>>;
-
+    type LValueOutput = Result<PointerValue<'a>>;
     type TypeOutput = Result<AnyTypeEnum<'a>>;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
@@ -375,21 +417,19 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
                 if block.get_terminator().is_none() {
                     self.builder.position_at_end(block);
-                    match return_type_ir {
-                        AnyTypeEnum::ArrayType(_array_type) => todo!(),
-                        AnyTypeEnum::FloatType(_float_type) => todo!(),
-                        AnyTypeEnum::FunctionType(_function_type) => todo!(),
-                        AnyTypeEnum::IntType(int_type) => {
+                    match_any_type_enum_as_basic_type!(
+                        return_type_ir,
+                        type_ => {
                             self.builder
-                                .build_return(Some(&int_type.const_int(123, false)))?;
-                        }
-                        AnyTypeEnum::PointerType(_pointer_type) => todo!(),
-                        AnyTypeEnum::StructType(_struct_type) => todo!(),
-                        AnyTypeEnum::VectorType(_vector_type) => todo!(),
-                        AnyTypeEnum::VoidType(_void_type) => {
+                                .build_return(Some(&type_.const_zero()))?;
+                        },
+                        function(_) => {
+                            todo!();
+                        },
+                        unit(_) => {
                             self.builder.build_return(None)?;
                         }
-                    }
+                    );
                 }
             }
         } else if matches!(return_type_ir, AnyTypeEnum::VoidType(_)) {
@@ -431,6 +471,20 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         }
 
         return Ok(ir_function);
+    }
+
+    fn visit_function_body(
+        &mut self,
+        function_body: &mut FunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        match function_body {
+            FunctionBody::Statement(statement_function_body) => {
+                self.visit_statement_function_body(statement_function_body)
+            }
+            FunctionBody::Extern(extern_function_body) => {
+                self.visit_extern_function_body(extern_function_body)
+            }
+        }
     }
 
     fn visit_statement_function_body(
@@ -475,40 +529,28 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                 self.runtime_type_to_llvm(inferred_type, simple_binding.clone())
             })?;
 
-        let ptr = match type_ {
-            AnyTypeEnum::ArrayType(array_type) => self
-                .builder
-                .build_alloca(array_type, &simple_binding.name)?,
-            AnyTypeEnum::FloatType(float_type) => self
-                .builder
-                .build_alloca(float_type, &simple_binding.name)?,
-            AnyTypeEnum::FunctionType(_function_type) => {
+        let ptr = match_any_type_enum_as_basic_type!(
+            type_,
+            type_ => {
+                self
+                    .builder
+                    .build_alloca(type_, &simple_binding.name)?
+            },
+            function(_) => {
                 return self.report_error(FleetError::from_node(
                     simple_binding.clone(),
                     "Somehow tried to bind a function type",
                     ErrorSeverity::Error,
                 ));
-            }
-            AnyTypeEnum::IntType(int_type) => {
-                self.builder.build_alloca(int_type, &simple_binding.name)?
-            }
-            AnyTypeEnum::PointerType(pointer_type) => self
-                .builder
-                .build_alloca(pointer_type, &simple_binding.name)?,
-            AnyTypeEnum::StructType(struct_type) => self
-                .builder
-                .build_alloca(struct_type, &simple_binding.name)?,
-            AnyTypeEnum::VectorType(vector_type) => self
-                .builder
-                .build_alloca(vector_type, &simple_binding.name)?,
-            AnyTypeEnum::VoidType(_void_type) => {
+            },
+            unit(_) => {
                 return self.report_error(FleetError::from_node(
                     simple_binding.clone(),
                     "Somehow tried to bind a void type",
                     ErrorSeverity::Error,
                 ));
             }
-        };
+        );
 
         let ref_variable = self
             .variable_data
@@ -910,7 +952,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             .clone();
 
         return Ok(Some(
-            self.runtime_type_to_llvm(*type_.borrow(), number_clone)?
+            self.runtime_type_to_llvm(type_.borrow().clone(), number_clone)?
                 .into_int_type()
                 .const_int(*value as u64, false)
                 .as_basic_value_enum(),
@@ -931,6 +973,51 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                 .const_int(if *value { 1 } else { 0 }, false)
                 .as_basic_value_enum(),
         ));
+    }
+
+    fn visit_array_expression(
+        &mut self,
+        expression: &mut ArrayExpression,
+    ) -> Self::ExpressionOutput {
+        let expression_clone = expression.clone();
+        let ArrayExpression {
+            open_bracket_token: _,
+            elements,
+            close_bracket_token: _,
+            id,
+        } = expression;
+
+        let type_ @ RuntimeType::ArrayOf { .. } = self
+            .type_data
+            .get(id)
+            .expect("type data should exist before running ir_generator")
+            .clone()
+            .borrow()
+            .clone()
+        else {
+            return self.report_error(FleetError::from_node(
+                expression_clone.clone(),
+                "This array doesn't have an ArrayOf(_) type",
+                ErrorSeverity::Error,
+            ));
+        };
+
+        let mut array_ir = self
+            .runtime_type_to_llvm(type_.clone(), expression_clone.clone())?
+            .into_array_type()
+            .get_undef();
+
+        for (i, (item, _comma)) in elements.iter_mut().enumerate() {
+            let item_ir = self
+                .visit_expression(item)?
+                .expect("Cannot have array of Unit");
+            array_ir = self
+                .builder
+                .build_insert_value(array_ir, item_ir, i as u32, "init_array")?
+                .into_array_value();
+        }
+
+        Ok(Some(array_ir.into()))
     }
 
     fn visit_function_call_expression(
@@ -978,6 +1065,47 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             .map(|l| l.as_basic_value_enum()));
     }
 
+    fn visit_array_index_expression(
+        &mut self,
+        ArrayIndexExpression {
+            array,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id: _,
+        }: &mut ArrayIndexExpression,
+    ) -> Self::ExpressionOutput {
+        let array_ir = self
+            .visit_expression(array)?
+            .expect("Cannot index into unit")
+            .into_array_value();
+        let index_ir = self
+            .visit_expression(index)?
+            .expect("Cannot index with unit")
+            .into_int_value();
+
+        let array_ptr = self
+            .builder
+            .build_alloca(array_ir.get_type(), "array_alloca")?;
+
+        self.builder.build_store(array_ptr, array_ir)?;
+
+        let index_ptr = unsafe {
+            self.builder.build_gep(
+                array_ir.get_type().get_element_type(),
+                array_ptr,
+                &[index_ir],
+                "array_index",
+            )
+        }?;
+
+        return Ok(Some(self.builder.build_load(
+            array_ir.get_type().get_element_type(),
+            index_ptr,
+            "load_from_array",
+        )?));
+    }
+
     fn visit_grouping_expression(
         &mut self,
         GroupingExpression {
@@ -1020,14 +1148,26 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             ));
         };
         let storage = storage.clone();
-        return Ok(Some(
-            match self.runtime_type_to_llvm(*var.borrow().type_.borrow(), expr_clone)? {
-                AnyTypeEnum::IntType(int_type) => {
-                    self.builder.build_load(int_type, storage.0.clone(), name)
-                }
-                _ => todo!(),
-            }?,
-        ));
+        return match_any_type_enum_as_basic_type!(
+            self.runtime_type_to_llvm(var.borrow().type_.borrow().clone(), expr_clone.clone())?,
+            type_ => {
+                Ok(Some(self.builder.build_load(type_, storage.0.clone(), name)?))
+            },
+            function(_) => {
+                return self.report_error(FleetError::from_node(
+                    expr_clone.clone(),
+                    "Cannot load function",
+                    ErrorSeverity::Error,
+                ));
+            },
+            unit(_) => {
+                return self.report_error(FleetError::from_node(
+                    expr_clone.clone(),
+                    "Cannot load Unit value",
+                    ErrorSeverity::Error,
+                ));
+            }
+        );
     }
 
     fn visit_unary_expression(
@@ -1090,7 +1230,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             .expect("type data should exist before calling ir_generator")
             .clone();
 
-        match *target_type.borrow() {
+        match target_type.borrow().clone() {
             RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64 => {
                 let expected_type = self.visit_type(type_)?.into_int_type();
                 let value = value
@@ -1130,6 +1270,16 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                         ));
                     }
                 }
+            }
+            RuntimeType::ArrayOf {
+                subtype: _,
+                size: _,
+            } => {
+                return self.report_error(FleetError::from_node(
+                    type_.clone(),
+                    "cannot cast to array currently",
+                    ErrorSeverity::Error,
+                ));
             }
             RuntimeType::Boolean => {
                 let expected_type = self.visit_type(type_)?.into_int_type();
@@ -1427,27 +1577,101 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
     fn visit_variable_assignment_expression(
         &mut self,
         VariableAssignmentExpression {
-            name,
-            name_token: _,
+            lvalue,
             equal_token: _,
             right,
-            id,
+            id: _,
         }: &mut VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
-        let right_value = self.visit_expression(right)?.ok_or(format!(
-            "Somehow tried assigning a Unit value to variable {name:?}",
-        ))?;
+        let storage = self.visit_lvalue(lvalue)?;
+        let right_value = self
+            .visit_expression(right)?
+            .ok_or("Somehow tried assigning a Unit value to an lvalue")?;
 
+        self.builder.build_store(storage, right_value)?;
+        return Ok(Some(right_value));
+    }
+
+    fn visit_variable_lvalue(
+        &mut self,
+        VariableLValue {
+            name,
+            name_token: _,
+            id,
+        }: &mut VariableLValue,
+    ) -> Self::LValueOutput {
         let var = self.variable_data.get(id).expect(&format!(
             "Variable data for {name:?} should exist before calling ir_generator"
         ));
         let storage = self
             .variable_storage
             .get(&var.borrow().id)
-            .expect("Variables should have storage before being accessed");
+            .expect("Variables should have storage before being accessed")
+            .0;
+        return Ok(storage);
+    }
 
-        self.builder.build_store(storage.0, right_value)?;
-        return Ok(Some(right_value));
+    fn visit_array_index_lvalue(
+        &mut self,
+        ArrayIndexLValue {
+            array,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id,
+        }: &mut ArrayIndexLValue,
+    ) -> Self::LValueOutput {
+        let array_ir = self.visit_lvalue(array)?;
+        let index_ir = self
+            .visit_expression(index)?
+            .expect("Cannot index with unit")
+            .into_int_value();
+
+        let infered_type = self
+            .type_data
+            .get(id)
+            .expect("type data should exist before calling ir_generator")
+            .clone();
+
+        let element_type =
+            self.runtime_type_to_llvm(infered_type.borrow().clone(), *array.clone())?;
+
+        let index_ptr = match_any_type_enum_as_basic_type!(
+            element_type,
+            type_ => {
+                unsafe {
+                    self.builder.build_gep(type_, array_ir, &[index_ir], "array_index_lvalue")
+                }?
+            },
+            function(_) => {
+                return self.report_error(FleetError::from_node(
+                    *array.clone(),
+                    "Cannot have array of functions",
+                    ErrorSeverity::Error,
+                ));
+            },
+            unit(_) => {
+                return self.report_error(FleetError::from_node(
+                    *array.clone(),
+                    "Cannot have array of Unit",
+                    ErrorSeverity::Error,
+                ));
+            }
+        );
+
+        return Ok(index_ptr);
+    }
+
+    fn visit_grouping_lvalue(
+        &mut self,
+        GroupingLValue {
+            open_paren_token: _,
+            sublvalue,
+            close_paren_token: _,
+            id: _,
+        }: &mut GroupingLValue,
+    ) -> Self::LValueOutput {
+        self.visit_lvalue(sublvalue)
     }
 
     fn visit_int_type(&mut self, type_: &mut IntType) -> Self::TypeOutput {
@@ -1467,7 +1691,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             *infered_type.borrow(),
             "Inferred type (right) of IntType doesn't match its actual type (left)"
         );
-        Ok(self.runtime_type_to_llvm(*type_, type_clone)?)
+        Ok(self.runtime_type_to_llvm(type_.clone(), type_clone)?)
     }
 
     fn visit_unit_type(
@@ -1525,7 +1749,28 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         );
 
         return Ok(self
-            .runtime_type_to_llvm(*infered_type.borrow(), type_clone)
+            .runtime_type_to_llvm(infered_type.borrow().clone(), type_clone)
+            .map_err(|err| err)?);
+    }
+
+    fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
+        let array_type_clone = array_type.clone();
+        let ArrayType {
+            subtype: _,
+            open_bracket_token: _,
+            size: _,
+            close_bracket_token: _,
+            id,
+        } = array_type;
+
+        let infered_type = self
+            .type_data
+            .get(id)
+            .expect("type data should exist before calling ir_generator")
+            .clone();
+
+        return Ok(self
+            .runtime_type_to_llvm(infered_type.borrow().clone(), array_type_clone)
             .map_err(|err| err)?);
     }
 }

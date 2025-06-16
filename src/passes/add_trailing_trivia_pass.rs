@@ -1,12 +1,13 @@
 use crate::{
     ast::{
-        AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement,
-        CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, IdkType, IfStatement,
-        IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, WhileLoopStatement,
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
+        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+        FunctionDefinition, GroupingExpression, GroupingLValue, IdkType, IfStatement, IntType,
+        NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -34,25 +35,17 @@ impl AstVisitor for AddTrailingTriviaPass {
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
-
     type ExpressionOutput = ();
-
+    type LValueOutput = ();
     type TypeOutput = ();
-
     fn visit_program(mut self, program: &mut Program) {
         program.functions.last_mut().map(|f| {
             self.visit_function_definition(f);
         });
     }
+
     fn visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
-        match &mut function_definition.body {
-            FunctionBody::Statement(statement_function_body) => {
-                self.visit_statement_function_body(statement_function_body)
-            }
-            FunctionBody::Extern(extern_function_body) => {
-                self.visit_extern_function_body(extern_function_body)
-            }
-        }
+        self.visit_function_body(&mut function_definition.body);
     }
 
     fn visit_statement_function_body(
@@ -180,8 +173,22 @@ impl AstVisitor for AddTrailingTriviaPass {
         self.visit_token(&mut expression.token);
     }
 
+    fn visit_array_expression(
+        &mut self,
+        expression: &mut ArrayExpression,
+    ) -> Self::ExpressionOutput {
+        self.visit_token(&mut expression.close_bracket_token);
+    }
+
     fn visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
         self.visit_token(&mut expression.close_paren_token);
+    }
+
+    fn visit_array_index_expression(
+        &mut self,
+        expression: &mut ArrayIndexExpression,
+    ) -> Self::ExpressionOutput {
+        self.visit_token(&mut expression.close_bracket_token);
     }
 
     fn visit_grouping_expression(&mut self, expression: &mut GroupingExpression) {
@@ -211,6 +218,18 @@ impl AstVisitor for AddTrailingTriviaPass {
         self.visit_expression(&mut expression.right);
     }
 
+    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
+        self.visit_token(&mut lvalue.name_token);
+    }
+
+    fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
+        self.visit_token(&mut lvalue.close_bracket_token);
+    }
+
+    fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {
+        self.visit_token(&mut lvalue.close_paren_token);
+    }
+
     fn visit_int_type(&mut self, int_type: &mut IntType) {
         self.visit_token(&mut int_type.token);
     }
@@ -225,5 +244,9 @@ impl AstVisitor for AddTrailingTriviaPass {
 
     fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {
         self.visit_token(&mut idk_type.token);
+    }
+
+    fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
+        self.visit_token(&mut array_type.close_bracket_token);
     }
 }

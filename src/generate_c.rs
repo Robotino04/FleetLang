@@ -1,14 +1,17 @@
+use std::{cell::RefCell, rc::Rc};
+
 use itertools::Itertools;
 
 use crate::{
     ast::{
-        AstNode, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
+        BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
         CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, IdkType, IfStatement,
-        IntType, NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, GroupingLValue, IdkType,
+        IfStatement, IntType, NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     passes::type_propagation::RuntimeType,
 };
@@ -38,6 +41,28 @@ fn generate_function_declaration(function: &FunctionDefinition, mut prefix: Stri
             params.as_str()
         }
         + ")";
+}
+
+fn to_c_type(type_: Rc<RefCell<RuntimeType>>) -> String {
+    return match type_.borrow().clone() {
+        RuntimeType::I8 => "int8_t".to_string(),
+        RuntimeType::I16 => "int16_t".to_string(),
+        RuntimeType::I32 => "int32_t".to_string(),
+        RuntimeType::I64 => "int64_t".to_string(),
+        RuntimeType::UnsizedInt => {
+            unreachable!("all types must be known before calling generate_c")
+        }
+        RuntimeType::Boolean => "bool".to_string(),
+        RuntimeType::Unit => "void".to_string(),
+        RuntimeType::Unknown => {
+            unreachable!("all types must be known before calling generate_c")
+        }
+        RuntimeType::Error => unreachable!("all types must be known before calling generate_c"),
+        RuntimeType::ArrayOf {
+            subtype: inner_type,
+            size: _,
+        } => format!("{}[]", to_c_type(inner_type)),
+    };
 }
 
 pub fn generate_c(node: impl Into<AstNode>) -> String {
@@ -264,6 +289,18 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             token: _,
             id: _,
         }) => value.to_string(),
+        AstNode::ArrayExpression(ArrayExpression {
+            open_bracket_token: _,
+            elements: _,
+            close_bracket_token: _,
+            id: _,
+        }) => {
+            // TODO: once we use AstVisitor here, add this so the type is available
+            /*
+            return format!("(({}){{ {} }})", /* type of array */, /* items of array */)
+            */
+            return "{/* TODO: array literals */}".to_string();
+        }
         AstNode::FunctionCallExpression(FunctionCallExpression {
             name,
             name_token: _,
@@ -282,6 +319,15 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
                     .join(", ")
                     .as_str()
                 + ")";
+        }
+        AstNode::ArrayIndexExpression(ArrayIndexExpression {
+            array,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id: _,
+        }) => {
+            return "(".to_string() + &generate_c(*array) + ")[" + &generate_c(*index) + "]";
         }
         AstNode::UnaryExpression(UnaryExpression {
             operation,
@@ -347,13 +393,32 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             return "fleet_".to_string() + &name;
         }
         AstNode::VariableAssignmentExpression(VariableAssignmentExpression {
-            name,
-            name_token: _,
+            lvalue,
             equal_token: _,
             right,
             id: _,
         }) => {
-            return format!("(fleet_{name} = {})", generate_c(*right),);
+            return format!("({} = {})", generate_c(lvalue), generate_c(*right),);
+        }
+        AstNode::VariableLValue(VariableLValue {
+            name,
+            name_token: _,
+            id: _,
+        }) => name,
+        AstNode::ArrayIndexLValue(ArrayIndexLValue {
+            array,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id: _,
+        }) => format!("({})[{}]", generate_c(*array), generate_c(*index)),
+        AstNode::GroupingLValue(GroupingLValue {
+            open_paren_token: _,
+            sublvalue,
+            close_paren_token: _,
+            id: _,
+        }) => {
+            format!("({})", generate_c(*sublvalue))
         }
         AstNode::IntType(IntType {
             token: _,
@@ -369,6 +434,10 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             RuntimeType::Unit => unreachable!("not sized int type"),
             RuntimeType::Unknown => unreachable!("not sized int type"),
             RuntimeType::Error => unreachable!("not sized int type"),
+            RuntimeType::ArrayOf {
+                subtype: _,
+                size: _,
+            } => unreachable!("not sized int type"),
         }
         .to_string(),
         AstNode::UnitType(UnitType {
@@ -381,21 +450,13 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             type_,
             token: _,
             id: _,
-        }) => match *type_.borrow() {
-            RuntimeType::I8 => "int8_t",
-            RuntimeType::I16 => "int16_t",
-            RuntimeType::I32 => "int32_t",
-            RuntimeType::I64 => "int64_t",
-            RuntimeType::UnsizedInt => {
-                unreachable!("all types must be known before calling generate_c")
-            }
-            RuntimeType::Boolean => "bool",
-            RuntimeType::Unit => "void",
-            RuntimeType::Unknown => {
-                unreachable!("all types must be known before calling generate_c")
-            }
-            RuntimeType::Error => unreachable!("all types must be known before calling generate_c"),
-        }
-        .to_string(),
+        }) => to_c_type(type_),
+        AstNode::ArrayType(ArrayType {
+            subtype,
+            open_bracket_token: _,
+            size: _,
+            close_bracket_token: _,
+            id: _,
+        }) => format!("*{}", generate_c(*subtype)),
     }
 }

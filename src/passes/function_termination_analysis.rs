@@ -1,12 +1,13 @@
 use crate::{
     ast::{
-        AstVisitor, BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement,
-        CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, IdkType, IfStatement,
-        IntType, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor,
-        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, WhileLoopStatement,
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
+        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+        FunctionDefinition, GroupingExpression, GroupingLValue, IdkType, IfStatement, IntType,
+        NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     tokenizer::SourceLocation,
@@ -66,9 +67,8 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
     type StatementOutput = FunctionTermination;
     type ExecutorHostOutput = FunctionTermination;
     type ExecutorOutput = FunctionTermination;
-
     type ExpressionOutput = FunctionTermination;
-
+    type LValueOutput = FunctionTermination;
     type TypeOutput = FunctionTermination;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
@@ -324,6 +324,19 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         return FunctionTermination::DoesntTerminate;
     }
 
+    fn visit_array_expression(
+        &mut self,
+        expression: &mut ArrayExpression,
+    ) -> Self::ExpressionOutput {
+        let mut term = FunctionTermination::DoesntTerminate;
+        for (item, _comma) in &mut expression.elements {
+            term = term.or(self.visit_expression(item));
+        }
+
+        self.termination.insert_node(expression, term);
+        return term;
+    }
+
     fn visit_function_call_expression(
         &mut self,
         expression: &mut FunctionCallExpression,
@@ -332,6 +345,16 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         for (arg, _comma) in &mut expression.arguments {
             term = term.or(self.visit_expression(arg));
         }
+        self.termination.insert_node(expression, term);
+        return term;
+    }
+
+    fn visit_array_index_expression(
+        &mut self,
+        expression: &mut ArrayIndexExpression,
+    ) -> Self::ExpressionOutput {
+        let mut term = self.visit_expression(&mut expression.array);
+        term = term.or(self.visit_expression(&mut expression.index));
         self.termination.insert_node(expression, term);
         return term;
     }
@@ -386,8 +409,30 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
         &mut self,
         expression: &mut VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
-        let term = self.visit_expression(&mut expression.right);
+        let term = self
+            .visit_lvalue(&mut expression.lvalue)
+            .or(self.visit_expression(&mut expression.right));
         self.termination.insert_node(expression, term);
+        return term;
+    }
+
+    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
+        self.termination
+            .insert_node(lvalue, FunctionTermination::DoesntTerminate);
+        return FunctionTermination::DoesntTerminate;
+    }
+
+    fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
+        let term = self
+            .visit_lvalue(&mut lvalue.array)
+            .or(self.visit_expression(&mut lvalue.index));
+        self.termination.insert_node(lvalue, term);
+        return term;
+    }
+
+    fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {
+        let term = self.visit_lvalue(&mut lvalue.sublvalue);
+        self.termination.insert_node(lvalue, term);
         return term;
     }
 
@@ -412,6 +457,12 @@ impl<'errors> AstVisitor for FunctionTerminationAnalyzer<'errors> {
     fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {
         self.termination
             .insert_node(idk_type, FunctionTermination::DoesntTerminate);
+        return FunctionTermination::DoesntTerminate;
+    }
+
+    fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
+        self.termination
+            .insert_node(array_type, FunctionTermination::DoesntTerminate);
         return FunctionTermination::DoesntTerminate;
     }
 }

@@ -1,6 +1,6 @@
 use indent::indent_all_by;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocumentElement {
     Concatenation(Vec<DocumentElement>),
     Indentation(Box<DocumentElement>),
@@ -41,6 +41,19 @@ impl DocumentElement {
 
     pub fn empty() -> DocumentElement {
         DocumentElement::Concatenation(vec![])
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::document_model::DocumentElement;
+
+    #[test]
+    fn empty_spaced_concatenation() {
+        assert_eq!(
+            DocumentElement::spaced_concatentation(DocumentElement::CollapsableSpace, vec![]),
+            DocumentElement::Concatenation(vec![])
+        );
     }
 }
 

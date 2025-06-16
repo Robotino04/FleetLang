@@ -1,3 +1,4 @@
+mod arrays;
 mod binary_op;
 mod boolean_op;
 mod comments;

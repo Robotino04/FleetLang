@@ -2,14 +2,15 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     ast::{
-        BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
-        BreakStatement, CastExpression, Executor, ExecutorHost, Expression, ExpressionStatement,
-        ExternFunctionBody, ForLoopStatement, FunctionBody, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, IdkType, IfStatement, IntType, NodeID,
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, BinaryExpression,
+        BinaryOperation, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
+        Executor, ExecutorHost, Expression, ExpressionStatement, ExternFunctionBody,
+        ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition,
+        GroupingExpression, GroupingLValue, IdkType, IfStatement, IntType, LValue, NodeID,
         NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
         SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, Type, UnaryExpression,
         UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, WhileLoopStatement,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::type_propagation::{FunctionID, RuntimeType, VariableID},
@@ -499,6 +500,30 @@ impl<'errors> Parser<'errors> {
                     id: self.id_generator.next_node_id(),
                 }));
             }
+            Some(TokenType::OpenBracket) => {
+                let open_bracket_token = expect!(self, TokenType::OpenBracket)?;
+                let mut elements = vec![];
+                while self.current_token_type() != Some(TokenType::CloseBracket) {
+                    let element = self.parse_expression()?;
+
+                    match self.current_token_type() {
+                        Some(TokenType::Comma) => {
+                            elements.push((element, Some(expect!(self, TokenType::Comma)?)))
+                        }
+                        _ => {
+                            elements.push((element, None));
+                            break;
+                        }
+                    }
+                }
+                let close_bracket_token = expect!(self, TokenType::CloseBracket)?;
+                return Ok(Expression::Array(ArrayExpression {
+                    open_bracket_token,
+                    elements,
+                    close_bracket_token,
+                    id: self.id_generator.next_node_id(),
+                }));
+            }
 
             Some(TokenType::Identifier(name)) => {
                 let name_token = expect!(self, TokenType::Identifier(_))?;
@@ -549,6 +574,24 @@ impl<'errors> Parser<'errors> {
             _ => unable_to_parse!(self, "primary expression"),
         }
     }
+    fn parse_postfix_expression(&mut self) -> Result<Expression> {
+        let mut lhs = self.parse_primary_expression()?;
+        while match self.current_token_type() {
+            Some(TokenType::OpenBracket) => {
+                lhs = Expression::ArrayIndex(ArrayIndexExpression {
+                    array: Box::new(lhs),
+                    open_bracket_token: expect!(self, TokenType::OpenBracket)?,
+                    index: Box::new(self.parse_expression()?),
+                    close_bracket_token: expect!(self, TokenType::CloseBracket)?,
+                    id: self.id_generator.next_node_id(),
+                });
+                true
+            }
+            _ => return Ok(lhs),
+        } {}
+
+        return Ok(lhs);
+    }
     fn parse_unary_expression(&mut self) -> Result<Expression> {
         match self.current_token_type() {
             Some(TokenType::Tilde) => Ok(Expression::Unary(UnaryExpression {
@@ -570,7 +613,7 @@ impl<'errors> Parser<'errors> {
                 id: self.id_generator.next_node_id(),
             })),
 
-            Some(_) => return self.parse_primary_expression(),
+            Some(_) => return self.parse_postfix_expression(),
             None => unable_to_parse!(self, "unary expression"),
         }
     }
@@ -807,29 +850,66 @@ impl<'errors> Parser<'errors> {
     fn parse_assignment_expression(&mut self) -> Result<Expression> {
         let left = self.parse_logical_or_expression()?;
 
-        match left {
-            Expression::VariableAccess(VariableAccessExpression {
-                name,
-                name_token,
-                id: _,
-            }) if matches!(self.current_token_type(), Some(TokenType::EqualSign)) => {
-                let equal_token = expect!(self, TokenType::EqualSign)?;
-                let value = self.parse_assignment_expression()?;
+        if !matches!(self.current_token_type(), Some(TokenType::EqualSign)) {
+            return Ok(left);
+        }
 
-                return Ok(Expression::VariableAssignment(
-                    VariableAssignmentExpression {
-                        name,
-                        name_token,
-                        equal_token,
-                        right: Box::new(value),
-                        id: self.id_generator.next_node_id(),
-                    },
-                ));
-            }
-            _ => {
-                return Ok(left);
-            }
+        fn expression_to_lvalue(expression: &Expression) -> Option<LValue> {
+            Some(match expression.clone() {
+                Expression::VariableAccess(VariableAccessExpression {
+                    name,
+                    name_token,
+                    id,
+                }) => LValue::Variable(VariableLValue {
+                    name,
+                    name_token,
+                    id,
+                }),
+                Expression::ArrayIndex(ArrayIndexExpression {
+                    array,
+                    open_bracket_token,
+                    index,
+                    close_bracket_token,
+                    id,
+                }) => LValue::ArrayIndex(ArrayIndexLValue {
+                    array: Box::new(expression_to_lvalue(&array)?),
+                    open_bracket_token,
+                    index,
+                    close_bracket_token,
+                    id,
+                }),
+                Expression::Grouping(GroupingExpression {
+                    open_paren_token,
+                    subexpression,
+                    close_paren_token,
+                    id,
+                }) => LValue::Grouping(GroupingLValue {
+                    open_paren_token,
+                    sublvalue: Box::new(expression_to_lvalue(&subexpression)?),
+                    close_paren_token,
+                    id,
+                }),
+                _ => {
+                    return None;
+                }
+            })
+        }
+
+        let Some(lvalue) = expression_to_lvalue(&left) else {
+            return Ok(left);
         };
+
+        let equal_token = expect!(self, TokenType::EqualSign)?;
+        let value = self.parse_assignment_expression()?;
+
+        Ok(Expression::VariableAssignment(
+            VariableAssignmentExpression {
+                lvalue,
+                equal_token,
+                right: Box::new(value),
+                id: self.id_generator.next_node_id(),
+            },
+        ))
     }
 
     pub fn parse_executor(&mut self) -> Result<Executor> {
@@ -847,8 +927,37 @@ impl<'errors> Parser<'errors> {
         }));
         return res;
     }
-
     pub fn parse_type(&mut self) -> Result<Type> {
+        self.parse_postfix_type()
+    }
+
+    pub fn parse_postfix_type(&mut self) -> Result<Type> {
+        let mut type_ = self.parse_primary_type()?;
+        while match self.current_token_type() {
+            Some(TokenType::OpenBracket) => {
+                let open_bracket_token = expect!(self, TokenType::OpenBracket)?;
+
+                let mut moved_errors = vec![];
+                std::mem::swap(&mut moved_errors, self.errors);
+                let size = self.parse_expression().ok();
+                std::mem::swap(&mut moved_errors, self.errors);
+
+                let close_bracket_token = expect!(self, TokenType::CloseBracket)?;
+                type_ = Type::Array(ArrayType {
+                    subtype: Box::new(type_),
+                    open_bracket_token,
+                    size: size.map(|x| Box::new(x)),
+                    close_bracket_token,
+                    id: self.id_generator.next_node_id(),
+                });
+                true
+            }
+            _ => false,
+        } {}
+        return Ok(type_);
+    }
+
+    pub fn parse_primary_type(&mut self) -> Result<Type> {
         match self.current_token_type() {
             Some(TokenType::Keyword(Keyword::I8)) => Ok(Type::Int(IntType {
                 token: expect!(self, TokenType::Keyword(Keyword::I8))?,

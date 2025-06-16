@@ -1,7 +1,9 @@
 use crate::ast::{
-    Associativity, AstVisitor, BinaryExpression, Expression, ExpressionStatement, ForLoopStatement,
-    FunctionCallExpression, GroupingExpression, IfStatement, ReturnStatement, ThreadExecutor,
-    UnaryExpression, VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+    ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, Associativity, AstVisitor,
+    BinaryExpression, CastExpression, Expression, ExpressionStatement, ForLoopStatement,
+    FunctionCallExpression, GroupingExpression, GroupingLValue, IfStatement, LValue,
+    ReturnStatement, ThreadExecutor, UnaryExpression, VariableAssignmentExpression,
+    VariableDefinitionStatement, WhileLoopStatement,
 };
 
 use super::{
@@ -31,7 +33,37 @@ impl RemoveParensPass {
     }
 }
 
-impl RemoveParensPass {}
+impl RemoveParensPass {
+    fn can_parens_be_removed(
+        old_parent_precedence: usize,
+        old_parent_associativity: Associativity,
+        old_side: OperandSide,
+        child_precedence: usize,
+        child_associativity: Associativity,
+    ) -> bool {
+        let associativity_compatible = old_parent_associativity == child_associativity
+            || old_parent_associativity == Associativity::Both
+            || child_associativity == Associativity::Both;
+        let can_remove_associativity = match old_side {
+            OperandSide::Left => matches!(
+                old_parent_associativity,
+                Associativity::Left | Associativity::Both
+            ),
+
+            OperandSide::Right => matches!(
+                old_parent_associativity,
+                Associativity::Right | Associativity::Both
+            ),
+        };
+
+        let parent_precedence_stronger = old_parent_precedence > child_precedence;
+        let same_precedence_and_safe = old_parent_precedence == child_precedence
+            && associativity_compatible
+            && can_remove_associativity;
+
+        return parent_precedence_stronger || same_precedence_and_safe;
+    }
+}
 
 impl PartialAstVisitor for RemoveParensPass {
     fn partial_visit_expression_statement(&mut self, expr_stmt: &mut ExpressionStatement) {
@@ -137,30 +169,16 @@ impl PartialAstVisitor for RemoveParensPass {
                 let old_parent_associativity = self.parent_associativity;
                 let old_side = self.current_side;
                 self.parent_precedence = Expression::TOP_PRECEDENCE;
+                self.parent_associativity = Associativity::Both;
                 self.visit_expression(&mut *subexpression);
 
-                let child_precedence = subexpression.get_precedence();
-                let child_associativity = subexpression.get_associativity();
-
-                let assiciativity_compatible = old_parent_associativity == child_associativity
-                    || old_parent_associativity == Associativity::Both
-                    || child_associativity == Associativity::Both;
-                let can_remove_associativity = match old_side {
-                    OperandSide::Left => {
-                        old_parent_associativity == Associativity::Both
-                            || old_parent_associativity == Associativity::Left
-                    }
-                    OperandSide::Right => {
-                        old_parent_associativity == Associativity::Both
-                            || old_parent_associativity == Associativity::Right
-                    }
-                };
-
-                if old_parent_precedence > child_precedence
-                    || (old_parent_precedence == child_precedence
-                        && assiciativity_compatible
-                        && can_remove_associativity)
-                {
+                if RemoveParensPass::can_parens_be_removed(
+                    old_parent_precedence,
+                    old_parent_associativity,
+                    old_side,
+                    subexpression.get_precedence(),
+                    subexpression.get_associativity(),
+                ) {
                     let leading_trivia = vec![
                         open_paren_token.leading_trivia.clone(),
                         open_paren_token.trailing_trivia.clone(),
@@ -185,8 +203,14 @@ impl PartialAstVisitor for RemoveParensPass {
             Expression::Bool(bool_expression) => {
                 self.partial_visit_bool_expression(bool_expression)
             }
+            Expression::Array(array_expression) => {
+                self.partial_visit_array_expression(array_expression)
+            }
             Expression::FunctionCall(function_call_expression) => {
                 self.partial_visit_function_call_expression(function_call_expression)
+            }
+            Expression::ArrayIndex(array_index_expression) => {
+                self.partial_visit_array_index_expression(array_index_expression)
             }
             Expression::VariableAccess(variable_access_expression) => {
                 self.partial_visit_variable_access_expression(variable_access_expression)
@@ -205,6 +229,13 @@ impl PartialAstVisitor for RemoveParensPass {
             }
         }
     }
+    fn partial_visit_array_expression(&mut self, expression: &mut ArrayExpression) {
+        for (item, _comma) in &mut expression.elements {
+            self.parent_precedence = Expression::TOP_PRECEDENCE;
+            self.parent_associativity = Associativity::Both;
+            self.visit_expression(item);
+        }
+    }
 
     fn partial_visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
         for (arg, _comma) in &mut expression.arguments {
@@ -214,10 +245,27 @@ impl PartialAstVisitor for RemoveParensPass {
         }
     }
 
+    fn partial_visit_array_index_expression(&mut self, expression: &mut ArrayIndexExpression) {
+        self.parent_precedence = Expression::ArrayIndex(expression.clone()).get_precedence();
+        self.parent_associativity = Expression::ArrayIndex(expression.clone()).get_associativity();
+        self.current_side = OperandSide::Left;
+        self.visit_expression(&mut expression.array);
+        self.parent_precedence = Expression::TOP_PRECEDENCE;
+        self.parent_associativity = Associativity::Both;
+        self.visit_expression(&mut expression.index);
+    }
     fn partial_visit_unary_expression(&mut self, expression: &mut UnaryExpression) {
         self.parent_precedence = Expression::Unary(expression.clone()).get_precedence();
+        self.parent_associativity = Expression::Unary(expression.clone()).get_associativity();
         self.current_side = OperandSide::Left;
         self.visit_expression(&mut expression.operand);
+    }
+    fn partial_visit_cast_expression(&mut self, expression: &mut CastExpression) {
+        self.parent_precedence = Expression::Cast(expression.clone()).get_precedence();
+        self.parent_associativity = Expression::Cast(expression.clone()).get_associativity();
+        self.current_side = OperandSide::Left;
+        self.visit_expression(&mut expression.operand);
+        self.visit_type(&mut expression.type_);
     }
 
     fn partial_visit_binary_expression(&mut self, expression: &mut BinaryExpression) {
@@ -234,11 +282,14 @@ impl PartialAstVisitor for RemoveParensPass {
         self.current_side = OperandSide::Right;
         self.visit_expression(&mut expression.right);
     }
-
     fn partial_visit_variable_assignment_expression(
         &mut self,
         expression: &mut VariableAssignmentExpression,
     ) {
+        self.parent_precedence = LValue::TOP_PRECEDENCE;
+        self.parent_associativity = Associativity::Both;
+        self.visit_lvalue(&mut expression.lvalue);
+
         let this_precedence = Expression::VariableAssignment(expression.clone()).get_precedence();
         let this_associativity =
             Expression::VariableAssignment(expression.clone()).get_associativity();
@@ -247,5 +298,66 @@ impl PartialAstVisitor for RemoveParensPass {
         self.parent_associativity = this_associativity;
         self.current_side = OperandSide::Right;
         self.visit_expression(&mut expression.right);
+    }
+
+    // need to use the general function here because we may potentially change a nodes type which
+    // is impossible otherwise
+    fn partial_visit_lvalue(&mut self, lvalue: &mut LValue) {
+        match lvalue {
+            LValue::Grouping(GroupingLValue {
+                open_paren_token,
+                sublvalue,
+                close_paren_token,
+                id: _,
+            }) => {
+                let old_parent_precedence = self.parent_precedence;
+                let old_parent_associativity = self.parent_associativity;
+                let old_side = self.current_side;
+                self.parent_precedence = LValue::TOP_PRECEDENCE;
+                self.parent_associativity = Associativity::Both;
+                self.visit_lvalue(&mut *sublvalue);
+
+                if RemoveParensPass::can_parens_be_removed(
+                    old_parent_precedence,
+                    old_parent_associativity,
+                    old_side,
+                    sublvalue.get_precedence(),
+                    sublvalue.get_associativity(),
+                ) {
+                    let leading_trivia = vec![
+                        open_paren_token.leading_trivia.clone(),
+                        open_paren_token.trailing_trivia.clone(),
+                    ]
+                    .concat();
+                    let trailing_trivia = vec![
+                        close_paren_token.leading_trivia.clone(),
+                        close_paren_token.trailing_trivia.clone(),
+                    ]
+                    .concat();
+
+                    let mut leading_pass = AddLeadingTriviaPass::new(leading_trivia);
+                    leading_pass.visit_lvalue(&mut *sublvalue);
+                    let mut trailing_pass = AddTrailingTriviaPass::new(trailing_trivia);
+                    trailing_pass.visit_lvalue(&mut *sublvalue);
+                    *lvalue = *sublvalue.clone();
+                }
+            }
+            LValue::Variable(variable_lvalue) => {
+                self.partial_visit_variable_lvalue(variable_lvalue);
+            }
+            LValue::ArrayIndex(array_index_lvalue) => {
+                self.partial_visit_array_index_lvalue(array_index_lvalue);
+            }
+        }
+    }
+
+    fn partial_visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) {
+        self.parent_precedence = LValue::ArrayIndex(lvalue.clone()).get_precedence();
+        self.parent_associativity = LValue::ArrayIndex(lvalue.clone()).get_associativity();
+        self.current_side = OperandSide::Left;
+        self.visit_lvalue(&mut lvalue.array);
+        self.parent_precedence = Expression::TOP_PRECEDENCE;
+        self.parent_associativity = Associativity::Both;
+        self.visit_expression(&mut lvalue.index);
     }
 }

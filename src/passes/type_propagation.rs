@@ -4,13 +4,15 @@ use itertools::{EitherOrBoth, Itertools};
 
 use crate::{
     ast::{
-        AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BoolExpression,
-        BoolType, BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody,
-        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression, IdkType,
-        IfStatement, IntType, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor,
-        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
+        BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
+        BreakStatement, CastExpression, Expression, ExpressionStatement, ExternFunctionBody,
+        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression,
+        GroupingLValue, IdkType, IfStatement, IntType, NumberExpression, OnStatement, PerNodeData,
+        Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
+        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -18,7 +20,7 @@ use crate::{
 
 type AnyResult<T> = ::core::result::Result<T, Box<dyn Error>>;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeType {
     I8,
     I16,
@@ -29,27 +31,39 @@ pub enum RuntimeType {
     Unit,
     Unknown,
     Error,
+    ArrayOf {
+        subtype: Rc<RefCell<RuntimeType>>,
+        size: Option<usize>,
+    },
 }
 
 impl Display for RuntimeType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            RuntimeType::I8 => "i8",
-            RuntimeType::I16 => "i16",
-            RuntimeType::I32 => "i32",
-            RuntimeType::I64 => "i64",
-            RuntimeType::UnsizedInt => "{unsized int}",
-            RuntimeType::Unit => "()",
-            RuntimeType::Boolean => "bool",
-            RuntimeType::Unknown => "{unknown}",
-            RuntimeType::Error => "{error}",
+        f.write_str(&match self {
+            RuntimeType::I8 => "i8".to_string(),
+            RuntimeType::I16 => "i16".to_string(),
+            RuntimeType::I32 => "i32".to_string(),
+            RuntimeType::I64 => "i64".to_string(),
+            RuntimeType::UnsizedInt => "{unsized int}".to_string(),
+            RuntimeType::Unit => "()".to_string(),
+            RuntimeType::Boolean => "bool".to_string(),
+            RuntimeType::Unknown => "{unknown}".to_string(),
+            RuntimeType::Error => "{error}".to_string(),
+            RuntimeType::ArrayOf {
+                subtype,
+                size: None,
+            } => format!("{}[]", subtype.borrow()),
+            RuntimeType::ArrayOf {
+                subtype,
+                size: Some(size),
+            } => format!("{}[{}]", subtype.borrow(), size),
         })?;
         Ok(())
     }
 }
 
 impl RuntimeType {
-    pub fn is_numeric(self) -> bool {
+    pub fn is_numeric(&self) -> bool {
         match self {
             RuntimeType::I8 => true,
             RuntimeType::I16 => true,
@@ -60,9 +74,13 @@ impl RuntimeType {
             RuntimeType::Boolean => false,
             RuntimeType::Unknown => false,
             RuntimeType::Error => false,
+            RuntimeType::ArrayOf {
+                subtype: _,
+                size: _,
+            } => false,
         }
     }
-    pub fn is_boolean(self) -> bool {
+    pub fn is_boolean(&self) -> bool {
         match self {
             RuntimeType::I8 => false,
             RuntimeType::I16 => false,
@@ -73,6 +91,10 @@ impl RuntimeType {
             RuntimeType::Unit => false,
             RuntimeType::Unknown => false,
             RuntimeType::Error => false,
+            RuntimeType::ArrayOf {
+                subtype: _,
+                size: _,
+            } => false,
         }
     }
 
@@ -91,6 +113,10 @@ impl RuntimeType {
             RuntimeType::Unit => false,
             RuntimeType::Unknown => false,
             RuntimeType::Error => true,
+            RuntimeType::ArrayOf {
+                subtype: inner_type,
+                size: _,
+            } => inner_type.borrow_mut().specialize_int_size(),
         }
     }
 
@@ -100,14 +126,14 @@ impl RuntimeType {
         other: &Rc<RefCell<RuntimeType>>,
     ) -> bool {
         let mut this_borrow = this.borrow_mut();
-        match *this_borrow {
+        match this_borrow.clone() {
             RuntimeType::I8 => false,
             RuntimeType::I16 => false,
             RuntimeType::I32 => false,
             RuntimeType::I64 => false,
             RuntimeType::UnsizedInt => {
                 if other.borrow().is_numeric() {
-                    *this_borrow = *other.borrow();
+                    *this_borrow = other.borrow().clone();
                     true
                 } else {
                     false
@@ -116,10 +142,30 @@ impl RuntimeType {
             RuntimeType::Boolean => false,
             RuntimeType::Unit => false,
             RuntimeType::Unknown => {
-                *this_borrow = *other.borrow();
+                *this_borrow = other.borrow().clone();
                 true
             }
             RuntimeType::Error => true,
+            RuntimeType::ArrayOf { subtype, size } => {
+                if let RuntimeType::ArrayOf {
+                    subtype: other_subtype,
+                    size: other_size,
+                } = other.borrow().clone()
+                {
+                    let mut did_specialize = RuntimeType::specialize_from(&subtype, &other_subtype);
+                    if size == None && other_size != None {
+                        match &mut *this_borrow {
+                            RuntimeType::ArrayOf { subtype: _, size } => *size = other_size,
+                            _ => unreachable!(),
+                        };
+                        did_specialize = true;
+                    }
+
+                    did_specialize
+                } else {
+                    false
+                }
+            }
         }
     }
 }
@@ -288,9 +334,8 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
-
     type ExpressionOutput = Rc<RefCell<RuntimeType>>;
-
+    type LValueOutput = Rc<RefCell<RuntimeType>>;
     type TypeOutput = Rc<RefCell<RuntimeType>>;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
@@ -524,7 +569,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         let value_type = self.visit_expression(value);
         let defined_type = self.visit_simple_binding(binding);
 
-        // order is important for {unknown} to {unknown assignments}
+        // order is important for {unknown} to {unknown} assignments
         RuntimeType::specialize_from(&value_type, &defined_type);
         RuntimeType::specialize_from(&defined_type, &value_type);
 
@@ -560,7 +605,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             condition.clone(),
             "if condition",
             "of type bool",
-            *cond_type.borrow(),
+            cond_type.borrow().clone(),
         );
 
         self.visit_statement(if_body);
@@ -571,7 +616,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                 elif_condition.clone(),
                 "elif condition",
                 "of type bool",
-                *elif_type.borrow(),
+                elif_type.borrow().clone(),
             );
 
             self.visit_statement(elif_body);
@@ -592,7 +637,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             while_stmt.condition.clone(),
             "while condition",
             "of type bool",
-            *cond_type.borrow(),
+            cond_type.borrow().clone(),
         );
         self.visit_statement(&mut while_stmt.body);
     }
@@ -621,7 +666,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                 con.clone(),
                 "for condition",
                 "of type bool",
-                *cond_type.borrow(),
+                cond_type.borrow().clone(),
             );
         }
         if let Some(inc) = incrementer {
@@ -678,7 +723,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             index.clone(),
             "thread index",
             "numeric",
-            *index_type.borrow(),
+            index_type.borrow().clone(),
         );
     }
 
@@ -696,16 +741,58 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         return type_;
     }
 
-    fn visit_bool_expression(
-        &mut self,
-        expression: &mut crate::ast::BoolExpression,
-    ) -> Self::ExpressionOutput {
+    fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput {
         let BoolExpression {
             value: _,
             token: _,
             id: _,
         } = expression;
         let type_ = Rc::new(RefCell::new(RuntimeType::Boolean));
+        self.types.insert_node(expression, type_.clone());
+        return type_;
+    }
+
+    fn visit_array_expression(
+        &mut self,
+        expression: &mut ArrayExpression,
+    ) -> Self::ExpressionOutput {
+        let ArrayExpression {
+            open_bracket_token: _,
+            elements,
+            close_bracket_token: _,
+            id: _,
+        } = expression;
+
+        let element_type = Rc::new(RefCell::new(RuntimeType::Unknown));
+        let mut element_types = vec![];
+        for (item, _comma) in &mut *elements {
+            let this_item_type = self.visit_expression(item);
+
+            RuntimeType::specialize_from(&element_type, &this_item_type);
+            element_type.borrow_mut().specialize_int_size();
+            RuntimeType::specialize_from(&this_item_type, &element_type);
+
+            element_types.push((this_item_type, item));
+        }
+        for (type_, item) in element_types {
+            if type_ != element_type {
+                self.errors.push(FleetError::from_node(
+                    item.clone(),
+                    format!(
+                        "This item has type {}, but was expected \
+                        to have type {} (inferred from the first element)",
+                        type_.borrow(),
+                        element_type.borrow()
+                    ),
+                    ErrorSeverity::Error,
+                ));
+            }
+        }
+
+        let type_ = Rc::new(RefCell::new(RuntimeType::ArrayOf {
+            subtype: element_type,
+            size: Some(elements.len()),
+        }));
         self.types.insert_node(expression, type_.clone());
         return type_;
     }
@@ -790,6 +877,42 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         self.types
             .insert_node(expression, ref_function.borrow().return_type.clone());
         return ref_function.borrow().return_type.clone();
+    }
+
+    fn visit_array_index_expression(
+        &mut self,
+        expression: &mut ArrayIndexExpression,
+    ) -> Self::ExpressionOutput {
+        let array_type = self.visit_expression(&mut expression.array);
+        let index_type = self.visit_expression(&mut expression.index);
+
+        let RuntimeType::ArrayOf { subtype, size: _ } = array_type.borrow().clone() else {
+            self.errors.push(FleetError::from_node(
+                *expression.array.clone(),
+                "Trying to index into non-array typed value",
+                ErrorSeverity::Error,
+            ));
+            let err_type = Rc::new(RefCell::new(RuntimeType::Error));
+            self.types.insert_node(expression, err_type.clone());
+            return err_type;
+        };
+
+        index_type.borrow_mut().specialize_int_size();
+
+        index_type.borrow_mut().specialize_int_size();
+        if !index_type.borrow().is_numeric() {
+            self.errors.push(FleetError::from_node(
+                *expression.index.clone(),
+                format!(
+                    "Cannot index into array using index of type {}",
+                    index_type.borrow()
+                ),
+                ErrorSeverity::Error,
+            ));
+        }
+
+        self.types.insert_node(expression, subtype.clone());
+        return subtype;
     }
 
     fn visit_grouping_expression(
@@ -889,42 +1012,181 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         let from_type = self.visit_expression(operand);
         let to_type = self.visit_type(type_);
 
-        let from_clone = *from_type.borrow();
-        let to_clone = *to_type.borrow();
+        let from_clone = from_type.borrow().clone();
+        let to_clone = to_type.borrow().clone();
         use RuntimeType::*;
-        match (from_clone, to_clone) {
-            (_, Error) | (Error, _) => {}
+        enum CastResult {
+            Possible,
+            Redundant,
+            Impossible,
+        }
+        fn perform_cast(
+            from: RuntimeType,
+            to: RuntimeType,
+            expression_clone: CastExpression,
+            from_type: &Rc<RefCell<RuntimeType>>,
+            to_type: &Rc<RefCell<RuntimeType>>,
+            self_errors: &mut Vec<FleetError>,
+        ) -> CastResult {
+            match (from.clone(), to.clone()) {
+                (_, Error) | (Error, _) => CastResult::Possible,
 
-            (I8, I8) | (I16, I16) | (I32, I32) | (I64, I64) | (Boolean, Boolean) | (Unit, Unit) => {
-                self.errors.push(FleetError::from_node(
-                    expression_clone,
-                    format!("Casting {} to itself is redundant", from_type.borrow()),
-                    ErrorSeverity::Warning,
-                ));
-            }
-            (I8 | I16 | I32 | I64 | UnsizedInt, I8 | I16 | I32 | I64 | UnsizedInt) => {
-                RuntimeType::specialize_from(&from_type, &to_type);
-            }
+                (I8, I8)
+                | (I16, I16)
+                | (I32, I32)
+                | (I64, I64)
+                | (Boolean, Boolean)
+                | (Unit, Unit) => {
+                    self_errors.push(FleetError::from_node(
+                        expression_clone,
+                        format!("Casting {} to itself is redundant", from),
+                        ErrorSeverity::Warning,
+                    ));
+                    CastResult::Redundant
+                }
+                (I8 | I16 | I32 | I64 | UnsizedInt, I8 | I16 | I32 | I64 | UnsizedInt) => {
+                    RuntimeType::specialize_from(from_type, to_type);
+                    CastResult::Possible
+                }
 
-            (I8 | I16 | I32 | I64 | UnsizedInt, Boolean) => {
-                from_type.borrow_mut().specialize_int_size();
-            }
-            (Boolean, I8 | I16 | I32 | I64 | UnsizedInt) => {}
+                (I8 | I16 | I32 | I64 | UnsizedInt, Boolean) => {
+                    from_type.borrow_mut().specialize_int_size();
+                    CastResult::Possible
+                }
+                (Boolean, I8 | I16 | I32 | I64 | UnsizedInt) => CastResult::Possible,
 
-            (_, Unit) | (Unit, _) => {
-                self.errors.push(FleetError::from_node(
-                    expression_clone,
-                    format!("Cannot cast to or from Unit"),
-                    ErrorSeverity::Error,
-                ));
-            }
-            (_, Unknown) => {
-                //RuntimeType::specialize_from(&to_type, &from_type);
-            }
-            (Unknown, _) => {
-                RuntimeType::specialize_from(&from_type, &to_type);
+                (_, Unit) | (Unit, _) => {
+                    self_errors.push(FleetError::from_node(
+                        expression_clone,
+                        format!("Cannot cast to or from Unit"),
+                        ErrorSeverity::Error,
+                    ));
+                    CastResult::Impossible
+                }
+                (
+                    ArrayOf {
+                        subtype: a,
+                        size: a_size,
+                    },
+                    ArrayOf {
+                        subtype: b,
+                        size: b_size,
+                    },
+                ) if a_size == b_size || a_size == None || b_size == None => {
+                    RuntimeType::specialize_from(from_type, to_type);
+                    let res = perform_cast(
+                        a.borrow().clone(),
+                        b.borrow().clone(),
+                        expression_clone.clone(),
+                        from_type,
+                        to_type,
+                        self_errors,
+                    );
+                    match res {
+                        CastResult::Possible => CastResult::Possible,
+                        CastResult::Redundant => {
+                            self_errors.push(FleetError::from_node(
+                                expression_clone,
+                                format!(
+                                    "Casting array of type {} to array of type {} is \
+                                redundant because the element types are equal",
+                                    from, to
+                                ),
+                                ErrorSeverity::Warning,
+                            ));
+                            CastResult::Redundant
+                        }
+                        CastResult::Impossible => {
+                            self_errors.push(FleetError::from_node(
+                                expression_clone,
+                                format!(
+                                    "Casting array of type {} to array of type {} is \
+                                impossible because the element types can't be cast",
+                                    from, to
+                                ),
+                                ErrorSeverity::Error,
+                            ));
+                            CastResult::Impossible
+                        }
+                    }
+                }
+                (
+                    ArrayOf {
+                        subtype: _,
+                        size: a_size,
+                    },
+                    ArrayOf {
+                        subtype: _,
+                        size: b_size,
+                    },
+                ) => {
+                    self_errors.push(FleetError::from_node(
+                        expression_clone,
+                        format!(
+                            "Casting array with length {} to length {} is impossible",
+                            a_size
+                                .map(|x| x.to_string())
+                                .unwrap_or("{unknown}".to_string()),
+                            b_size
+                                .map(|x| x.to_string())
+                                .unwrap_or("{unknown}".to_string())
+                        ),
+                        ErrorSeverity::Error,
+                    ));
+                    CastResult::Impossible
+                }
+                (
+                    _,
+                    ArrayOf {
+                        subtype: _,
+                        size: _,
+                    },
+                ) => {
+                    self_errors.push(FleetError::from_node(
+                        expression_clone,
+                        format!(
+                            "Casting non-array of type {} to array of type {} is impossible",
+                            from, to
+                        ),
+                        ErrorSeverity::Error,
+                    ));
+                    CastResult::Impossible
+                }
+                (
+                    ArrayOf {
+                        subtype: _,
+                        size: _,
+                    },
+                    _,
+                ) => {
+                    self_errors.push(FleetError::from_node(
+                        expression_clone,
+                        format!(
+                            "Casting array of type {} to non-array of type {} is impossible",
+                            from, to
+                        ),
+                        ErrorSeverity::Error,
+                    ));
+                    CastResult::Impossible
+                }
+                (_, Unknown) => {
+                    //RuntimeType::specialize_from(&to_type, &from_type);
+                    CastResult::Possible
+                }
+                (Unknown, _) => {
+                    RuntimeType::specialize_from(from_type, to_type);
+                    CastResult::Possible
+                }
             }
         }
+        perform_cast(
+            from_clone,
+            to_clone,
+            expression_clone,
+            &from_type,
+            &to_type,
+            self.errors,
+        );
 
         self.types.insert(*id, to_type.clone());
         return to_type;
@@ -1079,41 +1341,106 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
     ) -> Self::ExpressionOutput {
         let expression_clone = expression.clone();
         let VariableAssignmentExpression {
-            name,
-            name_token: _,
+            lvalue,
             equal_token: _,
             right,
-            id,
+            id: _,
         } = expression;
-        let Some(ref_variable) = self.variable_scopes.get(name).cloned() else {
+        let left_type = self.visit_lvalue(lvalue);
+        let right_type = self.visit_expression(right);
+
+        RuntimeType::specialize_from(&left_type, &right_type);
+        RuntimeType::specialize_from(&right_type, &left_type);
+
+        if right_type != left_type {
             self.errors.push(FleetError::from_node(
                 expression_clone.clone(),
+                format!(
+                    "Cannot assign value of type {} to lvalue of type {}",
+                    right_type.borrow(),
+                    left_type.borrow()
+                ),
+                ErrorSeverity::Error,
+            ));
+        }
+
+        self.types.insert_node(expression, left_type.clone());
+        return left_type;
+    }
+
+    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
+        let lvalue_clone = lvalue.clone();
+        let VariableLValue {
+            name,
+            name_token: _,
+            id,
+        } = lvalue;
+        let Some(ref_variable) = self.variable_scopes.get(name).cloned() else {
+            self.errors.push(FleetError::from_node(
+                lvalue_clone.clone(),
                 format!("No variable named {name:?} is defined"),
                 ErrorSeverity::Error,
             ));
             return Rc::new(RefCell::new(RuntimeType::Unknown));
         };
         self.referenced_variable.insert(*id, ref_variable.clone());
+        self.types
+            .insert_node(lvalue, ref_variable.borrow().type_.clone());
+        return ref_variable.borrow().type_.clone();
+    }
+    fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
+        let _lvalue_clone = lvalue.clone();
+        let ArrayIndexLValue {
+            array,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id,
+        } = lvalue;
 
-        let defined_type = ref_variable.borrow().type_.clone();
-        let right_type = self.visit_expression(right);
+        let array_type = self.visit_lvalue(array);
+        let index_type = self.visit_expression(index);
 
-        RuntimeType::specialize_from(&right_type, &defined_type);
-
-        if right_type != defined_type {
+        let RuntimeType::ArrayOf { subtype, size: _ } = array_type.borrow().clone() else {
             self.errors.push(FleetError::from_node(
-                expression_clone.clone(),
+                *array.clone(),
+                "Trying to index into non-array typed value",
+                ErrorSeverity::Error,
+            ));
+            let err_type = Rc::new(RefCell::new(RuntimeType::Error));
+            self.types.insert(*id, err_type.clone());
+            return err_type;
+        };
+
+        index_type.borrow_mut().specialize_int_size();
+        if !index_type.borrow().is_numeric() {
+            self.errors.push(FleetError::from_node(
+                *index.clone(),
                 format!(
-                    "Cannot assign value of type {} to variable {name:?} defined as type {}",
-                    right_type.borrow(),
-                    defined_type.borrow()
+                    "Cannot index into array using index of type {}",
+                    index_type.borrow()
                 ),
                 ErrorSeverity::Error,
             ));
         }
 
-        self.types.insert_node(expression, defined_type.clone());
-        return defined_type;
+        self.types.insert(*id, subtype.clone());
+        return subtype;
+    }
+
+    fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {
+        let _lvalue_clone = lvalue.clone();
+        let GroupingLValue {
+            open_paren_token: _,
+            sublvalue,
+            close_paren_token: _,
+            id,
+        } = lvalue;
+
+        let subtype = self.visit_lvalue(sublvalue);
+
+        self.types.insert(*id, subtype.clone());
+        return subtype;
     }
 
     fn visit_int_type(
@@ -1128,7 +1455,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         if let Some(type_) = self.types.get(id) {
             return type_.clone();
         }
-        let t = Rc::new(RefCell::new(*type_));
+        let t = Rc::new(RefCell::new(type_.clone()));
         self.types.insert(*id, t.clone());
         return t;
     }
@@ -1159,6 +1486,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         self.types.insert(*id, t.clone());
         return t;
     }
+
     fn visit_idk_type(
         &mut self,
         IdkType {
@@ -1169,5 +1497,62 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
     ) -> Self::TypeOutput {
         self.types.insert(*id, type_.clone());
         return type_.clone();
+    }
+
+    fn visit_array_type(
+        &mut self,
+        ArrayType {
+            subtype,
+            open_bracket_token: _,
+            size,
+            close_bracket_token: _,
+            id,
+        }: &mut ArrayType,
+    ) -> Self::TypeOutput {
+        if let Some(type_) = self.types.get(id) {
+            return type_.clone();
+        }
+        let subtype_t = self.visit_type(subtype);
+
+        if matches!(subtype_t.borrow().clone(), RuntimeType::Unit) {
+            self.errors.push(FleetError::from_node(
+                *subtype.clone(),
+                format!("Cannot have array of Unit"),
+                ErrorSeverity::Error,
+            ));
+        }
+        let size = match size.as_ref().map(|boxed_x| &**boxed_x) {
+            Some(Expression::Number(NumberExpression {
+                value,
+                token: _,
+                id: _,
+            })) => {
+                if *value < 0 {
+                    self.errors.push(FleetError::from_node(
+                        *subtype.clone(),
+                        format!("Arrays cannot have a negative size"),
+                        ErrorSeverity::Error,
+                    ));
+                }
+                Some(*value as usize)
+            }
+            Some(_) => {
+                // TODO: once we have consteval, relax this restriction
+                self.errors.push(FleetError::from_node(
+                    *subtype.clone(),
+                    format!("Arrays can only have number literals as a size for now"),
+                    ErrorSeverity::Error,
+                ));
+                None
+            }
+            None => None,
+        };
+
+        let t = Rc::new(RefCell::new(RuntimeType::ArrayOf {
+            subtype: subtype_t,
+            size,
+        }));
+        self.types.insert(*id, t.clone());
+        return t;
     }
 }
