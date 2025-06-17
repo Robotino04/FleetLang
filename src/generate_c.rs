@@ -30,7 +30,7 @@ fn generate_function_declaration(function: &FunctionDefinition, mut prefix: Stri
         prefix = "".to_string();
     }
 
-    return "void".to_string() //generate_c(function.return_type.clone())
+    "void".to_string() //generate_c(function.return_type.clone())
         + " "
         + &prefix
         + function.name.as_str()
@@ -40,7 +40,7 @@ fn generate_function_declaration(function: &FunctionDefinition, mut prefix: Stri
         } else {
             params.as_str()
         }
-        + ")";
+        + ")"
 }
 
 fn to_c_type(type_: Rc<RefCell<RuntimeType>>) -> String {
@@ -78,11 +78,11 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             let function_declarations = program
                 .functions
                 .iter()
-                .map(|f| generate_function_declaration(&f, "fleet_".to_string()) + ";")
+                .map(|f| generate_function_declaration(f, "fleet_".to_string()) + ";")
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            return format!(
+            format!(
                 r##"#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -93,7 +93,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
 // function definitions
 {function_definitions}
 "##
-            );
+            )
         }
         AstNode::FunctionDefinition(
             function @ FunctionDefinition {
@@ -101,9 +101,9 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
                 ..
             },
         ) => {
-            return generate_function_declaration(&function, "fleet_".to_string())
+            generate_function_declaration(&function, "fleet_".to_string())
                 + " "
-                + generate_c(function.body).as_str();
+                + generate_c(function.body).as_str()
         }
         AstNode::FunctionDefinition(
             ref function @ FunctionDefinition {
@@ -122,13 +122,13 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             let mut fake_extern_function = function.clone();
             fake_extern_function.name = symbol.clone();
 
-            return generate_function_declaration(&function, "fleet_".to_string())
+            generate_function_declaration(function, "fleet_".to_string())
                 + " {\n"
                 + "    extern "
                 + &generate_function_declaration(&fake_extern_function, "".to_string())
                 + ";\n"
                 + "    return "
-                + &symbol
+                + symbol
                 + "("
                 + &function
                     .parameters
@@ -136,7 +136,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
                     .map(|(param, _comma)| "fleet_".to_string() + &param.name)
                     .join(",")
                 + ");\n"
-                + "}";
+                + "}"
         }
         AstNode::ExternFunctionBody(_) => {
             unreachable!(
@@ -152,7 +152,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             type_: _,
             id: _,
         }) => {
-            return format!("{} fleet_{}", "int32_t" /*generate_c(type_)*/, name);
+            format!("{} fleet_{}", "int32_t" /*generate_c(type_)*/, name)
         }
         AstNode::ExpressionStatement(ExpressionStatement {
             expression,
@@ -175,7 +175,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             close_brace_token: _,
             id: _,
         }) => {
-            return "{\n".to_string()
+            "{\n".to_string()
                 + indent::indent_all_by(
                     4,
                     body.iter()
@@ -184,18 +184,14 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
                         .join("\n"),
                 )
                 .as_str()
-                + "\n}";
+                + "\n}"
         }
         AstNode::ReturnStatement(ReturnStatement {
             return_token: _,
             value,
             semicolon_token: _,
             id: _,
-        }) => {
-            return "return ".to_string()
-                + &value.map(|v| generate_c(v)).unwrap_or("".to_string())
-                + ";";
-        }
+        }) => "return ".to_string() + &value.map(generate_c).unwrap_or("".to_string()) + ";",
         AstNode::VariableDefinitionStatement(VariableDefinitionStatement {
             let_token: _,
             binding,
@@ -203,9 +199,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             value,
             semicolon_token: _,
             id: _,
-        }) => {
-            return generate_c(binding) + " = " + &generate_c(value) + ";";
-        }
+        }) => generate_c(binding) + " = " + &generate_c(value) + ";",
         AstNode::IfStatement(IfStatement {
             if_token: _,
             condition,
@@ -214,7 +208,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             else_,
             id: _,
         }) => {
-            return "if (".to_string()
+            "if (".to_string()
                 + &generate_c(condition)
                 + ") {"
                 + &generate_c(*if_body)
@@ -231,20 +225,14 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
                     .collect::<String>()
                 + &else_
                     .map(|(_token, body)| " else {".to_string() + &generate_c(*body) + "}")
-                    .unwrap_or("".to_string());
+                    .unwrap_or("".to_string())
         }
         AstNode::WhileLoopStatement(WhileLoopStatement {
             while_token: _,
             condition,
             body,
             id: _,
-        }) => {
-            return "while (".to_string()
-                + &generate_c(condition)
-                + ") {"
-                + &generate_c(*body)
-                + "}";
-        }
+        }) => "while (".to_string() + &generate_c(condition) + ") {" + &generate_c(*body) + "}",
         AstNode::ForLoopStatement(ForLoopStatement {
             for_token: _,
             open_paren_token: _,
@@ -256,14 +244,14 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             body,
             id: _,
         }) => {
-            return "for (".to_string()
+            "for (".to_string()
                 + &generate_c(*initializer)
-                + &condition.map(|c| generate_c(c)).unwrap_or("".to_string())
+                + &condition.map(generate_c).unwrap_or("".to_string())
                 + ";"
-                + &incrementer.map(|i| generate_c(i)).unwrap_or("".to_string())
+                + &incrementer.map(generate_c).unwrap_or("".to_string())
                 + ") {"
                 + &generate_c(*body)
-                + "}";
+                + "}"
         }
         AstNode::BreakStatement(_break_statement) => "break;".to_string(),
         AstNode::SkipStatement(_skip_statement) => "continue;".to_string(),
@@ -276,9 +264,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             index,
             close_bracket_token: _,
             id: _,
-        }) => {
-            return generate_c(host) + ".threads[" + generate_c(index).as_str() + "]";
-        }
+        }) => generate_c(host) + ".threads[" + generate_c(index).as_str() + "]",
         AstNode::NumberExpression(NumberExpression {
             value,
             token: _,
@@ -299,7 +285,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             /*
             return format!("(({}){{ {} }})", /* type of array */, /* items of array */)
             */
-            return "{/* TODO: array literals */}".to_string();
+            "{/* TODO: array literals */}".to_string()
         }
         AstNode::FunctionCallExpression(FunctionCallExpression {
             name,
@@ -309,7 +295,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             close_paren_token: _,
             id: _,
         }) => {
-            return "fleet_".to_string()
+            "fleet_".to_string()
                 + &name
                 + "("
                 + arguments
@@ -318,7 +304,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
                     .collect::<Vec<_>>()
                     .join(", ")
                     .as_str()
-                + ")";
+                + ")"
         }
         AstNode::ArrayIndexExpression(ArrayIndexExpression {
             array,
@@ -326,29 +312,27 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             index,
             close_bracket_token: _,
             id: _,
-        }) => {
-            return "(".to_string() + &generate_c(*array) + ")[" + &generate_c(*index) + "]";
-        }
+        }) => "(".to_string() + &generate_c(*array) + ")[" + &generate_c(*index) + "]",
         AstNode::UnaryExpression(UnaryExpression {
             operation,
             operand,
             operator_token: _,
             id: _,
         }) => {
-            return match operation {
+            match operation {
                 UnaryOperation::BitwiseNot => "~",
                 UnaryOperation::LogicalNot => "!",
                 UnaryOperation::Negate => "-",
             }
             .to_string()
-                + generate_c(*operand).as_str();
+                + generate_c(*operand).as_str()
         }
         AstNode::CastExpression(CastExpression {
             operand,
             as_token: _,
             type_,
             id: _,
-        }) => return format!("(({})({}))", generate_c(type_), generate_c(*operand)),
+        }) => format!("(({})({}))", generate_c(type_), generate_c(*operand)),
         AstNode::BinaryExpression(BinaryExpression {
             left,
             operator_token: _,
@@ -356,7 +340,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             right,
             id: _,
         }) => {
-            return format!(
+            format!(
                 "({} {} {})",
                 generate_c(*left),
                 match operation {
@@ -375,7 +359,7 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
                     BinaryOperation::LogicalOr => "||",
                 },
                 generate_c(*right)
-            );
+            )
         }
         AstNode::GroupingExpression(GroupingExpression {
             open_paren_token: _,
@@ -383,22 +367,20 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             close_paren_token: _,
             id: _,
         }) => {
-            return format!("({})", generate_c(*subexpression),);
+            format!("({})", generate_c(*subexpression))
         }
         AstNode::VariableAccessExpression(VariableAccessExpression {
             name,
             name_token: _,
             id: _,
-        }) => {
-            return "fleet_".to_string() + &name;
-        }
+        }) => "fleet_".to_string() + &name,
         AstNode::VariableAssignmentExpression(VariableAssignmentExpression {
             lvalue,
             equal_token: _,
             right,
             id: _,
         }) => {
-            return format!("({} = {})", generate_c(lvalue), generate_c(*right),);
+            format!("({} = {})", generate_c(lvalue), generate_c(*right))
         }
         AstNode::VariableLValue(VariableLValue {
             name,

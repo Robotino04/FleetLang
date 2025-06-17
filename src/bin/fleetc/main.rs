@@ -13,7 +13,7 @@ use inkwell::{
 };
 
 fn generate_header(text: impl AsRef<str>, length: usize) -> String {
-    return format!("{:-^length$}", "|".to_string() + text.as_ref() + "|");
+    format!("{:-^length$}", "|".to_string() + text.as_ref() + "|")
 }
 fn ansi_color_for_severity(severity: ErrorSeverity) -> &'static str {
     match severity {
@@ -63,10 +63,6 @@ fn main() {
     };
 
     match &res.status {
-        CompileStatus::TokenizerFailure {} => {
-            print_all_errors_and_message("The tokenizer failed completely");
-            exit(1);
-        }
         CompileStatus::ParserFailure { tokens } => {
             println!("{}", generate_header("Tokens", 50));
             println!("{:#?}", tokens);
@@ -233,13 +229,13 @@ fn main() {
 
     println!("{}", generate_header("LLVM IR (optimized)", 50));
 
-    run_default_optimization_passes(&module, &target_machine).unwrap();
+    run_default_optimization_passes(module, &target_machine).unwrap();
 
     println!("{}", module.print_to_string().to_str().unwrap());
 
     let output_path = Path::new("output.o");
     target_machine
-        .write_to_file(&module, FileType::Object, output_path)
+        .write_to_file(module, FileType::Object, output_path)
         .unwrap();
 
     println!("Object file written to {:?}", output_path);

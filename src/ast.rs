@@ -1080,17 +1080,19 @@ pub struct PerNodeData<T> {
 }
 
 impl<T> PerNodeData<T> {
-    pub fn new() -> Self {
-        Self {
-            map: HashMap::new(),
-        }
-    }
-
     pub fn get_node(&self, node: &impl HasID) -> Option<&T> {
         self.map.get(&node.get_id())
     }
     pub fn insert_node(&mut self, node: &impl HasID, value: T) {
         self.map.insert(node.get_id(), value);
+    }
+}
+
+impl<T> Default for PerNodeData<T> {
+    fn default() -> Self {
+        Self {
+            map: HashMap::new(),
+        }
     }
 }
 

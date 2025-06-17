@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, fmt, rc::Rc};
 
 use crate::{
     ast::{
@@ -14,10 +14,46 @@ use crate::{
     },
     infra::{ErrorSeverity, FleetError},
     passes::type_propagation::{FunctionID, RuntimeType, VariableID},
-    tokenizer::{Keyword, Token, TokenType},
+    tokenizer::{Keyword, SourceLocation, Token, TokenType},
 };
 
-type Result<T> = ::core::result::Result<T, ()>;
+#[derive(Debug)]
+pub struct ParserError {
+    pub file_name: String,
+    pub msg: String,
+    pub start: SourceLocation,
+    pub end: SourceLocation,
+}
+
+impl fmt::Display for ParserError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}:{}:{} - {}:{}: {}",
+            self.file_name,
+            self.start.line,
+            self.start.column,
+            self.end.line,
+            self.end.column,
+            self.msg
+        )
+    }
+}
+
+impl std::error::Error for ParserError {}
+
+impl From<FleetError> for ParserError {
+    fn from(value: FleetError) -> Self {
+        Self {
+            file_name: "unknown_file.fl".to_string(), // TODO: track filename in FleetError
+            msg: value.message,
+            start: value.start,
+            end: value.end,
+        }
+    }
+}
+
+type Result<T> = ::core::result::Result<T, ParserError>;
 
 #[derive(Debug)]
 pub struct Parser<'errors> {
@@ -35,29 +71,31 @@ pub struct IdGenerator {
 }
 
 impl IdGenerator {
-    pub fn new() -> Self {
-        Self {
-            node_id_counter: NodeID(0),
-            variable_id_counter: VariableID(0),
-            function_id_counter: FunctionID(0),
-        }
-    }
-
     pub fn next_node_id(&mut self) -> NodeID {
         let current_id = self.node_id_counter;
         self.node_id_counter.0 += 1;
-        return current_id;
+        current_id
     }
     pub fn next_variable_id(&mut self) -> VariableID {
         let current_id = self.variable_id_counter;
         self.variable_id_counter.0 += 1;
-        return current_id;
+        current_id
     }
 
     pub fn next_function_id(&mut self) -> FunctionID {
         let current_id = self.function_id_counter;
         self.function_id_counter.0 += 1;
-        return current_id;
+        current_id
+    }
+}
+
+impl Default for IdGenerator {
+    fn default() -> Self {
+        Self {
+            node_id_counter: NodeID(0),
+            variable_id_counter: VariableID(0),
+            function_id_counter: FunctionID(0),
+        }
     }
 }
 
@@ -72,25 +110,27 @@ macro_rules! expect {
         {
             match $self.current_token_type() {
                 Some($main_type) $(if $guard)? => {
-                    let result = Ok($body);
+                    let result: Result<_> = Ok($body);
                     $self.consume().unwrap();
                     result
                 },
                 _ => {
                     if let Some(token) = $self.current_token() {
-                        $self.errors.push(FleetError::from_token(
+                        let err = FleetError::from_token(
                             &token,
                             format!("Expected {}, but found {:?}", stringify!($main_type), token.type_),
                             ErrorSeverity::Error,
-                        ));
-                        Err(())
+                        );
+                        $self.errors.push(err.clone());
+                        Err(err.into())
                     } else {
-                        $self.errors.push(FleetError::from_token(
+                        let err = FleetError::from_token(
                             $self.tokens.last().unwrap(),
                             format!("Expected {}, but found End of file", stringify!($main_type)),
                             ErrorSeverity::Error,
-                        ));
-                        Err(())
+                        );
+                        $self.errors.push(err.clone());
+                        Err(err.into())
                     }
                 }
             }
@@ -135,19 +175,21 @@ macro_rules! recover_until {
 macro_rules! unable_to_parse {
     ($self:ident, $fmt_string:expr $(, $($param:expr)+)?) => {
         if let Some(token) = $self.current_token() {
-            $self.errors.push(FleetError::from_token(
+            let err = FleetError::from_token(
                 &token,
                 format!("Unable to parse an expected {}", format!($fmt_string $(, $($param),+)?)),
                 ErrorSeverity::Error,
-            ));
-            return Err(());
+            );
+            $self.errors.push(err.clone());
+            return Err(err.into());
         } else {
-            $self.errors.push(FleetError::from_token(
+            let err = FleetError::from_token(
                 $self.tokens.last().unwrap(),
                 format!("Hit EOF while parsing an expected {}", format!($fmt_string $(, $($param),+)?)),
                 ErrorSeverity::Error,
-            ));
-            return Err(());
+            );
+            $self.errors.push(err.clone());
+            return Err(err.into());
         }
     };
 }
@@ -157,12 +199,12 @@ impl<'errors> Parser<'errors> {
         Self {
             tokens: tokens
                 .iter()
+                .filter(|&tok| !matches!(tok.type_, TokenType::UnknownCharacters(_)))
                 .cloned()
-                .filter(|tok| !matches!(tok.type_, TokenType::UnknownCharacters(_)))
                 .collect(),
             index: 0,
             errors,
-            id_generator: IdGenerator::new(),
+            id_generator: IdGenerator::default(),
         }
     }
 
@@ -182,7 +224,7 @@ impl<'errors> Parser<'errors> {
     fn consume(&mut self) -> Option<Token> {
         let t = self.current_token();
         self.index += 1;
-        return t;
+        t
     }
 
     pub fn parse_program(mut self) -> Result<(Program, IdGenerator)> {
@@ -266,21 +308,20 @@ impl<'errors> Parser<'errors> {
                 let extern_token = expect!(self, TokenType::Keyword(Keyword::Extern))?;
                 let (symbol_token, symbol) = expect!(self, TokenType::StringLiteral(symbol) => (self.current_token().unwrap(), symbol))?;
                 let semicolon_token = expect!(self, TokenType::Semicolon)?;
-                return Ok(FunctionBody::Extern(ExternFunctionBody {
+
+                Ok(FunctionBody::Extern(ExternFunctionBody {
                     at_token,
                     extern_token,
                     symbol,
                     symbol_token,
                     semicolon_token,
                     id: self.id_generator.next_node_id(),
-                }));
+                }))
             }
-            _ => {
-                return Ok(FunctionBody::Statement(StatementFunctionBody {
-                    statement: self.parse_statement()?,
-                    id: self.id_generator.next_node_id(),
-                }));
-            }
+            _ => Ok(FunctionBody::Statement(StatementFunctionBody {
+                statement: self.parse_statement()?,
+                id: self.id_generator.next_node_id(),
+            })),
         }
     }
 
@@ -294,32 +335,30 @@ impl<'errors> Parser<'errors> {
             None
         };
 
-        return Ok(SimpleBinding {
+        Ok(SimpleBinding {
             name_token,
             name,
             type_,
             id: self.id_generator.next_node_id(),
-        });
+        })
     }
 
     pub fn parse_statement(&mut self) -> Result<Statement> {
         match self.current_token_type() {
-            Some(TokenType::Keyword(Keyword::On)) => {
-                return Ok(Statement::On(OnStatement {
-                    on_token: expect!(self, TokenType::Keyword(Keyword::On))?,
-                    open_paren_token: expect!(self, TokenType::OpenParen)?,
-                    executor: self.parse_executor()?,
-                    close_paren_token: expect!(self, TokenType::CloseParen)?,
-                    body: Box::new(self.parse_statement()?),
-                    id: self.id_generator.next_node_id(),
-                }));
-            }
+            Some(TokenType::Keyword(Keyword::On)) => Ok(Statement::On(OnStatement {
+                on_token: expect!(self, TokenType::Keyword(Keyword::On))?,
+                open_paren_token: expect!(self, TokenType::OpenParen)?,
+                executor: self.parse_executor()?,
+                close_paren_token: expect!(self, TokenType::CloseParen)?,
+                body: Box::new(self.parse_statement()?),
+                id: self.id_generator.next_node_id(),
+            })),
             Some(TokenType::OpenBrace) => {
                 let open_brace_token = expect!(self, TokenType::OpenBrace)?;
 
                 let mut body = vec![];
                 while self.current_token_type() != Some(TokenType::CloseBrace)
-                    && self.current_token_type() != None
+                    && self.current_token_type().is_some()
                 {
                     let recovery_start = self.current_token();
                     if let Ok(stmt) = self.parse_statement() {
@@ -339,12 +378,12 @@ impl<'errors> Parser<'errors> {
                 }
                 let close_brace_token = expect!(self, TokenType::CloseBrace)?;
 
-                return Ok(Statement::Block(BlockStatement {
+                Ok(Statement::Block(BlockStatement {
                     open_brace_token,
                     body,
                     close_brace_token,
                     id: self.id_generator.next_node_id(),
-                }));
+                }))
             }
             Some(TokenType::Keyword(Keyword::Return)) => {
                 let return_token = expect!(self, TokenType::Keyword(Keyword::Return))?;
@@ -355,24 +394,24 @@ impl<'errors> Parser<'errors> {
                     Some(self.parse_expression()?)
                 };
 
-                return Ok(Statement::Return(ReturnStatement {
+                Ok(Statement::Return(ReturnStatement {
                     return_token,
                     value,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
                     id: self.id_generator.next_node_id(),
-                }));
+                }))
             }
             Some(TokenType::Keyword(Keyword::Let)) => {
                 let let_token = expect!(self, TokenType::Keyword(Keyword::Let))?;
 
-                return Ok(Statement::VariableDefinition(VariableDefinitionStatement {
+                Ok(Statement::VariableDefinition(VariableDefinitionStatement {
                     let_token,
                     binding: self.parse_simple_binding()?,
                     equals_token: expect!(self, TokenType::EqualSign)?,
                     value: self.parse_expression()?,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
                     id: self.id_generator.next_node_id(),
-                }));
+                }))
             }
             Some(TokenType::Keyword(Keyword::If)) => {
                 let if_token = expect!(self, TokenType::Keyword(Keyword::If))?;
@@ -396,25 +435,25 @@ impl<'errors> Parser<'errors> {
                     ));
                 }
 
-                return Ok(Statement::If(IfStatement {
+                Ok(Statement::If(IfStatement {
                     if_token,
                     condition,
                     if_body: Box::new(if_body),
                     elifs,
                     else_,
                     id: self.id_generator.next_node_id(),
-                }));
+                }))
             }
             Some(TokenType::Keyword(Keyword::While)) => {
                 let while_token = expect!(self, TokenType::Keyword(Keyword::While))?;
                 let condition = self.parse_expression()?;
                 let body = self.parse_statement()?;
-                return Ok(Statement::WhileLoop(WhileLoopStatement {
+                Ok(Statement::WhileLoop(WhileLoopStatement {
                     while_token,
                     condition,
                     body: Box::new(body),
                     id: self.id_generator.next_node_id(),
-                }));
+                }))
             }
             Some(TokenType::Keyword(Keyword::For)) => {
                 let for_token = expect!(self, TokenType::Keyword(Keyword::For))?;
@@ -438,7 +477,7 @@ impl<'errors> Parser<'errors> {
                 let close_paren_token = expect!(self, TokenType::CloseParen)?;
 
                 let body = self.parse_statement()?;
-                return Ok(Statement::ForLoop(ForLoopStatement {
+                Ok(Statement::ForLoop(ForLoopStatement {
                     for_token,
                     open_paren_token,
                     initializer: Box::new(initializer),
@@ -448,58 +487,46 @@ impl<'errors> Parser<'errors> {
                     close_paren_token,
                     body: Box::new(body),
                     id: self.id_generator.next_node_id(),
-                }));
+                }))
             }
-            Some(TokenType::Keyword(Keyword::Break)) => {
-                return Ok(Statement::Break(BreakStatement {
-                    break_token: expect!(self, TokenType::Keyword(Keyword::Break))?,
-                    semicolon_token: expect!(self, TokenType::Semicolon)?,
-                    id: self.id_generator.next_node_id(),
-                }));
-            }
-            Some(TokenType::Keyword(Keyword::Skip)) => {
-                return Ok(Statement::Skip(SkipStatement {
-                    skip_token: expect!(self, TokenType::Keyword(Keyword::Skip))?,
-                    semicolon_token: expect!(self, TokenType::Semicolon)?,
-                    id: self.id_generator.next_node_id(),
-                }));
-            }
-            _ => {
-                return Ok(Statement::Expression(ExpressionStatement {
-                    expression: self.parse_expression()?,
-                    semicolon_token: expect!(self, TokenType::Semicolon)?,
-                    id: self.id_generator.next_node_id(),
-                }));
-            }
+            Some(TokenType::Keyword(Keyword::Break)) => Ok(Statement::Break(BreakStatement {
+                break_token: expect!(self, TokenType::Keyword(Keyword::Break))?,
+                semicolon_token: expect!(self, TokenType::Semicolon)?,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::Keyword(Keyword::Skip)) => Ok(Statement::Skip(SkipStatement {
+                skip_token: expect!(self, TokenType::Keyword(Keyword::Skip))?,
+                semicolon_token: expect!(self, TokenType::Semicolon)?,
+                id: self.id_generator.next_node_id(),
+            })),
+            _ => Ok(Statement::Expression(ExpressionStatement {
+                expression: self.parse_expression()?,
+                semicolon_token: expect!(self, TokenType::Semicolon)?,
+                id: self.id_generator.next_node_id(),
+            })),
         }
     }
     fn parse_expression(&mut self) -> Result<Expression> {
-        return self.parse_assignment_expression();
+        self.parse_assignment_expression()
     }
 
     fn parse_primary_expression(&mut self) -> Result<Expression> {
         match self.current_token_type() {
-            Some(TokenType::Number(value)) => {
-                return Ok(Expression::Number(NumberExpression {
-                    value,
-                    token: expect!(self, TokenType::Number(_))?,
-                    id: self.id_generator.next_node_id(),
-                }));
-            }
-            Some(TokenType::Keyword(Keyword::True)) => {
-                return Ok(Expression::Bool(BoolExpression {
-                    value: true,
-                    token: expect!(self, TokenType::Keyword(Keyword::True))?,
-                    id: self.id_generator.next_node_id(),
-                }));
-            }
-            Some(TokenType::Keyword(Keyword::False)) => {
-                return Ok(Expression::Bool(BoolExpression {
-                    value: false,
-                    token: expect!(self, TokenType::Keyword(Keyword::False))?,
-                    id: self.id_generator.next_node_id(),
-                }));
-            }
+            Some(TokenType::Number(value)) => Ok(Expression::Number(NumberExpression {
+                value,
+                token: expect!(self, TokenType::Number(_))?,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::Keyword(Keyword::True)) => Ok(Expression::Bool(BoolExpression {
+                value: true,
+                token: expect!(self, TokenType::Keyword(Keyword::True))?,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::Keyword(Keyword::False)) => Ok(Expression::Bool(BoolExpression {
+                value: false,
+                token: expect!(self, TokenType::Keyword(Keyword::False))?,
+                id: self.id_generator.next_node_id(),
+            })),
             Some(TokenType::OpenBracket) => {
                 let open_bracket_token = expect!(self, TokenType::OpenBracket)?;
                 let mut elements = vec![];
@@ -517,12 +544,12 @@ impl<'errors> Parser<'errors> {
                     }
                 }
                 let close_bracket_token = expect!(self, TokenType::CloseBracket)?;
-                return Ok(Expression::Array(ArrayExpression {
+                Ok(Expression::Array(ArrayExpression {
                     open_bracket_token,
                     elements,
                     close_bracket_token,
                     id: self.id_generator.next_node_id(),
-                }));
+                }))
             }
 
             Some(TokenType::Identifier(name)) => {
@@ -545,32 +572,28 @@ impl<'errors> Parser<'errors> {
                             }
                         }
                         let close_paren_token = expect!(self, TokenType::CloseParen)?;
-                        return Ok(Expression::FunctionCall(FunctionCallExpression {
+                        Ok(Expression::FunctionCall(FunctionCallExpression {
                             name,
                             name_token,
                             arguments,
                             open_paren_token,
                             close_paren_token,
                             id: self.id_generator.next_node_id(),
-                        }));
+                        }))
                     }
-                    _ => {
-                        return Ok(Expression::VariableAccess(VariableAccessExpression {
-                            name,
-                            name_token,
-                            id: self.id_generator.next_node_id(),
-                        }));
-                    }
+                    _ => Ok(Expression::VariableAccess(VariableAccessExpression {
+                        name,
+                        name_token,
+                        id: self.id_generator.next_node_id(),
+                    })),
                 }
             }
-            Some(TokenType::OpenParen) => {
-                return Ok(Expression::Grouping(GroupingExpression {
-                    open_paren_token: expect!(self, TokenType::OpenParen)?,
-                    subexpression: Box::new(self.parse_expression()?),
-                    close_paren_token: expect!(self, TokenType::CloseParen)?,
-                    id: self.id_generator.next_node_id(),
-                }));
-            }
+            Some(TokenType::OpenParen) => Ok(Expression::Grouping(GroupingExpression {
+                open_paren_token: expect!(self, TokenType::OpenParen)?,
+                subexpression: Box::new(self.parse_expression()?),
+                close_paren_token: expect!(self, TokenType::CloseParen)?,
+                id: self.id_generator.next_node_id(),
+            })),
             _ => unable_to_parse!(self, "primary expression"),
         }
     }
@@ -590,7 +613,7 @@ impl<'errors> Parser<'errors> {
             _ => return Ok(lhs),
         } {}
 
-        return Ok(lhs);
+        Ok(lhs)
     }
     fn parse_unary_expression(&mut self) -> Result<Expression> {
         match self.current_token_type() {
@@ -613,7 +636,7 @@ impl<'errors> Parser<'errors> {
                 id: self.id_generator.next_node_id(),
             })),
 
-            Some(_) => return self.parse_postfix_expression(),
+            Some(_) => self.parse_postfix_expression(),
             None => unable_to_parse!(self, "unary expression"),
         }
     }
@@ -635,7 +658,7 @@ impl<'errors> Parser<'errors> {
             _ => false,
         } {}
 
-        return Ok(left);
+        Ok(left)
     }
     fn parse_product_expression(&mut self) -> Result<Expression> {
         let mut left = self.parse_cast_expression()?;
@@ -680,7 +703,7 @@ impl<'errors> Parser<'errors> {
             _ => false,
         } {}
 
-        return Ok(left);
+        Ok(left)
     }
     fn parse_sum_expression(&mut self) -> Result<Expression> {
         let mut left = self.parse_product_expression()?;
@@ -713,7 +736,7 @@ impl<'errors> Parser<'errors> {
             _ => false,
         } {}
 
-        return Ok(left);
+        Ok(left)
     }
     fn parse_comparison_expression(&mut self) -> Result<Expression> {
         let mut left = self.parse_sum_expression()?;
@@ -770,7 +793,7 @@ impl<'errors> Parser<'errors> {
             _ => false,
         } {}
 
-        return Ok(left);
+        Ok(left)
     }
     fn parse_equality_expression(&mut self) -> Result<Expression> {
         let mut left = self.parse_comparison_expression()?;
@@ -803,7 +826,7 @@ impl<'errors> Parser<'errors> {
             _ => false,
         } {}
 
-        return Ok(left);
+        Ok(left)
     }
     fn parse_logical_and_expression(&mut self) -> Result<Expression> {
         let mut left = self.parse_equality_expression()?;
@@ -824,7 +847,7 @@ impl<'errors> Parser<'errors> {
             _ => false,
         } {}
 
-        return Ok(left);
+        Ok(left)
     }
     fn parse_logical_or_expression(&mut self) -> Result<Expression> {
         let mut left = self.parse_logical_and_expression()?;
@@ -845,7 +868,7 @@ impl<'errors> Parser<'errors> {
             _ => false,
         } {}
 
-        return Ok(left);
+        Ok(left)
     }
     fn parse_assignment_expression(&mut self) -> Result<Expression> {
         let left = self.parse_logical_or_expression()?;
@@ -913,7 +936,7 @@ impl<'errors> Parser<'errors> {
     }
 
     pub fn parse_executor(&mut self) -> Result<Executor> {
-        let res = Ok(Executor::Thread(ThreadExecutor {
+        Ok(Executor::Thread(ThreadExecutor {
             host: ExecutorHost::Self_(SelfExecutorHost {
                 token: expect!(self, TokenType::Keyword(Keyword::Self_))?,
                 id: self.id_generator.next_node_id(),
@@ -924,8 +947,7 @@ impl<'errors> Parser<'errors> {
             index: self.parse_expression()?,
             close_bracket_token: expect!(self, TokenType::CloseBracket)?,
             id: self.id_generator.next_node_id(),
-        }));
-        return res;
+        }))
     }
     pub fn parse_type(&mut self) -> Result<Type> {
         self.parse_postfix_type()
@@ -946,7 +968,7 @@ impl<'errors> Parser<'errors> {
                 type_ = Type::Array(ArrayType {
                     subtype: Box::new(type_),
                     open_bracket_token,
-                    size: size.map(|x| Box::new(x)),
+                    size: size.map(Box::new),
                     close_bracket_token,
                     id: self.id_generator.next_node_id(),
                 });
@@ -954,7 +976,7 @@ impl<'errors> Parser<'errors> {
             }
             _ => false,
         } {}
-        return Ok(type_);
+        Ok(type_)
     }
 
     pub fn parse_primary_type(&mut self) -> Result<Type> {

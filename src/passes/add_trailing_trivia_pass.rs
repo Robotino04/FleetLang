@@ -39,9 +39,9 @@ impl AstVisitor for AddTrailingTriviaPass {
     type LValueOutput = ();
     type TypeOutput = ();
     fn visit_program(mut self, program: &mut Program) {
-        program.functions.last_mut().map(|f| {
+        if let Some(f) = program.functions.last_mut() {
             self.visit_function_definition(f);
-        });
+        }
     }
 
     fn visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {

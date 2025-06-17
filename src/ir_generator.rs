@@ -7,6 +7,7 @@ use std::{
 };
 
 use inkwell::{
+    IntPredicate,
     basic_block::BasicBlock,
     builder::Builder,
     context::Context,
@@ -15,7 +16,6 @@ use inkwell::{
     values::{
         BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue,
     },
-    IntPredicate,
 };
 use itertools::Itertools;
 
@@ -55,7 +55,7 @@ impl<'a> Deref for VariableStorage<'a> {
         &self.0
     }
 }
-impl<'a> DerefMut for VariableStorage<'a> {
+impl DerefMut for VariableStorage<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -122,7 +122,7 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
 
     fn report_error<T>(&mut self, error: FleetError) -> Result<T> {
         self.errors.push(error.clone());
-        return Err(error.message.into());
+        Err(error.message.into())
     }
 
     fn make_into_function_type<'c>(
@@ -261,7 +261,7 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
             })
             .collect_vec()
             .iter()
-            .map(|(param, var)| -> Result<_> {
+            .flat_map(|(param, var)| -> Result<_> {
                 Ok(match_any_type_enum_as_basic_type!(
                     self.runtime_type_to_llvm(var.borrow().type_.borrow().clone(), param.clone())?,
                     type_ => {
@@ -283,7 +283,6 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
                     }
                 ))
             })
-            .flatten()
             .collect_vec();
 
         let ir_function = self.module.add_function(
@@ -296,16 +295,16 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
             .get(&function.id)
             .expect("Function data should exist before calling ir_generator");
 
-        assert!(matches!(
+        assert!(
             self.function_locations
-                .insert(ref_function.borrow().id, FunctionLocation(ir_function)),
-            None
-        ));
+                .insert(ref_function.borrow().id, FunctionLocation(ir_function))
+                .is_none()
+        );
         Ok(())
     }
 }
 
-impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
+impl<'a> AstVisitor for IrGenerator<'a, '_> {
     type ProgramOutput = Result<Module<'a>>;
     type FunctionDefinitionOutput = Result<FunctionValue<'a>>;
     type FunctionBodyOutput = Result<()>;
@@ -344,7 +343,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             });
         }
 
-        return Ok(self.module);
+        Ok(self.module)
     }
 
     fn visit_function_definition(
@@ -470,7 +469,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             ));
         }
 
-        return Ok(ir_function);
+        Ok(ir_function)
     }
 
     fn visit_function_body(
@@ -555,23 +554,23 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         let ref_variable = self
             .variable_data
             .get(&simple_binding.id)
-            .expect(&format!(
-                "Variable data for {:?} should exist before calling ir_generator",
-                simple_binding.name,
-            ))
+            .unwrap_or_else(|| {
+                panic!(
+                    "Variable data for {:?} should exist before calling ir_generator",
+                    simple_binding.name
+                )
+            })
             .borrow();
 
         assert!(
-            matches!(
-                self.variable_storage
-                    .insert(ref_variable.id, VariableStorage(ptr)),
-                None
-            ),
+            self.variable_storage
+                .insert(ref_variable.id, VariableStorage(ptr))
+                .is_none(),
             "Variable {:?} was already assigned some storage",
             simple_binding.name
         );
 
-        return Ok(ptr);
+        Ok(ptr)
     }
 
     fn visit_expression_statement(
@@ -640,9 +639,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
     ) -> Self::StatementOutput {
         let eval_value = self
             .visit_expression(&mut vardef_stmt.value)?
-            .ok_or(format!(
-                "Somehow passed using a void value as a variable initializer"
-            ))?;
+            .ok_or("Somehow passed using a void value as a variable initializer".to_string())?;
 
         let ptr = self.visit_simple_binding(&mut vardef_stmt.binding)?;
         self.builder.build_store(ptr, eval_value)?;
@@ -679,10 +676,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         if *self
             .function_termination
             .get_node(&*if_stmt.if_body)
-            .expect(&format!(
-                "{:?} didn't get analyzed for termination",
-                if_stmt.if_body
-            ))
+            .unwrap_or_else(|| panic!("{:?} didn't get analyzed for termination", if_stmt.if_body))
             != FunctionTermination::Terminates
         {
             self.builder.build_unconditional_branch(end_block)?;
@@ -716,7 +710,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             if *self
                 .function_termination
                 .get_node(body)
-                .expect(&format!("{body:?} didn't get analyzed for termination"))
+                .unwrap_or_else(|| panic!("{body:?} didn't get analyzed for termination"))
                 != FunctionTermination::Terminates
             {
                 self.builder.build_unconditional_branch(end_block)?;
@@ -731,10 +725,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             if *self
                 .function_termination
                 .get_node(&**else_body)
-                .expect(&format!(
-                    "{:?} didn't get analyzed for termination",
-                    else_body
-                ))
+                .unwrap_or_else(|| panic!("{:?} didn't get analyzed for termination", else_body))
                 != FunctionTermination::Terminates
             {
                 self.builder.build_unconditional_branch(end_block)?;
@@ -804,7 +795,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
         self.builder.position_at_end(end_block);
 
-        return Ok(());
+        Ok(())
     }
 
     fn visit_for_loop_statement(
@@ -884,7 +875,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
         self.builder.position_at_end(end_block);
 
-        return Ok(());
+        Ok(())
     }
 
     fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
@@ -967,12 +958,12 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             id: _,
         }: &mut BoolExpression,
     ) -> Self::ExpressionOutput {
-        return Ok(Some(
+        Ok(Some(
             self.context
                 .bool_type()
                 .const_int(if *value { 1 } else { 0 }, false)
                 .as_basic_value_enum(),
-        ));
+        ))
     }
 
     fn visit_array_expression(
@@ -1057,12 +1048,12 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             .clone()
             .0;
 
-        return Ok(self
+        Ok(self
             .builder
             .build_call(ir_function, &args[..], name)?
             .try_as_basic_value()
             .left()
-            .map(|l| l.as_basic_value_enum()));
+            .map(|l| l.as_basic_value_enum()))
     }
 
     fn visit_array_index_expression(
@@ -1099,11 +1090,11 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             )
         }?;
 
-        return Ok(Some(self.builder.build_load(
+        Ok(Some(self.builder.build_load(
             array_ir.get_type().get_element_type(),
             index_ptr,
             "load_from_array",
-        )?));
+        )?))
     }
 
     fn visit_grouping_expression(
@@ -1132,9 +1123,9 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         let var = self
             .variable_data
             .get(id)
-            .expect(&format!(
-                "Variable data for {name:?} should exist before running ir_generator"
-            ))
+            .unwrap_or_else(|| {
+                panic!("Variable data for {name:?} should exist before running ir_generator")
+            })
             .clone();
 
         let Some(storage) = self.variable_storage.get(&var.borrow().id) else {
@@ -1151,7 +1142,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
         return match_any_type_enum_as_basic_type!(
             self.runtime_type_to_llvm(var.borrow().type_.borrow().clone(), expr_clone.clone())?,
             type_ => {
-                Ok(Some(self.builder.build_load(type_, storage.0.clone(), name)?))
+                Ok(Some(self.builder.build_load(type_, storage.0, name)?))
             },
             function(_) => {
                 return self.report_error(FleetError::from_node(
@@ -1184,7 +1175,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             operation
         ))?;
 
-        return match operation {
+        match operation {
             UnaryOperation::BitwiseNot => Ok(Some(
                 self.builder
                     .build_not::<IntValue>(value.into_int_value(), "bitwise_not")?
@@ -1205,7 +1196,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                     .build_int_neg::<IntValue>(value.into_int_value(), "negate")?
                     .into(),
             )),
-        };
+        }
     }
 
     fn visit_cast_expression(
@@ -1238,7 +1229,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                     .into_int_value();
 
                 if expected_type.get_bit_width() <= value.get_type().get_bit_width() {
-                    return Ok(Some(
+                    Ok(Some(
                         self.builder
                             .build_int_truncate_or_bit_cast(
                                 value,
@@ -1246,75 +1237,65 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
                                 &format!("as_{target_type:?}"),
                             )?
                             .into(),
-                    ));
+                    ))
+                } else if value_type.borrow().is_boolean() {
+                    Ok(Some(
+                        self.builder
+                            .build_int_z_extend(
+                                value,
+                                expected_type,
+                                &format!("as_{target_type:?}"),
+                            )?
+                            .into(),
+                    ))
                 } else {
-                    if value_type.borrow().is_boolean() {
-                        return Ok(Some(
-                            self.builder
-                                .build_int_z_extend(
-                                    value,
-                                    expected_type,
-                                    &format!("as_{target_type:?}"),
-                                )?
-                                .into(),
-                        ));
-                    } else {
-                        return Ok(Some(
-                            self.builder
-                                .build_int_s_extend(
-                                    value,
-                                    expected_type,
-                                    &format!("as_{target_type:?}"),
-                                )?
-                                .into(),
-                        ));
-                    }
+                    Ok(Some(
+                        self.builder
+                            .build_int_s_extend(
+                                value,
+                                expected_type,
+                                &format!("as_{target_type:?}"),
+                            )?
+                            .into(),
+                    ))
                 }
             }
             RuntimeType::ArrayOf {
                 subtype: _,
                 size: _,
-            } => {
-                return self.report_error(FleetError::from_node(
-                    type_.clone(),
-                    "cannot cast to array currently",
-                    ErrorSeverity::Error,
-                ));
-            }
+            } => self.report_error(FleetError::from_node(
+                type_.clone(),
+                "cannot cast to array currently",
+                ErrorSeverity::Error,
+            )),
             RuntimeType::Boolean => {
                 let expected_type = self.visit_type(type_)?.into_int_type();
                 let value = value
                     .expect("Somehow tried to cast Unit to bool")
                     .into_int_value();
 
-                return Ok(Some(
+                Ok(Some(
                     self.builder
                         .build_int_truncate_or_bit_cast(value, expected_type, "as_bool")?
                         .into(),
-                ));
+                ))
             }
-            RuntimeType::Unit => return Ok(None),
-            RuntimeType::Unknown => {
-                return self.report_error(FleetError::from_node(
-                    type_.clone(),
-                    "ir_generator shouldn't run if there are unknown types",
-                    ErrorSeverity::Error,
-                ));
-            }
-            RuntimeType::Error => {
-                return self.report_error(FleetError::from_node(
-                    type_.clone(),
-                    "ir_generator shouldn't run if there are error types",
-                    ErrorSeverity::Error,
-                ));
-            }
-            RuntimeType::UnsizedInt => {
-                return self.report_error(FleetError::from_node(
-                    type_.clone(),
-                    "ir_generator shouldn't run if there are unsized int types",
-                    ErrorSeverity::Error,
-                ));
-            }
+            RuntimeType::Unit => Ok(None),
+            RuntimeType::Unknown => self.report_error(FleetError::from_node(
+                type_.clone(),
+                "ir_generator shouldn't run if there are unknown types",
+                ErrorSeverity::Error,
+            )),
+            RuntimeType::Error => self.report_error(FleetError::from_node(
+                type_.clone(),
+                "ir_generator shouldn't run if there are error types",
+                ErrorSeverity::Error,
+            )),
+            RuntimeType::UnsizedInt => self.report_error(FleetError::from_node(
+                type_.clone(),
+                "ir_generator shouldn't run if there are unsized int types",
+                ErrorSeverity::Error,
+            )),
         }
     }
 
@@ -1339,7 +1320,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             ))?)
         };
 
-        return match operation {
+        match operation {
             BinaryOperation::Add => {
                 let right_value = right_value_gen(self)?;
                 Ok(Some(
@@ -1571,7 +1552,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
 
                 Ok(Some(result.as_basic_value()))
             }
-        };
+        }
     }
 
     fn visit_variable_assignment_expression(
@@ -1589,7 +1570,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             .ok_or("Somehow tried assigning a Unit value to an lvalue")?;
 
         self.builder.build_store(storage, right_value)?;
-        return Ok(Some(right_value));
+        Ok(Some(right_value))
     }
 
     fn visit_variable_lvalue(
@@ -1600,15 +1581,15 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             id,
         }: &mut VariableLValue,
     ) -> Self::LValueOutput {
-        let var = self.variable_data.get(id).expect(&format!(
-            "Variable data for {name:?} should exist before calling ir_generator"
-        ));
+        let var = self.variable_data.get(id).unwrap_or_else(|| {
+            panic!("Variable data for {name:?} should exist before calling ir_generator")
+        });
         let storage = self
             .variable_storage
             .get(&var.borrow().id)
             .expect("Variables should have storage before being accessed")
             .0;
-        return Ok(storage);
+        Ok(storage)
     }
 
     fn visit_array_index_lvalue(
@@ -1659,7 +1640,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             }
         );
 
-        return Ok(index_ptr);
+        Ok(index_ptr)
     }
 
     fn visit_grouping_lvalue(
@@ -1691,7 +1672,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             *infered_type.borrow(),
             "Inferred type (right) of IntType doesn't match its actual type (left)"
         );
-        Ok(self.runtime_type_to_llvm(type_.clone(), type_clone)?)
+        self.runtime_type_to_llvm(type_.clone(), type_clone)
     }
 
     fn visit_unit_type(
@@ -1748,9 +1729,7 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             "IdkType didn't get inferred before calling ir_generator"
         );
 
-        return Ok(self
-            .runtime_type_to_llvm(infered_type.borrow().clone(), type_clone)
-            .map_err(|err| err)?);
+        self.runtime_type_to_llvm(infered_type.borrow().clone(), type_clone)
     }
 
     fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
@@ -1769,8 +1748,6 @@ impl<'a, 'errors> AstVisitor for IrGenerator<'a, 'errors> {
             .expect("type data should exist before calling ir_generator")
             .clone();
 
-        return Ok(self
-            .runtime_type_to_llvm(infered_type.borrow().clone(), array_type_clone)
-            .map_err(|err| err)?);
+        self.runtime_type_to_llvm(infered_type.borrow().clone(), array_type_clone)
     }
 }

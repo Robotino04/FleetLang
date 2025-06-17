@@ -462,7 +462,7 @@ pub trait PartialAstVisitor {
         }: &mut VariableAssignmentExpression,
     ) {
         self.partial_visit_lvalue(&mut *lvalue);
-        self.partial_visit_expression(&mut **right);
+        self.partial_visit_expression(right);
     }
 
     fn partial_visit_lvalue(&mut self, lvalue: &mut LValue) {

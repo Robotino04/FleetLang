@@ -42,7 +42,7 @@ fn run_fix_passes(
     program: &mut Program,
     id_generator: &mut IdGenerator,
 ) {
-    RemoveParensPass::new().visit_program(program);
+    RemoveParensPass::default().visit_program(program);
     FixNonBlockStatements::new(errors, id_generator).visit_program(program);
     FixTrailingComma::new(errors, id_generator).visit_program(program);
     ErrMissingTypeInParam::new(errors).visit_program(program);
@@ -72,7 +72,7 @@ impl FleetError {
     }
 }
 
-pub fn print_error_message(source: &String, error: &FleetError) {
+pub fn print_error_message(source: &str, error: &FleetError) {
     let ansi_color = match error.severity {
         ErrorSeverity::Error => "31",
         ErrorSeverity::Warning => "33",
@@ -153,7 +153,6 @@ pub fn print_error_message(source: &String, error: &FleetError) {
 
 #[derive(Clone, Debug)]
 pub enum CompileStatus<'a> {
-    TokenizerFailure {},
     ParserFailure {
         tokens: Vec<Token>,
     },
@@ -213,7 +212,6 @@ pub enum CompileStatus<'a> {
 impl<'a> CompileStatus<'a> {
     pub fn module(&self) -> Option<&Module<'a>> {
         match &self {
-            CompileStatus::TokenizerFailure {} => None,
             CompileStatus::ParserFailure { .. } => None,
             CompileStatus::TokenizerOrParserErrors { .. } => None,
             CompileStatus::AnalysisErrors { .. } => None,
@@ -224,7 +222,6 @@ impl<'a> CompileStatus<'a> {
     }
     pub fn tokens(&self) -> Option<&Vec<Token>> {
         match &self {
-            CompileStatus::TokenizerFailure {} => None,
             CompileStatus::ParserFailure { tokens } => Some(tokens),
             CompileStatus::TokenizerOrParserErrors { tokens, .. } => Some(tokens),
             CompileStatus::AnalysisErrors { tokens, .. } => Some(tokens),
@@ -235,7 +232,6 @@ impl<'a> CompileStatus<'a> {
     }
     pub fn program(&self) -> Option<&Program> {
         match &self {
-            CompileStatus::TokenizerFailure {} => None,
             CompileStatus::ParserFailure { .. } => None,
             CompileStatus::TokenizerOrParserErrors {
                 partial_parsed_program,
@@ -250,7 +246,6 @@ impl<'a> CompileStatus<'a> {
     // the program as it was parsed without any modifications
     pub fn parsed_program(&self) -> Option<&Program> {
         match &self {
-            CompileStatus::TokenizerFailure {} => None,
             CompileStatus::ParserFailure { tokens: _ } => None,
             CompileStatus::TokenizerOrParserErrors {
                 partial_parsed_program,
@@ -264,7 +259,6 @@ impl<'a> CompileStatus<'a> {
     }
     pub fn function_terminations(&self) -> Option<&PerNodeData<FunctionTermination>> {
         match &self {
-            CompileStatus::TokenizerFailure {} => None,
             CompileStatus::ParserFailure { tokens: _ } => None,
             CompileStatus::TokenizerOrParserErrors { .. } => None,
             CompileStatus::AnalysisErrors {
@@ -287,7 +281,6 @@ impl<'a> CompileStatus<'a> {
     }
     pub fn type_data(&self) -> Option<&PerNodeData<Rc<RefCell<RuntimeType>>>> {
         match &self {
-            CompileStatus::TokenizerFailure {} => None,
             CompileStatus::ParserFailure { tokens: _ } => None,
             CompileStatus::TokenizerOrParserErrors { .. } => None,
             CompileStatus::AnalysisErrors { type_data, .. } => Some(type_data),
@@ -298,7 +291,6 @@ impl<'a> CompileStatus<'a> {
     }
     pub fn variable_data(&self) -> Option<&PerNodeData<Rc<RefCell<Variable>>>> {
         match &self {
-            CompileStatus::TokenizerFailure {} => None,
             CompileStatus::ParserFailure { tokens: _ } => None,
             CompileStatus::TokenizerOrParserErrors { .. } => None,
             CompileStatus::AnalysisErrors { variable_data, .. } => Some(variable_data),
@@ -309,7 +301,6 @@ impl<'a> CompileStatus<'a> {
     }
     pub fn function_data(&self) -> Option<&PerNodeData<Rc<RefCell<Function>>>> {
         match &self {
-            CompileStatus::TokenizerFailure {} => None,
             CompileStatus::ParserFailure { tokens: _ } => None,
             CompileStatus::TokenizerOrParserErrors { .. } => None,
             CompileStatus::AnalysisErrors { function_data, .. } => Some(function_data),
@@ -320,7 +311,6 @@ impl<'a> CompileStatus<'a> {
     }
     pub fn id_generator(&self) -> Option<&IdGenerator> {
         match &self {
-            CompileStatus::TokenizerFailure {} => None,
             CompileStatus::ParserFailure { .. } => None,
             CompileStatus::TokenizerOrParserErrors { id_generator, .. } => Some(id_generator),
             CompileStatus::AnalysisErrors { id_generator, .. } => Some(id_generator),
@@ -331,7 +321,6 @@ impl<'a> CompileStatus<'a> {
     }
     pub fn parsed_id_generator(&self) -> Option<&IdGenerator> {
         match &self {
-            CompileStatus::TokenizerFailure {} => None,
             CompileStatus::ParserFailure { .. } => None,
             CompileStatus::TokenizerOrParserErrors { id_generator, .. } => Some(id_generator),
             CompileStatus::AnalysisErrors {
@@ -363,12 +352,7 @@ pub struct CompileResult<'a> {
 pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
     let mut errors = vec![];
 
-    let Ok(tokens) = Tokenizer::new(src.to_string(), &mut errors).tokenize() else {
-        return CompileResult {
-            status: CompileStatus::TokenizerFailure {},
-            errors,
-        };
-    };
+    let tokens = Tokenizer::new(src.to_string(), &mut errors).tokenize();
 
     let Ok((mut program, mut id_generator)) =
         Parser::new(tokens.clone(), &mut errors).parse_program()
@@ -425,7 +409,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
     }
 
     let ir_generator = IrGenerator::new(
-        &context,
+        context,
         &mut errors,
         function_terminations.clone(),
         variable_data.clone(),
@@ -442,7 +426,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
                     .first()
                     .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
                 message: match error.source() {
-                    Some(source) => format!("{} ({:?})", error.to_string(), source),
+                    Some(source) => format!("{} ({:?})", error, source),
                     None => error.to_string(),
                 },
                 severity: ErrorSeverity::Error,
@@ -489,7 +473,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
         };
     }
 
-    return CompileResult {
+    CompileResult {
         status: CompileStatus::Success {
             tokens,
             parsed_program,
@@ -503,7 +487,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
             id_generator,
         },
         errors,
-    };
+    }
 }
 
 pub fn format_program(mut program: Program, mut id_generator: IdGenerator) -> String {
@@ -511,15 +495,14 @@ pub fn format_program(mut program: Program, mut id_generator: IdGenerator) -> St
 
     run_fix_passes(&mut errors, &mut program, &mut id_generator);
 
-    let document = AstToDocumentModelConverter::new().visit_program(&mut program);
-    let formatted_src = stringify_document(&fully_flatten_document(document));
-    return formatted_src;
+    let document = AstToDocumentModelConverter::default().visit_program(&mut program);
+    stringify_document(&fully_flatten_document(document))
 }
 
 pub fn run_default_optimization_passes(
     module: &Module<'_>,
     target_machine: &TargetMachine,
 ) -> Result<(), Box<dyn Error>> {
-    module.run_passes("default<O1>", &target_machine, PassBuilderOptions::create())?;
+    module.run_passes("default<O1>", target_machine, PassBuilderOptions::create())?;
     Ok(())
 }

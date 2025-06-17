@@ -1,6 +1,6 @@
 use indoc::indoc;
 
-use crate::common::{assert_formatting, assert_formatting_and_same_behaviour};
+use crate::common::assert_formatting_and_same_behaviour;
 
 #[test]
 fn expand_literal() {

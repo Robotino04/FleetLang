@@ -23,8 +23,8 @@ pub struct RemoveParensPass {
     current_side: OperandSide,
 }
 
-impl RemoveParensPass {
-    pub fn new() -> Self {
+impl Default for RemoveParensPass {
+    fn default() -> Self {
         Self {
             parent_precedence: Expression::TOP_PRECEDENCE,
             parent_associativity: Associativity::Both,
@@ -61,7 +61,7 @@ impl RemoveParensPass {
             && associativity_compatible
             && can_remove_associativity;
 
-        return parent_precedence_stronger || same_precedence_and_safe;
+        parent_precedence_stronger || same_precedence_and_safe
     }
 }
 
@@ -179,12 +179,12 @@ impl PartialAstVisitor for RemoveParensPass {
                     subexpression.get_precedence(),
                     subexpression.get_associativity(),
                 ) {
-                    let leading_trivia = vec![
+                    let leading_trivia = [
                         open_paren_token.leading_trivia.clone(),
                         open_paren_token.trailing_trivia.clone(),
                     ]
                     .concat();
-                    let trailing_trivia = vec![
+                    let trailing_trivia = [
                         close_paren_token.leading_trivia.clone(),
                         close_paren_token.trailing_trivia.clone(),
                     ]
@@ -324,12 +324,12 @@ impl PartialAstVisitor for RemoveParensPass {
                     sublvalue.get_precedence(),
                     sublvalue.get_associativity(),
                 ) {
-                    let leading_trivia = vec![
+                    let leading_trivia = [
                         open_paren_token.leading_trivia.clone(),
                         open_paren_token.trailing_trivia.clone(),
                     ]
                     .concat();
-                    let trailing_trivia = vec![
+                    let trailing_trivia = [
                         close_paren_token.leading_trivia.clone(),
                         close_paren_token.trailing_trivia.clone(),
                     ]

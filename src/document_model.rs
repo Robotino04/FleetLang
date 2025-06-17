@@ -36,24 +36,11 @@ impl DocumentElement {
             res.push(spacing.clone());
         }
         res.pop();
-        return DocumentElement::Concatenation(res);
+        DocumentElement::Concatenation(res)
     }
 
     pub fn empty() -> DocumentElement {
         DocumentElement::Concatenation(vec![])
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use crate::document_model::DocumentElement;
-
-    #[test]
-    fn empty_spaced_concatenation() {
-        assert_eq!(
-            DocumentElement::spaced_concatentation(DocumentElement::CollapsableSpace, vec![]),
-            DocumentElement::Concatenation(vec![])
-        );
     }
 }
 
@@ -70,7 +57,7 @@ pub fn fully_flatten_document(mut element: DocumentElement) -> DocumentElement {
         }
     }
 
-    return element;
+    element
 }
 
 fn flatten_document_elements_once(element: DocumentElement) -> (DocumentElement, bool) {
@@ -201,10 +188,10 @@ fn flatten_document_elements_once(element: DocumentElement) -> (DocumentElement,
 
             let (new_child, did_change) = flatten_document_elements_once(*child);
 
-            return (
+            (
                 DocumentElement::Indentation(Box::new(new_child)),
                 did_change,
-            );
+            )
         }
     }
 }
@@ -212,11 +199,9 @@ fn flatten_document_elements_once(element: DocumentElement) -> (DocumentElement,
 pub fn stringify_document(element: &DocumentElement) -> String {
     match element {
         DocumentElement::Concatenation(document_elements) => {
-            return document_elements.iter().map(stringify_document).collect();
+            document_elements.iter().map(stringify_document).collect()
         }
-        DocumentElement::Indentation(child) => {
-            return indent_all_by(4, stringify_document(&*child));
-        }
+        DocumentElement::Indentation(child) => indent_all_by(4, stringify_document(child)),
         DocumentElement::ForcedSpace => " ".to_string(),
         DocumentElement::CollapsableSpace => " ".to_string(),
         DocumentElement::ForcedLineBreak => "\n".to_string(),
@@ -224,5 +209,18 @@ pub fn stringify_document(element: &DocumentElement) -> String {
         DocumentElement::Text(text) => text.clone(),
         DocumentElement::SpaceEater => "".to_string(),
         DocumentElement::ReverseSpaceEater => "".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::document_model::DocumentElement;
+
+    #[test]
+    fn empty_spaced_concatenation() {
+        assert_eq!(
+            DocumentElement::spaced_concatentation(DocumentElement::CollapsableSpace, vec![]),
+            DocumentElement::Concatenation(vec![])
+        );
     }
 }

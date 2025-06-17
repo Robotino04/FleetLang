@@ -68,9 +68,7 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             close_paren_token: _,
             body,
             id: _,
-        }) => {
-            return (on_token.start, find_node_bounds(*body).1);
-        }
+        }) => (on_token.start, find_node_bounds(*body).1),
         AstNode::BlockStatement(BlockStatement {
             open_brace_token,
             body: _,
@@ -152,17 +150,13 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             operation: _,
             operand,
             id: _,
-        }) => {
-            return (operator_token.start, find_node_bounds(*operand).1);
-        }
+        }) => (operator_token.start, find_node_bounds(*operand).1),
         AstNode::CastExpression(CastExpression {
             operand,
             as_token: _,
             type_,
             id: _,
-        }) => {
-            return (find_node_bounds(*operand).0, find_node_bounds(type_).1);
-        }
+        }) => (find_node_bounds(*operand).0, find_node_bounds(type_).1),
         AstNode::NumberExpression(NumberExpression {
             value: _,
             token,

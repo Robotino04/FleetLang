@@ -1,9 +1,7 @@
 use fleet::tokenizer::SourceLocation;
 use indoc::indoc;
 
-use crate::common::{
-    assert_compile_error, assert_compile_error_no_formatting, assert_parser_or_tokenizer_error,
-};
+use crate::common::{assert_compile_error, assert_parser_or_tokenizer_error};
 
 #[test]
 fn literal_mixed_elements() {

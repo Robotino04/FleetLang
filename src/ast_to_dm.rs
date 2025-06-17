@@ -13,15 +13,12 @@ use crate::{
     tokenizer::{Keyword, Token, TokenType, Trivia, TriviaKind},
 };
 
+#[derive(Default)]
 pub struct AstToDocumentModelConverter {}
 
 impl AstToDocumentModelConverter {
-    pub fn new() -> Self {
-        Self {}
-    }
-
-    fn trivia_to_element(&self, trivia: &Vec<Trivia>) -> DocumentElement {
-        return DocumentElement::spaced_concatentation(
+    fn trivia_to_element(&self, trivia: &[Trivia]) -> DocumentElement {
+        DocumentElement::spaced_concatentation(
             DocumentElement::CollapsableSpace,
             trivia
                 .iter()
@@ -58,11 +55,7 @@ impl AstToDocumentModelConverter {
                                 line = &line[min_space.min(line.len().saturating_sub(1))..];
                             }
 
-                            if line.trim() == "" {
-                                return "";
-                            } else {
-                                return line;
-                            }
+                            if line.trim() == "" { "" } else { line }
                         });
 
                         DocumentElement::Concatenation(vec![
@@ -80,7 +73,7 @@ impl AstToDocumentModelConverter {
                     TriviaKind::EmptyLineAtTokenSide => DocumentElement::ForcedLineBreak,
                 })
                 .collect(),
-        );
+        )
     }
 
     fn keyword_string(&self, keyword: Keyword) -> String {
@@ -117,7 +110,7 @@ impl AstToDocumentModelConverter {
             TokenType::Identifier(ref id) => id.as_str(),
 
             TokenType::Number(n) => &n.to_string(),
-            TokenType::StringLiteral(ref str) => &('"'.to_string() + &str + "\""),
+            TokenType::StringLiteral(ref str) => &('"'.to_string() + str + "\""),
 
             TokenType::UnknownCharacters(ref chars) => chars,
 
@@ -158,17 +151,17 @@ impl AstToDocumentModelConverter {
             TokenType::DoublePipe       => "||",
         };
 
-        return DocumentElement::Text(s.to_string());
+        DocumentElement::Text(s.to_string())
     }
 
     fn token_to_element(&self, token: &Token) -> DocumentElement {
-        return self.token_to_element_custom_spacers(
+        self.token_to_element_custom_spacers(
             token,
             DocumentElement::empty(),
             DocumentElement::CollapsableSpace,
             DocumentElement::CollapsableSpace,
             DocumentElement::empty(),
-        );
+        )
     }
     fn token_to_element_custom_spacers(
         &self,
@@ -195,7 +188,7 @@ impl AstToDocumentModelConverter {
             elements.push(trailing_post_spacer);
         }
 
-        return DocumentElement::Concatenation(elements);
+        DocumentElement::Concatenation(elements)
     }
 }
 
@@ -296,7 +289,7 @@ impl AstVisitor for AstToDocumentModelConverter {
         &mut self,
         StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
     ) -> Self::FunctionBodyOutput {
-        return self.visit_statement(statement);
+        self.visit_statement(statement)
     }
 
     fn visit_extern_function_body(
@@ -503,10 +496,7 @@ impl AstVisitor for AstToDocumentModelConverter {
             ));
         }
 
-        return DocumentElement::spaced_concatentation(
-            DocumentElement::CollapsableLineBreak,
-            elements,
-        );
+        DocumentElement::spaced_concatentation(DocumentElement::CollapsableLineBreak, elements)
     }
 
     fn visit_while_loop_statement(
@@ -549,7 +539,7 @@ impl AstVisitor for AstToDocumentModelConverter {
                 DocumentElement::Concatenation(vec![
                     self.token_to_element(open_paren_token),
                     DocumentElement::Concatenation(vec![
-                        self.visit_statement(&mut **initializer),
+                        self.visit_statement(initializer),
                         condition
                             .as_mut()
                             .map(|con| {
@@ -601,11 +591,11 @@ impl AstVisitor for AstToDocumentModelConverter {
     fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
         DocumentElement::Concatenation(vec![
             self.visit_executor_host(&mut executor.host),
-            self.token_to_element(&mut executor.dot_token),
-            self.token_to_element(&mut executor.thread_token),
-            self.token_to_element(&mut executor.open_bracket_token),
+            self.token_to_element(&executor.dot_token),
+            self.token_to_element(&executor.thread_token),
+            self.token_to_element(&executor.open_bracket_token),
             self.visit_expression(&mut executor.index),
-            self.token_to_element(&mut executor.close_bracket_token),
+            self.token_to_element(&executor.close_bracket_token),
         ])
     }
 

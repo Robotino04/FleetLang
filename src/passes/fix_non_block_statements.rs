@@ -26,7 +26,7 @@ impl<'a> FixNonBlockStatements<'a> {
     fn create_fake_block_arround(&mut self, node: &Statement) -> Statement {
         let (start, end) = find_node_bounds(node.clone());
 
-        return Statement::Block(BlockStatement {
+        Statement::Block(BlockStatement {
             open_brace_token: Token {
                 type_: TokenType::OpenBrace,
                 start,
@@ -43,7 +43,7 @@ impl<'a> FixNonBlockStatements<'a> {
                 trailing_trivia: vec![],
             },
             id: self.id_generator.next_node_id(),
-        });
+        })
     }
 }
 
@@ -116,7 +116,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                 ErrorSeverity::Note,
             ));
 
-            **if_body = self.create_fake_block_arround(&**if_body);
+            **if_body = self.create_fake_block_arround(if_body);
         }
 
         self.visit_expression(condition);
@@ -154,7 +154,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                     ErrorSeverity::Note,
                 ));
 
-                **else_body = self.create_fake_block_arround(&**else_body);
+                **else_body = self.create_fake_block_arround(else_body);
             }
 
             self.visit_statement(else_body);
@@ -182,7 +182,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                 ErrorSeverity::Note,
             ));
 
-            **body = self.create_fake_block_arround(&**body);
+            **body = self.create_fake_block_arround(body);
         }
 
         self.visit_expression(condition);
@@ -215,7 +215,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                 ErrorSeverity::Note,
             ));
 
-            **body = self.create_fake_block_arround(&**body);
+            **body = self.create_fake_block_arround(body);
         }
 
         self.visit_statement(initializer);

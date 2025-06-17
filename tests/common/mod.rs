@@ -1,6 +1,6 @@
 #[cfg(test)]
 use std::fmt::Debug;
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, Stdio};
 
 use inkwell::{
     OptimizationLevel,
@@ -18,13 +18,12 @@ use fleet::{
 };
 use tempfile::tempdir;
 
-pub fn assert_parser_or_tokenizer_error<'a>(src: &str, error_start: SourceLocation) {
+pub fn assert_parser_or_tokenizer_error(src: &str, error_start: SourceLocation) {
     let context = Context::create();
     let result = compile_program(&context, src);
 
     assert!(
         match result.status {
-            CompileStatus::TokenizerFailure {} => false,
             CompileStatus::ParserFailure { .. } => false,
             CompileStatus::TokenizerOrParserErrors { .. } => true,
             CompileStatus::AnalysisErrors { .. } => false,
@@ -59,17 +58,16 @@ fn assert_warning_at_position(errors: &Vec<FleetError>, warning_start: SourceLoc
     );
 }
 
-pub fn assert_compile_error<'a>(src: &str, error_start: SourceLocation) {
+pub fn assert_compile_error(src: &str, error_start: SourceLocation) {
     assert_is_formatted(src);
     assert_compile_error_no_formatting(src, error_start);
 }
-pub fn assert_compile_error_no_formatting<'a>(src: &str, error_start: SourceLocation) {
+pub fn assert_compile_error_no_formatting(src: &str, error_start: SourceLocation) {
     let context = Context::create();
     let result = compile_program(&context, src);
 
     assert!(
         match result.status {
-            CompileStatus::TokenizerFailure {} => false,
             CompileStatus::ParserFailure { .. } => false,
             CompileStatus::TokenizerOrParserErrors { .. } => false,
             CompileStatus::AnalysisErrors { .. } => true,
@@ -82,13 +80,12 @@ pub fn assert_compile_error_no_formatting<'a>(src: &str, error_start: SourceLoca
     );
     assert_error_at_position(&result.errors, error_start);
 }
-pub fn assert_compile_and_warning<'a>(src: &str, warning_start: SourceLocation) {
+pub fn assert_compile_and_warning(src: &str, warning_start: SourceLocation) {
     let context = Context::create();
     let result = compile_program(&context, src);
 
     assert!(
         match result.status {
-            CompileStatus::TokenizerFailure {} => false,
             CompileStatus::ParserFailure { .. } => false,
             CompileStatus::TokenizerOrParserErrors { .. } => false,
             CompileStatus::AnalysisErrors { .. } => false,
@@ -100,11 +97,6 @@ pub fn assert_compile_and_warning<'a>(src: &str, warning_start: SourceLocation) 
         result.status
     );
     assert_warning_at_position(&result.errors, warning_start);
-}
-
-pub fn assert_successful_compilation(src: &str) {
-    let context = Context::create();
-    compile_or_panic(&context, src);
 }
 
 pub fn assert_compile_and_return_value<ReturnType>(
@@ -143,7 +135,7 @@ pub fn assert_formatting<'a>(src: &str, expected_fmt: &'a str) -> &'a str {
         "expected left to be formatted like right"
     );
     assert_is_formatted(formatted_src.as_str());
-    return expected_fmt;
+    expected_fmt
 }
 
 pub fn assert_formatting_and_same_behaviour<ReturnType>(
@@ -156,7 +148,7 @@ pub fn assert_formatting_and_same_behaviour<ReturnType>(
     let formatted_src = assert_formatting(src, expected_fmt);
 
     let unformatted_retvalue = execute_or_panic::<ReturnType>(src, function_name);
-    let formatted_retvalue = execute_or_panic::<ReturnType>(&formatted_src, function_name);
+    let formatted_retvalue = execute_or_panic::<ReturnType>(formatted_src, function_name);
 
     assert_eq!(
         unformatted_retvalue, formatted_retvalue,
@@ -181,7 +173,7 @@ fn compile_or_panic<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
     let module = result.status.module().unwrap();
 
     module.verify().unwrap();
-    return result;
+    result
 }
 
 fn format_or_panic(src: &str) -> String {
@@ -190,7 +182,6 @@ fn format_or_panic(src: &str) -> String {
 
     assert!(
         match result.status {
-            CompileStatus::TokenizerFailure {} => false,
             CompileStatus::ParserFailure { .. } => false,
             CompileStatus::TokenizerOrParserErrors { .. } => false,
             CompileStatus::AnalysisErrors { .. } => true,
@@ -202,17 +193,17 @@ fn format_or_panic(src: &str) -> String {
         result.status
     );
 
-    return format_program(
+    format_program(
         result.status.parsed_program().unwrap().clone(),
         result.status.parsed_id_generator().unwrap().clone(),
-    );
+    )
 }
 
 fn execute_or_panic<ReturnType>(src: &str, function_name: &str) -> ReturnType {
     let context = Context::create();
     let result = compile_or_panic(&context, src);
     let retval: ReturnType = execute_function(result.status.module().unwrap(), function_name);
-    return retval;
+    retval
 }
 
 fn execute_function<ReturnType>(module: &Module, function_name: &str) -> ReturnType {
@@ -228,7 +219,7 @@ fn execute_function<ReturnType>(module: &Module, function_name: &str) -> ReturnT
             .unwrap()
     };
 
-    return unsafe { main_function.call() };
+    unsafe { main_function.call() }
 }
 
 fn assert_is_formatted(src: &str) {
@@ -266,14 +257,14 @@ pub fn assert_compile_and_output_subprocess(
         )
         .unwrap();
 
-    run_default_optimization_passes(&module, &target_machine).unwrap();
+    run_default_optimization_passes(module, &target_machine).unwrap();
 
     let output_dir = tempdir().unwrap();
     let object_file = output_dir.path().join("test.o");
     let binary_file = output_dir.path().join("test");
 
     target_machine
-        .write_to_file(&module, FileType::Object, object_file.as_path())
+        .write_to_file(module, FileType::Object, object_file.as_path())
         .unwrap();
 
     assert!(

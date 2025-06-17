@@ -157,7 +157,7 @@ impl Backend {
                             let return_type = self.format_option_type(ref_func.map(|func| {
                                 func.map(|func| func.borrow().return_type.borrow().clone())
                             }));
-                            return return_type;
+                            return_type
                         })
                 ),
                 "function definition".to_string(),
@@ -196,7 +196,7 @@ impl Backend {
                                 ref_var
                                     .map(|var| var.map(|var| var.borrow().type_.borrow().clone())),
                             );
-                            return type_;
+                            type_
                         })
                 ),
                 "simple binding".to_string(),
@@ -369,7 +369,7 @@ impl Backend {
                 close_bracket_token: _,
                 id,
             }) => (
-                format!("{}", self.get_type_as_hover(id, type_data)),
+                self.get_type_as_hover(id, type_data).to_string(),
                 "array literal".to_string(),
             ),
             AstNode::BinaryExpression(BinaryExpression {
@@ -546,9 +546,9 @@ impl Backend {
                 open_paren_token: _,
                 close_paren_token: _,
                 id: _,
-            }) => (format!("()"), "type".to_string()),
+            }) => ("()".to_string(), "type".to_string()),
             AstNode::BoolType(BoolType { token: _, id: _ }) => {
-                (format!("bool"), "type".to_string())
+                ("bool".to_string(), "type".to_string())
             }
             AstNode::IdkType(IdkType {
                 type_: _,
@@ -556,7 +556,7 @@ impl Backend {
                 id,
             }) => {
                 let type_ = self.get_type_as_hover(id, type_data);
-                (format!("{type_}"), "idk type".to_string())
+                (type_.to_string(), "idk type".to_string())
             }
             AstNode::ArrayType(ArrayType {
                 subtype: _,
@@ -566,21 +566,21 @@ impl Backend {
                 id,
             }) => {
                 let type_ = self.get_type_as_hover(id, type_data);
-                (format!("{type_}"), "array type".to_string())
+                (type_.to_string(), "array type".to_string())
             }
         }
     }
 
     fn full_hover_text(
         &self,
-        node_hierarchy: &Vec<AstNode>,
+        node_hierarchy: &[AstNode],
         variable_data: &Option<PerNodeData<Rc<RefCell<Variable>>>>,
         function_data: &Option<PerNodeData<Rc<RefCell<Function>>>>,
         type_data: &Option<PerNodeData<Rc<RefCell<RuntimeType>>>>,
         terminations: &Option<PerNodeData<FunctionTermination>>,
         hovered_token: &Option<Token>,
     ) -> String {
-        return format!(
+        format!(
             indoc! {r##"
                         ```rust
                         {}
@@ -598,22 +598,21 @@ impl Backend {
                 .last()
                 .map(|node| self.generate_node_hover(
                     node.clone(),
-                    &variable_data,
-                    &function_data,
-                    &type_data
+                    variable_data,
+                    function_data,
+                    type_data
                 ))
                 .map_or("No AST Node".to_string(), |(info, debug)| format!(
                     "{info} // {debug}"
                 )),
             terminations
                 .as_ref()
-                .map(|ts| ts.get_node(node_hierarchy.last()?).cloned())
-                .flatten()
+                .and_then(|ts| ts.get_node(node_hierarchy.last()?).cloned())
                 .map_or("No termination info available".to_string(), |t| format!(
                     "{t:?}"
                 )),
             hovered_token,
-        );
+        )
     }
 }
 
@@ -646,14 +645,14 @@ impl ExtractSemanticTokensPass {
             token_type: self.find_token_type_index(token_type),
             token_modifiers_bitset: self.build_token_modifier_bitset(token_modifiers),
         });
-        self.previous_token_start = token.start.clone();
+        self.previous_token_start = token.start;
         self.build_comment_tokens_from_trivia(&token.trailing_trivia);
     }
 
     fn build_comment_tokens_from_trivia(&mut self, trivia: &Vec<Trivia>) {
         for Trivia { kind, start, end } in trivia {
             if let TriviaKind::LineComment(content) | TriviaKind::BlockComment(content) = kind {
-                let mut mod_start = start.clone();
+                let mut mod_start = *start;
                 for line in content.split("\n") {
                     let mut length = line.chars().count();
                     if mod_start.line == end.line {
@@ -719,7 +718,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
         for f in &mut program.functions {
             self.visit_function_definition(f);
         }
-        return self.semantic_tokens;
+        self.semantic_tokens
     }
 
     fn visit_function_definition(
@@ -797,7 +796,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
         simple_binding: &mut SimpleBinding,
     ) -> Self::SimpleBindingOutput {
         self.build_semantic_token(
-            &mut simple_binding.name_token,
+            &simple_binding.name_token,
             SemanticTokenType::VARIABLE,
             vec![SemanticTokenModifier::DEFINITION],
         );
@@ -820,19 +819,19 @@ impl AstVisitor for ExtractSemanticTokensPass {
     }
 
     fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
-        self.build_semantic_token(&mut on_stmt.on_token, SemanticTokenType::KEYWORD, vec![]);
-        self.build_comment_tokens_only(&mut on_stmt.open_paren_token);
+        self.build_semantic_token(&on_stmt.on_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_comment_tokens_only(&on_stmt.open_paren_token);
         self.visit_executor(&mut on_stmt.executor);
-        self.build_comment_tokens_only(&mut on_stmt.close_paren_token);
+        self.build_comment_tokens_only(&on_stmt.close_paren_token);
         self.visit_statement(&mut on_stmt.body);
     }
 
     fn visit_block_statement(&mut self, block: &mut BlockStatement) -> Self::StatementOutput {
-        self.build_comment_tokens_only(&mut block.open_brace_token);
+        self.build_comment_tokens_only(&block.open_brace_token);
         for stmt in &mut block.body {
             self.visit_statement(stmt);
         }
-        self.build_comment_tokens_only(&mut block.close_brace_token);
+        self.build_comment_tokens_only(&block.close_brace_token);
     }
 
     fn visit_return_statement(
@@ -840,33 +839,29 @@ impl AstVisitor for ExtractSemanticTokensPass {
         return_stmt: &mut ReturnStatement,
     ) -> Self::StatementOutput {
         self.build_semantic_token(
-            &mut return_stmt.return_token,
+            &return_stmt.return_token,
             SemanticTokenType::KEYWORD,
             vec![],
         );
         if let Some(value) = &mut return_stmt.value {
             self.visit_expression(value);
         }
-        self.build_comment_tokens_only(&mut return_stmt.semicolon_token);
+        self.build_comment_tokens_only(&return_stmt.semicolon_token);
     }
 
     fn visit_variable_definition_statement(
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
     ) -> Self::StatementOutput {
-        self.build_semantic_token(
-            &mut vardef_stmt.let_token,
-            SemanticTokenType::KEYWORD,
-            vec![],
-        );
+        self.build_semantic_token(&vardef_stmt.let_token, SemanticTokenType::KEYWORD, vec![]);
         self.visit_simple_binding(&mut vardef_stmt.binding);
-        self.build_comment_tokens_only(&mut vardef_stmt.equals_token);
+        self.build_comment_tokens_only(&vardef_stmt.equals_token);
         self.visit_expression(&mut vardef_stmt.value);
-        self.build_comment_tokens_only(&mut vardef_stmt.semicolon_token);
+        self.build_comment_tokens_only(&vardef_stmt.semicolon_token);
     }
 
     fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::StatementOutput {
-        self.build_semantic_token(&mut if_stmt.if_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(&if_stmt.if_token, SemanticTokenType::KEYWORD, vec![]);
         self.visit_expression(&mut if_stmt.condition);
         self.visit_statement(&mut if_stmt.if_body);
         for (token, condition, body) in &mut if_stmt.elifs {
@@ -952,15 +947,11 @@ impl AstVisitor for ExtractSemanticTokensPass {
 
     fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) {
         self.visit_executor_host(&mut executor.host);
-        self.build_comment_tokens_only(&mut executor.dot_token);
-        self.build_semantic_token(
-            &mut executor.thread_token,
-            SemanticTokenType::VARIABLE,
-            vec![],
-        );
-        self.build_comment_tokens_only(&mut executor.open_bracket_token);
+        self.build_comment_tokens_only(&executor.dot_token);
+        self.build_semantic_token(&executor.thread_token, SemanticTokenType::VARIABLE, vec![]);
+        self.build_comment_tokens_only(&executor.open_bracket_token);
         self.visit_expression(&mut executor.index);
-        self.build_comment_tokens_only(&mut executor.close_bracket_token);
+        self.build_comment_tokens_only(&executor.close_bracket_token);
     }
 
     fn visit_number_expression(
@@ -1519,7 +1510,6 @@ impl LanguageServer for Backend {
         let res = compile_program(&context, text.as_str());
 
         if match res.status {
-            CompileStatus::TokenizerFailure { .. } => true,
             CompileStatus::ParserFailure { .. } => true,
             CompileStatus::TokenizerOrParserErrors { .. } => true,
             CompileStatus::AnalysisErrors { .. } => false,
@@ -1572,7 +1562,7 @@ impl LanguageServer for Backend {
                 },
                 end: Position {
                     line: doc_end.line /* +1 -1 */ as u32,
-                    character: 0 as u32,
+                    character: 0,
                 },
             },
             new_text,
@@ -1696,8 +1686,7 @@ impl LanguageServer for Backend {
                                         .chars()
                                         .enumerate()
                                         .filter(|(_i, c)| matches!(*c, ',' | '(' | ')'))
-                                        .skip(param_i)
-                                        .next()
+                                        .nth(param_i)
                                         .map(|(i, c)| i + if matches!(c, ',') { 2 } else { 1 })
                                         .unwrap_or(0) as u32,
                                     label
@@ -1705,8 +1694,7 @@ impl LanguageServer for Backend {
                                         .chars()
                                         .enumerate()
                                         .filter(|(_i, c)| matches!(*c, ',' | '(' | ')'))
-                                        .skip(param_i + 1)
-                                        .next()
+                                        .nth(param_i + 1)
                                         .map(|(i, _)| i)
                                         .unwrap_or(0) as u32,
                                 ]),

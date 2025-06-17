@@ -153,7 +153,7 @@ impl RuntimeType {
                 } = other.borrow().clone()
                 {
                     let mut did_specialize = RuntimeType::specialize_from(&subtype, &other_subtype);
-                    if size == None && other_size != None {
+                    if size.is_none() && other_size.is_some() {
                         match &mut *this_borrow {
                             RuntimeType::ArrayOf { subtype: _, size } => *size = other_size,
                             _ => unreachable!(),
@@ -209,7 +209,7 @@ impl VariableScopeStack {
                 return Some(value);
             }
         }
-        return None;
+        None
     }
     pub fn try_insert(&mut self, var: Variable) -> AnyResult<()> {
         let scope = self
@@ -217,18 +217,18 @@ impl VariableScopeStack {
             .last_mut()
             .expect("A variable scope stack must always contain at least one scope");
         if scope.contains_key(&var.name) {
-            return Err("variable already exists".into());
+            Err("variable already exists".into())
         } else {
             scope.insert(var.name.clone(), Rc::new(RefCell::new(var)));
-            return Ok(());
+            Ok(())
         }
     }
     pub fn push_child(&mut self) {
         self.scopes.push(HashMap::new());
     }
-    pub fn pop<'b>(&mut self) {
+    pub fn pop(&mut self) {
         self.scopes.pop();
-        assert!(self.scopes.len() >= 1);
+        assert!(!self.scopes.is_empty());
     }
 }
 
@@ -246,12 +246,12 @@ pub struct TypePropagator<'a> {
 impl<'a> TypePropagator<'a> {
     pub fn new(error_output: &'a mut Vec<FleetError>, id_generator: &'a mut IdGenerator) -> Self {
         Self {
-            types: PerNodeData::new(),
+            types: PerNodeData::default(),
             errors: error_output,
             variable_scopes: VariableScopeStack::new(),
-            referenced_variable: PerNodeData::new(),
+            referenced_variable: PerNodeData::default(),
             function_list: HashMap::new(),
-            referenced_function: PerNodeData::new(),
+            referenced_function: PerNodeData::default(),
             id_generator,
             current_function: None,
         }
@@ -282,15 +282,19 @@ impl<'a> TypePropagator<'a> {
             .map(|(param, _comma)| self.visit_simple_binding(param))
             .collect();
 
-        if let Some(_) = self.function_list.insert(
-            name.clone(),
-            Rc::new(RefCell::new(Function {
-                name: name.clone(),
-                return_type,
-                parameter_types,
-                id: self.id_generator.next_function_id(),
-            })),
-        ) {
+        if self
+            .function_list
+            .insert(
+                name.clone(),
+                Rc::new(RefCell::new(Function {
+                    name: name.clone(),
+                    return_type,
+                    parameter_types,
+                    id: self.id_generator.next_function_id(),
+                })),
+            )
+            .is_some()
+        {
             self.errors.push(FleetError::from_node(
                 function_clone,
                 format!("Multiple functions named {name:?} defined"),
@@ -322,7 +326,7 @@ impl<'a> TypePropagator<'a> {
     }
 }
 
-impl<'errors> AstVisitor for TypePropagator<'errors> {
+impl AstVisitor for TypePropagator<'_> {
     type ProgramOutput = (
         PerNodeData<Rc<RefCell<RuntimeType>>>,
         PerNodeData<Rc<RefCell<Variable>>>,
@@ -345,11 +349,11 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         for f in &mut program.functions {
             self.visit_function_definition(f);
         }
-        return (
+        (
             self.types,
             self.referenced_variable,
             self.referenced_function,
-        );
+        )
     }
 
     fn visit_function_definition(
@@ -388,7 +392,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         self.visit_function_body(body);
         self.variable_scopes.pop();
 
-        self.referenced_function.insert(id.clone(), this_function);
+        self.referenced_function.insert(*id, this_function);
     }
 
     fn visit_statement_function_body(
@@ -428,11 +432,15 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         } else {
             Rc::new(RefCell::new(RuntimeType::Unknown))
         };
-        if let Err(_) = self.variable_scopes.try_insert(Variable {
-            name: name.clone(),
-            type_: defined_type.clone(),
-            id: self.id_generator.next_variable_id(),
-        }) {
+        if self
+            .variable_scopes
+            .try_insert(Variable {
+                name: name.clone(),
+                type_: defined_type.clone(),
+                id: self.id_generator.next_variable_id(),
+            })
+            .is_err()
+        {
             self.errors.push(FleetError::from_node(
                 simple_binding_clone.clone(),
                 format!(
@@ -448,7 +456,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                     .clone()
                     .map(|(_colon, type_)| Into::<AstNode>::into(type_.clone()))
                     .unwrap_or(simple_binding_clone.into()),
-                format!("Variables cannot have Unit type"),
+                "Variables cannot have Unit type".to_string(),
                 ErrorSeverity::Error,
             ));
         }
@@ -460,7 +468,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                 .expect("This variable should have just been added")
                 .clone(),
         );
-        return defined_type;
+        defined_type
     }
 
     fn visit_expression_statement(
@@ -738,7 +746,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         } = expression;
         let type_ = Rc::new(RefCell::new(RuntimeType::UnsizedInt));
         self.types.insert_node(expression, type_.clone());
-        return type_;
+        type_
     }
 
     fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput {
@@ -749,7 +757,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         } = expression;
         let type_ = Rc::new(RefCell::new(RuntimeType::Boolean));
         self.types.insert_node(expression, type_.clone());
-        return type_;
+        type_
     }
 
     fn visit_array_expression(
@@ -794,7 +802,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             size: Some(elements.len()),
         }));
         self.types.insert_node(expression, type_.clone());
-        return type_;
+        type_
     }
 
     fn visit_function_call_expression(
@@ -839,7 +847,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         {
             match types {
                 EitherOrBoth::Both((arg_type, arg), param_type) => {
-                    RuntimeType::specialize_from(&arg_type, param_type);
+                    RuntimeType::specialize_from(arg_type, param_type);
                     if *arg_type != *param_type {
                         self.errors.push(FleetError::from_node(
                             (*arg).clone(),
@@ -912,7 +920,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         }
 
         self.types.insert_node(expression, subtype.clone());
-        return subtype;
+        subtype
     }
 
     fn visit_grouping_expression(
@@ -921,7 +929,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
     ) -> Self::ExpressionOutput {
         let type_ = self.visit_expression(&mut expression.subexpression);
         self.types.insert_node(expression, type_.clone());
-        return type_.clone();
+        type_.clone()
     }
 
     fn visit_variable_access_expression(
@@ -997,7 +1005,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             ));
         }
         self.types.insert(*id, this_type.clone());
-        return this_type;
+        this_type
     }
 
     fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
@@ -1058,7 +1066,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                 (_, Unit) | (Unit, _) => {
                     self_errors.push(FleetError::from_node(
                         expression_clone,
-                        format!("Cannot cast to or from Unit"),
+                        "Cannot cast to or from Unit".to_string(),
                         ErrorSeverity::Error,
                     ));
                     CastResult::Impossible
@@ -1072,7 +1080,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                         subtype: b,
                         size: b_size,
                     },
-                ) if a_size == b_size || a_size == None || b_size == None => {
+                ) if a_size == b_size || a_size.is_none() || b_size.is_none() => {
                     RuntimeType::specialize_from(from_type, to_type);
                     let res = perform_cast(
                         a.borrow().clone(),
@@ -1189,7 +1197,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         );
 
         self.types.insert(*id, to_type.clone());
-        return to_type;
+        to_type
     }
 
     fn visit_binary_expression(
@@ -1332,7 +1340,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             | BinaryOperation::LogicalOr => Rc::new(RefCell::new(RuntimeType::Boolean)),
         };
         self.types.insert(*id, this_type.clone());
-        return this_type;
+        this_type
     }
 
     fn visit_variable_assignment_expression(
@@ -1365,7 +1373,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         }
 
         self.types.insert_node(expression, left_type.clone());
-        return left_type;
+        left_type
     }
 
     fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
@@ -1425,7 +1433,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         }
 
         self.types.insert(*id, subtype.clone());
-        return subtype;
+        subtype
     }
 
     fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {
@@ -1440,7 +1448,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         let subtype = self.visit_lvalue(sublvalue);
 
         self.types.insert(*id, subtype.clone());
-        return subtype;
+        subtype
     }
 
     fn visit_int_type(
@@ -1457,7 +1465,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         }
         let t = Rc::new(RefCell::new(type_.clone()));
         self.types.insert(*id, t.clone());
-        return t;
+        t
     }
 
     fn visit_unit_type(
@@ -1474,7 +1482,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         }
         let t = Rc::new(RefCell::new(RuntimeType::Unit));
         self.types.insert(*id, t.clone());
-        return t;
+        t
     }
 
     fn visit_bool_type(&mut self, BoolType { token: _, id }: &mut BoolType) -> Self::TypeOutput {
@@ -1484,7 +1492,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         }
         let t = Rc::new(RefCell::new(RuntimeType::Boolean));
         self.types.insert(*id, t.clone());
-        return t;
+        t
     }
 
     fn visit_idk_type(
@@ -1496,7 +1504,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         }: &mut IdkType,
     ) -> Self::TypeOutput {
         self.types.insert(*id, type_.clone());
-        return type_.clone();
+        type_.clone()
     }
 
     fn visit_array_type(
@@ -1517,7 +1525,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
         if matches!(subtype_t.borrow().clone(), RuntimeType::Unit) {
             self.errors.push(FleetError::from_node(
                 *subtype.clone(),
-                format!("Cannot have array of Unit"),
+                "Cannot have array of Unit".to_string(),
                 ErrorSeverity::Error,
             ));
         }
@@ -1530,7 +1538,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                 if *value < 0 {
                     self.errors.push(FleetError::from_node(
                         *subtype.clone(),
-                        format!("Arrays cannot have a negative size"),
+                        "Arrays cannot have a negative size".to_string(),
                         ErrorSeverity::Error,
                     ));
                 }
@@ -1540,7 +1548,7 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
                 // TODO: once we have consteval, relax this restriction
                 self.errors.push(FleetError::from_node(
                     *subtype.clone(),
-                    format!("Arrays can only have number literals as a size for now"),
+                    "Arrays can only have number literals as a size for now".to_string(),
                     ErrorSeverity::Error,
                 ));
                 None
@@ -1553,6 +1561,6 @@ impl<'errors> AstVisitor for TypePropagator<'errors> {
             size,
         }));
         self.types.insert(*id, t.clone());
-        return t;
+        t
     }
 }

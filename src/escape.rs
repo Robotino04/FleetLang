@@ -34,5 +34,5 @@ pub fn unescape(str: impl AsRef<str>) -> String {
             (a, _) => a,
         });
     }
-    return result;
+    result
 }

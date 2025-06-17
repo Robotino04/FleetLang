@@ -234,10 +234,10 @@ impl<'errors> Tokenizer<'errors> {
             trailing_trivia: vec![],
         };
         self.trivia_accumulator.clear();
-        return token;
+        token
     }
 
-    pub fn tokenize(mut self) -> Result<Vec<Token>, ()> {
+    pub fn tokenize(mut self) -> Vec<Token> {
         while self.current_location.index < self.chars.len() {
             match self.chars[self.current_location.index] {
                 '(' => {
@@ -528,7 +528,7 @@ impl<'errors> Tokenizer<'errors> {
                         end: self.current_location,
                         type_: TokenType::Number(lexeme.parse().unwrap_or_else(|_| {
                             eprintln!("Unable to parse {:?} as a number", lexeme);
-                            return 0;
+                            0
                         })),
 
                         leading_trivia: self.trivia_accumulator.clone(),
@@ -660,7 +660,7 @@ impl<'errors> Tokenizer<'errors> {
             }
         }
 
-        return Ok(self.tokens);
+        self.tokens
     }
     fn flush_trailing_trivia(&mut self) {
         if let (Some(last_token), Some(trivia)) =

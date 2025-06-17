@@ -33,13 +33,13 @@ impl FindContainingNodePass {
             self.token = Some(token.clone());
             return Err(());
         }
-        return Ok((
+        Ok((
             token.start,
             SourceLocation {
                 column: token.end.column.saturating_sub(1),
                 ..token.end
             },
-        ));
+        ))
     }
 }
 
@@ -67,7 +67,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Err(());
+        Err(())
     }
 
     fn visit_function_definition(
@@ -112,7 +112,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_statement_function_body(
@@ -131,7 +131,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_extern_function_body(
@@ -160,15 +160,15 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_simple_binding(&mut self, binding: &mut SimpleBinding) -> Self::SimpleBindingOutput {
         self.node_hierarchy.push(binding.clone().into());
 
-        let (left_bound, mut right_bound) = self.visit_token(&mut binding.name_token)?;
+        let (left_bound, mut right_bound) = self.visit_token(&binding.name_token)?;
         if let Some((colon_token, type_)) = &mut binding.type_ {
-            self.visit_token(&colon_token)?;
+            self.visit_token(colon_token)?;
             right_bound = self.visit_type(type_)?.1;
         }
 
@@ -177,7 +177,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_expression_statement(
@@ -194,7 +194,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
@@ -211,7 +211,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_block_statement(&mut self, block_stmt: &mut BlockStatement) -> Self::StatementOutput {
@@ -228,7 +228,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_return_statement(
@@ -248,7 +248,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_variable_definition_statement(
@@ -257,7 +257,7 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::StatementOutput {
         self.node_hierarchy.push(vardef_stmt.clone().into());
 
-        let left_bound = self.visit_token(&mut vardef_stmt.let_token)?.0;
+        let left_bound = self.visit_token(&vardef_stmt.let_token)?.0;
         self.visit_simple_binding(&mut vardef_stmt.binding)?;
         self.visit_token(&vardef_stmt.equals_token)?;
         self.visit_expression(&mut vardef_stmt.value)?;
@@ -268,7 +268,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::StatementOutput {
@@ -292,7 +292,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_while_loop_statement(
@@ -301,7 +301,7 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::StatementOutput {
         self.node_hierarchy.push(while_stmt.clone().into());
 
-        let left_bound = self.visit_token(&mut while_stmt.while_token)?.0;
+        let left_bound = self.visit_token(&while_stmt.while_token)?.0;
         self.visit_expression(&mut while_stmt.condition)?;
         let right_bound = self.visit_statement(&mut while_stmt.body)?.1;
 
@@ -310,7 +310,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_for_loop_statement(
@@ -319,17 +319,17 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::StatementOutput {
         self.node_hierarchy.push(for_stmt.clone().into());
 
-        let left_bound = self.visit_token(&mut for_stmt.for_token)?.0;
-        self.visit_token(&mut for_stmt.open_paren_token)?;
+        let left_bound = self.visit_token(&for_stmt.for_token)?.0;
+        self.visit_token(&for_stmt.open_paren_token)?;
         self.visit_statement(&mut for_stmt.initializer)?;
         if let Some(c) = &mut for_stmt.condition {
             self.visit_expression(c)?;
         }
-        self.visit_token(&mut for_stmt.second_semicolon_token)?;
+        self.visit_token(&for_stmt.second_semicolon_token)?;
         if let Some(i) = &mut for_stmt.incrementer {
             self.visit_expression(i)?;
         }
-        self.visit_token(&mut for_stmt.close_paren_token)?;
+        self.visit_token(&for_stmt.close_paren_token)?;
         let right_bound = self.visit_statement(&mut for_stmt.body)?.1;
 
         if left_bound <= self.search_position && self.search_position <= right_bound {
@@ -337,7 +337,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
@@ -351,7 +351,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
@@ -365,7 +365,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_self_executor_host(
@@ -381,7 +381,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
@@ -399,7 +399,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_number_expression(
@@ -415,7 +415,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput {
@@ -428,7 +428,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_array_expression(
@@ -453,7 +453,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_function_call_expression(
@@ -477,7 +477,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_array_index_expression(
@@ -496,7 +496,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_grouping_expression(
@@ -514,7 +514,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_variable_access_expression(
@@ -530,7 +530,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_unary_expression(
@@ -547,7 +547,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
@@ -562,7 +562,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_binary_expression(
@@ -580,7 +580,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_variable_assignment_expression(
@@ -598,7 +598,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
@@ -611,7 +611,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
@@ -627,7 +627,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {
@@ -642,7 +642,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_int_type(&mut self, type_: &mut IntType) -> Self::TypeOutput {
@@ -655,7 +655,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
@@ -669,7 +669,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
@@ -682,7 +682,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {
@@ -695,7 +695,7 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 
     fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
@@ -713,6 +713,6 @@ impl AstVisitor for FindContainingNodePass {
         }
 
         self.node_hierarchy.pop();
-        return Ok((left_bound, right_bound));
+        Ok((left_bound, right_bound))
     }
 }
