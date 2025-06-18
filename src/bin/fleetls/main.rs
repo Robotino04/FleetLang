@@ -1,8 +1,6 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env::args;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::rc::Rc;
 use std::sync::LazyLock;
 
 use fleet::ast::{
@@ -18,7 +16,7 @@ use fleet::ast::{
 use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
 use fleet::passes::find_containing_node::FindContainingNodePass;
 use fleet::passes::function_termination_analysis::FunctionTermination;
-use fleet::passes::type_propagation::{Function, RuntimeType, Variable};
+use fleet::passes::type_propagation::TypeAnalysisData;
 use fleet::tokenizer::{SourceLocation, Token, Trivia, TriviaKind};
 use indoc::indoc;
 use inkwell::context::Context;
@@ -91,33 +89,22 @@ fn token_length(start: SourceLocation, end: SourceLocation) -> u32 {
 }
 
 impl Backend {
-    fn format_option_type(&self, type_: Option<Option<RuntimeType>>) -> String {
-        type_
-            .as_ref()
-            .map(|td| {
-                td.as_ref()
-                    .map(|t| t.to_string())
-                    .unwrap_or("/* missing type data*/".to_string())
-            })
-            .unwrap_or("/* type data unavailable */".to_string())
-    }
-    fn get_type_as_hover(
-        &self,
-        id: NodeID,
-        type_data: &Option<PerNodeData<Rc<RefCell<RuntimeType>>>>,
-    ) -> String {
-        self.format_option_type(
-            type_data
-                .as_ref()
-                .map(|td| td.get(&id).map(|id_t| id_t.borrow().clone())),
-        )
+    fn get_type_as_hover(&self, id: NodeID, analysis_data: Option<&TypeAnalysisData>) -> String {
+        let Some(analysis_data) = analysis_data else {
+            return "/* No type data available */".to_string();
+        };
+        let Some(type_) = analysis_data.type_data.get(&id) else {
+            return "/* Node type missing */".to_string();
+        };
+        analysis_data
+            .type_sets
+            .get(*type_)
+            .stringify(&analysis_data.type_sets)
     }
     fn generate_node_hover(
         &self,
         node: impl Into<AstNode>,
-        variable_data: &Option<PerNodeData<Rc<RefCell<Variable>>>>,
-        function_data: &Option<PerNodeData<Rc<RefCell<Function>>>>,
-        type_data: &Option<PerNodeData<Rc<RefCell<RuntimeType>>>>,
+        analysis_data: Option<&TypeAnalysisData>,
     ) -> (String, String) {
         match node.into() {
             AstNode::Program(_) => ("".to_string(), "program".to_string()),
@@ -138,26 +125,23 @@ impl Backend {
                     "let {name} = ({}) -> {}",
                     Itertools::intersperse(
                         parameters.iter().map(|(param, _comma)| self
-                            .generate_node_hover(
-                                param.clone(),
-                                variable_data,
-                                function_data,
-                                type_data
-                            )
+                            .generate_node_hover(param.clone(), analysis_data)
                             .0),
                         ", ".to_string()
                     )
                     .collect::<String>(),
                     return_type
-                        .map(|t| self
-                            .generate_node_hover(t, variable_data, function_data, type_data)
-                            .0)
+                        .map(|t| self.generate_node_hover(t, analysis_data).0)
                         .unwrap_or_else(|| {
-                            let ref_func = function_data.as_ref().map(|fd| fd.get(&id));
-                            let return_type = self.format_option_type(ref_func.map(|func| {
-                                func.map(|func| func.borrow().return_type.borrow().clone())
-                            }));
-                            return_type
+                            let Some(analysis_data) = analysis_data else {
+                                return "/* No type data available */".to_string();
+                            };
+                            let Some(ref_func) = analysis_data.function_data.get(&id) else {
+                                return "/* Function doesn't exist */".to_string();
+                            };
+                            let return_type =
+                                analysis_data.type_sets.get(ref_func.borrow().return_type);
+                            return_type.stringify(&analysis_data.type_sets)
                         })
                 ),
                 "function definition".to_string(),
@@ -174,8 +158,7 @@ impl Backend {
                 "extern function body".to_string(),
             ),
             AstNode::StatementFunctionBody(StatementFunctionBody { statement, id: _ }) => (
-                self.generate_node_hover(statement, variable_data, function_data, type_data)
-                    .0,
+                self.generate_node_hover(statement, analysis_data).0,
                 "statement function body".to_string(),
             ),
             AstNode::SimpleBinding(SimpleBinding {
@@ -187,16 +170,16 @@ impl Backend {
                 format!(
                     "{name}: {}",
                     type_
-                        .map(|(_colon, type_)| self
-                            .generate_node_hover(type_, variable_data, function_data, type_data)
-                            .0)
+                        .map(|(_colon, type_)| self.generate_node_hover(type_, analysis_data).0)
                         .unwrap_or_else(|| {
-                            let ref_var = variable_data.as_ref().map(|fd| fd.get(&id));
-                            let type_ = self.format_option_type(
-                                ref_var
-                                    .map(|var| var.map(|var| var.borrow().type_.borrow().clone())),
-                            );
-                            type_
+                            let Some(analysis_data) = analysis_data else {
+                                return "/* No type data available */".to_string();
+                            };
+                            let Some(ref_var) = analysis_data.variable_data.get(&id) else {
+                                return "/* Variable doesn't exist */".to_string();
+                            };
+                            let type_ = analysis_data.type_sets.get(ref_var.borrow().type_);
+                            type_.stringify(&analysis_data.type_sets)
                         })
                 ),
                 "simple binding".to_string(),
@@ -206,8 +189,7 @@ impl Backend {
                 semicolon_token: _,
                 id: _,
             }) => (
-                self.generate_node_hover(expression, variable_data, function_data, type_data)
-                    .0,
+                self.generate_node_hover(expression, analysis_data).0,
                 "expression statement".to_string(),
             ),
             AstNode::OnStatement(OnStatement {
@@ -220,14 +202,13 @@ impl Backend {
             }) => (
                 format!(
                     "on ({})",
-                    self.generate_node_hover(executor, variable_data, function_data, type_data)
-                        .0
+                    self.generate_node_hover(executor, analysis_data).0
                 ),
                 "`on` statement".to_string(),
             ),
             AstNode::BlockStatement(BlockStatement { .. }) => ("".to_string(), "block".to_string()),
             AstNode::ReturnStatement(ReturnStatement { id, .. }) => (
-                format!("return {}", self.get_type_as_hover(id, type_data)),
+                format!("return {}", self.get_type_as_hover(id, analysis_data)),
                 "`return` statement".to_string(),
             ),
             AstNode::VariableDefinitionStatement(VariableDefinitionStatement {
@@ -240,8 +221,7 @@ impl Backend {
             }) => (
                 format!(
                     "let {} = ...", // TODO: once we have consteval, display that here
-                    self.generate_node_hover(binding, variable_data, function_data, type_data)
-                        .0
+                    self.generate_node_hover(binding, analysis_data).0
                 ),
                 "variable definition".to_string(),
             ),
@@ -263,21 +243,15 @@ impl Backend {
                 id: _,
             }) => {
                 let condition_type = condition
-                    .map(|cond| self.get_type_as_hover(cond.get_id(), type_data))
+                    .map(|cond| self.get_type_as_hover(cond.get_id(), analysis_data))
                     .unwrap_or("".to_string());
                 let incrementer_type = incrementer
-                    .map(|cond| self.get_type_as_hover(cond.get_id(), type_data))
+                    .map(|cond| self.get_type_as_hover(cond.get_id(), analysis_data))
                     .unwrap_or("".to_string());
                 (
                     format!(
                         "for ({}; {}; {})",
-                        self.generate_node_hover(
-                            *initializer,
-                            variable_data,
-                            function_data,
-                            type_data
-                        )
-                        .0,
+                        self.generate_node_hover(*initializer, analysis_data).0,
                         condition_type,
                         incrementer_type
                     ),
@@ -304,10 +278,8 @@ impl Backend {
             }) => (
                 format!(
                     "{}.threads[{}]",
-                    self.generate_node_hover(host, variable_data, function_data, type_data)
-                        .0,
-                    self.generate_node_hover(index, variable_data, function_data, type_data)
-                        .0
+                    self.generate_node_hover(host, analysis_data).0,
+                    self.generate_node_hover(index, analysis_data).0
                 ),
                 "thread executor".to_string(),
             ),
@@ -318,8 +290,8 @@ impl Backend {
                 id,
             }) => (
                 {
-                    let inner_type = self.get_type_as_hover(operand.get_id(), type_data);
-                    let outer_type = self.get_type_as_hover(id, type_data);
+                    let inner_type = self.get_type_as_hover(operand.get_id(), analysis_data);
+                    let outer_type = self.get_type_as_hover(id, analysis_data);
                     match operation {
                         UnaryOperation::BitwiseNot => {
                             format!("bitwise negation (~{inner_type}) => {outer_type}")
@@ -341,8 +313,8 @@ impl Backend {
                 id,
             }) => (
                 {
-                    let from_type = self.get_type_as_hover(operand.get_id(), type_data);
-                    let to_type = self.get_type_as_hover(id, type_data);
+                    let from_type = self.get_type_as_hover(operand.get_id(), analysis_data);
+                    let to_type = self.get_type_as_hover(id, analysis_data);
                     format!("{from_type} as {to_type}")
                 },
                 "type cast".to_string(),
@@ -352,7 +324,7 @@ impl Backend {
                 token: _,
                 id,
             }) => (
-                format!("{value} {}", self.get_type_as_hover(id, type_data)),
+                format!("{value} {}", self.get_type_as_hover(id, analysis_data)),
                 "number literal".to_string(),
             ),
             AstNode::BoolExpression(BoolExpression {
@@ -360,7 +332,7 @@ impl Backend {
                 token: _,
                 id,
             }) => (
-                format!("{value} {}", self.get_type_as_hover(id, type_data)),
+                format!("{value} {}", self.get_type_as_hover(id, analysis_data)),
                 "boolean literal".to_string(),
             ),
             AstNode::ArrayExpression(ArrayExpression {
@@ -369,7 +341,7 @@ impl Backend {
                 close_bracket_token: _,
                 id,
             }) => (
-                self.get_type_as_hover(id, type_data).to_string(),
+                self.get_type_as_hover(id, analysis_data).to_string(),
                 "array literal".to_string(),
             ),
             AstNode::BinaryExpression(BinaryExpression {
@@ -379,9 +351,9 @@ impl Backend {
                 right,
                 id,
             }) => {
-                let left_type = self.get_type_as_hover(left.get_id(), type_data);
-                let right_type = self.get_type_as_hover(right.get_id(), type_data);
-                let result_type = self.get_type_as_hover(id, type_data);
+                let left_type = self.get_type_as_hover(left.get_id(), analysis_data);
+                let right_type = self.get_type_as_hover(right.get_id(), analysis_data);
+                let result_type = self.get_type_as_hover(id, analysis_data);
                 let (name, op) = match operation {
                     BinaryOperation::Add => ("addition", "+"),
                     BinaryOperation::Subtract => ("subtraction", "-"),
@@ -411,13 +383,7 @@ impl Backend {
             }) => (
                 format!(
                     "({})",
-                    self.generate_node_hover(
-                        *subexpression,
-                        variable_data,
-                        function_data,
-                        type_data
-                    )
-                    .0
+                    self.generate_node_hover(*subexpression, analysis_data).0
                 ),
                 "expression grouping".to_string(),
             ),
@@ -429,26 +395,36 @@ impl Backend {
                 close_paren_token: _,
                 id,
             }) => {
-                let ref_func = function_data.as_ref().map(|fd| fd.get(&id));
-                let return_type = self.format_option_type(
-                    ref_func
-                        .map(|func| func.map(|func| func.borrow().return_type.borrow().clone())),
-                );
-                let parameters = ref_func
-                    .map(|func| {
-                        func.map(|func| {
-                            Itertools::intersperse(
-                                func.borrow()
-                                    .parameter_types
-                                    .iter()
-                                    .map(|param| param.borrow().to_string()),
-                                ", ".to_string(),
-                            )
-                            .collect::<String>()
-                        })
-                        .unwrap_or("/* missing type data*/".to_string())
-                    })
-                    .unwrap_or("/* type data unavailable */".to_string());
+                let (parameters, return_type) = (|| {
+                    let Some(analysis_data) = analysis_data else {
+                        return (
+                            "/* No type data available */".to_string(),
+                            "/* No type data available */".to_string(),
+                        );
+                    };
+                    let Some(ref_func) = analysis_data.function_data.get(&id) else {
+                        return (
+                            "/* Function doesn't exist */".to_string(),
+                            "/* Function doesn't exist */".to_string(),
+                        );
+                    };
+                    let return_type = analysis_data
+                        .type_sets
+                        .get(ref_func.borrow().return_type)
+                        .stringify(&analysis_data.type_sets);
+                    let parameters = Itertools::intersperse(
+                        ref_func.borrow().parameter_types.iter().map(|param| {
+                            analysis_data
+                                .type_sets
+                                .get(*param)
+                                .stringify(&analysis_data.type_sets)
+                        }),
+                        ", ".to_string(),
+                    )
+                    .collect::<String>();
+
+                    (parameters, return_type)
+                })();
 
                 (
                     format!("let {name} = ({parameters}) -> {return_type}"),
@@ -464,9 +440,9 @@ impl Backend {
             }) => (
                 format!(
                     "({})[{}] => {}",
-                    self.get_type_as_hover(array.get_id(), type_data),
-                    self.get_type_as_hover(index.get_id(), type_data),
-                    self.get_type_as_hover(id, type_data)
+                    self.get_type_as_hover(array.get_id(), analysis_data),
+                    self.get_type_as_hover(index.get_id(), analysis_data),
+                    self.get_type_as_hover(id, analysis_data)
                 ),
                 "array index".to_string(),
             ),
@@ -475,7 +451,7 @@ impl Backend {
                 name_token: _,
                 id,
             }) => {
-                let type_ = self.get_type_as_hover(id, type_data);
+                let type_ = self.get_type_as_hover(id, analysis_data);
                 // TODO: once we have consteval, display the value here
                 (
                     format!("let {name}: {type_} = ..."),
@@ -490,8 +466,7 @@ impl Backend {
             }) => {
                 // TODO: once we have consteval, display the value here
                 (
-                    self.generate_node_hover(lvalue, variable_data, function_data, type_data)
-                        .0,
+                    self.generate_node_hover(lvalue, analysis_data).0,
                     "variable assignment".to_string(),
                 )
             }
@@ -501,7 +476,7 @@ impl Backend {
                 id,
             }) => {
                 // TODO: once we have consteval, display the value here
-                let type_ = self.get_type_as_hover(id, type_data);
+                let type_ = self.get_type_as_hover(id, analysis_data);
                 (
                     format!("let {name}: {type_} = ..."),
                     "variable lvalue".to_string(),
@@ -518,8 +493,8 @@ impl Backend {
                 (
                     format!(
                         "let {}[{}] = ...",
-                        self.get_type_as_hover(array.get_id(), type_data),
-                        self.get_type_as_hover(index.get_id(), type_data)
+                        self.get_type_as_hover(array.get_id(), analysis_data),
+                        self.get_type_as_hover(index.get_id(), analysis_data)
                     ),
                     "array index lvalue".to_string(),
                 )
@@ -532,8 +507,7 @@ impl Backend {
             }) => (
                 format!(
                     "({})",
-                    self.generate_node_hover(*sublvalue, variable_data, function_data, type_data)
-                        .0
+                    self.generate_node_hover(*sublvalue, analysis_data).0
                 ),
                 "lvalue grouping".to_string(),
             ),
@@ -541,7 +515,12 @@ impl Backend {
                 token: _,
                 type_,
                 id: _,
-            }) => (type_.to_string(), "type".to_string()),
+            }) => (
+                analysis_data
+                    .map(|data| type_.stringify(&data.type_sets))
+                    .unwrap_or("/* No type data available */".to_string()),
+                "type".to_string(),
+            ),
             AstNode::UnitType(UnitType {
                 open_paren_token: _,
                 close_paren_token: _,
@@ -550,12 +529,8 @@ impl Backend {
             AstNode::BoolType(BoolType { token: _, id: _ }) => {
                 ("bool".to_string(), "type".to_string())
             }
-            AstNode::IdkType(IdkType {
-                type_: _,
-                token: _,
-                id,
-            }) => {
-                let type_ = self.get_type_as_hover(id, type_data);
+            AstNode::IdkType(IdkType { token: _, id }) => {
+                let type_ = self.get_type_as_hover(id, analysis_data);
                 (type_.to_string(), "idk type".to_string())
             }
             AstNode::ArrayType(ArrayType {
@@ -565,7 +540,7 @@ impl Backend {
                 close_bracket_token: _,
                 id,
             }) => {
-                let type_ = self.get_type_as_hover(id, type_data);
+                let type_ = self.get_type_as_hover(id, analysis_data);
                 (type_.to_string(), "array type".to_string())
             }
         }
@@ -574,11 +549,9 @@ impl Backend {
     fn full_hover_text(
         &self,
         node_hierarchy: &[AstNode],
-        variable_data: &Option<PerNodeData<Rc<RefCell<Variable>>>>,
-        function_data: &Option<PerNodeData<Rc<RefCell<Function>>>>,
-        type_data: &Option<PerNodeData<Rc<RefCell<RuntimeType>>>>,
-        terminations: &Option<PerNodeData<FunctionTermination>>,
-        hovered_token: &Option<Token>,
+        terminations: Option<&PerNodeData<FunctionTermination>>,
+        analysis_data: Option<&TypeAnalysisData>,
+        hovered_token: Option<&Token>,
     ) -> String {
         format!(
             indoc! {r##"
@@ -596,12 +569,7 @@ impl Backend {
                     "##},
             node_hierarchy
                 .last()
-                .map(|node| self.generate_node_hover(
-                    node.clone(),
-                    variable_data,
-                    function_data,
-                    type_data
-                ))
+                .map(|node| self.generate_node_hover(node.clone(), analysis_data))
                 .map_or("No AST Node".to_string(), |(info, debug)| format!(
                     "{info} // {debug}"
                 )),
@@ -1186,14 +1154,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
         self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
     }
 
-    fn visit_idk_type(
-        &mut self,
-        IdkType {
-            type_: _,
-            token,
-            id: _,
-        }: &mut IdkType,
-    ) -> Self::TypeOutput {
+    fn visit_idk_type(&mut self, IdkType { token, id: _ }: &mut IdkType) -> Self::TypeOutput {
         self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
     }
 
@@ -1420,10 +1381,8 @@ impl LanguageServer for Backend {
             column: cpos.character as usize,
         });
 
-        let terminations = res.status.function_terminations().cloned();
-        let type_data = res.status.type_data().cloned();
-        let variable_data = res.status.variable_data().cloned();
-        let function_data = res.status.function_data().cloned();
+        let terminations = res.status.function_terminations();
+        let analysis_data = res.status.type_analysis_data();
 
         if let Ok((node_hierarchy, hovered_token)) = find_pass.visit_program(&mut program) {
             Ok(Some(Hover {
@@ -1431,11 +1390,9 @@ impl LanguageServer for Backend {
                     kind: MarkupKind::Markdown,
                     value: self.full_hover_text(
                         &node_hierarchy,
-                        &variable_data,
-                        &function_data,
-                        &type_data,
-                        &terminations,
-                        &hovered_token,
+                        terminations,
+                        analysis_data,
+                        hovered_token.as_ref(),
                     ),
                 }),
                 range: hovered_token.map(|token| Range {
@@ -1602,9 +1559,7 @@ impl LanguageServer for Backend {
         };
         let find_pass = FindContainingNodePass::new(cpos_sl);
 
-        let type_data = res.status.type_data().cloned();
-        let variable_data = res.status.variable_data().cloned();
-        let function_data = res.status.function_data().cloned();
+        let analysis_data = res.status.type_analysis_data();
 
         if let Ok((node_hierarchy, _hovered_token)) = find_pass.visit_program(&mut program) {
             let mut prev_node = None;
@@ -1623,19 +1578,14 @@ impl LanguageServer for Backend {
             };
 
             let label = self
-                .generate_node_hover(
-                    function_call.clone(),
-                    &variable_data,
-                    &function_data,
-                    &type_data,
-                )
+                .generate_node_hover(function_call.clone(), analysis_data)
                 .0;
 
-            let Some(function_data) = function_data else {
+            let Some(analysis_data) = analysis_data else {
                 return Ok(None);
             };
 
-            let Some(ref_func) = function_data.get(&function_call.id) else {
+            let Some(ref_func) = analysis_data.function_data.get(&function_call.id) else {
                 return Ok(None);
             };
 

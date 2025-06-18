@@ -242,11 +242,7 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             id: _,
         }) => (open_paren_token.start, close_paren_token.end),
         AstNode::BoolType(BoolType { token, id: _ }) => (token.start, token.end),
-        AstNode::IdkType(IdkType {
-            type_: _,
-            token,
-            id: _,
-        }) => (token.start, token.end),
+        AstNode::IdkType(IdkType { token, id: _ }) => (token.start, token.end),
         AstNode::ArrayType(ArrayType {
             subtype,
             open_bracket_token: _,

@@ -87,3 +87,20 @@ fn wrong_size_assigned() {
         },
     );
 }
+
+#[test]
+fn mixed_bool_int() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = [1, true, 3];
+                return 0;
+            }
+        "##},
+        SourceLocation {
+            index: 39,
+            line: 2,
+            column: 16,
+        },
+    );
+}

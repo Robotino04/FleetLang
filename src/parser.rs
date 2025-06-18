@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fmt, rc::Rc};
+use std::fmt;
 
 use crate::{
     ast::{
@@ -1006,7 +1006,6 @@ impl<'errors> Parser<'errors> {
                 id: self.id_generator.next_node_id(),
             })),
             Some(TokenType::Keyword(Keyword::Idk)) => Ok(Type::Idk(IdkType {
-                type_: Rc::new(RefCell::new(RuntimeType::Unknown)),
                 token: expect!(self, TokenType::Keyword(Keyword::Idk))?,
                 id: self.id_generator.next_node_id(),
             })),

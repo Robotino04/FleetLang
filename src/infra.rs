@@ -1,4 +1,4 @@
-use std::{cell::RefCell, error::Error, rc::Rc};
+use std::error::Error;
 
 use inkwell::{
     context::Context, module::Module, passes::PassBuilderOptions, targets::TargetMachine,
@@ -17,7 +17,7 @@ use crate::{
         fix_trailing_comma::FixTrailingComma,
         function_termination_analysis::{FunctionTermination, FunctionTerminationAnalyzer},
         remove_parens::RemoveParensPass,
-        type_propagation::{Function, RuntimeType, TypePropagator, Variable},
+        type_propagation::{TypeAnalysisData, TypePropagator},
     },
     tokenizer::{SourceLocation, Token, Tokenizer},
 };
@@ -168,9 +168,7 @@ pub enum CompileStatus<'a> {
         program: Program,
         id_generator: IdGenerator,
         function_terminations: PerNodeData<FunctionTermination>,
-        type_data: PerNodeData<Rc<RefCell<RuntimeType>>>,
-        variable_data: PerNodeData<Rc<RefCell<Variable>>>,
-        function_data: PerNodeData<Rc<RefCell<Function>>>,
+        type_analysis_data: TypeAnalysisData,
     },
     IrGeneratorFailure {
         tokens: Vec<Token>,
@@ -179,9 +177,7 @@ pub enum CompileStatus<'a> {
         program: Program,
         id_generator: IdGenerator,
         function_terminations: PerNodeData<FunctionTermination>,
-        type_data: PerNodeData<Rc<RefCell<RuntimeType>>>,
-        variable_data: PerNodeData<Rc<RefCell<Variable>>>,
-        function_data: PerNodeData<Rc<RefCell<Function>>>,
+        type_analysis_data: TypeAnalysisData,
     },
     IrGeneratorErrors {
         tokens: Vec<Token>,
@@ -190,9 +186,7 @@ pub enum CompileStatus<'a> {
         program: Program,
         id_generator: IdGenerator,
         function_terminations: PerNodeData<FunctionTermination>,
-        type_data: PerNodeData<Rc<RefCell<RuntimeType>>>,
-        variable_data: PerNodeData<Rc<RefCell<Variable>>>,
-        function_data: PerNodeData<Rc<RefCell<Function>>>,
+        type_analysis_data: TypeAnalysisData,
         partial_module: Option<Module<'a>>,
     },
     Success {
@@ -202,9 +196,7 @@ pub enum CompileStatus<'a> {
         program: Program,
         id_generator: IdGenerator,
         function_terminations: PerNodeData<FunctionTermination>,
-        type_data: PerNodeData<Rc<RefCell<RuntimeType>>>,
-        variable_data: PerNodeData<Rc<RefCell<Variable>>>,
-        function_data: PerNodeData<Rc<RefCell<Function>>>,
+        type_analysis_data: TypeAnalysisData,
         module: Module<'a>,
     },
 }
@@ -246,7 +238,7 @@ impl<'a> CompileStatus<'a> {
     // the program as it was parsed without any modifications
     pub fn parsed_program(&self) -> Option<&Program> {
         match &self {
-            CompileStatus::ParserFailure { tokens: _ } => None,
+            CompileStatus::ParserFailure { .. } => None,
             CompileStatus::TokenizerOrParserErrors {
                 partial_parsed_program,
                 ..
@@ -257,9 +249,37 @@ impl<'a> CompileStatus<'a> {
             CompileStatus::Success { parsed_program, .. } => Some(parsed_program),
         }
     }
+    pub fn id_generator(&self) -> Option<&IdGenerator> {
+        match &self {
+            CompileStatus::ParserFailure { .. } => None,
+            CompileStatus::TokenizerOrParserErrors { id_generator, .. } => Some(id_generator),
+            CompileStatus::AnalysisErrors { id_generator, .. } => Some(id_generator),
+            CompileStatus::IrGeneratorFailure { id_generator, .. } => Some(id_generator),
+            CompileStatus::IrGeneratorErrors { id_generator, .. } => Some(id_generator),
+            CompileStatus::Success { id_generator, .. } => Some(id_generator),
+        }
+    }
+    pub fn type_analysis_data(&self) -> Option<&TypeAnalysisData> {
+        match &self {
+            CompileStatus::ParserFailure { .. } => None,
+            CompileStatus::TokenizerOrParserErrors { .. } => None,
+            CompileStatus::AnalysisErrors {
+                type_analysis_data, ..
+            } => Some(type_analysis_data),
+            CompileStatus::IrGeneratorFailure {
+                type_analysis_data, ..
+            } => Some(type_analysis_data),
+            CompileStatus::IrGeneratorErrors {
+                type_analysis_data, ..
+            } => Some(type_analysis_data),
+            CompileStatus::Success {
+                type_analysis_data, ..
+            } => Some(type_analysis_data),
+        }
+    }
     pub fn function_terminations(&self) -> Option<&PerNodeData<FunctionTermination>> {
         match &self {
-            CompileStatus::ParserFailure { tokens: _ } => None,
+            CompileStatus::ParserFailure { .. } => None,
             CompileStatus::TokenizerOrParserErrors { .. } => None,
             CompileStatus::AnalysisErrors {
                 function_terminations,
@@ -277,46 +297,6 @@ impl<'a> CompileStatus<'a> {
                 function_terminations,
                 ..
             } => Some(function_terminations),
-        }
-    }
-    pub fn type_data(&self) -> Option<&PerNodeData<Rc<RefCell<RuntimeType>>>> {
-        match &self {
-            CompileStatus::ParserFailure { tokens: _ } => None,
-            CompileStatus::TokenizerOrParserErrors { .. } => None,
-            CompileStatus::AnalysisErrors { type_data, .. } => Some(type_data),
-            CompileStatus::IrGeneratorFailure { type_data, .. } => Some(type_data),
-            CompileStatus::IrGeneratorErrors { type_data, .. } => Some(type_data),
-            CompileStatus::Success { type_data, .. } => Some(type_data),
-        }
-    }
-    pub fn variable_data(&self) -> Option<&PerNodeData<Rc<RefCell<Variable>>>> {
-        match &self {
-            CompileStatus::ParserFailure { tokens: _ } => None,
-            CompileStatus::TokenizerOrParserErrors { .. } => None,
-            CompileStatus::AnalysisErrors { variable_data, .. } => Some(variable_data),
-            CompileStatus::IrGeneratorFailure { variable_data, .. } => Some(variable_data),
-            CompileStatus::IrGeneratorErrors { variable_data, .. } => Some(variable_data),
-            CompileStatus::Success { variable_data, .. } => Some(variable_data),
-        }
-    }
-    pub fn function_data(&self) -> Option<&PerNodeData<Rc<RefCell<Function>>>> {
-        match &self {
-            CompileStatus::ParserFailure { tokens: _ } => None,
-            CompileStatus::TokenizerOrParserErrors { .. } => None,
-            CompileStatus::AnalysisErrors { function_data, .. } => Some(function_data),
-            CompileStatus::IrGeneratorFailure { function_data, .. } => Some(function_data),
-            CompileStatus::IrGeneratorErrors { function_data, .. } => Some(function_data),
-            CompileStatus::Success { function_data, .. } => Some(function_data),
-        }
-    }
-    pub fn id_generator(&self) -> Option<&IdGenerator> {
-        match &self {
-            CompileStatus::ParserFailure { .. } => None,
-            CompileStatus::TokenizerOrParserErrors { id_generator, .. } => Some(id_generator),
-            CompileStatus::AnalysisErrors { id_generator, .. } => Some(id_generator),
-            CompileStatus::IrGeneratorFailure { id_generator, .. } => Some(id_generator),
-            CompileStatus::IrGeneratorErrors { id_generator, .. } => Some(id_generator),
-            CompileStatus::Success { id_generator, .. } => Some(id_generator),
         }
     }
     pub fn parsed_id_generator(&self) -> Option<&IdGenerator> {
@@ -383,7 +363,7 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
     // Analysis
     let term_analyzer = FunctionTerminationAnalyzer::new(&mut errors);
     let function_terminations = term_analyzer.visit_program(&mut program);
-    let (type_data, variable_data, function_data) =
+    let analysis_data =
         TypePropagator::new(&mut errors, &mut id_generator).visit_program(&mut program);
 
     run_fix_passes(&mut errors, &mut program, &mut id_generator);
@@ -397,10 +377,8 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
                 tokens,
                 parsed_program,
                 program,
+                type_analysis_data: analysis_data,
                 function_terminations,
-                type_data,
-                variable_data,
-                function_data,
                 parsed_id_generator,
                 id_generator,
             },
@@ -408,14 +386,8 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
         };
     }
 
-    let ir_generator = IrGenerator::new(
-        context,
-        &mut errors,
-        function_terminations.clone(),
-        variable_data.clone(),
-        function_data.clone(),
-        type_data.clone(),
-    );
+    let ir_generator =
+        IrGenerator::new(context, &mut errors, &function_terminations, &analysis_data);
     let module = match ir_generator.visit_program(&mut program) {
         Ok(module) => module,
         Err(error) => {
@@ -436,10 +408,8 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
                     tokens,
                     parsed_program,
                     program,
+                    type_analysis_data: analysis_data,
                     function_terminations,
-                    function_data,
-                    variable_data,
-                    type_data,
                     parsed_id_generator,
                     id_generator,
                 },
@@ -457,10 +427,8 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
                 tokens,
                 parsed_program,
                 program,
+                type_analysis_data: analysis_data,
                 function_terminations,
-                function_data,
-                variable_data,
-                type_data,
                 partial_module: if module.verify().is_ok() {
                     Some(module)
                 } else {
@@ -478,10 +446,8 @@ pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a>
             tokens,
             parsed_program,
             program,
+            type_analysis_data: analysis_data,
             function_terminations,
-            function_data,
-            variable_data,
-            type_data,
             module: module.clone(),
             parsed_id_generator,
             id_generator,

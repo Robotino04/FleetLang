@@ -543,7 +543,6 @@ pub trait PartialAstVisitor {
     fn partial_visit_idk_type(
         &mut self,
         IdkType {
-            type_: _,
             token: _,
             id: _,
         }: &mut IdkType,

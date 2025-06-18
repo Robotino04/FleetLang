@@ -35,7 +35,10 @@ use crate::{
     infra::{ErrorSeverity, FleetError},
     passes::{
         function_termination_analysis::FunctionTermination,
-        type_propagation::{Function, FunctionID, RuntimeType, Variable, VariableID},
+        type_propagation::{
+            Function, FunctionID, RuntimeType, TypeAnalysisData, UnionFindSet, UnionFindSetPtr,
+            Variable, VariableID,
+        },
     },
     tokenizer::SourceLocation,
 };
@@ -76,33 +79,40 @@ macro_rules! match_any_type_enum_as_basic_type {
     };
 }
 
-pub struct IrGenerator<'a, 'errors> {
+pub struct IrGenerator<'a, 'errors, 'inputs> {
     context: &'a Context,
     module: Module<'a>,
     builder: Builder<'a>,
     errors: &'errors mut Vec<FleetError>,
 
-    function_termination: PerNodeData<FunctionTermination>,
-    variable_data: PerNodeData<Rc<RefCell<Variable>>>,
+    function_termination: &'inputs PerNodeData<FunctionTermination>,
     variable_storage: HashMap<VariableID, VariableStorage<'a>>,
-    function_data: PerNodeData<Rc<RefCell<Function>>>,
     function_locations: HashMap<FunctionID, FunctionLocation<'a>>,
-    type_data: PerNodeData<Rc<RefCell<RuntimeType>>>,
+
+    variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
+    function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
+    type_data: &'inputs PerNodeData<UnionFindSetPtr>,
+    type_sets: &'inputs UnionFindSet<RuntimeType>,
 
     break_block: Option<BasicBlock<'a>>,
     skip_block: Option<BasicBlock<'a>>,
 }
-impl<'a, 'errors> IrGenerator<'a, 'errors> {
+impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
     pub fn new(
         context: &'a Context,
         errors: &'errors mut Vec<FleetError>,
-        function_termination: PerNodeData<FunctionTermination>,
-        variable_data: PerNodeData<Rc<RefCell<Variable>>>,
-        function_data: PerNodeData<Rc<RefCell<Function>>>,
-        type_data: PerNodeData<Rc<RefCell<RuntimeType>>>,
+        function_termination: &'inputs PerNodeData<FunctionTermination>,
+        analysis_data: &'inputs TypeAnalysisData,
     ) -> Self {
         let module = context.create_module("module");
         let builder = context.create_builder();
+
+        let TypeAnalysisData {
+            type_data,
+            type_sets,
+            variable_data,
+            function_data,
+        } = &analysis_data;
 
         IrGenerator {
             context,
@@ -115,6 +125,7 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
             function_data,
             function_locations: HashMap::new(),
             type_data,
+            type_sets,
             break_block: None,
             skip_block: None,
         }
@@ -183,7 +194,7 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
                 size,
             } => {
                 let inner_type_ir =
-                    self.runtime_type_to_llvm(inner_type.borrow().clone(), error_node.clone())?;
+                    self.runtime_type_to_llvm(*self.type_sets.get(inner_type), error_node.clone())?;
 
                 let Some(size) = size else {
                     return self.report_error(FleetError::from_node(
@@ -229,10 +240,8 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
                     .get(&function.get_id())
                     .expect("Function data should exist before calling ir_generator")
                     .borrow()
-                    .return_type
-                    .borrow()
-                    .clone();
-                self.runtime_type_to_llvm(inferred_type, function.clone())
+                    .return_type;
+                self.runtime_type_to_llvm(*self.type_sets.get(inferred_type), function.clone())
             })?;
 
         let name = match &function.body {
@@ -263,7 +272,7 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
             .iter()
             .flat_map(|(param, var)| -> Result<_> {
                 Ok(match_any_type_enum_as_basic_type!(
-                    self.runtime_type_to_llvm(var.borrow().type_.borrow().clone(), param.clone())?,
+                    self.runtime_type_to_llvm(*self.type_sets.get(var.borrow().type_), param.clone())?,
                     type_ => {
                         type_.into()
                     },
@@ -304,7 +313,7 @@ impl<'a, 'errors> IrGenerator<'a, 'errors> {
     }
 }
 
-impl<'a> AstVisitor for IrGenerator<'a, '_> {
+impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
     type ProgramOutput = Result<Module<'a>>;
     type FunctionDefinitionOutput = Result<FunctionValue<'a>>;
     type FunctionBodyOutput = Result<()>;
@@ -362,10 +371,8 @@ impl<'a> AstVisitor for IrGenerator<'a, '_> {
                     .get(&function.get_id())
                     .expect("Function data should exist before calling ir_generator")
                     .borrow()
-                    .return_type
-                    .borrow()
-                    .clone();
-                self.runtime_type_to_llvm(inferred_type, function.clone())
+                    .return_type;
+                self.runtime_type_to_llvm(*self.type_sets.get(inferred_type), function.clone())
             })?;
         let ir_function = self
             .function_locations
@@ -522,10 +529,11 @@ impl<'a> AstVisitor for IrGenerator<'a, '_> {
                     .get(&simple_binding.id)
                     .expect("variable data should exist before calling ir_generator")
                     .borrow()
-                    .type_
-                    .borrow()
-                    .clone();
-                self.runtime_type_to_llvm(inferred_type, simple_binding.clone())
+                    .type_;
+                self.runtime_type_to_llvm(
+                    *self.type_sets.get(inferred_type),
+                    simple_binding.clone(),
+                )
             })?;
 
         let ptr = match_any_type_enum_as_basic_type!(
@@ -936,14 +944,13 @@ impl<'a> AstVisitor for IrGenerator<'a, '_> {
             token: _,
             id,
         } = number;
-        let type_ = self
+        let type_ = *self
             .type_data
             .get(id)
-            .expect("type data should exist before running ir_generator")
-            .clone();
+            .expect("type data should exist before running ir_generator");
 
         return Ok(Some(
-            self.runtime_type_to_llvm(type_.borrow().clone(), number_clone)?
+            self.runtime_type_to_llvm(*self.type_sets.get(type_), number_clone)?
                 .into_int_type()
                 .const_int(*value as u64, false)
                 .as_basic_value_enum(),
@@ -978,14 +985,12 @@ impl<'a> AstVisitor for IrGenerator<'a, '_> {
             id,
         } = expression;
 
-        let type_ @ RuntimeType::ArrayOf { .. } = self
-            .type_data
-            .get(id)
-            .expect("type data should exist before running ir_generator")
-            .clone()
-            .borrow()
-            .clone()
-        else {
+        let type_ @ RuntimeType::ArrayOf { .. } = self.type_sets.get(
+            *self
+                .type_data
+                .get(id)
+                .expect("type data should exist before running ir_generator"),
+        ) else {
             return self.report_error(FleetError::from_node(
                 expression_clone.clone(),
                 "This array doesn't have an ArrayOf(_) type",
@@ -994,7 +999,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_> {
         };
 
         let mut array_ir = self
-            .runtime_type_to_llvm(type_.clone(), expression_clone.clone())?
+            .runtime_type_to_llvm(*type_, expression_clone)?
             .into_array_type()
             .get_undef();
 
@@ -1140,7 +1145,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_> {
         };
         let storage = storage.clone();
         return match_any_type_enum_as_basic_type!(
-            self.runtime_type_to_llvm(var.borrow().type_.borrow().clone(), expr_clone.clone())?,
+            self.runtime_type_to_llvm(*self.type_sets.get(var.borrow().type_), expr_clone.clone())?,
             type_ => {
                 Ok(Some(self.builder.build_load(type_, storage.0, name)?))
             },
@@ -1209,19 +1214,17 @@ impl<'a> AstVisitor for IrGenerator<'a, '_> {
         }: &mut CastExpression,
     ) -> Self::ExpressionOutput {
         let value = self.visit_expression(&mut *operand)?;
-        let value_type = self
+        let value_type = *self
             .type_data
             .get_node(&**operand)
-            .expect("type data should exist before calling ir_generator")
-            .clone();
+            .expect("type data should exist before calling ir_generator");
 
-        let target_type = self
+        let target_type = *self
             .type_data
             .get(id)
-            .expect("type data should exist before calling ir_generator")
-            .clone();
+            .expect("type data should exist before calling ir_generator");
 
-        match target_type.borrow().clone() {
+        match *self.type_sets.get(target_type) {
             RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64 => {
                 let expected_type = self.visit_type(type_)?.into_int_type();
                 let value = value
@@ -1238,7 +1241,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_> {
                             )?
                             .into(),
                     ))
-                } else if value_type.borrow().is_boolean() {
+                } else if self.type_sets.get(value_type).is_boolean() {
                     Ok(Some(
                         self.builder
                             .build_int_z_extend(
@@ -1608,14 +1611,13 @@ impl<'a> AstVisitor for IrGenerator<'a, '_> {
             .expect("Cannot index with unit")
             .into_int_value();
 
-        let infered_type = self
+        let infered_type = *self
             .type_data
             .get(id)
-            .expect("type data should exist before calling ir_generator")
-            .clone();
+            .expect("type data should exist before calling ir_generator");
 
         let element_type =
-            self.runtime_type_to_llvm(infered_type.borrow().clone(), *array.clone())?;
+            self.runtime_type_to_llvm(*self.type_sets.get(infered_type), *array.clone())?;
 
         let index_ptr = match_any_type_enum_as_basic_type!(
             element_type,
@@ -1669,10 +1671,10 @@ impl<'a> AstVisitor for IrGenerator<'a, '_> {
 
         assert_eq!(
             *type_,
-            *infered_type.borrow(),
+            *self.type_sets.get(*infered_type),
             "Inferred type (right) of IntType doesn't match its actual type (left)"
         );
-        self.runtime_type_to_llvm(type_.clone(), type_clone)
+        self.runtime_type_to_llvm(*type_, type_clone)
     }
 
     fn visit_unit_type(
@@ -1690,7 +1692,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_> {
 
         assert_eq!(
             RuntimeType::Unit,
-            *infered_type.borrow(),
+            *self.type_sets.get(*infered_type),
             "Inferred type (right) of UnitType doesn't match its actual type (left)"
         );
         Ok(self.context.void_type().into())
@@ -1704,7 +1706,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_> {
 
         assert_eq!(
             RuntimeType::Boolean,
-            *infered_type.borrow(),
+            *self.type_sets.get(*infered_type),
             "Inferred type (right) of BoolType doesn't match its actual type (left)"
         );
         Ok(self.context.bool_type().into())
@@ -1712,24 +1714,13 @@ impl<'a> AstVisitor for IrGenerator<'a, '_> {
 
     fn visit_idk_type(&mut self, type_: &mut IdkType) -> Self::TypeOutput {
         let type_clone = type_.clone();
-        let IdkType {
-            type_,
-            token: _,
-            id,
-        } = type_;
-        let infered_type = self
+        let IdkType { token: _, id } = type_;
+        let infered_type = *self
             .type_data
             .get(id)
-            .expect("type data should exist before calling ir_generator")
-            .clone();
+            .expect("type data should exist before calling ir_generator");
 
-        assert_eq!(
-            *type_.borrow(),
-            *infered_type.borrow(),
-            "IdkType didn't get inferred before calling ir_generator"
-        );
-
-        self.runtime_type_to_llvm(infered_type.borrow().clone(), type_clone)
+        self.runtime_type_to_llvm(*self.type_sets.get(infered_type), type_clone)
     }
 
     fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
@@ -1742,12 +1733,11 @@ impl<'a> AstVisitor for IrGenerator<'a, '_> {
             id,
         } = array_type;
 
-        let infered_type = self
+        let infered_type = *self
             .type_data
             .get(id)
-            .expect("type data should exist before calling ir_generator")
-            .clone();
+            .expect("type data should exist before calling ir_generator");
 
-        self.runtime_type_to_llvm(infered_type.borrow().clone(), array_type_clone)
+        self.runtime_type_to_llvm(*self.type_sets.get(infered_type), array_type_clone)
     }
 }

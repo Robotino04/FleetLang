@@ -1,6 +1,7 @@
+use fleet::tokenizer::SourceLocation;
 use indoc::indoc;
 
-use crate::common::assert_compile_and_return_value;
+use crate::common::{assert_compile_and_return_value, assert_compile_and_warning};
 
 #[test]
 fn missing_return_type() {
@@ -46,7 +47,6 @@ fn missing_variable_type() {
 }
 
 #[test]
-#[ignore = "needs more powerful type inference"]
 fn missing_variable_type_int() {
     assert_compile_and_return_value(
         indoc! {r##"
@@ -57,5 +57,38 @@ fn missing_variable_type_int() {
         "##},
         "main",
         12345i32,
+    );
+}
+
+#[test]
+fn chained_untyped_assignment() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = 12345;
+                let b = a;
+                let c = b;
+                let d = c;
+                return d;
+            }
+        "##},
+        "main",
+        12345i32,
+    );
+}
+
+#[test]
+fn chained_as_idk_casts() {
+    assert_compile_and_warning(
+        indoc! {r##"
+            let main = () -> i32 {
+                return 2 as idk as idk as idk;
+            }
+        "##},
+        SourceLocation {
+            index: 34,
+            line: 2,
+            column: 11,
+        },
     );
 }

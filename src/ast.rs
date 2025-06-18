@@ -1,8 +1,6 @@
 use std::{
-    cell::RefCell,
     collections::HashMap,
     ops::{Deref, DerefMut},
-    rc::Rc,
 };
 
 use crate::{passes::type_propagation::RuntimeType, tokenizer::Token};
@@ -469,7 +467,6 @@ generate_ast_requirements!(BoolType, unwrap_bool_type);
 
 #[derive(Clone, Debug)]
 pub struct IdkType {
-    pub type_: Rc<RefCell<RuntimeType>>,
     pub token: Token,
     pub id: NodeID,
 }

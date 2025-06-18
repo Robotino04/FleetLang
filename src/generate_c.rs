@@ -44,7 +44,7 @@ fn generate_function_declaration(function: &FunctionDefinition, mut prefix: Stri
 }
 
 fn to_c_type(type_: Rc<RefCell<RuntimeType>>) -> String {
-    return match type_.borrow().clone() {
+    return match *type_.borrow() {
         RuntimeType::I8 => "int8_t".to_string(),
         RuntimeType::I16 => "int16_t".to_string(),
         RuntimeType::I32 => "int32_t".to_string(),
@@ -59,9 +59,9 @@ fn to_c_type(type_: Rc<RefCell<RuntimeType>>) -> String {
         }
         RuntimeType::Error => unreachable!("all types must be known before calling generate_c"),
         RuntimeType::ArrayOf {
-            subtype: inner_type,
+            subtype: _,
             size: _,
-        } => format!("{}[]", to_c_type(inner_type)),
+        } => format!("{}[]", "/* TODO: type inference access in c gen */"),
     };
 }
 
@@ -428,11 +428,9 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             id: _,
         }) => "void".to_string(),
         AstNode::BoolType(BoolType { token: _, id: _ }) => "bool".to_string(),
-        AstNode::IdkType(IdkType {
-            type_,
-            token: _,
-            id: _,
-        }) => to_c_type(type_),
+        AstNode::IdkType(IdkType { token: _, id: _ }) => {
+            "/* TODO: type inference in c */".to_string()
+        }
         AstNode::ArrayType(ArrayType {
             subtype,
             open_bracket_token: _,

@@ -103,7 +103,7 @@ fn complex_expression_assignment_chaining() {
             let main = () -> i32 {
                 let a = [0, 0, 0];
                 let b = [0, 0, 0];
-                let counter: i32 = 0;
+                let counter = 0;
                 a = b = [counter = counter + 1, counter = counter + 1, counter = counter + 1];
                 return counter;
             }

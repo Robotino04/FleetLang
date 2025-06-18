@@ -88,9 +88,7 @@ fn main() {
             program,
             id_generator: _,
             function_terminations,
-            type_data: _,
-            variable_data: _,
-            function_data: _,
+            type_analysis_data: _,
         } => {
             println!("{}", generate_header("Tokens", 50));
             println!("{:#?}", tokens);
@@ -106,9 +104,7 @@ fn main() {
             parsed_program: _,
             program,
             function_terminations,
-            type_data: _,
-            variable_data: _,
-            function_data: _,
+            type_analysis_data: _,
             id_generator: _,
             parsed_id_generator: _,
         } => {
@@ -127,9 +123,7 @@ fn main() {
             program,
             partial_module,
             function_terminations,
-            type_data: _,
-            variable_data: _,
-            function_data: _,
+            type_analysis_data: _,
             id_generator: _,
             parsed_id_generator: _,
         } => {
@@ -160,9 +154,7 @@ fn main() {
             program,
             module,
             function_terminations,
-            type_data: _,
-            variable_data: _,
-            function_data: _,
+            type_analysis_data: _,
             id_generator: _,
             parsed_id_generator: _,
         } => {
