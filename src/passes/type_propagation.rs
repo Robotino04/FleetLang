@@ -8,8 +8,8 @@ use crate::{
         BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
         BreakStatement, CastExpression, Expression, ExpressionStatement, ExternFunctionBody,
         ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression,
-        GroupingLValue, IdkType, IfStatement, IntType, NumberExpression, OnStatement, PerNodeData,
-        Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
+        GroupingLValue, HasID, IdkType, IfStatement, IntType, NumberExpression, OnStatement,
+        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
         StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
         VariableLValue, WhileLoopStatement,
@@ -312,7 +312,7 @@ pub struct Variable {
 pub struct Function {
     pub name: String,
     pub return_type: UnionFindSetPtr,
-    pub parameter_types: Vec<UnionFindSetPtr>,
+    pub parameter_types: Vec<(UnionFindSetPtr, String)>,
     pub id: FunctionID,
 }
 
@@ -406,7 +406,7 @@ impl<'a> TypePropagator<'a> {
             .unwrap_or_else(|| self.type_sets.insert_set(RuntimeType::Unknown));
         let parameter_types = parameters
             .iter_mut()
-            .map(|(param, _comma)| self.visit_simple_binding(param))
+            .map(|(param, _comma)| (self.visit_simple_binding(param), param.name.clone()))
             .collect();
 
         if self
@@ -534,6 +534,9 @@ impl AstVisitor for TypePropagator<'_> {
         self.visit_function_body(body);
         self.variable_scopes.pop();
 
+        self.referenced_function
+            .insert(body.get_id(), this_function.clone());
+
         self.referenced_function.insert(*id, this_function);
     }
 
@@ -610,6 +613,7 @@ impl AstVisitor for TypePropagator<'_> {
                 .expect("This variable should have just been added")
                 .clone(),
         );
+        self.node_types.insert(*id, defined_type);
         defined_type
     }
 
@@ -972,15 +976,15 @@ impl AstVisitor for TypePropagator<'_> {
             .enumerate()
         {
             match types {
-                EitherOrBoth::Both((arg_type, arg), &param_type) => {
+                EitherOrBoth::Both((arg_type, arg), (param_type, param_name)) => {
                     // function arguments shouldn't get specialized by calling the function
-                    let param_type = self.type_sets.detach(param_type);
+                    let param_type = self.type_sets.detach(*param_type);
 
                     if !RuntimeType::merge_types(*arg_type, param_type, &mut self.type_sets) {
                         self.errors.push(FleetError::from_node(
                             (*arg).clone(),
                             format!(
-                                "{name:?} expects a value of type {} as argument {}. Got {}",
+                                "{name:?} expects a value of type {} as argument {param_name:?} (Nr. {}). Got {}",
                                 self.stringify_type_ptr(param_type),
                                 i + 1,
                                 self.stringify_type_ptr(*arg_type),
@@ -996,13 +1000,13 @@ impl AstVisitor for TypePropagator<'_> {
                         ErrorSeverity::Error,
                     ));
                 }
-                EitherOrBoth::Right(&param_type) => {
+                EitherOrBoth::Right((param_type, name)) => {
                     self.errors.push(FleetError::from_token(
                         close_paren_token,
                         format!(
-                            "{name:?} is missing parameter {} of type {}",
+                            "{name:?} is missing parameter {name:?} (Nr. {}) of type {}",
                             i + 1,
-                            self.stringify_type_ptr(param_type)
+                            self.stringify_type_ptr(*param_type)
                         ),
                         ErrorSeverity::Error,
                     ));
@@ -1724,16 +1728,7 @@ impl AstVisitor for TypePropagator<'_> {
                 value,
                 token: _,
                 id: _,
-            })) => {
-                if *value < 0 {
-                    self.errors.push(FleetError::from_node(
-                        *subtype.clone(),
-                        "Arrays cannot have a negative size".to_string(),
-                        ErrorSeverity::Error,
-                    ));
-                }
-                Some(*value as usize)
-            }
+            })) => Some(*value as usize),
             Some(_) => {
                 // TODO: once we have consteval, relax this restriction
                 self.errors.push(FleetError::from_node(

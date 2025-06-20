@@ -1,8 +1,8 @@
+use itertools::Itertools;
+
 pub fn unescape(str: impl AsRef<str>) -> String {
     let mut result = "".to_string();
-    let chars = (str.as_ref().to_string() + "\0")
-        .chars()
-        .collect::<Vec<_>>();
+    let chars = (str.as_ref().to_string() + "\0").chars().collect_vec();
     let mut pairs = chars.windows(2);
 
     while let Some([a, b]) = pairs.next() {

@@ -413,12 +413,18 @@ impl Backend {
                         .get(ref_func.borrow().return_type)
                         .stringify(&analysis_data.type_sets);
                     let parameters = Itertools::intersperse(
-                        ref_func.borrow().parameter_types.iter().map(|param| {
-                            analysis_data
-                                .type_sets
-                                .get(*param)
-                                .stringify(&analysis_data.type_sets)
-                        }),
+                        ref_func
+                            .borrow()
+                            .parameter_types
+                            .iter()
+                            .map(|(param, name)| {
+                                name.clone()
+                                    + ": "
+                                    + &analysis_data
+                                        .type_sets
+                                        .get(*param)
+                                        .stringify(&analysis_data.type_sets)
+                            }),
                         ", ".to_string(),
                     )
                     .collect::<String>();

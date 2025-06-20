@@ -326,8 +326,6 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
     type TypeOutput = Result<AnyTypeEnum<'a>>;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
-        eprintln!("Generating program");
-
         for f in &mut program.functions {
             self.register_function(f)?;
         }
@@ -359,8 +357,6 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         &mut self,
         function: &mut FunctionDefinition,
     ) -> Self::FunctionDefinitionOutput {
-        eprintln!("Generating function {:?}", function.name);
-
         let return_type_ir = function
             .return_type
             .as_mut()
@@ -952,7 +948,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         return Ok(Some(
             self.runtime_type_to_llvm(*self.type_sets.get(type_), number_clone)?
                 .into_int_type()
-                .const_int(*value as u64, false)
+                .const_int(*value, false)
                 .as_basic_value_enum(),
         ));
     }

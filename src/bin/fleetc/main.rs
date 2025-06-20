@@ -1,10 +1,10 @@
 use std::{env::args, fs::read_to_string, path::Path, process::exit};
 
-use fleet::infra::{ErrorSeverity, format_program, run_default_optimization_passes};
-use fleet::{
-    ast::AstNode,
-    generate_c::generate_c,
-    infra::{CompileStatus, compile_program, print_error_message},
+use fleet::ast::AstVisitor;
+use fleet::generate_c::CCodeGenerator;
+use fleet::infra::{
+    CompileResult, CompileStatus, ErrorSeverity, compile_program, format_program,
+    print_error_message, run_default_optimization_passes,
 };
 use inkwell::{
     OptimizationLevel,
@@ -34,9 +34,9 @@ fn main() {
     });
 
     let context = Context::create();
-    let res = compile_program(&context, &src);
+    let mut res = compile_program(&context, &src);
 
-    let print_all_errors_and_message = |msg| {
+    let print_all_errors_and_message = |msg, res: CompileResult<'_>| {
         let mut worst_error = None;
         for error in &res.errors {
             if let Some(prev) = worst_error {
@@ -66,7 +66,7 @@ fn main() {
         CompileStatus::ParserFailure { tokens } => {
             println!("{}", generate_header("Tokens", 50));
             println!("{:#?}", tokens);
-            print_all_errors_and_message("The parser failed completely");
+            print_all_errors_and_message("The parser failed completely", res);
             exit(1);
         }
         CompileStatus::TokenizerOrParserErrors {
@@ -78,7 +78,7 @@ fn main() {
             println!("{:#?}", tokens);
             println!("{}", generate_header("Partial AST", 50));
             println!("{:#?}", partial_parsed_program);
-            print_all_errors_and_message("The parser or tokenizer failed partially");
+            print_all_errors_and_message("The parser or tokenizer failed partially", res);
             exit(1);
         }
         CompileStatus::AnalysisErrors {
@@ -96,7 +96,7 @@ fn main() {
             println!("{:#?}", program);
             println!("{}", generate_header("Function Terminations", 50));
             println!("{:#?}", function_terminations);
-            print_all_errors_and_message("Program analysis found some errors");
+            print_all_errors_and_message("Program analysis found some errors", res);
             exit(1);
         }
         CompileStatus::IrGeneratorFailure {
@@ -114,7 +114,7 @@ fn main() {
             println!("{:#?}", program);
             println!("{}", generate_header("Function Terminations", 50));
             println!("{:#?}", function_terminations);
-            print_all_errors_and_message("The ir generator failed completely");
+            print_all_errors_and_message("The ir generator failed completely", res);
             exit(1);
         }
         CompileStatus::IrGeneratorErrors {
@@ -145,7 +145,7 @@ fn main() {
                     .unwrap_or("<Module is invalid>".to_string())
             );
 
-            print_all_errors_and_message("The ir generator failed partially");
+            print_all_errors_and_message("The ir generator failed partially", res);
             exit(1);
         }
         CompileStatus::Success {
@@ -177,11 +177,20 @@ fn main() {
             );
         }
     }
-    let program = res.status.program().unwrap().clone();
+    let mut program = res.status.program().unwrap().clone();
     let module = res.status.module().unwrap();
 
+    let c_code = CCodeGenerator::new(
+        res.status
+            .type_analysis_data()
+            .expect("type data must exist if we get here"),
+    )
+    .visit_program(&mut program);
+
     println!("{}", generate_header("C Code", 50));
-    println!("{}", generate_c(AstNode::Program(program.clone())));
+    println!("{}", c_code);
+
+    std::fs::write("./out.c", c_code).expect("Writing to './out.c' failed");
 
     /*
     println!("{}", generate_header("Document Model", 50));
@@ -232,5 +241,5 @@ fn main() {
 
     println!("Object file written to {:?}", output_path);
 
-    print_all_errors_and_message("There are warnings");
+    print_all_errors_and_message("There are warnings", res);
 }

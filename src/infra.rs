@@ -3,6 +3,7 @@ use std::error::Error;
 use inkwell::{
     context::Context, module::Module, passes::PassBuilderOptions, targets::TargetMachine,
 };
+use itertools::Itertools;
 
 use crate::{
     ast::{AstNode, AstVisitor, PerNodeData, Program},
@@ -121,7 +122,6 @@ pub fn print_error_message(source: &str, error: &FleetError) {
                 .as_str(),
             ))
         })
-        .collect::<Vec<_>>()
         .join("\n");
     let after_err = source_lines.skip(error.end.line);
 
@@ -129,12 +129,10 @@ pub fn print_error_message(source: &str, error: &FleetError) {
         .skip(error.start.line.saturating_sub(num_before_error_lines + 1))
         .skip_while(|(_line, text)| text.trim() == "")
         .map(pad_with_line_number)
-        .collect::<Vec<_>>()
         .join("\n");
     let after_err_trunc = after_err
         .take(num_after_error_lines)
         .map(pad_with_line_number)
-        .collect::<Vec<_>>()
         .join("\n");
 
     println!(

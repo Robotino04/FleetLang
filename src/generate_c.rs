@@ -1,239 +1,504 @@
 use std::{cell::RefCell, rc::Rc};
 
+use indoc::formatdoc;
+
 use itertools::Itertools;
 
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
-        CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, GroupingLValue, IdkType,
-        IfStatement, IntType, NumberExpression, OnStatement, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, GroupingLValue, HasID,
+        IdkType, IfStatement, IntType, NumberExpression, OnStatement, PerNodeData, Program,
+        ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody,
+        ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
-    passes::type_propagation::RuntimeType,
+    passes::type_propagation::{
+        Function, RuntimeType, TypeAnalysisData, UnionFindSet, UnionFindSetPtr, Variable,
+    },
 };
 
-fn generate_function_declaration(function: &FunctionDefinition, mut prefix: String) -> String {
-    let params = Itertools::intersperse(
-        function
-            .parameters
-            .iter()
-            .map(|(param, _comma)| generate_c(param.clone())),
-        ", ".to_string(),
-    )
-    .collect::<String>();
+pub struct CCodeGenerator<'inputs> {
+    variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
+    function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
+    type_data: &'inputs PerNodeData<UnionFindSetPtr>,
+    type_sets: &'inputs UnionFindSet<RuntimeType>,
 
-    if function.name == "main" {
-        prefix = "".to_string();
+    temporary_counter: u64,
+}
+impl<'inputs> CCodeGenerator<'inputs> {
+    pub fn new(analysis_data: &'inputs TypeAnalysisData) -> Self {
+        let TypeAnalysisData {
+            type_data,
+            type_sets,
+            variable_data,
+            function_data,
+        } = &analysis_data;
+
+        Self {
+            variable_data,
+            function_data,
+            type_data,
+            type_sets,
+            temporary_counter: 0,
+        }
     }
 
-    "void".to_string() //generate_c(function.return_type.clone())
-        + " "
-        + &prefix
-        + function.name.as_str()
-        + "("
-        + if function.parameters.is_empty() {
-            "void"
-        } else {
-            params.as_str()
+    fn runtime_type_to_c(&self, type_: RuntimeType) -> (String, String) {
+        match type_ {
+            RuntimeType::I8 => ("int8_t".to_string(), "".to_string()),
+            RuntimeType::I16 => ("int16_t".to_string(), "".to_string()),
+            RuntimeType::I32 => ("int32_t".to_string(), "".to_string()),
+            RuntimeType::I64 => ("int64_t".to_string(), "".to_string()),
+            RuntimeType::UnsizedInt => {
+                unreachable!("unsized ints should have caused errors before calling c_generator")
+            }
+            RuntimeType::Boolean => ("bool".to_string(), "".to_string()),
+            RuntimeType::Unit => ("void".to_string(), "".to_string()),
+            RuntimeType::Unknown => {
+                unreachable!("unknown types should have caused errors before calling c_generator")
+            }
+            RuntimeType::Error => {
+                unreachable!("unknown types should have caused errors before calling c_generator")
+            }
+            RuntimeType::ArrayOf { subtype, size } => {
+                let (type_, after_id) = self.runtime_type_to_c(*self.type_sets.get(subtype));
+                let Some(size) = size else {
+                    unreachable!("arrays should all have a size before calling c_generator");
+                };
+                (type_, format!("[{size}]{after_id}"))
+            }
         }
-        + ")"
+    }
+    fn runtime_type_to_byte_size(&self, type_: RuntimeType) -> usize {
+        match type_ {
+            RuntimeType::I8 => 1,
+            RuntimeType::I16 => 2,
+            RuntimeType::I32 => 4,
+            RuntimeType::I64 => 8,
+            RuntimeType::UnsizedInt => {
+                unreachable!("unsized ints should have caused errors before calling c_generator")
+            }
+            RuntimeType::Boolean => 1,
+            RuntimeType::Unit => 0,
+            RuntimeType::Unknown => {
+                unreachable!("unknown types should have caused errors before calling c_generator")
+            }
+            RuntimeType::Error => {
+                unreachable!("unknown types should have caused errors before calling c_generator")
+            }
+            RuntimeType::ArrayOf { subtype, size } => {
+                let subtype_size = self.runtime_type_to_byte_size(*self.type_sets.get(subtype));
+                let size = size.expect("arrays should all have a size before calling c_generator");
+                size * subtype_size
+            }
+        }
+    }
+
+    fn generate_function_declaration(&self, function: &Function, mangle: bool) -> String {
+        let params = function
+            .parameter_types
+            .iter()
+            .map(|(param, name)| {
+                let (type_, after_id) = self.runtime_type_to_c(*self.type_sets.get(*param));
+                type_ + " " + &self.mangle_variable(name) + &after_id
+            })
+            .join(", ");
+
+        let (type_, after_id) = self.runtime_type_to_c(*self.type_sets.get(function.return_type));
+        type_
+            + &after_id
+            + " "
+            + if mangle {
+                self.mangle_function(&function.name)
+            } else {
+                function.name.clone()
+            }
+            .as_str()
+            + "("
+            + if function.parameter_types.is_empty() {
+                "void"
+            } else {
+                &params
+            }
+            + ")"
+    }
+
+    fn mangle_variable(&self, name: &str) -> String {
+        format!("fleet_{name}")
+    }
+    fn mangle_function(&self, name: &str) -> String {
+        format!("fleet_{name}")
+    }
+    fn unique_temporary(&mut self, name: &str) -> String {
+        let count = self.temporary_counter;
+        self.temporary_counter += 1;
+        format!("temporary_{name}_{count}")
+    }
 }
 
-fn to_c_type(type_: Rc<RefCell<RuntimeType>>) -> String {
-    return match *type_.borrow() {
-        RuntimeType::I8 => "int8_t".to_string(),
-        RuntimeType::I16 => "int16_t".to_string(),
-        RuntimeType::I32 => "int32_t".to_string(),
-        RuntimeType::I64 => "int64_t".to_string(),
-        RuntimeType::UnsizedInt => {
-            unreachable!("all types must be known before calling generate_c")
-        }
-        RuntimeType::Boolean => "bool".to_string(),
-        RuntimeType::Unit => "void".to_string(),
-        RuntimeType::Unknown => {
-            unreachable!("all types must be known before calling generate_c")
-        }
-        RuntimeType::Error => unreachable!("all types must be known before calling generate_c"),
-        RuntimeType::ArrayOf {
-            subtype: _,
-            size: _,
-        } => format!("{}[]", "/* TODO: type inference access in c gen */"),
-    };
+#[derive(Default)]
+pub struct PreStatementValue {
+    pub pre_statements: String,
+    pub out_value: String,
 }
 
-pub fn generate_c(node: impl Into<AstNode>) -> String {
-    match node.into() {
-        AstNode::Program(program) => {
-            let function_definitions = program
-                .functions
+impl AstVisitor for CCodeGenerator<'_> {
+    type ProgramOutput = String;
+    type FunctionDefinitionOutput = String;
+    type FunctionBodyOutput = String;
+    type SimpleBindingOutput = String;
+    type StatementOutput = String;
+    type ExecutorHostOutput = String;
+    type ExecutorOutput = String;
+    type ExpressionOutput = PreStatementValue;
+    type LValueOutput = PreStatementValue;
+    type TypeOutput = String;
+
+    fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
+        let function_definitions = program
+            .functions
+            .iter_mut()
+            .map(|f| self.visit_function_definition(f))
+            .join("\n");
+
+        let function_declarations = program
+            .functions
+            .iter()
+            .map(|f| {
+                self.generate_function_declaration(
+                    &self
+                        .function_data
+                        .get(&f.get_id())
+                        .expect("Functions should be tracked before calling c_generator")
+                        .borrow()
+                        .clone(),
+                    f.name != "main",
+                ) + ";"
+            })
+            .join("\n");
+
+        formatdoc!(
+            r##"
+            #include <stdio.h>
+            #include <stdlib.h>
+            #include <stdint.h>
+            #include <stdbool.h>
+            #include <string.h>
+
+
+            // function declarations
+            {function_declarations}
+
+            // function definitions
+            {function_definitions}
+            "##,
+        )
+    }
+
+    fn visit_function_definition(
+        &mut self,
+        FunctionDefinition {
+            let_token: _,
+            name,
+            name_token: _,
+            equal_token: _,
+            open_paren_token: _,
+            parameters: _,
+            close_paren_token: _,
+            right_arrow_token: _,
+            return_type: _,
+            body,
+            id,
+        }: &mut FunctionDefinition,
+    ) -> Self::FunctionDefinitionOutput {
+        let function = self
+            .function_data
+            .get(id)
+            .expect("Functions should be tracked before calling c_generator");
+
+        self.generate_function_declaration(&function.borrow().clone(), name != "main")
+            + self.visit_function_body(body).as_str()
+    }
+
+    fn visit_statement_function_body(
+        &mut self,
+        StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        format!("{{{}}}", self.visit_statement(statement))
+    }
+
+    fn visit_extern_function_body(
+        &mut self,
+        ExternFunctionBody {
+            at_token: _,
+            extern_token: _,
+            symbol,
+            symbol_token: _,
+            semicolon_token: _,
+            id,
+        }: &mut ExternFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        let parent_function = self.function_data.get(id).unwrap();
+        let mut fake_extern_function = parent_function.borrow().clone();
+        fake_extern_function.name = symbol.clone();
+
+        formatdoc!(
+            "
+            {{
+                extern {};
+                return {symbol}({});
+            }}\
+            ",
+            self.generate_function_declaration(&fake_extern_function, false),
+            parent_function
+                .borrow()
+                .parameter_types
                 .iter()
-                .map(|f| generate_c(f.clone()))
-                .collect::<Vec<_>>()
-                .join("\n");
+                .map(|(_param, name)| self.mangle_variable(name))
+                .join(",")
+        )
+    }
 
-            let function_declarations = program
-                .functions
-                .iter()
-                .map(|f| generate_function_declaration(f, "fleet_".to_string()) + ";")
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            format!(
-                r##"#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-
-// function declarations
-{function_declarations}
-
-// function definitions
-{function_definitions}
-"##
-            )
-        }
-        AstNode::FunctionDefinition(
-            function @ FunctionDefinition {
-                body: FunctionBody::Statement(_),
-                ..
-            },
-        ) => {
-            generate_function_declaration(&function, "fleet_".to_string())
-                + " "
-                + generate_c(function.body).as_str()
-        }
-        AstNode::FunctionDefinition(
-            ref function @ FunctionDefinition {
-                body:
-                    FunctionBody::Extern(ExternFunctionBody {
-                        at_token: _,
-                        extern_token: _,
-                        ref symbol,
-                        symbol_token: _,
-                        semicolon_token: _,
-                        id: _,
-                    }),
-                ..
-            },
-        ) => {
-            let mut fake_extern_function = function.clone();
-            fake_extern_function.name = symbol.clone();
-
-            generate_function_declaration(function, "fleet_".to_string())
-                + " {\n"
-                + "    extern "
-                + &generate_function_declaration(&fake_extern_function, "".to_string())
-                + ";\n"
-                + "    return "
-                + symbol
-                + "("
-                + &function
-                    .parameters
-                    .iter()
-                    .map(|(param, _comma)| "fleet_".to_string() + &param.name)
-                    .join(",")
-                + ");\n"
-                + "}"
-        }
-        AstNode::ExternFunctionBody(_) => {
-            unreachable!(
-                "external function bodies should be handled by FunctionDefinition directly"
-            );
-        }
-        AstNode::StatementFunctionBody(StatementFunctionBody { statement, id: _ }) => {
-            generate_c(statement)
-        }
-        AstNode::SimpleBinding(SimpleBinding {
+    fn visit_simple_binding(
+        &mut self,
+        SimpleBinding {
             name_token: _,
             name,
             type_: _,
-            id: _,
-        }) => {
-            format!("{} fleet_{}", "int32_t" /*generate_c(type_)*/, name)
-        }
-        AstNode::ExpressionStatement(ExpressionStatement {
+            id,
+        }: &mut SimpleBinding,
+    ) -> Self::SimpleBindingOutput {
+        let inferred_type = *self.type_sets.get(
+            *self
+                .type_data
+                .get(id)
+                .expect("Bindings should have types before calling c_generator"),
+        );
+
+        let (type_, after_id) = self.runtime_type_to_c(inferred_type);
+
+        format!("{} {}{}", type_, self.mangle_variable(name), after_id)
+    }
+
+    fn visit_expression_statement(
+        &mut self,
+        ExpressionStatement {
             expression,
             semicolon_token: _,
             id: _,
-        }) => generate_c(expression) + ";",
-        AstNode::OnStatement(OnStatement {
-            on_token: _,
-            open_paren_token: _,
-            executor: _,
-            close_paren_token: _,
-            body: _,
-            id: _,
-        }) => {
-            todo!();
-        }
-        AstNode::BlockStatement(BlockStatement {
+        }: &mut ExpressionStatement,
+    ) -> Self::StatementOutput {
+        let PreStatementValue {
+            pre_statements,
+            out_value,
+        } = self.visit_expression(expression);
+        format!("{}{};", pre_statements, out_value)
+    }
+
+    fn visit_on_statement(&mut self, _on_stmt: &mut OnStatement) -> Self::StatementOutput {
+        todo!()
+    }
+
+    fn visit_block_statement(
+        &mut self,
+        BlockStatement {
             open_brace_token: _,
             body,
             close_brace_token: _,
             id: _,
-        }) => {
-            "{\n".to_string()
-                + indent::indent_all_by(
-                    4,
-                    body.iter()
-                        .map(|tls| generate_c(tls.clone()))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
-                .as_str()
-                + "\n}"
-        }
-        AstNode::ReturnStatement(ReturnStatement {
+        }: &mut BlockStatement,
+    ) -> Self::StatementOutput {
+        formatdoc!(
+            "
+            {{
+                {}
+            }}\
+            ",
+            indent::indent_by(
+                4,
+                body.iter_mut()
+                    .map(|stmt| self.visit_statement(stmt))
+                    .join("\n"),
+            )
+        )
+    }
+
+    fn visit_return_statement(
+        &mut self,
+        ReturnStatement {
             return_token: _,
             value,
             semicolon_token: _,
             id: _,
-        }) => "return ".to_string() + &value.map(generate_c).unwrap_or("".to_string()) + ";",
-        AstNode::VariableDefinitionStatement(VariableDefinitionStatement {
+        }: &mut ReturnStatement,
+    ) -> Self::StatementOutput {
+        let PreStatementValue {
+            pre_statements,
+            out_value,
+        } = value
+            .as_mut()
+            .map(|expr| self.visit_expression(expr))
+            .unwrap_or(PreStatementValue::default());
+        format!("{}return {};", pre_statements, out_value)
+    }
+
+    fn visit_variable_definition_statement(
+        &mut self,
+        VariableDefinitionStatement {
             let_token: _,
             binding,
             equals_token: _,
             value,
             semicolon_token: _,
             id: _,
-        }) => generate_c(binding) + " = " + &generate_c(value) + ";",
-        AstNode::IfStatement(IfStatement {
+        }: &mut VariableDefinitionStatement,
+    ) -> Self::StatementOutput {
+        let ref_var = self
+            .variable_data
+            .get(&binding.get_id())
+            .expect("var data must exist before calling c_generator")
+            .clone();
+
+        let type_ = self.type_sets.get(ref_var.borrow().type_);
+
+        if let RuntimeType::ArrayOf {
+            subtype: _,
+            size: _,
+        } = *type_
+        {
+            let num_bytes = self.runtime_type_to_byte_size(*type_);
+
+            let lvalue_gen = self.visit_simple_binding(binding);
+            let lvalue_temporary = self.mangle_variable(&ref_var.borrow().name);
+
+            let rvalue_temporary = self.unique_temporary("rvalue");
+            let PreStatementValue {
+                pre_statements: rvalue_pre_statements,
+                out_value: rvalue_out_value,
+            } = self.visit_expression(&mut *value);
+            let (rvalue_type, rvalue_postfix) = self.runtime_type_to_c(*type_);
+
+            let rvalue_gen =
+                format!("{rvalue_type} (*{rvalue_temporary}){rvalue_postfix} = {rvalue_out_value}");
+
+            let memcpy = format!("memcpy(&{lvalue_temporary}, {rvalue_temporary}, {num_bytes})");
+
+            formatdoc!(
+                "
+                {lvalue_gen};
+                {rvalue_pre_statements}
+                {{
+                    {};
+                    {};
+                }}\
+                ",
+                indent::indent_by(4, rvalue_gen),
+                indent::indent_by(4, memcpy),
+            )
+        } else {
+            let PreStatementValue {
+                pre_statements,
+                out_value,
+            } = self.visit_expression(&mut *value);
+            format!(
+                "{pre_statements}{} = ({out_value});",
+                self.visit_simple_binding(binding),
+            )
+        }
+    }
+
+    fn visit_if_statement(
+        &mut self,
+        IfStatement {
             if_token: _,
             condition,
             if_body,
             elifs,
             else_,
             id: _,
-        }) => {
-            "if (".to_string()
-                + &generate_c(condition)
-                + ") {"
-                + &generate_c(*if_body)
-                + "}"
-                + &elifs
-                    .iter()
-                    .map(|(_token, condition, body)| {
-                        "else if (".to_string()
-                            + &generate_c(condition.clone())
-                            + ") {"
-                            + &generate_c(body.clone())
-                            + "}"
-                    })
-                    .collect::<String>()
-                + &else_
-                    .map(|(_token, body)| " else {".to_string() + &generate_c(*body) + "}")
-                    .unwrap_or("".to_string())
-        }
-        AstNode::WhileLoopStatement(WhileLoopStatement {
+        }: &mut IfStatement,
+    ) -> Self::StatementOutput {
+        let PreStatementValue {
+            pre_statements,
+            out_value,
+        } = self.visit_expression(condition);
+
+        let (elif_prestatements, elifs): (Vec<_>, Vec<_>) = elifs
+            .iter_mut()
+            .map(|(_token, condition, body)| {
+                let PreStatementValue {
+                    pre_statements,
+                    out_value,
+                } = self.visit_expression(condition);
+                (
+                    pre_statements,
+                    formatdoc!(
+                        "
+                        else if ({out_value}) {{
+                            {}
+                        }}\
+                        ",
+                        indent::indent_by(4, self.visit_statement(body))
+                    ),
+                )
+            })
+            .unzip();
+
+        formatdoc!(
+            "
+            {pre_statements}{}if ({out_value}) {{
+                {}
+            }}
+            {}\
+            ",
+            elif_prestatements.concat(),
+            indent::indent_by(4, self.visit_statement(&mut *if_body)),
+            elifs.join("\n")
+        ) + &else_
+            .as_mut()
+            .map(|(_token, body)| {
+                formatdoc!(
+                    "
+                        else {{
+                            {}
+                        }}\
+                        ",
+                    self.visit_statement(&mut *body)
+                )
+            })
+            .unwrap_or("".to_string())
+    }
+
+    fn visit_while_loop_statement(
+        &mut self,
+        WhileLoopStatement {
             while_token: _,
             condition,
             body,
             id: _,
-        }) => "while (".to_string() + &generate_c(condition) + ") {" + &generate_c(*body) + "}",
-        AstNode::ForLoopStatement(ForLoopStatement {
+        }: &mut WhileLoopStatement,
+    ) -> Self::StatementOutput {
+        let PreStatementValue {
+            pre_statements,
+            out_value,
+        } = self.visit_expression(condition);
+        formatdoc!(
+            "
+            {pre_statements}while ({out_value}) {{
+                {}
+            }}\
+            ",
+            indent::indent_by(4, self.visit_statement(&mut *body))
+        )
+    }
+
+    fn visit_for_loop_statement(
+        &mut self,
+        ForLoopStatement {
             for_token: _,
             open_paren_token: _,
             initializer,
@@ -243,106 +508,387 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
             close_paren_token: _,
             body,
             id: _,
-        }) => {
-            "for (".to_string()
-                + &generate_c(*initializer)
-                + &condition.map(generate_c).unwrap_or("".to_string())
-                + ";"
-                + &incrementer.map(generate_c).unwrap_or("".to_string())
-                + ") {"
-                + &generate_c(*body)
-                + "}"
-        }
-        AstNode::BreakStatement(_break_statement) => "break;".to_string(),
-        AstNode::SkipStatement(_skip_statement) => "continue;".to_string(),
-        AstNode::SelfExecutorHost(SelfExecutorHost { token: _, id: _ }) => "self".to_string(),
-        AstNode::ThreadExecutor(ThreadExecutor {
-            host,
-            dot_token: _,
-            thread_token: _,
-            open_bracket_token: _,
-            index,
-            close_bracket_token: _,
+        }: &mut ForLoopStatement,
+    ) -> Self::StatementOutput {
+        let PreStatementValue {
+            pre_statements: cond_pre_statements,
+            out_value: cond_out_value,
+        } = condition
+            .as_mut()
+            .map(|cond| self.visit_expression(cond))
+            .unwrap_or(PreStatementValue::default());
+        let PreStatementValue {
+            pre_statements: inc_pre_statements,
+            out_value: inc_out_value,
+        } = incrementer
+            .as_mut()
+            .map(|inc| self.visit_expression(inc))
+            .unwrap_or(PreStatementValue::default());
+        formatdoc!(
+            "
+            {cond_pre_statements}{inc_pre_statements}for ({} {cond_out_value}; {inc_out_value}) {{
+                {}
+            }}\
+            ",
+            self.visit_statement(initializer),
+            indent::indent_by(4, self.visit_statement(&mut *body))
+        )
+    }
+
+    fn visit_break_statement(
+        &mut self,
+        BreakStatement {
+            break_token: _,
+            semicolon_token: _,
             id: _,
-        }) => generate_c(host) + ".threads[" + generate_c(index).as_str() + "]",
-        AstNode::NumberExpression(NumberExpression {
+        }: &mut BreakStatement,
+    ) -> Self::StatementOutput {
+        "break;".to_string()
+    }
+
+    fn visit_skip_statement(
+        &mut self,
+        SkipStatement {
+            skip_token: _,
+            semicolon_token: _,
+            id: _,
+        }: &mut SkipStatement,
+    ) -> Self::StatementOutput {
+        "continue;".to_string()
+    }
+
+    fn visit_self_executor_host(
+        &mut self,
+        _executor_host: &mut SelfExecutorHost,
+    ) -> Self::ExecutorHostOutput {
+        todo!()
+    }
+
+    fn visit_thread_executor(&mut self, _executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
+        todo!()
+    }
+
+    fn visit_number_expression(
+        &mut self,
+        NumberExpression {
             value,
             token: _,
             id: _,
-        }) => value.to_string(),
-        AstNode::BoolExpression(BoolExpression {
+        }: &mut NumberExpression,
+    ) -> Self::ExpressionOutput {
+        PreStatementValue {
+            pre_statements: "".to_string(),
+            out_value: value.to_string(),
+        }
+    }
+
+    fn visit_bool_expression(
+        &mut self,
+        BoolExpression {
             value,
             token: _,
             id: _,
-        }) => value.to_string(),
-        AstNode::ArrayExpression(ArrayExpression {
-            open_bracket_token: _,
-            elements: _,
-            close_bracket_token: _,
-            id: _,
-        }) => {
-            // TODO: once we use AstVisitor here, add this so the type is available
-            /*
-            return format!("(({}){{ {} }})", /* type of array */, /* items of array */)
-            */
-            "{/* TODO: array literals */}".to_string()
+        }: &mut BoolExpression,
+    ) -> Self::ExpressionOutput {
+        PreStatementValue {
+            pre_statements: "".to_string(),
+            out_value: value.to_string(),
         }
-        AstNode::FunctionCallExpression(FunctionCallExpression {
+    }
+
+    fn visit_array_expression(
+        &mut self,
+        ArrayExpression {
+            open_bracket_token: _,
+            elements,
+            close_bracket_token: _,
+            id,
+        }: &mut ArrayExpression,
+    ) -> Self::ExpressionOutput {
+        let inferred_type = *self.type_sets.get(
+            *self
+                .type_data
+                .get(id)
+                .expect("Array expressions should have types before calling c_generator"),
+        );
+
+        let (type_, after_id) = self.runtime_type_to_c(inferred_type);
+
+        let RuntimeType::ArrayOf { subtype, size: _ } = inferred_type else {
+            unreachable!("array expressions must have type ArrayOf(_)")
+        };
+
+        if let RuntimeType::ArrayOf { subtype: _, size } = self.type_sets.get(subtype) {
+            let subtype = *self.type_sets.get(subtype);
+            let size = size.expect("arrays must have their size set before calling c_generator");
+            let (pre_statements, definitions, temporaries): (Vec<_>, Vec<_>, Vec<_>) = elements
+                .iter_mut()
+                .map(|(element, _comma)| {
+                    let rvalue_temporary = self.unique_temporary("element");
+                    let PreStatementValue {
+                        pre_statements,
+                        out_value,
+                    } = self.visit_expression(element);
+                    let (rvalue_type, rvalue_postfix) = self.runtime_type_to_c(subtype);
+
+                    let rvalue_gen = format!(
+                        "{rvalue_type} (*{rvalue_temporary}){rvalue_postfix} = {out_value};\n"
+                    );
+
+                    (pre_statements, rvalue_gen, rvalue_temporary)
+                })
+                .multiunzip();
+
+            let out_temporary = self.unique_temporary("out");
+
+            PreStatementValue {
+                pre_statements: format!(
+                    "{pre_statements}{type_} (*{out_temporary}){after_id};\n",
+                    pre_statements = indent::indent_by(4, pre_statements.concat()),
+                ),
+                out_value: formatdoc!(
+                    "
+                    ({{
+                        {definitions}
+                        {out_temporary} = (&(({type_}{after_id}){{ {elements} }}));
+                        {out_temporary};
+                    }})\
+                    ",
+                    definitions = indent::indent_by(4, definitions.concat()),
+                    elements = indent::indent_by(
+                        4,
+                        temporaries
+                            .iter()
+                            .flat_map(|tmp| {
+                                (0..size)
+                                    .map(|i| format!("((*({tmp}))[{i}])"))
+                                    .collect_vec()
+                            })
+                            .join(", ")
+                    ),
+                ),
+            }
+        } else {
+            let (pre_statements, elements): (Vec<_>, Vec<_>) = elements
+                .iter_mut()
+                .map(|(element, _comma)| self.visit_expression(element))
+                .map(
+                    |PreStatementValue {
+                         pre_statements,
+                         out_value,
+                     }| (pre_statements, out_value),
+                )
+                .unzip();
+            PreStatementValue {
+                pre_statements: pre_statements.concat(),
+                out_value: format!("(&(({}{}){{ {} }}))", type_, after_id, elements.join(", ")),
+            }
+        }
+    }
+
+    fn visit_function_call_expression(
+        &mut self,
+        FunctionCallExpression {
             name,
             name_token: _,
             open_paren_token: _,
             arguments,
             close_paren_token: _,
             id: _,
-        }) => {
-            "fleet_".to_string()
-                + &name
-                + "("
-                + arguments
-                    .iter()
-                    .map(|(arg, _comma)| generate_c(arg.clone()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-                    .as_str()
-                + ")"
+        }: &mut FunctionCallExpression,
+    ) -> Self::ExpressionOutput {
+        let (pre_statements, args): (Vec<_>, Vec<_>) = arguments
+            .iter_mut()
+            .map(|(arg, _comma)| self.visit_expression(arg))
+            .map(
+                |PreStatementValue {
+                     pre_statements,
+                     out_value,
+                 }| (pre_statements, out_value),
+            )
+            .unzip();
+        PreStatementValue {
+            pre_statements: pre_statements.concat(),
+            out_value: format!(
+                "{}({})",
+                self.mangle_function(name),
+                args.iter().map(|arg| format!("({arg})")).join(",")
+            ),
         }
-        AstNode::ArrayIndexExpression(ArrayIndexExpression {
+    }
+
+    fn visit_array_index_expression(
+        &mut self,
+        ArrayIndexExpression {
             array,
             open_bracket_token: _,
             index,
             close_bracket_token: _,
+            id,
+        }: &mut ArrayIndexExpression,
+    ) -> Self::ExpressionOutput {
+        let PreStatementValue {
+            pre_statements: array_pre_statements,
+            out_value: array_out_value,
+        } = self.visit_expression(&mut *array);
+        let PreStatementValue {
+            pre_statements: index_pre_statements,
+            out_value: index_out_value,
+        } = self.visit_expression(&mut *index);
+
+        if let RuntimeType::ArrayOf {
+            subtype: _,
+            size: _,
+        } = self.type_sets.get(
+            *self
+                .type_data
+                .get(id)
+                .expect("type data must exist before calling c_generator"),
+        ) {
+            PreStatementValue {
+                pre_statements: array_pre_statements + &index_pre_statements,
+                out_value: format!("(&(*({array_out_value}))[{index_out_value}])"),
+            }
+        } else {
+            PreStatementValue {
+                pre_statements: array_pre_statements + &index_pre_statements,
+                out_value: format!("((*({array_out_value}))[{index_out_value}])"),
+            }
+        }
+    }
+
+    fn visit_grouping_expression(
+        &mut self,
+        GroupingExpression {
+            open_paren_token: _,
+            subexpression,
+            close_paren_token: _,
             id: _,
-        }) => "(".to_string() + &generate_c(*array) + ")[" + &generate_c(*index) + "]",
-        AstNode::UnaryExpression(UnaryExpression {
+        }: &mut GroupingExpression,
+    ) -> Self::ExpressionOutput {
+        let PreStatementValue {
+            pre_statements,
+            out_value,
+        } = self.visit_expression(&mut *subexpression);
+
+        PreStatementValue {
+            pre_statements,
+            out_value: format!("({out_value})"),
+        }
+    }
+
+    fn visit_variable_access_expression(
+        &mut self,
+        VariableAccessExpression {
+            name,
+            name_token: _,
+            id,
+        }: &mut VariableAccessExpression,
+    ) -> Self::ExpressionOutput {
+        let ref_var = self
+            .variable_data
+            .get(id)
+            .expect("var data must exist before calling c_generator")
+            .clone();
+
+        let type_ = self.type_sets.get(ref_var.borrow().type_);
+
+        if let RuntimeType::ArrayOf {
+            subtype: _,
+            size: _,
+        } = *type_
+        {
+            PreStatementValue {
+                pre_statements: "".to_string(),
+                out_value: format!("(&{})", self.mangle_variable(name)),
+            }
+        } else {
+            PreStatementValue {
+                pre_statements: "".to_string(),
+                out_value: self.mangle_variable(name),
+            }
+        }
+    }
+
+    fn visit_unary_expression(
+        &mut self,
+        UnaryExpression {
+            operator_token: _,
             operation,
             operand,
-            operator_token: _,
             id: _,
-        }) => {
-            match operation {
-                UnaryOperation::BitwiseNot => "~",
-                UnaryOperation::LogicalNot => "!",
-                UnaryOperation::Negate => "-",
-            }
-            .to_string()
-                + generate_c(*operand).as_str()
+        }: &mut UnaryExpression,
+    ) -> Self::ExpressionOutput {
+        let PreStatementValue {
+            pre_statements,
+            out_value,
+        } = self.visit_expression(&mut *operand);
+
+        PreStatementValue {
+            pre_statements,
+            out_value: format!(
+                "({}({out_value}))",
+                match operation {
+                    UnaryOperation::BitwiseNot => "~",
+                    UnaryOperation::LogicalNot => "!",
+                    UnaryOperation::Negate => "-",
+                },
+            ),
         }
-        AstNode::CastExpression(CastExpression {
+    }
+
+    fn visit_cast_expression(
+        &mut self,
+        CastExpression {
             operand,
             as_token: _,
-            type_,
-            id: _,
-        }) => format!("(({})({}))", generate_c(type_), generate_c(*operand)),
-        AstNode::BinaryExpression(BinaryExpression {
+            type_: _,
+            id,
+        }: &mut CastExpression,
+    ) -> Self::ExpressionOutput {
+        let (type_, after_id) = self.runtime_type_to_c(
+            *self.type_sets.get(
+                *self
+                    .type_data
+                    .get(id)
+                    .expect("types should be inferred before calling c_generator"),
+            ),
+        );
+
+        let PreStatementValue {
+            pre_statements,
+            out_value,
+        } = self.visit_expression(&mut *operand);
+
+        PreStatementValue {
+            pre_statements,
+            out_value: format!("(({type_}{after_id})({out_value}))"),
+        }
+    }
+
+    fn visit_binary_expression(
+        &mut self,
+        BinaryExpression {
             left,
             operator_token: _,
             operation,
             right,
             id: _,
-        }) => {
-            format!(
-                "({} {} {})",
-                generate_c(*left),
+        }: &mut BinaryExpression,
+    ) -> Self::ExpressionOutput {
+        let PreStatementValue {
+            pre_statements: left_pre_statements,
+            out_value: left_out_value,
+        } = self.visit_expression(&mut *left);
+        let PreStatementValue {
+            pre_statements: right_pre_statements,
+            out_value: right_out_value,
+        } = self.visit_expression(&mut *right);
+
+        PreStatementValue {
+            pre_statements: left_pre_statements + &right_pre_statements,
+            out_value: format!(
+                "(({left_out_value}) {} ({right_out_value}))",
                 match operation {
                     BinaryOperation::Add => "+",
                     BinaryOperation::Subtract => "-",
@@ -358,85 +904,229 @@ pub fn generate_c(node: impl Into<AstNode>) -> String {
                     BinaryOperation::LogicalAnd => "&&",
                     BinaryOperation::LogicalOr => "||",
                 },
-                generate_c(*right)
-            )
+            ),
         }
-        AstNode::GroupingExpression(GroupingExpression {
-            open_paren_token: _,
-            subexpression,
-            close_paren_token: _,
-            id: _,
-        }) => {
-            format!("({})", generate_c(*subexpression))
-        }
-        AstNode::VariableAccessExpression(VariableAccessExpression {
-            name,
-            name_token: _,
-            id: _,
-        }) => "fleet_".to_string() + &name,
-        AstNode::VariableAssignmentExpression(VariableAssignmentExpression {
+    }
+
+    fn visit_variable_assignment_expression(
+        &mut self,
+        VariableAssignmentExpression {
             lvalue,
             equal_token: _,
             right,
-            id: _,
-        }) => {
-            format!("({} = {})", generate_c(lvalue), generate_c(*right))
+            id,
+        }: &mut VariableAssignmentExpression,
+    ) -> Self::ExpressionOutput {
+        let type_ = self.type_sets.get(
+            *self
+                .type_data
+                .get(id)
+                .expect("Types must exist before calling c_generator"),
+        );
+        if let RuntimeType::ArrayOf {
+            subtype: _,
+            size: _,
+        } = *type_
+        {
+            let num_bytes = self.runtime_type_to_byte_size(*type_);
+
+            let lvalue_temporary = self.unique_temporary("lvalue");
+            let PreStatementValue {
+                pre_statements: lvalue_pre_statements,
+                out_value: lvalue,
+            } = self.visit_lvalue(lvalue);
+            let lvalue = format!("(&({lvalue}))");
+            let (lvalue_type, lvalue_postfix) = self.runtime_type_to_c(*type_);
+
+            let lvalue_gen =
+                format!("{lvalue_type} (*{lvalue_temporary}){lvalue_postfix} = {lvalue}");
+
+            let rvalue_temporary = self.unique_temporary("rvalue");
+            let PreStatementValue {
+                pre_statements: rvalue_pre_statements,
+                out_value: rvalue_out_value,
+            } = self.visit_expression(&mut *right);
+            let (rvalue_type, rvalue_postfix) = self.runtime_type_to_c(*type_);
+
+            let rvalue_pre = format!("{rvalue_type} (*{rvalue_temporary}){rvalue_postfix};\n");
+            let rvalue_gen = format!("{rvalue_temporary} = {rvalue_out_value}");
+
+            let memcpy = format!("memcpy({lvalue_temporary}, {rvalue_temporary}, {num_bytes})");
+
+            PreStatementValue {
+                pre_statements: lvalue_pre_statements + &rvalue_pre + &rvalue_pre_statements,
+                out_value: formatdoc!(
+                    "
+                    ({{
+                        {};
+                        {};
+                        {};
+                        {};
+                    }})\
+                    ",
+                    indent::indent_by(4, lvalue_gen),
+                    indent::indent_by(4, rvalue_gen),
+                    indent::indent_by(4, memcpy),
+                    indent::indent_by(4, rvalue_temporary),
+                ),
+            }
+        } else {
+            let PreStatementValue {
+                pre_statements: rpre_statements,
+                out_value: out_rvalue,
+            } = self.visit_expression(&mut *right);
+
+            let PreStatementValue {
+                pre_statements: lpre_statements,
+                out_value: out_lvalue,
+            } = self.visit_lvalue(lvalue);
+
+            PreStatementValue {
+                pre_statements: lpre_statements + &rpre_statements,
+                out_value: format!("(({out_lvalue}) = ({out_rvalue}))",),
+            }
         }
-        AstNode::VariableLValue(VariableLValue {
+    }
+
+    fn visit_variable_lvalue(
+        &mut self,
+        VariableLValue {
             name,
             name_token: _,
             id: _,
-        }) => name,
-        AstNode::ArrayIndexLValue(ArrayIndexLValue {
+        }: &mut VariableLValue,
+    ) -> Self::LValueOutput {
+        PreStatementValue {
+            pre_statements: "".to_string(),
+            out_value: self.mangle_variable(name),
+        }
+    }
+
+    fn visit_array_index_lvalue(
+        &mut self,
+        ArrayIndexLValue {
             array,
             open_bracket_token: _,
             index,
             close_bracket_token: _,
             id: _,
-        }) => format!("({})[{}]", generate_c(*array), generate_c(*index)),
-        AstNode::GroupingLValue(GroupingLValue {
+        }: &mut ArrayIndexLValue,
+    ) -> Self::LValueOutput {
+        let PreStatementValue {
+            pre_statements: rpre_statements,
+            out_value: out_rvalue,
+        } = self.visit_expression(&mut *index);
+
+        let PreStatementValue {
+            pre_statements: lpre_statements,
+            out_value: out_lvalue,
+        } = self.visit_lvalue(array);
+        PreStatementValue {
+            pre_statements: lpre_statements + &rpre_statements,
+            out_value: format!("(({out_lvalue})[{out_rvalue}])",),
+        }
+    }
+
+    fn visit_grouping_lvalue(
+        &mut self,
+        GroupingLValue {
             open_paren_token: _,
             sublvalue,
             close_paren_token: _,
             id: _,
-        }) => {
-            format!("({})", generate_c(*sublvalue))
+        }: &mut GroupingLValue,
+    ) -> Self::LValueOutput {
+        let PreStatementValue {
+            pre_statements,
+            out_value,
+        } = self.visit_lvalue(&mut *sublvalue);
+
+        PreStatementValue {
+            pre_statements,
+            out_value: format!("({out_value})"),
         }
-        AstNode::IntType(IntType {
+    }
+
+    fn visit_int_type(
+        &mut self,
+        IntType {
             token: _,
-            type_,
-            id: _,
-        }) => match type_ {
-            RuntimeType::I8 => "int8_t",
-            RuntimeType::I16 => "int16_t",
-            RuntimeType::I32 => "int32_t",
-            RuntimeType::I64 => "int64_t",
-            RuntimeType::UnsizedInt => unreachable!("not sized int type"),
-            RuntimeType::Boolean => unreachable!("not sized int type"),
-            RuntimeType::Unit => unreachable!("not sized int type"),
-            RuntimeType::Unknown => unreachable!("not sized int type"),
-            RuntimeType::Error => unreachable!("not sized int type"),
-            RuntimeType::ArrayOf {
-                subtype: _,
-                size: _,
-            } => unreachable!("not sized int type"),
-        }
-        .to_string(),
-        AstNode::UnitType(UnitType {
+            type_: _,
+            id,
+        }: &mut IntType,
+    ) -> Self::TypeOutput {
+        let (type_, after_id) = self.runtime_type_to_c(
+            *self.type_sets.get(
+                *self
+                    .type_data
+                    .get(id)
+                    .expect("type data should exist before calling c_generator"),
+            ),
+        );
+        type_ + &after_id
+    }
+
+    fn visit_unit_type(
+        &mut self,
+        UnitType {
             open_paren_token: _,
             close_paren_token: _,
-            id: _,
-        }) => "void".to_string(),
-        AstNode::BoolType(BoolType { token: _, id: _ }) => "bool".to_string(),
-        AstNode::IdkType(IdkType { token: _, id: _ }) => {
-            "/* TODO: type inference in c */".to_string()
-        }
-        AstNode::ArrayType(ArrayType {
-            subtype,
+            id,
+        }: &mut UnitType,
+    ) -> Self::TypeOutput {
+        let (type_, after_id) = self.runtime_type_to_c(
+            *self.type_sets.get(
+                *self
+                    .type_data
+                    .get(id)
+                    .expect("type data should exist before calling c_generator"),
+            ),
+        );
+        type_ + &after_id
+    }
+
+    fn visit_bool_type(&mut self, BoolType { token: _, id }: &mut BoolType) -> Self::TypeOutput {
+        let (type_, after_id) = self.runtime_type_to_c(
+            *self.type_sets.get(
+                *self
+                    .type_data
+                    .get(id)
+                    .expect("type data should exist before calling c_generator"),
+            ),
+        );
+        type_ + &after_id
+    }
+
+    fn visit_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> Self::TypeOutput {
+        let (type_, after_id) = self.runtime_type_to_c(
+            *self.type_sets.get(
+                *self
+                    .type_data
+                    .get(id)
+                    .expect("type data should exist before calling c_generator"),
+            ),
+        );
+        type_ + &after_id
+    }
+
+    fn visit_array_type(
+        &mut self,
+        ArrayType {
+            subtype: _,
             open_bracket_token: _,
             size: _,
             close_bracket_token: _,
-            id: _,
-        }) => format!("*{}", generate_c(*subtype)),
+            id,
+        }: &mut ArrayType,
+    ) -> Self::TypeOutput {
+        let (type_, after_id) = self.runtime_type_to_c(
+            *self.type_sets.get(
+                *self
+                    .type_data
+                    .get(id)
+                    .expect("type data should exist before calling c_generator"),
+            ),
+        );
+        type_ + &after_id
     }
 }

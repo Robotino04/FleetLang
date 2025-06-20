@@ -17,18 +17,15 @@
 - find a better way to store CompileStatus
 - add quick fix system for e.g. non-block as if body
 - notes for removable parens
-- show parameter names in hover for FunctionCallExpression. Likely requires storing the definition node, in which case, errors like multiple definitions could show the first definition
 - run analysis even on errored parse
 - maybe make non-block-statement fixes a code action instead of formatting. Replace `assert_compile_error_no_formatting` after
 - tuple types
-- arrays
 - structs
 - sum types
 - f32, f64
 - comptime evaluation
 - comptime type eval for generics (similar to zig/hblang)
-- use constraint based type inference, `Rc<RefCell<Rc<RefCell<>>>>` or <https://en.wikipedia.org/wiki/Disjoint-set_data_structure>
-- use AstVisitor for `generate_c` and `find_node_bounds`
+- use AstVisitor for `find_node_bounds`
 - simplify `get_precedence` and `get_associativity` using impl or a trait
 - add way to get length of array
 

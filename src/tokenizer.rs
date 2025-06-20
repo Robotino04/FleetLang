@@ -1,5 +1,7 @@
 use std::cmp::Ordering;
 
+use itertools::Itertools;
+
 use crate::infra::{ErrorSeverity, FleetError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,7 +51,7 @@ pub enum TokenType {
     EqualSign,
     SingleRightArrow,
 
-    Number(i64),
+    Number(u64),
     StringLiteral(String),
 
     ExclamationMark,
@@ -159,7 +161,7 @@ pub struct Tokenizer<'errors> {
 impl<'errors> Tokenizer<'errors> {
     pub fn new(src: String, errors: &'errors mut Vec<FleetError>) -> Self {
         Self {
-            chars: src.chars().collect::<Vec<_>>(),
+            chars: src.chars().collect_vec(),
             current_location: SourceLocation::start(),
 
             tokens: vec![],

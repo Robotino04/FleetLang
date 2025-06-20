@@ -1,6 +1,6 @@
 #[cfg(test)]
 use std::fmt::Debug;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use inkwell::{
     OptimizationLevel,
@@ -10,13 +10,59 @@ use inkwell::{
 };
 
 use fleet::{
+    ast::AstVisitor,
+    generate_c::CCodeGenerator,
     infra::{
         CompileResult, CompileStatus, ErrorSeverity, FleetError, compile_program, format_program,
         run_default_optimization_passes,
     },
     tokenizer::SourceLocation,
 };
-use tempfile::tempdir;
+use tempfile::{TempDir, tempdir};
+
+pub trait SubprocessTestableReturnType {
+    fn into_return_value(self) -> i8;
+}
+impl SubprocessTestableReturnType for i64 {
+    fn into_return_value(self) -> i8 {
+        assert_eq!(
+            self as i8 as i64, self,
+            "{} (i64) would be truncated and can't be tested against",
+            self
+        );
+        self as i8
+    }
+}
+impl SubprocessTestableReturnType for i32 {
+    fn into_return_value(self) -> i8 {
+        assert_eq!(
+            self as i8 as i32, self,
+            "{} (i32) would be truncated and can't be tested against",
+            self
+        );
+        self as i8
+    }
+}
+impl SubprocessTestableReturnType for i16 {
+    fn into_return_value(self) -> i8 {
+        assert_eq!(
+            self as i8 as i16, self,
+            "{} (i16) would be truncated and can't be tested against",
+            self
+        );
+        self as i8
+    }
+}
+impl SubprocessTestableReturnType for i8 {
+    fn into_return_value(self) -> i8 {
+        self
+    }
+}
+impl SubprocessTestableReturnType for bool {
+    fn into_return_value(self) -> i8 {
+        self as i8
+    }
+}
 
 pub fn assert_parser_or_tokenizer_error(src: &str, error_start: SourceLocation) {
     let context = Context::create();
@@ -99,7 +145,7 @@ pub fn assert_compile_and_warning(src: &str, warning_start: SourceLocation) {
     assert_warning_at_position(&result.errors, warning_start);
 }
 
-pub fn assert_compile_and_return_value<ReturnType>(
+pub fn assert_compile_and_return_value_llvm_only<ReturnType>(
     src: &str,
     function_name: &str,
     expected_return_value: ReturnType,
@@ -108,6 +154,24 @@ pub fn assert_compile_and_return_value<ReturnType>(
 {
     assert_compile_and_return_value_unformatted(src, function_name, expected_return_value);
     assert_is_formatted(src.trim());
+}
+pub fn assert_compile_and_return_value<ReturnType>(
+    src: &str,
+    function_name: &str,
+    expected_return_value: ReturnType,
+) where
+    ReturnType: Debug + PartialEq + SubprocessTestableReturnType + Clone,
+{
+    assert_is_formatted(src.trim());
+    println!("Source is formatted");
+    assert_compile_and_return_value_unformatted::<ReturnType>(
+        src,
+        function_name,
+        expected_return_value.clone(),
+    );
+    println!("LLVM execution succeeded");
+    assert_compile_and_output_subprocess(src, expected_return_value.into_return_value(), "", "");
+    println!("Subprocess execution succeeded");
 }
 
 pub fn assert_compile_and_return_value_unformatted<ReturnType>(
@@ -231,12 +295,7 @@ fn assert_is_formatted(src: &str) {
     );
 }
 
-pub fn assert_compile_and_output_subprocess(
-    src: &str,
-    expected_exit_code: i32,
-    expected_stdout: impl AsRef<str>,
-    expected_stderr: impl AsRef<str>,
-) {
+fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
     let context = Context::create();
     let result = compile_or_panic(&context, src);
 
@@ -259,47 +318,124 @@ pub fn assert_compile_and_output_subprocess(
 
     run_default_optimization_passes(module, &target_machine).unwrap();
 
-    let output_dir = tempdir().unwrap();
-    let object_file = output_dir.path().join("test.o");
-    let binary_file = output_dir.path().join("test");
+    let object_file = dir.path().join("test.o");
+    let binary_file = dir.path().join("test");
 
     target_machine
         .write_to_file(module, FileType::Object, object_file.as_path())
         .unwrap();
 
-    assert!(
-        Command::new("clang")
-            .arg(object_file.to_str().unwrap())
-            .arg("-o")
-            .arg(binary_file.to_str().unwrap())
-            .spawn()
-            .unwrap()
-            .wait()
-            .unwrap()
-            .success()
-    );
-
-    let cmd = Command::new(binary_file)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    println!("Calling clang to link {object_file:?} to {binary_file:?}");
+    let clang_out = Command::new("clang")
+        .arg("-fdiagnostics-color=always")
+        .arg(object_file.to_str().unwrap())
+        .arg("-o")
+        .arg(binary_file.to_str().unwrap())
+        .output()
         .unwrap();
+    print!(
+        "Clang stdout:\n{}",
+        String::from_utf8(clang_out.stdout).unwrap()
+    );
+    print!(
+        "Clang stderr:\n{}",
+        String::from_utf8(clang_out.stderr).unwrap()
+    );
+    assert!(clang_out.status.success());
 
-    let output = cmd.wait_with_output().unwrap();
+    binary_file.to_string_lossy().to_string()
+}
+fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
+    let context = Context::create();
+    let mut result = compile_or_panic(&context, src);
+
+    let mut program = result.status.program().unwrap().clone();
+
+    let c_code = CCodeGenerator::new(result.status.type_analysis_data().unwrap())
+        .visit_program(&mut program);
+
+    let c_file = dir.path().join("test.c");
+    let binary_file = dir.path().join("test");
+
+    println!("Writing C code to {c_file:?}");
+    std::fs::write(&c_file, c_code).unwrap();
+
+    println!("Calling clang to compile {c_file:?} to {binary_file:?}");
+    let clang_out = Command::new("clang")
+        .arg("-fdiagnostics-color=always")
+        .arg(c_file.to_str().unwrap())
+        .arg("-o")
+        .arg(binary_file.to_str().unwrap())
+        .output()
+        .unwrap();
+    print!(
+        "Clang stdout:\n{}",
+        String::from_utf8(clang_out.stdout).unwrap()
+    );
+    print!(
+        "Clang stderr:\n{}",
+        String::from_utf8(clang_out.stderr).unwrap()
+    );
+    assert!(clang_out.status.success());
+
+    binary_file.to_str().unwrap().to_string()
+}
+
+fn run_and_check_output(
+    binary: String,
+    expected_exit_code: impl SubprocessTestableReturnType,
+    expected_stdout: impl AsRef<str>,
+    expected_stderr: impl AsRef<str>,
+) {
+    let output = Command::new(binary).output().unwrap();
+
     assert_eq!(
-        output.status.code().unwrap(),
-        expected_exit_code,
-        "exit code doesn't match"
+        output.status.code().unwrap() as i8,
+        expected_exit_code.into_return_value(),
+        "exit code doesn't match (left should be right)"
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
         expected_stdout.as_ref(),
-        "stdout doesn't match"
+        "stdout doesn't match (left should be right)"
     );
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
         expected_stderr.as_ref(),
-        "stderr doesn't match"
+        "stderr doesn't match (left should be right)"
     );
+}
+
+pub fn assert_compile_and_output_subprocess(
+    src: &str,
+    expected_exit_code: impl SubprocessTestableReturnType + Clone,
+    expected_stdout: impl AsRef<str> + Clone,
+    expected_stderr: impl AsRef<str> + Clone,
+) {
     assert_is_formatted(src);
+    println!("Source is formatted");
+
+    {
+        let llvm_tmpdir = tempdir().unwrap();
+        let llvm_bin = compile_to_binary_llvm(src, &llvm_tmpdir);
+        run_and_check_output(
+            llvm_bin,
+            expected_exit_code.clone(),
+            expected_stdout.clone(),
+            expected_stderr.clone(),
+        );
+        println!("LLVM subprocess execution succeeded");
+    }
+
+    {
+        let c_tmpdir = tempdir().unwrap();
+        let c_bin = compile_to_binary_c(src, &c_tmpdir);
+        run_and_check_output(
+            c_bin,
+            expected_exit_code.clone(),
+            expected_stdout.clone(),
+            expected_stderr.clone(),
+        );
+        println!("C subprocess execution succeeded");
+    }
 }

@@ -762,7 +762,7 @@ pub enum Associativity {
 }
 #[derive(Clone, Debug)]
 pub struct NumberExpression {
-    pub value: i64,
+    pub value: u64,
     pub token: Token,
     pub id: NodeID,
 }
