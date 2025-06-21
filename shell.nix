@@ -10,7 +10,13 @@ in
       pkgs.libxml2
       pkgs.libffi
       pkgs.ncurses # pkgs.libtinfo is broken atm
-      pkgs.llvmPackages_18.clang-tools # required for tests
+      pkgs.llvmPackages_18.clang-tools
+      pkgs.llvmPackages_18.clang # required for tests
+
+      pkgs.glfw
+      pkgs.libGL
+      pkgs.libGL.dev
+      pkgs.glslang
     ];
 
     env = {
