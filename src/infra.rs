@@ -1,16 +1,15 @@
 use std::error::Error;
 
-use inkwell::{
-    context::Context, module::Module, passes::PassBuilderOptions, targets::TargetMachine,
-};
+#[cfg(feature = "llvm_backend")]
+use inkwell::{context::Context, module::Module, targets::TargetMachine};
 use itertools::Itertools;
 
 use crate::{
     ast::{AstNode, AstVisitor, PerNodeData, Program},
     ast_to_dm::AstToDocumentModelConverter,
     document_model::{fully_flatten_document, stringify_document},
-    ir_generator::IrGenerator,
-    parser::{IdGenerator, Parser},
+    generate_c::CCodeGenerator,
+    parser::{IdGenerator, Parser, ParserError},
     passes::{
         err_missing_type_in_parameter::ErrMissingTypeInParam,
         find_node_bonds::find_node_bounds,
@@ -150,323 +149,139 @@ pub fn print_error_message(source: &str, error: &FleetError) {
 }
 
 #[derive(Clone, Debug)]
-pub enum CompileStatus<'a> {
-    ParserFailure {
-        tokens: Vec<Token>,
-    },
-    TokenizerOrParserErrors {
-        tokens: Vec<Token>,
-        partial_parsed_program: Program,
-        id_generator: IdGenerator,
-    },
-    AnalysisErrors {
-        tokens: Vec<Token>,
-        parsed_program: Program,
-        parsed_id_generator: IdGenerator,
-        program: Program,
-        id_generator: IdGenerator,
-        function_terminations: PerNodeData<FunctionTermination>,
-        type_analysis_data: TypeAnalysisData,
-    },
-    IrGeneratorFailure {
-        tokens: Vec<Token>,
-        parsed_program: Program,
-        parsed_id_generator: IdGenerator,
-        program: Program,
-        id_generator: IdGenerator,
-        function_terminations: PerNodeData<FunctionTermination>,
-        type_analysis_data: TypeAnalysisData,
-    },
-    IrGeneratorErrors {
-        tokens: Vec<Token>,
-        parsed_program: Program,
-        parsed_id_generator: IdGenerator,
-        program: Program,
-        id_generator: IdGenerator,
-        function_terminations: PerNodeData<FunctionTermination>,
-        type_analysis_data: TypeAnalysisData,
-        partial_module: Option<Module<'a>>,
-    },
-    Success {
-        tokens: Vec<Token>,
-        parsed_program: Program,
-        parsed_id_generator: IdGenerator,
-        program: Program,
-        id_generator: IdGenerator,
-        function_terminations: PerNodeData<FunctionTermination>,
-        type_analysis_data: TypeAnalysisData,
-        module: Module<'a>,
-    },
+pub struct TokenizerOutput {
+    pub tokens: Vec<Token>,
 }
 
-impl<'a> CompileStatus<'a> {
-    pub fn module(&self) -> Option<&Module<'a>> {
-        match &self {
-            CompileStatus::ParserFailure { .. } => None,
-            CompileStatus::TokenizerOrParserErrors { .. } => None,
-            CompileStatus::AnalysisErrors { .. } => None,
-            CompileStatus::IrGeneratorFailure { .. } => None,
-            CompileStatus::IrGeneratorErrors { partial_module, .. } => partial_module.as_ref(),
-            CompileStatus::Success { module, .. } => Some(module),
-        }
+impl TokenizerOutput {
+    pub fn new(src: &str, errors: &mut Vec<FleetError>) -> Option<Self> {
+        let tokens = Tokenizer::new(src.to_string(), errors).tokenize();
+
+        Some(Self { tokens })
     }
-    pub fn tokens(&self) -> Option<&Vec<Token>> {
-        match &self {
-            CompileStatus::ParserFailure { tokens } => Some(tokens),
-            CompileStatus::TokenizerOrParserErrors { tokens, .. } => Some(tokens),
-            CompileStatus::AnalysisErrors { tokens, .. } => Some(tokens),
-            CompileStatus::IrGeneratorFailure { tokens, .. } => Some(tokens),
-            CompileStatus::IrGeneratorErrors { tokens, .. } => Some(tokens),
-            CompileStatus::Success { tokens, .. } => Some(tokens),
-        }
-    }
-    pub fn program(&self) -> Option<&Program> {
-        match &self {
-            CompileStatus::ParserFailure { .. } => None,
-            CompileStatus::TokenizerOrParserErrors {
-                partial_parsed_program,
-                ..
-            } => Some(partial_parsed_program),
-            CompileStatus::AnalysisErrors { program, .. } => Some(program),
-            CompileStatus::IrGeneratorFailure { program, .. } => Some(program),
-            CompileStatus::IrGeneratorErrors { program, .. } => Some(program),
-            CompileStatus::Success { program, .. } => Some(program),
-        }
-    }
-    // the program as it was parsed without any modifications
-    pub fn parsed_program(&self) -> Option<&Program> {
-        match &self {
-            CompileStatus::ParserFailure { .. } => None,
-            CompileStatus::TokenizerOrParserErrors {
-                partial_parsed_program,
-                ..
-            } => Some(partial_parsed_program),
-            CompileStatus::AnalysisErrors { parsed_program, .. } => Some(parsed_program),
-            CompileStatus::IrGeneratorFailure { parsed_program, .. } => Some(parsed_program),
-            CompileStatus::IrGeneratorErrors { parsed_program, .. } => Some(parsed_program),
-            CompileStatus::Success { parsed_program, .. } => Some(parsed_program),
-        }
-    }
-    pub fn id_generator(&self) -> Option<&IdGenerator> {
-        match &self {
-            CompileStatus::ParserFailure { .. } => None,
-            CompileStatus::TokenizerOrParserErrors { id_generator, .. } => Some(id_generator),
-            CompileStatus::AnalysisErrors { id_generator, .. } => Some(id_generator),
-            CompileStatus::IrGeneratorFailure { id_generator, .. } => Some(id_generator),
-            CompileStatus::IrGeneratorErrors { id_generator, .. } => Some(id_generator),
-            CompileStatus::Success { id_generator, .. } => Some(id_generator),
-        }
-    }
-    pub fn type_analysis_data(&self) -> Option<&TypeAnalysisData> {
-        match &self {
-            CompileStatus::ParserFailure { .. } => None,
-            CompileStatus::TokenizerOrParserErrors { .. } => None,
-            CompileStatus::AnalysisErrors {
-                type_analysis_data, ..
-            } => Some(type_analysis_data),
-            CompileStatus::IrGeneratorFailure {
-                type_analysis_data, ..
-            } => Some(type_analysis_data),
-            CompileStatus::IrGeneratorErrors {
-                type_analysis_data, ..
-            } => Some(type_analysis_data),
-            CompileStatus::Success {
-                type_analysis_data, ..
-            } => Some(type_analysis_data),
-        }
-    }
-    pub fn function_terminations(&self) -> Option<&PerNodeData<FunctionTermination>> {
-        match &self {
-            CompileStatus::ParserFailure { .. } => None,
-            CompileStatus::TokenizerOrParserErrors { .. } => None,
-            CompileStatus::AnalysisErrors {
-                function_terminations,
-                ..
-            } => Some(function_terminations),
-            CompileStatus::IrGeneratorFailure {
-                function_terminations,
-                ..
-            } => Some(function_terminations),
-            CompileStatus::IrGeneratorErrors {
-                function_terminations,
-                ..
-            } => Some(function_terminations),
-            CompileStatus::Success {
-                function_terminations,
-                ..
-            } => Some(function_terminations),
-        }
-    }
-    pub fn parsed_id_generator(&self) -> Option<&IdGenerator> {
-        match &self {
-            CompileStatus::ParserFailure { .. } => None,
-            CompileStatus::TokenizerOrParserErrors { id_generator, .. } => Some(id_generator),
-            CompileStatus::AnalysisErrors {
-                parsed_id_generator,
-                ..
-            } => Some(parsed_id_generator),
-            CompileStatus::IrGeneratorFailure {
-                parsed_id_generator,
-                ..
-            } => Some(parsed_id_generator),
-            CompileStatus::IrGeneratorErrors {
-                parsed_id_generator,
-                ..
-            } => Some(parsed_id_generator),
-            CompileStatus::Success {
-                parsed_id_generator,
-                ..
-            } => Some(parsed_id_generator),
-        }
+
+    pub fn parse(&self, errors: &mut Vec<FleetError>) -> Result<ParserOutput, ParserError> {
+        Parser::new(self.tokens.clone(), errors)
+            .parse_program()
+            .map(|(program, id_generator)| ParserOutput {
+                program,
+                id_generator,
+            })
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct CompileResult<'a> {
-    pub status: CompileStatus<'a>,
-    pub errors: Vec<FleetError>,
+pub struct ParserOutput {
+    pub program: Program,
+    pub id_generator: IdGenerator,
 }
 
-pub fn compile_program<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
-    let mut errors = vec![];
+impl ParserOutput {
+    pub fn analyze(&self, errors: &mut Vec<FleetError>) -> Option<AnalysisOutput> {
+        let mut id_generator = self.id_generator.clone();
+        let mut program = self.program.clone();
+        let term_analyzer = FunctionTerminationAnalyzer::new(errors);
+        let function_terminations = term_analyzer.visit_program(&mut program);
+        let type_analysis_data =
+            TypePropagator::new(errors, &mut id_generator).visit_program(&mut program);
 
-    let tokens = Tokenizer::new(src.to_string(), &mut errors).tokenize();
+        run_fix_passes(errors, &mut program, &mut id_generator);
 
-    let Ok((mut program, mut id_generator)) =
-        Parser::new(tokens.clone(), &mut errors).parse_program()
-    else {
-        return CompileResult {
-            status: CompileStatus::ParserFailure { tokens },
-            errors,
-        };
-    };
-
-    let parsed_program = program.clone();
-    let parsed_id_generator = id_generator.clone();
-
-    if errors
-        .iter()
-        .any(|err| err.severity == ErrorSeverity::Error)
-    {
-        return CompileResult {
-            status: CompileStatus::TokenizerOrParserErrors {
-                tokens,
-                partial_parsed_program: parsed_program,
-                id_generator: parsed_id_generator,
-            },
-            errors,
-        };
-    }
-
-    // Analysis
-    let term_analyzer = FunctionTerminationAnalyzer::new(&mut errors);
-    let function_terminations = term_analyzer.visit_program(&mut program);
-    let analysis_data =
-        TypePropagator::new(&mut errors, &mut id_generator).visit_program(&mut program);
-
-    run_fix_passes(&mut errors, &mut program, &mut id_generator);
-
-    if errors
-        .iter()
-        .any(|err| err.severity == ErrorSeverity::Error)
-    {
-        return CompileResult {
-            status: CompileStatus::AnalysisErrors {
-                tokens,
-                parsed_program,
-                program,
-                type_analysis_data: analysis_data,
-                function_terminations,
-                parsed_id_generator,
-                id_generator,
-            },
-            errors,
-        };
-    }
-
-    let ir_generator =
-        IrGenerator::new(context, &mut errors, &function_terminations, &analysis_data);
-    let module = match ir_generator.visit_program(&mut program) {
-        Ok(module) => module,
-        Err(error) => {
-            errors.push(FleetError {
-                start: SourceLocation::start(),
-                end: program
-                    .functions
-                    .first()
-                    .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
-                message: match error.source() {
-                    Some(source) => format!("{} ({:?})", error, source),
-                    None => error.to_string(),
-                },
-                severity: ErrorSeverity::Error,
-            });
-            return CompileResult {
-                status: CompileStatus::IrGeneratorFailure {
-                    tokens,
-                    parsed_program,
-                    program,
-                    type_analysis_data: analysis_data,
-                    function_terminations,
-                    parsed_id_generator,
-                    id_generator,
-                },
-                errors,
-            };
-        }
-    };
-
-    if errors
-        .iter()
-        .any(|err| err.severity == ErrorSeverity::Error)
-    {
-        return CompileResult {
-            status: CompileStatus::IrGeneratorErrors {
-                tokens,
-                parsed_program,
-                program,
-                type_analysis_data: analysis_data,
-                function_terminations,
-                partial_module: if module.verify().is_ok() {
-                    Some(module)
-                } else {
-                    None
-                },
-                parsed_id_generator,
-                id_generator,
-            },
-            errors,
-        };
-    }
-
-    CompileResult {
-        status: CompileStatus::Success {
-            tokens,
-            parsed_program,
+        Some(AnalysisOutput {
             program,
-            type_analysis_data: analysis_data,
-            function_terminations,
-            module: module.clone(),
-            parsed_id_generator,
             id_generator,
-        },
-        errors,
+            function_terminations,
+            type_analysis_data,
+        })
+    }
+
+    pub fn format(&self) -> String {
+        let mut errors = vec![];
+        run_fix_passes(
+            &mut errors,
+            &mut self.program.clone(),
+            &mut self.id_generator.clone(),
+        );
+
+        let document =
+            AstToDocumentModelConverter::default().visit_program(&mut self.program.clone());
+        stringify_document(&fully_flatten_document(document))
     }
 }
 
-pub fn format_program(mut program: Program, mut id_generator: IdGenerator) -> String {
-    let mut errors = vec![];
+#[derive(Clone, Debug)]
+pub struct AnalysisOutput {
+    pub program: Program,
+    pub id_generator: IdGenerator,
 
-    run_fix_passes(&mut errors, &mut program, &mut id_generator);
-
-    let document = AstToDocumentModelConverter::default().visit_program(&mut program);
-    stringify_document(&fully_flatten_document(document))
+    pub function_terminations: PerNodeData<FunctionTermination>,
+    pub type_analysis_data: TypeAnalysisData,
 }
 
-pub fn run_default_optimization_passes(
-    module: &Module<'_>,
-    target_machine: &TargetMachine,
-) -> Result<(), Box<dyn Error>> {
-    module.run_passes("default<O1>", target_machine, PassBuilderOptions::create())?;
-    Ok(())
+impl AnalysisOutput {
+    #[cfg(feature = "llvm_backend")]
+    pub fn compile_llvm<'a>(
+        &self,
+        errors: &mut Vec<FleetError>,
+        context: &'a Context,
+    ) -> Option<LLVMCompilationOutput<'a>> {
+        use crate::ir_generator::IrGenerator;
+
+        if errors
+            .iter()
+            .any(|err| err.severity == ErrorSeverity::Error)
+        {
+            return None;
+        }
+        let ir_generator = IrGenerator::new(
+            context,
+            errors,
+            &self.function_terminations,
+            &self.type_analysis_data,
+        );
+        match ir_generator.visit_program(&mut self.program.clone()) {
+            Ok(module) => Some(LLVMCompilationOutput { module }),
+            Err(error) => {
+                errors.push(FleetError {
+                    start: SourceLocation::start(),
+                    end: self
+                        .program
+                        .functions
+                        .first()
+                        .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
+                    message: match error.source() {
+                        Some(source) => format!("{} ({:?})", error, source),
+                        None => error.to_string(),
+                    },
+                    severity: ErrorSeverity::Error,
+                });
+
+                None
+            }
+        }
+    }
+
+    pub fn compile_c(&self) -> String {
+        CCodeGenerator::new(&self.type_analysis_data).visit_program(&mut self.program.clone())
+    }
+}
+
+#[cfg(feature = "llvm_backend")]
+#[derive(Clone, Debug)]
+pub struct LLVMCompilationOutput<'a> {
+    pub module: Module<'a>,
+}
+
+#[cfg(feature = "llvm_backend")]
+impl LLVMCompilationOutput<'_> {
+    pub fn run_default_optimization_passes(
+        &self,
+        target_machine: &TargetMachine,
+    ) -> Result<(), Box<dyn Error>> {
+        use inkwell::passes::PassBuilderOptions;
+
+        self.module
+            .run_passes("default<O1>", target_machine, PassBuilderOptions::create())?;
+        Ok(())
+    }
 }

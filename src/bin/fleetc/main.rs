@@ -1,11 +1,6 @@
 use std::{env::args, fs::read_to_string, path::Path, process::exit};
 
-use fleet::ast::AstVisitor;
-use fleet::generate_c::CCodeGenerator;
-use fleet::infra::{
-    CompileResult, CompileStatus, ErrorSeverity, compile_program, format_program,
-    print_error_message, run_default_optimization_passes,
-};
+use fleet::infra::{ErrorSeverity, FleetError, TokenizerOutput, print_error_message};
 use inkwell::{
     OptimizationLevel,
     context::Context,
@@ -33,12 +28,9 @@ fn main() {
         exit(1);
     });
 
-    let context = Context::create();
-    let mut res = compile_program(&context, &src);
-
-    let print_all_errors_and_message = |msg, res: CompileResult<'_>| {
+    let print_all_errors_and_message = |msg, errors: &Vec<FleetError>| {
         let mut worst_error = None;
-        for error in &res.errors {
+        for error in errors {
             if let Some(prev) = worst_error {
                 match (prev, error.severity) {
                     (ErrorSeverity::Warning, ErrorSeverity::Error)
@@ -54,7 +46,7 @@ fn main() {
         }
         if let Some(worst_severity) = worst_error {
             println!("{}", generate_header("Errors", 50));
-            for error in &res.errors {
+            for error in errors {
                 print_error_message(&src, error);
             }
             let ansi_color = ansi_color_for_severity(worst_severity);
@@ -62,130 +54,67 @@ fn main() {
         }
     };
 
-    match &res.status {
-        CompileStatus::ParserFailure { tokens } => {
-            println!("{}", generate_header("Tokens", 50));
-            println!("{:#?}", tokens);
-            print_all_errors_and_message("The parser failed completely", res);
-            exit(1);
-        }
-        CompileStatus::TokenizerOrParserErrors {
-            tokens,
-            partial_parsed_program,
-            id_generator: _,
-        } => {
-            println!("{}", generate_header("Tokens", 50));
-            println!("{:#?}", tokens);
-            println!("{}", generate_header("Partial AST", 50));
-            println!("{:#?}", partial_parsed_program);
-            print_all_errors_and_message("The parser or tokenizer failed partially", res);
-            exit(1);
-        }
-        CompileStatus::AnalysisErrors {
-            tokens,
-            parsed_program: _,
-            parsed_id_generator: _,
-            program,
-            id_generator: _,
-            function_terminations,
-            type_analysis_data: _,
-        } => {
-            println!("{}", generate_header("Tokens", 50));
-            println!("{:#?}", tokens);
-            println!("{}", generate_header("AST", 50));
-            println!("{:#?}", program);
-            println!("{}", generate_header("Function Terminations", 50));
-            println!("{:#?}", function_terminations);
-            print_all_errors_and_message("Program analysis found some errors", res);
-            exit(1);
-        }
-        CompileStatus::IrGeneratorFailure {
-            tokens,
-            parsed_program: _,
-            program,
-            function_terminations,
-            type_analysis_data: _,
-            id_generator: _,
-            parsed_id_generator: _,
-        } => {
-            println!("{}", generate_header("Tokens", 50));
-            println!("{:#?}", tokens);
-            println!("{}", generate_header("AST", 50));
-            println!("{:#?}", program);
-            println!("{}", generate_header("Function Terminations", 50));
-            println!("{:#?}", function_terminations);
-            print_all_errors_and_message("The ir generator failed completely", res);
-            exit(1);
-        }
-        CompileStatus::IrGeneratorErrors {
-            tokens,
-            parsed_program: _,
-            program,
-            partial_module,
-            function_terminations,
-            type_analysis_data: _,
-            id_generator: _,
-            parsed_id_generator: _,
-        } => {
-            println!("{}", generate_header("Tokens", 50));
-            println!("{:#?}", tokens);
+    let mut errors = vec![];
+    let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
+        print_all_errors_and_message("The tokenizer failed completely", &errors);
+        exit(1);
+    };
+    println!("{}", generate_header("Tokens", 50));
+    println!("{:#?}", tokenizer_output.tokens);
 
-            println!("{}", generate_header("AST", 50));
-            println!("{:#?}", program);
-
-            println!("{}", generate_header("Function Terminations", 50));
-            println!("{:#?}", function_terminations);
-
-            println!("{}", generate_header("Partial LLVM IR (unoptimized)", 50));
-            println!(
-                "{}",
-                partial_module
-                    .clone()
-                    .map(|module| module.print_to_string().to_str().unwrap().to_string())
-                    .unwrap_or("<Module is invalid>".to_string())
-            );
-
-            print_all_errors_and_message("The ir generator failed partially", res);
-            exit(1);
-        }
-        CompileStatus::Success {
-            tokens,
-            parsed_program: _,
-            program,
-            module,
-            function_terminations,
-            type_analysis_data: _,
-            id_generator: _,
-            parsed_id_generator: _,
-        } => {
-            println!("{}", generate_header("Tokens", 50));
-            println!("{:#?}", tokens);
-
-            println!("{}", generate_header("AST", 50));
-            println!("{:#?}", program);
-
-            println!("{}", generate_header("Function Terminations", 50));
-            println!("{:#?}", function_terminations);
-
-            println!("{}", generate_header("LLVM IR (unoptimized)", 50));
-            println!("{}", module.print_to_string().to_str().unwrap());
-
-            assert!(
-                !res.errors
-                    .iter()
-                    .any(|err| matches!(err.severity, ErrorSeverity::Error))
-            );
-        }
+    if errors
+        .iter()
+        .any(|err| err.severity == ErrorSeverity::Error)
+    {
+        print_all_errors_and_message("The tokenizer failed partially", &errors);
     }
-    let mut program = res.status.program().unwrap().clone();
-    let module = res.status.module().unwrap();
 
-    let c_code = CCodeGenerator::new(
-        res.status
-            .type_analysis_data()
-            .expect("type data must exist if we get here"),
-    )
-    .visit_program(&mut program);
+    let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
+        print_all_errors_and_message("The parser failed completely", &errors);
+        exit(1);
+    };
+    println!("{}", generate_header("AST", 50));
+    println!("{:#?}", parser_output.program);
+
+    if errors
+        .iter()
+        .any(|err| err.severity == ErrorSeverity::Error)
+    {
+        print_all_errors_and_message("The parser failed partially", &errors);
+    }
+
+    let Some(analysis_output) = parser_output.analyze(&mut errors) else {
+        print_all_errors_and_message("Analysis failed completely", &errors);
+        exit(1);
+    };
+
+    println!("{}", generate_header("Function Terminations", 50));
+    println!("{:#?}", analysis_output.function_terminations);
+
+    if errors
+        .iter()
+        .any(|err| err.severity == ErrorSeverity::Error)
+    {
+        print_all_errors_and_message("Program analysis found some errors", &errors);
+    }
+
+    let context = Context::create();
+    let Some(llvm_output) = analysis_output.compile_llvm(&mut errors, &context) else {
+        print_all_errors_and_message("LLVM compilation failed completely", &errors);
+        exit(1);
+    };
+
+    println!("{}", generate_header("LLVM IR (unoptimized)", 50));
+    println!("{:#?}", analysis_output.function_terminations);
+
+    if errors
+        .iter()
+        .any(|err| err.severity == ErrorSeverity::Error)
+    {
+        print_all_errors_and_message("LLVM compilation failed partially", &errors);
+    }
+
+    let c_code = analysis_output.compile_c();
 
     println!("{}", generate_header("C Code", 50));
     println!("{}", c_code);
@@ -204,14 +133,7 @@ fn main() {
     */
 
     println!("{}", generate_header("Pretty-Printed", 50));
-    println!(
-        "{}",
-        format_program(
-            res.status.parsed_program().unwrap().clone(),
-            res.status.parsed_id_generator().unwrap().clone()
-        )
-    );
-    println!("{}", generate_header("", 50));
+    println!("{}", parser_output.format());
 
     Target::initialize_all(&inkwell::targets::InitializationConfig::default());
 
@@ -230,16 +152,18 @@ fn main() {
 
     println!("{}", generate_header("LLVM IR (optimized)", 50));
 
-    run_default_optimization_passes(module, &target_machine).unwrap();
+    llvm_output
+        .run_default_optimization_passes(&target_machine)
+        .unwrap();
 
-    println!("{}", module.print_to_string().to_str().unwrap());
+    println!("{}", llvm_output.module.print_to_string().to_str().unwrap());
 
     let output_path = Path::new("output.o");
     target_machine
-        .write_to_file(module, FileType::Object, output_path)
+        .write_to_file(&llvm_output.module, FileType::Object, output_path)
         .unwrap();
 
     println!("Object file written to {:?}", output_path);
 
-    print_all_errors_and_message("There are warnings", res);
+    print_all_errors_and_message("There are warnings", &errors);
 }

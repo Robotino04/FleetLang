@@ -5,16 +5,13 @@ use std::process::Command;
 use inkwell::{
     OptimizationLevel,
     context::Context,
-    module::Module,
     targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple},
 };
 
 use fleet::{
-    ast::AstVisitor,
-    generate_c::CCodeGenerator,
     infra::{
-        CompileResult, CompileStatus, ErrorSeverity, FleetError, compile_program, format_program,
-        run_default_optimization_passes,
+        AnalysisOutput, ErrorSeverity, FleetError, LLVMCompilationOutput, ParserOutput,
+        TokenizerOutput,
     },
     tokenizer::SourceLocation,
 };
@@ -65,23 +62,15 @@ impl SubprocessTestableReturnType for bool {
 }
 
 pub fn assert_parser_or_tokenizer_error(src: &str, error_start: SourceLocation) {
-    let context = Context::create();
-    let result = compile_program(&context, src);
+    let mut errors = vec![];
+    let Some(tokenizer_output) = TokenizerOutput::new(src, &mut errors) else {
+        panic!("Tokenizer failed completely");
+    };
+    let Ok(_parser_output) = tokenizer_output.parse(&mut errors) else {
+        panic!("Tokenizer failed completely");
+    };
 
-    assert!(
-        match result.status {
-            CompileStatus::ParserFailure { .. } => false,
-            CompileStatus::TokenizerOrParserErrors { .. } => true,
-            CompileStatus::AnalysisErrors { .. } => false,
-            CompileStatus::IrGeneratorFailure { .. } => false,
-            CompileStatus::IrGeneratorErrors { .. } => false,
-            CompileStatus::Success { .. } => false,
-        },
-        "Expected compilation to error at tokenizer or parser. Got {:#?}",
-        result.status
-    );
-
-    assert_error_at_position(&result.errors, error_start);
+    assert_error_at_position(&errors, error_start);
 }
 
 fn assert_error_at_position(errors: &Vec<FleetError>, error_start: SourceLocation) {
@@ -104,45 +93,56 @@ fn assert_warning_at_position(errors: &Vec<FleetError>, warning_start: SourceLoc
     );
 }
 
+pub fn assert_no_fatal_errors(errors: &Vec<FleetError>) {
+    assert!(
+        !errors
+            .iter()
+            .any(|err| err.severity == ErrorSeverity::Error),
+        "There are fatal errors: {errors:#?}"
+    );
+}
+
 pub fn assert_compile_error(src: &str, error_start: SourceLocation) {
     assert_is_formatted(src);
     assert_compile_error_no_formatting(src, error_start);
 }
 pub fn assert_compile_error_no_formatting(src: &str, error_start: SourceLocation) {
-    let context = Context::create();
-    let result = compile_program(&context, src);
+    let mut errors = vec![];
+    let Some(tokenizer_output) = TokenizerOutput::new(src, &mut errors) else {
+        panic!("Tokenizer failed completely");
+    };
+    assert_no_fatal_errors(&errors);
+    let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
+        panic!("Parser failed completely");
+    };
+    assert_no_fatal_errors(&errors);
+    let Some(_analysis_output) = parser_output.analyze(&mut errors) else {
+        panic!("Analysis failed completely");
+    };
 
-    assert!(
-        match result.status {
-            CompileStatus::ParserFailure { .. } => false,
-            CompileStatus::TokenizerOrParserErrors { .. } => false,
-            CompileStatus::AnalysisErrors { .. } => true,
-            CompileStatus::IrGeneratorFailure { .. } => false,
-            CompileStatus::IrGeneratorErrors { .. } => true,
-            CompileStatus::Success { .. } => false,
-        },
-        "Expected compilation to error after parsing. Got {:#?}",
-        result.status
-    );
-    assert_error_at_position(&result.errors, error_start);
+    assert_error_at_position(&errors, error_start);
 }
 pub fn assert_compile_and_warning(src: &str, warning_start: SourceLocation) {
     let context = Context::create();
-    let result = compile_program(&context, src);
+    let mut errors = vec![];
+    let Some(tokenizer_output) = TokenizerOutput::new(src, &mut errors) else {
+        panic!("Tokenizer failed completely");
+    };
+    assert_no_fatal_errors(&errors);
+    let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
+        panic!("Parser failed completely");
+    };
+    assert_no_fatal_errors(&errors);
+    let Some(analysis_output) = parser_output.analyze(&mut errors) else {
+        panic!("Analysis failed completely");
+    };
+    assert_no_fatal_errors(&errors);
+    let Some(_llvm_output) = analysis_output.compile_llvm(&mut errors, &context) else {
+        panic!("LLVM compilation failed completely");
+    };
+    assert_no_fatal_errors(&errors);
 
-    assert!(
-        match result.status {
-            CompileStatus::ParserFailure { .. } => false,
-            CompileStatus::TokenizerOrParserErrors { .. } => false,
-            CompileStatus::AnalysisErrors { .. } => false,
-            CompileStatus::IrGeneratorFailure { .. } => false,
-            CompileStatus::IrGeneratorErrors { .. } => false,
-            CompileStatus::Success { .. } => true,
-        },
-        "Expected compilation to succeed with warnings. Got {:#?}",
-        result.status
-    );
-    assert_warning_at_position(&result.errors, warning_start);
+    assert_warning_at_position(&errors, warning_start);
 }
 
 pub fn assert_compile_and_return_value_llvm_only<ReturnType>(
@@ -182,10 +182,10 @@ pub fn assert_compile_and_return_value_unformatted<ReturnType>(
     ReturnType: Debug + PartialEq,
 {
     let context = Context::create();
-    let result = compile_or_panic(&context, src);
-    let module = result.status.module().unwrap();
+    let (_tokenizer_output, _parser_output, _analysis_output, llvmcompilation_output) =
+        compile_or_panic(&context, src);
 
-    let actual_return_value: ReturnType = execute_function(module, function_name);
+    let actual_return_value: ReturnType = execute_function(&llvmcompilation_output, function_name);
     assert_eq!(
         actual_return_value, expected_return_value,
         "expected {function_name:?} to return {expected_return_value:?} instead of {actual_return_value:?}"
@@ -220,61 +220,76 @@ pub fn assert_formatting_and_same_behaviour<ReturnType>(
     );
 }
 
-fn compile_or_panic<'a>(context: &'a Context, src: &str) -> CompileResult<'a> {
-    let result = compile_program(context, src);
+fn compile_or_panic<'a>(
+    context: &'a Context,
+    src: &str,
+) -> (
+    TokenizerOutput,
+    ParserOutput,
+    AnalysisOutput,
+    LLVMCompilationOutput<'a>,
+) {
+    let mut errors = vec![];
+    let Some(tokenizer_output) = TokenizerOutput::new(src, &mut errors) else {
+        panic!("Tokenizer failed completely");
+    };
+    assert_no_fatal_errors(&errors);
+    let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
+        panic!("Parser failed completely");
+    };
+    assert_no_fatal_errors(&errors);
+    let Some(analysis_output) = parser_output.analyze(&mut errors) else {
+        panic!("Analysis failed completely");
+    };
+    assert_no_fatal_errors(&errors);
+    let Some(llvm_output) = analysis_output.compile_llvm(&mut errors, context) else {
+        panic!("LLVM compilation failed completely");
+    };
+    assert_no_fatal_errors(&errors);
 
-    assert!(result.errors.is_empty(), "{:#?}", result.errors);
-    assert!(
-        matches!(result.status, CompileStatus::Success { .. }),
-        "result.status = {:#?}",
-        result.status
-    );
+    assert!(errors.is_empty(), "{:#?}", errors);
 
-    assert!(result.status.tokens().is_some());
-    assert!(result.status.program().is_some());
-    assert!(result.status.module().is_some());
+    llvm_output.module.verify().unwrap();
 
-    let module = result.status.module().unwrap();
-
-    module.verify().unwrap();
-    result
+    (
+        tokenizer_output,
+        parser_output,
+        analysis_output,
+        llvm_output,
+    )
 }
 
 fn format_or_panic(src: &str) -> String {
-    let context = Context::create();
-    let result = compile_program(&context, src);
+    let mut errors = vec![];
+    let Some(tokenizer_output) = TokenizerOutput::new(src, &mut errors) else {
+        panic!("Tokenizer failed completely");
+    };
+    assert_no_fatal_errors(&errors);
+    let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
+        panic!("Parser failed completely");
+    };
+    assert_no_fatal_errors(&errors);
 
-    assert!(
-        match result.status {
-            CompileStatus::ParserFailure { .. } => false,
-            CompileStatus::TokenizerOrParserErrors { .. } => false,
-            CompileStatus::AnalysisErrors { .. } => true,
-            CompileStatus::IrGeneratorFailure { .. } => true,
-            CompileStatus::IrGeneratorErrors { .. } => true,
-            CompileStatus::Success { .. } => true,
-        },
-        "Cannot format something that doesn't parse: {:#?}",
-        result.status
-    );
-
-    format_program(
-        result.status.parsed_program().unwrap().clone(),
-        result.status.parsed_id_generator().unwrap().clone(),
-    )
+    parser_output.format()
 }
 
 fn execute_or_panic<ReturnType>(src: &str, function_name: &str) -> ReturnType {
     let context = Context::create();
-    let result = compile_or_panic(&context, src);
-    let retval: ReturnType = execute_function(result.status.module().unwrap(), function_name);
-    retval
+    let (_tokenizer_output, _parser_output, _analysis_output, llvmcompilation_output) =
+        compile_or_panic(&context, src);
+
+    execute_function::<ReturnType>(&llvmcompilation_output, function_name)
 }
 
-fn execute_function<ReturnType>(module: &Module, function_name: &str) -> ReturnType {
+fn execute_function<ReturnType>(
+    compilation_output: &LLVMCompilationOutput<'_>,
+    function_name: &str,
+) -> ReturnType {
     Target::initialize_native(&InitializationConfig::default())
         .expect("Failed to initialize native LLVM target");
 
-    let execution_engine = module
+    let execution_engine = compilation_output
+        .module
         .create_jit_execution_engine(inkwell::OptimizationLevel::None)
         .unwrap();
     let main_function = unsafe {
@@ -297,9 +312,8 @@ fn assert_is_formatted(src: &str) {
 
 fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
     let context = Context::create();
-    let result = compile_or_panic(&context, src);
-
-    let module = result.status.module().unwrap();
+    let (_tokenizer_output, _parser_output, _analysis_output, llvmcompilation_output) =
+        compile_or_panic(&context, src);
 
     Target::initialize_all(&inkwell::targets::InitializationConfig::default());
 
@@ -316,13 +330,19 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
         )
         .unwrap();
 
-    run_default_optimization_passes(module, &target_machine).unwrap();
+    llvmcompilation_output
+        .run_default_optimization_passes(&target_machine)
+        .unwrap();
 
     let object_file = dir.path().join("test.o");
     let binary_file = dir.path().join("test");
 
     target_machine
-        .write_to_file(module, FileType::Object, object_file.as_path())
+        .write_to_file(
+            &llvmcompilation_output.module,
+            FileType::Object,
+            object_file.as_path(),
+        )
         .unwrap();
 
     println!("Calling clang to link {object_file:?} to {binary_file:?}");
@@ -347,12 +367,10 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
 }
 fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     let context = Context::create();
-    let mut result = compile_or_panic(&context, src);
+    let (_tokenizer_output, _parser_output, analysis_output, _llvmcompilation_output) =
+        compile_or_panic(&context, src);
 
-    let mut program = result.status.program().unwrap().clone();
-
-    let c_code = CCodeGenerator::new(result.status.type_analysis_data().unwrap())
-        .visit_program(&mut program);
+    let c_code = analysis_output.compile_c();
 
     let c_file = dir.path().join("test.c");
     let binary_file = dir.path().join("test");

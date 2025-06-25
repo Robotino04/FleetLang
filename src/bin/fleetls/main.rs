@@ -13,13 +13,12 @@ use fleet::ast::{
     ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
     VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
 };
-use fleet::infra::{CompileStatus, ErrorSeverity, compile_program, format_program};
+use fleet::infra::{ErrorSeverity, FleetError, TokenizerOutput};
 use fleet::passes::find_containing_node::FindContainingNodePass;
 use fleet::passes::function_termination_analysis::FunctionTermination;
 use fleet::passes::type_propagation::TypeAnalysisData;
 use fleet::tokenizer::{SourceLocation, Token, Trivia, TriviaKind};
 use indoc::indoc;
-use inkwell::context::Context;
 use itertools::Itertools;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::{Client, LspService, Server};
@@ -1259,7 +1258,7 @@ impl LanguageServer for Backend {
         eprintln!("{}", "-".repeat(80));
         eprintln!("{params:#?}");
 
-        let text = self
+        let src = self
             .documents
             .read()
             .unwrap()
@@ -1267,25 +1266,42 @@ impl LanguageServer for Backend {
             .unwrap()
             .clone();
 
-        let context = Context::create();
-        let res = compile_program(&context, text.as_str());
+        fn run_all_main_phases(src: &str) -> Vec<FleetError> {
+            let mut errors = vec![];
 
-        let _program = res
-            .status
-            .parsed_program()
-            .ok_or_else(|| tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
-                message: "Parsing failed completely".into(),
-                data: None,
-            })?;
+            let Some(tokenizer_output) = TokenizerOutput::new(src, &mut errors) else {
+                return errors;
+            };
+
+            let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
+                return errors;
+            };
+
+            let Some(analysis_output) = parser_output.analyze(&mut errors) else {
+                return errors;
+            };
+
+            #[cfg(feature = "llvm_backend")]
+            {
+                use inkwell::context::Context;
+
+                let context = Context::create();
+                let _ = analysis_output.compile_llvm(&mut errors, &context);
+            }
+            #[cfg(not(feature = "llvm_backend"))]
+            let _ = analysis_output;
+
+            errors
+        }
+
+        let errors = run_all_main_phases(&src);
 
         Ok(DocumentDiagnosticReportResult::Report(
             DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
                 related_documents: None,
                 full_document_diagnostic_report: FullDocumentDiagnosticReport {
                     result_id: None,
-                    items: res
-                        .errors
+                    items: errors
                         .iter()
                         .map(|error| Diagnostic {
                             range: Range {
@@ -1359,7 +1375,7 @@ impl LanguageServer for Backend {
         eprintln!("{}", "-".repeat(80));
         eprintln!("{params:#?}");
 
-        let text = self
+        let src = self
             .documents
             .read()
             .unwrap()
@@ -1367,18 +1383,24 @@ impl LanguageServer for Backend {
             .unwrap()
             .clone();
 
-        let context = Context::create();
-        let res = compile_program(&context, text.as_str());
+        let mut errors = vec![];
 
-        let mut program = res
-            .status
-            .parsed_program()
-            .ok_or_else(|| tower_lsp::jsonrpc::Error {
+        let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
+            return Err(tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: "Tokenization failed completely".into(),
+                data: None,
+            });
+        };
+
+        let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
+            return Err(tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
                 message: "Parsing failed completely".into(),
                 data: None,
-            })?
-            .clone();
+            });
+        };
+        let analysis_output = parser_output.analyze(&mut errors);
 
         let cpos = params.text_document_position_params.position;
         let find_pass = FindContainingNodePass::new(SourceLocation {
@@ -1387,17 +1409,19 @@ impl LanguageServer for Backend {
             column: cpos.character as usize,
         });
 
-        let terminations = res.status.function_terminations();
-        let analysis_data = res.status.type_analysis_data();
-
-        if let Ok((node_hierarchy, hovered_token)) = find_pass.visit_program(&mut program) {
+        if let Ok((node_hierarchy, hovered_token)) = find_pass.visit_program(
+            &mut analysis_output
+                .as_ref()
+                .map(|a| a.program.clone())
+                .unwrap_or(parser_output.program.clone()),
+        ) {
             Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
                     value: self.full_hover_text(
                         &node_hierarchy,
-                        terminations,
-                        analysis_data,
+                        analysis_output.as_ref().map(|a| &a.function_terminations),
+                        analysis_output.as_ref().map(|a| &a.type_analysis_data),
                         hovered_token.as_ref(),
                     ),
                 }),
@@ -1424,7 +1448,7 @@ impl LanguageServer for Backend {
         eprintln!("{}", "-".repeat(80));
         eprintln!("{params:#?}");
 
-        let text = self
+        let src = self
             .documents
             .read()
             .unwrap()
@@ -1432,20 +1456,26 @@ impl LanguageServer for Backend {
             .unwrap()
             .clone();
 
-        let context = Context::create();
-        let res = compile_program(&context, text.as_str());
+        let mut errors = vec![];
 
-        let mut program = res
-            .status
-            .parsed_program()
-            .ok_or_else(|| tower_lsp::jsonrpc::Error {
+        let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
+            return Err(tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: "Tokenization failed completely".into(),
+                data: None,
+            });
+        };
+
+        let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
+            return Err(tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
                 message: "Parsing failed completely".into(),
                 data: None,
-            })?
-            .clone();
+            });
+        };
 
-        let semantic_tokens = ExtractSemanticTokensPass::new().visit_program(&mut program);
+        let semantic_tokens =
+            ExtractSemanticTokensPass::new().visit_program(&mut parser_output.program.clone());
 
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             result_id: None,
@@ -1461,7 +1491,7 @@ impl LanguageServer for Backend {
         eprintln!("{}", "-".repeat(80));
         eprintln!("{params:#?}");
 
-        let text = self
+        let src = self
             .documents
             .read()
             .unwrap()
@@ -1469,42 +1499,35 @@ impl LanguageServer for Backend {
             .unwrap()
             .clone();
 
-        let context = Context::create();
-        let res = compile_program(&context, text.as_str());
-
-        if match res.status {
-            CompileStatus::ParserFailure { .. } => true,
-            CompileStatus::TokenizerOrParserErrors { .. } => true,
-            CompileStatus::AnalysisErrors { .. } => false,
-            CompileStatus::IrGeneratorFailure { .. } => false,
-            CompileStatus::IrGeneratorErrors { .. } => false,
-            CompileStatus::Success { .. } => false,
-        } {
+        let mut errors = vec![];
+        let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
             return Err(tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
-                message: "Code has parse errors. Not formatting.".into(),
+                message: "Tokenization failed completely".into(),
+                data: None,
+            });
+        };
+
+        let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
+            return Err(tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: "Parsing failed completely".into(),
+                data: None,
+            });
+        };
+
+        if errors
+            .iter()
+            .any(|err| err.severity == ErrorSeverity::Error)
+        {
+            return Err(tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: "Code has parse errors. Not formatting".into(),
                 data: None,
             });
         }
 
-        let program = res
-            .status
-            .parsed_program()
-            .ok_or_else(|| tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
-                message: "Parsing failed completely".into(),
-                data: None,
-            })?;
-        let id_generator =
-            res.status
-                .parsed_id_generator()
-                .ok_or_else(|| tower_lsp::jsonrpc::Error {
-                    code: tower_lsp::jsonrpc::ErrorCode::ParseError,
-                    message: "Parsing failed completely".into(),
-                    data: None,
-                })?;
-
-        let new_text = format_program(program.clone(), id_generator.clone());
+        let new_text = parser_output.format();
         self.documents
             .write()
             .unwrap()
@@ -1515,7 +1538,7 @@ impl LanguageServer for Backend {
             let _ = client.semantic_tokens_refresh().await;
         });
 
-        let doc_end = SourceLocation::end(text.clone());
+        let doc_end = SourceLocation::end(src.clone());
 
         return Ok(Some(vec![TextEdit {
             range: Range {
@@ -1536,7 +1559,7 @@ impl LanguageServer for Backend {
         eprintln!("{}", "-".repeat(80));
         eprintln!("{params:#?}");
 
-        let text = self
+        let src = self
             .documents
             .read()
             .unwrap()
@@ -1544,18 +1567,24 @@ impl LanguageServer for Backend {
             .unwrap()
             .clone();
 
-        let context = Context::create();
-        let res = compile_program(&context, text.as_str());
+        let mut errors = vec![];
 
-        let mut program = res
-            .status
-            .parsed_program()
-            .ok_or_else(|| tower_lsp::jsonrpc::Error {
+        let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
+            return Err(tower_lsp::jsonrpc::Error {
+                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+                message: "Tokenization failed completely".into(),
+                data: None,
+            });
+        };
+
+        let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
+            return Err(tower_lsp::jsonrpc::Error {
                 code: tower_lsp::jsonrpc::ErrorCode::ParseError,
                 message: "Parsing failed completely".into(),
                 data: None,
-            })?
-            .clone();
+            });
+        };
+        let analysis_output = parser_output.analyze(&mut errors);
 
         let cpos = params.text_document_position_params.position;
         let cpos_sl = SourceLocation {
@@ -1565,9 +1594,12 @@ impl LanguageServer for Backend {
         };
         let find_pass = FindContainingNodePass::new(cpos_sl);
 
-        let analysis_data = res.status.type_analysis_data();
-
-        if let Ok((node_hierarchy, _hovered_token)) = find_pass.visit_program(&mut program) {
+        if let Ok((node_hierarchy, _hovered_token)) = find_pass.visit_program(
+            &mut analysis_output
+                .as_ref()
+                .map(|a| a.program.clone())
+                .unwrap_or(parser_output.program.clone()),
+        ) {
             let mut prev_node = None;
             let mut function_call = None;
             for node in node_hierarchy.iter().rev() {
@@ -1584,14 +1616,21 @@ impl LanguageServer for Backend {
             };
 
             let label = self
-                .generate_node_hover(function_call.clone(), analysis_data)
+                .generate_node_hover(
+                    function_call.clone(),
+                    analysis_output.as_ref().map(|a| &a.type_analysis_data),
+                )
                 .0;
 
-            let Some(analysis_data) = analysis_data else {
+            let Some(analysis_output) = analysis_output else {
                 return Ok(None);
             };
 
-            let Some(ref_func) = analysis_data.function_data.get(&function_call.id) else {
+            let Some(ref_func) = analysis_output
+                .type_analysis_data
+                .function_data
+                .get(&function_call.id)
+            else {
                 return Ok(None);
             };
 
@@ -1633,9 +1672,7 @@ impl LanguageServer for Backend {
                             .iter()
                             .enumerate()
                             .map(|(param_i, _param)| ParameterInformation {
-                                // TODO: once function_data links to the definition, display
-                                // param names here and use them to generate the label ranges
-                                // instead of parsing them out of the label
+                                // TODO: don't parse label positions out of the string
                                 label: ParameterLabel::LabelOffsets([
                                     label
                                         .clone()
