@@ -23,6 +23,8 @@ use std::{collections::HashMap, sync::LazyLock};
 use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::{Client, LanguageServer, lsp_types::*};
 
+pub extern crate tower_lsp_server;
+
 pub trait Spawner: Send + Sync + 'static {
     fn spawn<F>(&self, fut: F)
     where
@@ -37,44 +39,44 @@ pub struct Backend<S: Spawner> {
 
 static SEMANTIC_TOKEN_TYPES: LazyLock<Vec<SemanticTokenType>> = std::sync::LazyLock::new(|| {
     vec![
-        SemanticTokenType::NAMESPACE,
-        SemanticTokenType::TYPE,
         SemanticTokenType::CLASS,
+        SemanticTokenType::COMMENT,
+        SemanticTokenType::DECORATOR,
         SemanticTokenType::ENUM,
-        SemanticTokenType::INTERFACE,
-        SemanticTokenType::STRUCT,
-        SemanticTokenType::TYPE_PARAMETER,
-        SemanticTokenType::PARAMETER,
-        SemanticTokenType::VARIABLE,
-        SemanticTokenType::PROPERTY,
         SemanticTokenType::ENUM_MEMBER,
         SemanticTokenType::EVENT,
         SemanticTokenType::FUNCTION,
-        SemanticTokenType::METHOD,
-        SemanticTokenType::MACRO,
+        SemanticTokenType::INTERFACE,
         SemanticTokenType::KEYWORD,
+        SemanticTokenType::MACRO,
+        SemanticTokenType::METHOD,
         SemanticTokenType::MODIFIER,
-        SemanticTokenType::COMMENT,
-        SemanticTokenType::STRING,
+        SemanticTokenType::NAMESPACE,
         SemanticTokenType::NUMBER,
-        SemanticTokenType::REGEXP,
         SemanticTokenType::OPERATOR,
-        SemanticTokenType::DECORATOR,
+        SemanticTokenType::PARAMETER,
+        SemanticTokenType::PROPERTY,
+        SemanticTokenType::REGEXP,
+        SemanticTokenType::STRING,
+        SemanticTokenType::STRUCT,
+        SemanticTokenType::TYPE,
+        SemanticTokenType::TYPE_PARAMETER,
+        SemanticTokenType::VARIABLE,
     ]
 });
 static SEMANTIC_TOKEN_MODIFIERS: LazyLock<Vec<SemanticTokenModifier>> =
     std::sync::LazyLock::new(|| {
         vec![
-            SemanticTokenModifier::DECLARATION,
-            SemanticTokenModifier::DEFINITION,
-            SemanticTokenModifier::READONLY,
-            SemanticTokenModifier::STATIC,
-            SemanticTokenModifier::DEPRECATED,
             SemanticTokenModifier::ABSTRACT,
             SemanticTokenModifier::ASYNC,
-            SemanticTokenModifier::MODIFICATION,
-            SemanticTokenModifier::DOCUMENTATION,
+            SemanticTokenModifier::DECLARATION,
             SemanticTokenModifier::DEFAULT_LIBRARY,
+            SemanticTokenModifier::DEFINITION,
+            SemanticTokenModifier::DEPRECATED,
+            SemanticTokenModifier::DOCUMENTATION,
+            SemanticTokenModifier::MODIFICATION,
+            SemanticTokenModifier::READONLY,
+            SemanticTokenModifier::STATIC,
         ]
     });
 

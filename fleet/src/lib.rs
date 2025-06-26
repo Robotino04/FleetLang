@@ -10,4 +10,5 @@ pub mod parser;
 pub mod passes;
 pub mod tokenizer;
 
+#[cfg(feature = "llvm_backend")]
 pub extern crate inkwell;

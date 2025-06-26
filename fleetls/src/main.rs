@@ -1,6 +1,6 @@
+use fleetls_lib::tower_lsp_server::{LspService, Server};
 use fleetls_lib::{Backend, Spawner};
 use std::env::args;
-use tower_lsp_server::{LspService, Server};
 
 pub struct TokioSpawner;
 

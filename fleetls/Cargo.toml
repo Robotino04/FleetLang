@@ -6,4 +6,3 @@ edition = "2024"
 [dependencies]
 fleetls-lib = { path = "../fleetls-lib" }
 tokio = { version = "1.44.2", features = ["full"] }
-tower-lsp-server = { version = "0.22.0" }

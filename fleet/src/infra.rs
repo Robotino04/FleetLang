@@ -1,3 +1,4 @@
+#[cfg(feature = "llvm_backend")]
 use std::error::Error;
 
 #[cfg(feature = "llvm_backend")]

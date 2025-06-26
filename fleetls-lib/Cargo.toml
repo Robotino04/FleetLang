@@ -5,13 +5,11 @@ edition = "2024"
 
 [dependencies]
 fleet = { path = "../fleet", default-features = false }
-tower-lsp-server = { version = "0.22.0", features = [
-    "runtime-tokio",
-], default-features = false }
+tower-lsp-server = { version = "0.22.0", default-features = false }
 indoc = "2.0.6"
 itertools = "0.14.0"
 
 [features]
 llvm_backend = ["fleet/llvm_backend"]
-default = ["llvm_backend"]
+default = ["llvm_backend", "tower-lsp-server/runtime-tokio"]
 runtime-agnostic = ["tower-lsp-server/runtime-agnostic"]
