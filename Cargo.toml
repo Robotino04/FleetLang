@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["fleet", "fleetc", "fleetls", "fleetls-lib"]
+members = ["fleet", "fleetc", "fleetls", "fleetls-lib", "fleetls-wasm"]
 default-members = ["fleet", "fleetc", "fleetls", "fleetls-lib"]
 
 [profile.dev]
