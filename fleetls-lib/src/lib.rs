@@ -1,33 +1,38 @@
-use std::collections::HashMap;
-use std::env::args;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::LazyLock;
-
-use fleet::ast::{
-    ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
-    BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType, BreakStatement,
-    CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-    FunctionCallExpression, FunctionDefinition, GroupingExpression, GroupingLValue, HasID, IdkType,
-    IfStatement, IntType, NodeID, NumberExpression, OnStatement, PerNodeData, Program,
-    ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody,
-    ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-    VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+use fleet::{
+    ast::{
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
+        BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
+        BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GroupingExpression, GroupingLValue, HasID,
+        IdkType, IfStatement, IntType, NodeID, NumberExpression, OnStatement, PerNodeData, Program,
+        ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody,
+        ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
+    },
+    infra::{ErrorSeverity, FleetError, TokenizerOutput},
+    passes::{
+        find_containing_node::FindContainingNodePass,
+        function_termination_analysis::FunctionTermination, type_propagation::TypeAnalysisData,
+    },
+    tokenizer::{SourceLocation, Token, Trivia, TriviaKind},
 };
-use fleet::infra::{ErrorSeverity, FleetError, TokenizerOutput};
-use fleet::passes::find_containing_node::FindContainingNodePass;
-use fleet::passes::function_termination_analysis::FunctionTermination;
-use fleet::passes::type_propagation::TypeAnalysisData;
-use fleet::tokenizer::{SourceLocation, Token, Trivia, TriviaKind};
 use indoc::indoc;
 use itertools::Itertools;
-use tower_lsp::jsonrpc::Result;
-use tower_lsp::{Client, LspService, Server};
-use tower_lsp::{LanguageServer, lsp_types::*};
+use std::{collections::HashMap, sync::LazyLock};
+use tower_lsp_server::jsonrpc::Result;
+use tower_lsp_server::{Client, LanguageServer, lsp_types::*};
 
-#[derive(Debug)]
-struct Backend {
-    client: Client,
-    documents: std::sync::RwLock<HashMap<Url, String>>,
+pub trait Spawner: Send + Sync + 'static {
+    fn spawn<F>(&self, fut: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static;
+}
+
+pub struct Backend<S: Spawner> {
+    pub client: Client,
+    pub documents: std::sync::RwLock<HashMap<Uri, String>>,
+    pub spawner: S,
 }
 
 static SEMANTIC_TOKEN_TYPES: LazyLock<Vec<SemanticTokenType>> = std::sync::LazyLock::new(|| {
@@ -87,7 +92,7 @@ fn token_length(start: SourceLocation, end: SourceLocation) -> u32 {
     (end.index - start.index) as u32
 }
 
-impl Backend {
+impl<S: Spawner> Backend<S> {
     fn get_type_as_hover(&self, id: NodeID, analysis_data: Option<&TypeAnalysisData>) -> String {
         let Some(analysis_data) = analysis_data else {
             return "/* No type data available */".to_string();
@@ -1182,8 +1187,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
     }
 }
 
-#[tower_lsp::async_trait]
-impl LanguageServer for Backend {
+impl<S: Spawner> LanguageServer for Backend<S> {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         eprintln!("{}", "-".repeat(80));
         eprintln!("{params:#?}");
@@ -1283,7 +1287,7 @@ impl LanguageServer for Backend {
 
             #[cfg(feature = "llvm_backend")]
             {
-                use inkwell::context::Context;
+                use fleet::inkwell::context::Context;
 
                 let context = Context::create();
                 let _ = analysis_output.compile_llvm(&mut errors, &context);
@@ -1343,7 +1347,7 @@ impl LanguageServer for Backend {
         );
 
         let client = self.client.clone();
-        tokio::spawn(async move {
+        self.spawner.spawn(async move {
             let _ = client.semantic_tokens_refresh().await;
         });
     }
@@ -1357,7 +1361,7 @@ impl LanguageServer for Backend {
             .insert(params.text_document.uri, params.text_document.text);
 
         let client = self.client.clone();
-        tokio::spawn(async move {
+        self.spawner.spawn(async move {
             let _ = client.semantic_tokens_refresh().await;
         });
     }
@@ -1386,16 +1390,16 @@ impl LanguageServer for Backend {
         let mut errors = vec![];
 
         let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
-            return Err(tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+            return Err(tower_lsp_server::jsonrpc::Error {
+                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
                 message: "Tokenization failed completely".into(),
                 data: None,
             });
         };
 
         let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
-            return Err(tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+            return Err(tower_lsp_server::jsonrpc::Error {
+                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
                 message: "Parsing failed completely".into(),
                 data: None,
             });
@@ -1459,16 +1463,16 @@ impl LanguageServer for Backend {
         let mut errors = vec![];
 
         let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
-            return Err(tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+            return Err(tower_lsp_server::jsonrpc::Error {
+                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
                 message: "Tokenization failed completely".into(),
                 data: None,
             });
         };
 
         let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
-            return Err(tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+            return Err(tower_lsp_server::jsonrpc::Error {
+                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
                 message: "Parsing failed completely".into(),
                 data: None,
             });
@@ -1501,16 +1505,16 @@ impl LanguageServer for Backend {
 
         let mut errors = vec![];
         let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
-            return Err(tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+            return Err(tower_lsp_server::jsonrpc::Error {
+                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
                 message: "Tokenization failed completely".into(),
                 data: None,
             });
         };
 
         let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
-            return Err(tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+            return Err(tower_lsp_server::jsonrpc::Error {
+                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
                 message: "Parsing failed completely".into(),
                 data: None,
             });
@@ -1520,8 +1524,8 @@ impl LanguageServer for Backend {
             .iter()
             .any(|err| err.severity == ErrorSeverity::Error)
         {
-            return Err(tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+            return Err(tower_lsp_server::jsonrpc::Error {
+                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
                 message: "Code has parse errors. Not formatting".into(),
                 data: None,
             });
@@ -1534,13 +1538,13 @@ impl LanguageServer for Backend {
             .insert(params.text_document.uri, new_text.clone());
 
         let client = self.client.clone();
-        tokio::spawn(async move {
+        self.spawner.spawn(async move {
             let _ = client.semantic_tokens_refresh().await;
         });
 
         let doc_end = SourceLocation::end(src.clone());
 
-        return Ok(Some(vec![TextEdit {
+        Ok(Some(vec![TextEdit {
             range: Range {
                 start: Position {
                     line: 0,
@@ -1552,7 +1556,7 @@ impl LanguageServer for Backend {
                 },
             },
             new_text,
-        }]));
+        }]))
     }
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
@@ -1570,16 +1574,16 @@ impl LanguageServer for Backend {
         let mut errors = vec![];
 
         let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
-            return Err(tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+            return Err(tower_lsp_server::jsonrpc::Error {
+                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
                 message: "Tokenization failed completely".into(),
                 data: None,
             });
         };
 
         let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
-            return Err(tower_lsp::jsonrpc::Error {
-                code: tower_lsp::jsonrpc::ErrorCode::ParseError,
+            return Err(tower_lsp_server::jsonrpc::Error {
+                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
                 message: "Parsing failed completely".into(),
                 data: None,
             });
@@ -1702,43 +1706,6 @@ impl LanguageServer for Backend {
             }))
         } else {
             Ok(None)
-        }
-    }
-}
-
-#[tokio::main]
-async fn main() {
-    if args().any(|arg| arg == "--stdio") {
-        let (service, loopback_socket) = LspService::new(|client| Backend {
-            client,
-            documents: Default::default(),
-        });
-
-        Server::new(tokio::io::stdin(), tokio::io::stdout(), loopback_socket)
-            .serve(service)
-            .await;
-    } else {
-        let socket = tokio::net::TcpSocket::new_v4().unwrap();
-        socket.set_reuseaddr(true).unwrap();
-        socket
-            .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234))
-            .unwrap();
-        let listener = socket.listen(5).unwrap();
-
-        loop {
-            let (client_connection, _client_addr) = listener.accept().await.unwrap();
-
-            tokio::spawn(async move {
-                let (service, loopback_socket) = LspService::new(|client| Backend {
-                    client,
-                    documents: Default::default(),
-                });
-
-                let (read_half, write_half) = tokio::io::split(client_connection);
-                Server::new(read_half, write_half, loopback_socket)
-                    .serve(service)
-                    .await;
-            });
         }
     }
 }

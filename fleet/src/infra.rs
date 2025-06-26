@@ -197,14 +197,12 @@ impl ParserOutput {
 
     pub fn format(&self) -> String {
         let mut errors = vec![];
-        run_fix_passes(
-            &mut errors,
-            &mut self.program.clone(),
-            &mut self.id_generator.clone(),
-        );
+        let mut program = self.program.clone();
+        let mut id_generator = self.id_generator.clone();
 
-        let document =
-            AstToDocumentModelConverter::default().visit_program(&mut self.program.clone());
+        run_fix_passes(&mut errors, &mut program, &mut id_generator);
+
+        let document = AstToDocumentModelConverter::default().visit_program(&mut program);
         stringify_document(&fully_flatten_document(document))
     }
 }

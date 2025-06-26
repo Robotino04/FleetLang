@@ -9,3 +9,5 @@ pub mod ir_generator;
 pub mod parser;
 pub mod passes;
 pub mod tokenizer;
+
+pub extern crate inkwell;

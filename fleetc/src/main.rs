@@ -1,11 +1,9 @@
 use std::{env::args, fs::read_to_string, path::Path, process::exit};
 
 use fleet::infra::{ErrorSeverity, FleetError, TokenizerOutput, print_error_message};
-use inkwell::{
-    OptimizationLevel,
-    context::Context,
-    targets::{CodeModel, FileType, RelocMode, Target, TargetTriple},
-};
+use fleet::inkwell::context::Context;
+use fleet::inkwell::targets::{CodeModel, FileType, RelocMode, Target, TargetTriple};
+use fleet::inkwell::{self, OptimizationLevel};
 
 fn generate_header(text: impl AsRef<str>, length: usize) -> String {
     format!("{:-^length$}", "|".to_string() + text.as_ref() + "|")
