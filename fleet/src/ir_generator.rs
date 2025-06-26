@@ -442,16 +442,12 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                 }
             }
         } else {
-            match &function.body {
+            match function.body {
                 FunctionBody::Extern(_) => {}
                 FunctionBody::Statement(_) => {
-                    self.errors.push(FleetError::from_node(
-                        function.body.clone(),
-                        "All code paths must return.",
-                        ErrorSeverity::Error,
-                    ));
+                    unreachable!("non-terminating functions should have caused errors earlier")
                 }
-            };
+            }
         }
 
         match &function.body {

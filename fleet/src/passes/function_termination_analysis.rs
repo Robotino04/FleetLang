@@ -1,3 +1,5 @@
+use std::{cell::RefCell, rc::Rc};
+
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
@@ -10,6 +12,9 @@ use crate::{
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
+    passes::type_propagation::{
+        Function, RuntimeType, TypeAnalysisData, UnionFindSet, UnionFindSetPtr, Variable,
+    },
     tokenizer::SourceLocation,
 };
 
@@ -45,21 +50,40 @@ impl FunctionTermination {
     }
 }
 
-pub struct FunctionTerminationAnalyzer<'errors> {
+pub struct FunctionTerminationAnalyzer<'errors, 'inputs> {
     termination: PerNodeData<FunctionTermination>,
     errors: &'errors mut Vec<FleetError>,
+
+    type_data: &'inputs PerNodeData<UnionFindSetPtr>,
+    type_sets: &'inputs UnionFindSet<RuntimeType>,
+    variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
+    function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
+
+    current_function: Option<Rc<RefCell<Function>>>,
+    loop_count: usize,
 }
 
-impl<'errors> FunctionTerminationAnalyzer<'errors> {
-    pub fn new(error_output: &'errors mut Vec<FleetError>) -> Self {
+impl<'errors, 'inputs> FunctionTerminationAnalyzer<'errors, 'inputs> {
+    pub fn new(
+        error_output: &'errors mut Vec<FleetError>,
+        analysis_data: &'inputs TypeAnalysisData,
+    ) -> Self {
         Self {
             termination: PerNodeData::default(),
             errors: error_output,
+
+            type_data: &analysis_data.type_data,
+            type_sets: &analysis_data.type_sets,
+            variable_data: &analysis_data.variable_data,
+            function_data: &analysis_data.function_data,
+
+            current_function: None,
+            loop_count: 0,
         }
     }
 }
 
-impl AstVisitor for FunctionTerminationAnalyzer<'_> {
+impl AstVisitor for FunctionTerminationAnalyzer<'_, '_> {
     type ProgramOutput = PerNodeData<FunctionTermination>;
     type FunctionDefinitionOutput = FunctionTermination;
     type FunctionBodyOutput = FunctionTermination;
@@ -103,13 +127,27 @@ impl AstVisitor for FunctionTerminationAnalyzer<'_> {
         function: &mut FunctionDefinition,
     ) -> Self::FunctionDefinitionOutput {
         let FunctionDefinition {
-            return_type, body, ..
+            return_type,
+            body,
+            id,
+            ..
         } = function;
+
+        self.current_function = Some(
+            self.function_data
+                .get(id)
+                .expect("function data must exist before calling function_termination_analyzer")
+                .clone(),
+        );
+
         if let Some(return_type) = return_type {
             self.visit_type(return_type);
         }
         let body_termination = self.visit_function_body(body);
         self.termination.insert_node(function, body_termination);
+
+        self.current_function = None;
+
         body_termination
     }
 
@@ -119,6 +157,23 @@ impl AstVisitor for FunctionTerminationAnalyzer<'_> {
     ) -> Self::FunctionBodyOutput {
         let StatementFunctionBody { statement, id: _ } = statement_function_body;
         let term = self.visit_statement(statement);
+
+        if term != FunctionTermination::Terminates {
+            let Some(current_function) = &self.current_function else {
+                unreachable!(
+                    "Function body analyzed for termination without a containing function"
+                );
+            };
+
+            if *self.type_sets.get(current_function.borrow().return_type) != RuntimeType::Unit {
+                self.errors.push(FleetError::from_node(
+                    statement_function_body.clone(),
+                    "All code paths must return.",
+                    ErrorSeverity::Error,
+                ));
+            }
+        }
+
         self.termination.insert_node(statement_function_body, term);
         term
     }
@@ -251,7 +306,9 @@ impl AstVisitor for FunctionTerminationAnalyzer<'_> {
         while_stmt: &mut WhileLoopStatement,
     ) -> Self::StatementOutput {
         let con_term = self.visit_expression(&mut while_stmt.condition);
+        self.loop_count += 1;
         let body_term = self.visit_statement(&mut while_stmt.body);
+        self.loop_count -= 1;
         let term = con_term.or(body_term);
         self.termination.insert_node(while_stmt, term);
         term
@@ -274,7 +331,9 @@ impl AstVisitor for FunctionTerminationAnalyzer<'_> {
             .map(|incrementer| self.visit_expression(incrementer))
             .unwrap_or(FunctionTermination::DoesntTerminate);
 
+        self.loop_count += 1;
         let body_term = self.visit_statement(&mut for_stmt.body);
+        self.loop_count -= 1;
         let term = init_term.or(con_term).or(inc_term).or(body_term);
         self.termination.insert_node(for_stmt, term);
         term
@@ -283,12 +342,28 @@ impl AstVisitor for FunctionTerminationAnalyzer<'_> {
     fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
         self.termination
             .insert_node(break_stmt, FunctionTermination::DoesntTerminate);
+        if self.loop_count == 0 {
+            self.errors.push(FleetError::from_node(
+                break_stmt.clone(),
+                "Break statements cannot appear outside loops",
+                ErrorSeverity::Error,
+            ));
+        }
+
         FunctionTermination::DoesntTerminate
     }
 
     fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
         self.termination
             .insert_node(skip_stmt, FunctionTermination::DoesntTerminate);
+        if self.loop_count == 0 {
+            self.errors.push(FleetError::from_node(
+                skip_stmt.clone(),
+                "Skip statements cannot appear outside loops",
+                ErrorSeverity::Error,
+            ));
+        }
+
         FunctionTermination::DoesntTerminate
     }
 

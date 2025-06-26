@@ -186,9 +186,9 @@ fn missing_return() {
             }
         "##},
         SourceLocation {
-            index: 0,
+            index: 21,
             line: 1,
-            column: 0,
+            column: 21,
         },
     );
 }

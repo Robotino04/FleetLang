@@ -119,6 +119,7 @@ pub fn assert_compile_error_no_formatting(src: &str, error_start: SourceLocation
     let Some(_analysis_output) = parser_output.analyze(&mut errors) else {
         panic!("Analysis failed completely");
     };
+    //_analysis_output.compile_llvm(&mut errors, &Context::create());
 
     assert_error_at_position(&errors, error_start);
 }

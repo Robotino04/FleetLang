@@ -14,7 +14,6 @@
 ## TODOs
 - if expressions
 - allow single manual newlines. Maybe add newline eaters after {\n and before \n} and print trivia newlines as long as they are inside a statement
-- find a better way to store CompileStatus
 - add quick fix system for e.g. non-block as if body
 - notes for removable parens
 - run analysis even on errored parse
@@ -28,6 +27,7 @@
 - use AstVisitor for `find_node_bounds`
 - simplify `get_precedence` and `get_associativity` using impl or a trait
 - add way to get length of array
+- consistent error language style
 
 
 ## Building

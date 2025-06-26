@@ -180,10 +180,11 @@ impl ParserOutput {
     pub fn analyze(&self, errors: &mut Vec<FleetError>) -> Option<AnalysisOutput> {
         let mut id_generator = self.id_generator.clone();
         let mut program = self.program.clone();
-        let term_analyzer = FunctionTerminationAnalyzer::new(errors);
-        let function_terminations = term_analyzer.visit_program(&mut program);
         let type_analysis_data =
             TypePropagator::new(errors, &mut id_generator).visit_program(&mut program);
+
+        let term_analyzer = FunctionTerminationAnalyzer::new(errors, &type_analysis_data);
+        let function_terminations = term_analyzer.visit_program(&mut program);
 
         run_fix_passes(errors, &mut program, &mut id_generator);
 
