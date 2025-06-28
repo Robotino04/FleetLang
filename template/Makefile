@@ -1,4 +1,4 @@
-template: glad.o main.o compute.comp
+template: glad.o main.o
 	clang++ -o template -lglfw -lGL main.o glad.o
 
 main.o: main.cpp
@@ -7,7 +7,10 @@ main.o: main.cpp
 glad.o: glad/src/glad.c glad/include/KHR/khrplatform.h glad/include/glad/glad.h
 	clang++ -c -o glad.o -Iglad/include/ glad/src/glad.c
 
-.PHONY: clean
+.PHONY: clean run
 
 clean:
 	rm template main.o glad.o
+
+run: template
+	./template
