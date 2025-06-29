@@ -1,16 +1,19 @@
-template: glad.o main.o
-	clang++ -o template -lglfw -lGL main.o glad.o
+CFLAGS = -g -std=c++2a
+LDFLAGS = -lvulkan
 
-main.o: main.cpp
-	clang++ -c -o main.o -std=c++2a main.cpp
+template: main.o compute.comp.spv Makefile
+	clang++ $(LDFLAGS) -o template main.o
 
-glad.o: glad/src/glad.c glad/include/KHR/khrplatform.h glad/include/glad/glad.h
-	clang++ -c -o glad.o -Iglad/include/ glad/src/glad.c
+main.o: main.cpp Makefile
+	clang++ -c $(CFLAGS) -o main.o main.cpp
+
+compute.comp.spv: compute.comp Makefile
+	glslangValidator -V compute.comp -o compute.comp.spv
 
 .PHONY: clean run
 
 clean:
-	rm template main.o glad.o
+	rm -f template main.o compute.comp.spv
 
 run: template
 	./template

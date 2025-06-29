@@ -16,11 +16,17 @@ in
       pkgs.glfw
       pkgs.libGL
       pkgs.libGL.dev
+
       pkgs.glslang
+      pkgs.vulkan-headers
+      pkgs.vulkan-loader
+      pkgs.vulkan-validation-layers
     ];
 
     env = {
       LLVM_SYS_180_PREFIX = "${pkgs.llvmPackages_18.libllvm.dev}";
+
+      VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
       /*
       LLVM_SYS_180_PREFIX = "${(
         pkgs.buildEnv {
