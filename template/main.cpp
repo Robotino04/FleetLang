@@ -1,4 +1,5 @@
 #include <cstring>
+#include <utility>
 #include <vulkan/vulkan.hpp>
 #include <iostream>
 #include <vector>
@@ -7,6 +8,9 @@
 #include <vulkan/vulkan_core.h>
 
 #include <functional>
+#include <vulkan/vulkan_enums.hpp>
+#include <vulkan/vulkan_handles.hpp>
+#include <vulkan/vulkan_structs.hpp>
 #include <vulkan/vulkan_to_string.hpp>
 
 
@@ -134,6 +138,7 @@ ScopeGuard createBuffer(
     VkBuffer& buffer,
     VkDeviceMemory& bufferMemory
 ) {
+    std::cout << "Creating " << size << " bytes large storage buffer\n";
     VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     bufferInfo.size = size;
     bufferInfo.usage = usage;
@@ -164,29 +169,37 @@ ScopeGuard createBuffer(
     return ScopeGuard::merge(std::move(memory_dtor), std::move(buffer_dtor));
 }
 
-int main() {
-    if (!checkValidationLayerSupport()) {
-        throw std::runtime_error("validation layers requested, but not available!");
-    }
-
-    // === Vulkan instance + physical device + logical device ===
+VkInstance createInstance() {
     std::cout << "Creating instance\n";
     VkInstance instance;
     VkInstanceCreateInfo instInfo{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     instInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
     instInfo.ppEnabledLayerNames = validationLayers.data();
     VK_CHECK(vkCreateInstance(&instInfo, nullptr, &instance));
-    DEFER(vkDestroyInstance(instance, nullptr));
+    return instance;
+}
 
+VkPhysicalDevice getPhysicalDevice(VkInstance instance) {
     uint32_t devCount = 0;
     vkEnumeratePhysicalDevices(instance, &devCount, nullptr);
     std::vector<VkPhysicalDevice> physicalDevices(devCount);
     vkEnumeratePhysicalDevices(instance, &devCount, physicalDevices.data());
 
-    VkPhysicalDevice physicalDevice = physicalDevices[0];
+    std::cout << "Available physical devices:\n";
+    for (auto const& dev : physicalDevices) {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(dev, &props);
+        std::cout << "- " << props.deviceName << " (type: " << vk::to_string((vk::PhysicalDeviceType)props.deviceType)
+                  << ", vendor: " << vk::to_string((vk::VendorId)props.vendorID) << ")\n";
+    }
 
-    float priority = 1.0f;
-    std::cout << "Creating compute queue\n";
+    std::cout << "Using first device\n";
+
+    return physicalDevices[0];
+}
+
+std::pair<VkDevice, uint> createLogicalDeviceAndQueue(VkPhysicalDevice physicalDevice) {
+    std::cout << "Searching for compute-only queue family\n";
     uint queueFamilyCount;
     vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
     std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
@@ -205,6 +218,7 @@ int main() {
         foundIndex = 0;
     }
 
+    float priority = 1.0f;
     VkDeviceQueueCreateInfo queueCreateInfo{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
     queueCreateInfo.queueFamilyIndex = foundIndex;
     queueCreateInfo.queueCount = 1;
@@ -216,18 +230,130 @@ int main() {
     deviceInfo.queueCreateInfoCount = 1;
     deviceInfo.pQueueCreateInfos = &queueCreateInfo;
     VK_CHECK(vkCreateDevice(physicalDevice, &deviceInfo, nullptr, &device));
+
+    return std::make_pair(device, foundIndex);
+}
+
+VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, std::vector<VkDescriptorSetLayoutBinding> const& bindings) {
+    VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    layoutInfo.bindingCount = 3;
+    layoutInfo.pBindings = bindings.data();
+
+    VkDescriptorSetLayout descriptorSetLayout;
+    VK_CHECK(vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout));
+    return descriptorSetLayout;
+}
+
+VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout setLayout, VkPushConstantRange pushConstants) {
+    std::cout << "Creating PipelineLayout\n";
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &setLayout;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstants;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+
+    VkPipelineLayout pipelineLayout;
+    VK_CHECK(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout));
+    return pipelineLayout;
+}
+
+VkPipeline loadComputeShader(VkDevice device, VkPipelineLayout pipelineLayout, std::string const& filename) {
+    std::cout << "Loading ShaderModule \"" << filename << "\"\n";
+    auto shaderCode = readSPV(filename);
+    VkShaderModuleCreateInfo shaderModuleCreateInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    shaderModuleCreateInfo.codeSize = shaderCode.size();
+    shaderModuleCreateInfo.pCode = reinterpret_cast<const uint32_t*>(shaderCode.data());
+
+    VkShaderModule shaderModule;
+    VK_CHECK(vkCreateShaderModule(device, &shaderModuleCreateInfo, nullptr, &shaderModule));
+    DEFER(vkDestroyShaderModule(device, shaderModule, nullptr));
+
+    std::cout << "Creating Pipeline\n";
+    VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+    pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pipelineInfo.stage.module = shaderModule;
+    pipelineInfo.stage.pName = "main";
+    pipelineInfo.layout = pipelineLayout;
+
+
+    VkPipeline pipeline;
+    VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline));
+    return pipeline;
+}
+
+
+VkDescriptorPool createDescriptorPool(VkDevice device) {
+    std::cout << "Creating Descriptor Pool\n";
+    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3};
+    VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+
+    VkDescriptorPool descriptorPool;
+    VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
+    return descriptorPool;
+}
+
+VkDescriptorSet allocateDescriptorSet(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, VkDescriptorPool descriptorPool) {
+    std::cout << "Creating Descriptor Set\n";
+    VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    allocInfo.descriptorPool = descriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &descriptorSetLayout;
+
+    VkDescriptorSet descriptorSet;
+    VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet));
+    return descriptorSet;
+}
+
+VkCommandPool createCommandPool(VkDevice device, uint queueFamilyIndex) {
+    std::cout << "Creating Command pool\n";
+    VkCommandPoolCreateInfo poolCreateInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    poolCreateInfo.queueFamilyIndex = queueFamilyIndex;
+    poolCreateInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    VkCommandPool commandPool;
+    VK_CHECK(vkCreateCommandPool(device, &poolCreateInfo, nullptr, &commandPool));
+    return commandPool;
+}
+VkCommandBuffer allocateCommandBuffer(VkDevice device, VkCommandPool commandPool) {
+    VkCommandBufferAllocateInfo cmdAlloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    cmdAlloc.commandPool = commandPool;
+    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdAlloc.commandBufferCount = 1;
+
+    std::cout << "Allocating command buffer\n";
+    VkCommandBuffer commandBuffer;
+    VK_CHECK(vkAllocateCommandBuffers(device, &cmdAlloc, &commandBuffer));
+    return commandBuffer;
+}
+
+int main() {
+    if (!checkValidationLayerSupport()) {
+        throw std::runtime_error("validation layers requested, but not available!");
+    }
+
+    // === Vulkan instance + physical device + logical device ===
+    VkInstance instance = createInstance();
+    DEFER(vkDestroyInstance(instance, nullptr));
+
+    VkPhysicalDevice physicalDevice = getPhysicalDevice(instance);
+
+    auto&& [_device, _queueFamilyIndex] = createLogicalDeviceAndQueue(physicalDevice);
+    VkDevice device = _device;
+    uint queueFamilyIndex = _queueFamilyIndex;
     DEFER(vkDestroyDevice(device, nullptr));
 
-
     VkQueue queue;
-    vkGetDeviceQueue(device, foundIndex, 0, &queue);
+    vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
 
     // === Buffers ===
     std::vector<int> A = {1, 2, 3};
     std::vector<int> B = {4, 5, 6};
     std::vector<int> C(3);
 
-    std::cout << "Allocating 3x " << A.size() * sizeof(int) << " bytes on the GPU\n";
+    std::cout << "Allocating buffers A, B and C on GPU\n";
 
     VkDeviceSize bufferSize = A.size() * sizeof(int);
 
@@ -274,88 +400,37 @@ int main() {
 
     // === Descriptor Set Layout ===
     std::cout << "Creating DescriptorSetLayouts\n";
-    VkDescriptorSetLayoutBinding bindings[3];
+    std::vector<VkDescriptorSetLayoutBinding> bindings;
     for (int i = 0; i < 3; ++i) {
-        bindings[i] = {};
-        bindings[i].binding = i;
-        bindings[i].descriptorCount = 1;
-        bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        VkDescriptorSetLayoutBinding binding{};
+        binding.binding = i;
+        binding.descriptorCount = 1;
+        binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        bindings.push_back(binding);
     }
 
-    VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layoutInfo.bindingCount = 3;
-    layoutInfo.pBindings = bindings;
-
-    VkDescriptorSetLayout descriptorSetLayout;
-    VK_CHECK(vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout));
+    VkDescriptorSetLayout descriptorSetLayout = createDescriptorSetLayout(device, bindings);
     DEFER(vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr));
 
+    VkDescriptorPool descriptorPool = createDescriptorPool(device);
+    DEFER(vkDestroyDescriptorPool(device, descriptorPool, nullptr));
+
+    VkDescriptorSet descriptorSet = allocateDescriptorSet(device, descriptorSetLayout, descriptorPool);
+    // not needed because descriptor sets are bound to their pool
+    // DEFER(vkFreeDescriptorSets(device, descriptorPool, 1, &descriptorSet));
+
     // === Pipeline Layout ===
-    std::cout << "Creating PipelineLayout\n";
-    VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    pipelineLayoutInfo.setLayoutCount = 1;
-    pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
-
-
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushConstantRange.offset = 0;
     pushConstantRange.size = 4;
-    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
-    pipelineLayoutInfo.pushConstantRangeCount = 1;
 
-    VkPipelineLayout pipelineLayout;
-    VK_CHECK(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout));
+    VkPipelineLayout pipelineLayout = createPipelineLayout(device, descriptorSetLayout, pushConstantRange);
     DEFER(vkDestroyPipelineLayout(device, pipelineLayout, nullptr));
 
-    // === Shader Module ===
-    std::cout << "Loading ShaderModule\n";
-    auto shaderCode = readSPV("compute.comp.spv");
-    VkShaderModuleCreateInfo shaderModuleCreateInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    shaderModuleCreateInfo.codeSize = shaderCode.size();
-    shaderModuleCreateInfo.pCode = reinterpret_cast<const uint32_t*>(shaderCode.data());
-
-    VkShaderModule shaderModule;
-    VK_CHECK(vkCreateShaderModule(device, &shaderModuleCreateInfo, nullptr, &shaderModule));
-    DEFER(vkDestroyShaderModule(device, shaderModule, nullptr));
-
-    // === Pipeline ===
-    std::cout << "Creating Pipeline\n";
-    VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-    pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
-    pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    pipelineInfo.stage.module = shaderModule;
-    pipelineInfo.stage.pName = "main";
-    pipelineInfo.layout = pipelineLayout;
-
-
-    VkPipeline pipeline;
-    VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline));
+    VkPipeline pipeline = loadComputeShader(device, pipelineLayout, "compute.comp.spv");
     DEFER(vkDestroyPipeline(device, pipeline, nullptr));
-
-    // === Descriptor Pool and Set ===
-    std::cout << "Creating Descriptor Pool\n";
-    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3};
-    VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    poolInfo.maxSets = 1;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
-
-    VkDescriptorPool descriptorPool;
-    VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
-    DEFER(vkDestroyDescriptorPool(device, descriptorPool, nullptr));
-
-    std::cout << "Creating Descriptor Set\n";
-    VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    allocInfo.descriptorPool = descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &descriptorSetLayout;
-
-    VkDescriptorSet descriptorSet;
-    VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet));
-    // not needed because descriptor sets are bound to their pool
-    // DEFER(vkFreeDescriptorSets(device, descriptorPool, 1, &descriptorSet));
 
     VkDescriptorBufferInfo infos[3] = {
         {bufA, 0, bufferSize},
@@ -375,23 +450,10 @@ int main() {
 
     vkUpdateDescriptorSets(device, 3, writes, 0, nullptr);
 
-    // === Command Buffer ===
-    std::cout << "Creating Command pool\n";
-    VkCommandPoolCreateInfo poolCreateInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
-    poolCreateInfo.queueFamilyIndex = foundIndex;
-    poolCreateInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    VkCommandPool commandPool;
-    VK_CHECK(vkCreateCommandPool(device, &poolCreateInfo, nullptr, &commandPool));
+    VkCommandPool commandPool = createCommandPool(device, queueFamilyIndex);
     DEFER(vkDestroyCommandPool(device, commandPool, nullptr));
 
-    VkCommandBufferAllocateInfo cmdAlloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-    cmdAlloc.commandPool = commandPool;
-    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmdAlloc.commandBufferCount = 1;
-
-    std::cout << "Allocating command buffer\n";
-    VkCommandBuffer commandBuffer;
-    VK_CHECK(vkAllocateCommandBuffers(device, &cmdAlloc, &commandBuffer));
+    VkCommandBuffer commandBuffer = allocateCommandBuffer(device, commandPool);
 
     std::cout << "Filling command buffer\n";
     VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
