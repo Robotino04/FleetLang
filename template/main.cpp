@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <cstring>
 #include <utility>
 #include <vulkan/vulkan.hpp>
@@ -7,62 +8,10 @@
 #include <cassert>
 #include <vulkan/vulkan_core.h>
 
-#include <functional>
 #include <vulkan/vulkan_enums.hpp>
 #include <vulkan/vulkan_handles.hpp>
 #include <vulkan/vulkan_structs.hpp>
 #include <vulkan/vulkan_to_string.hpp>
-
-
-class ScopeGuard {
-public:
-    explicit ScopeGuard(std::function<void()> f): dtor(std::move(f)), active(true) {}
-    ~ScopeGuard() {
-        if (active)
-            dtor();
-    }
-
-    ScopeGuard(const ScopeGuard&) = delete;
-    ScopeGuard& operator=(const ScopeGuard&) = delete;
-
-    ScopeGuard(ScopeGuard&& other) noexcept: dtor(std::move(other.dtor)), active(other.active) {
-        other.active = false;
-    }
-
-    ScopeGuard& operator=(ScopeGuard&& other) noexcept {
-        if (this != &other) {
-            dtor = std::move(other.dtor);
-            active = other.active;
-            other.active = false;
-        }
-        return *this;
-    }
-
-    static ScopeGuard merge(ScopeGuard&& a, ScopeGuard&& b) noexcept {
-        auto a_dtor = a.dtor;
-        auto b_dtor = b.dtor;
-
-        a.active = false;
-        b.active = false;
-
-        return ScopeGuard([a_dtor, b_dtor]() {
-            a_dtor();
-            b_dtor();
-        });
-    }
-
-private:
-    std::function<void()> dtor;
-    bool active;
-};
-
-#define EXPAND(x) x
-#define CONCAT_impl(x, y) x##y
-#define CONCAT(x, y) CONCAT_impl(x, y)
-
-#define DEFER_VALUE(...) ScopeGuard([&]() { __VA_ARGS__; })
-#define DEFER(...) auto CONCAT(_defer_guard_, __LINE__) = DEFER_VALUE(__VA_ARGS__)
-
 
 #define VK_CHECK(x)                                                                                         \
     do {                                                                                                    \
@@ -129,7 +78,7 @@ std::vector<char> readSPV(const std::string& filename) {
 }
 
 // Create buffer + allocate + bind memory
-ScopeGuard createBuffer(
+void createBuffer(
     VkDevice device,
     VkPhysicalDevice physicalDevice,
     VkDeviceSize size,
@@ -144,7 +93,6 @@ ScopeGuard createBuffer(
     bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VK_CHECK(vkCreateBuffer(device, &bufferInfo, nullptr, &buffer));
-    auto buffer_dtor = ScopeGuard([device, buffer]() { vkDestroyBuffer(device, buffer, nullptr); });
 
     VkMemoryRequirements memReq;
     vkGetBufferMemoryRequirements(device, buffer, &memReq);
@@ -163,10 +111,14 @@ ScopeGuard createBuffer(
     }
 
     VK_CHECK(vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory));
-    auto memory_dtor = ScopeGuard([device, bufferMemory]() { vkFreeMemory(device, bufferMemory, nullptr); });
     VK_CHECK(vkBindBufferMemory(device, buffer, bufferMemory, 0));
+}
 
-    return ScopeGuard::merge(std::move(memory_dtor), std::move(buffer_dtor));
+void destroyBuffer(VkDevice device, VkBuffer buffer, VkDeviceMemory bufferMemory) {
+    std ::cout << "destroying buffer" << "\n";
+    vkDestroyBuffer(device, buffer, nullptr);
+    std ::cout << "freeing buffer memory" << "\n";
+    vkFreeMemory(device, bufferMemory, nullptr);
 }
 
 VkInstance createInstance() {
@@ -266,7 +218,6 @@ VkPipeline loadComputeShader(VkDevice device, VkPipelineLayout pipelineLayout, s
 
     VkShaderModule shaderModule;
     VK_CHECK(vkCreateShaderModule(device, &shaderModuleCreateInfo, nullptr, &shaderModule));
-    DEFER(vkDestroyShaderModule(device, shaderModule, nullptr));
 
     std::cout << "Creating Pipeline\n";
     VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
@@ -279,6 +230,10 @@ VkPipeline loadComputeShader(VkDevice device, VkPipelineLayout pipelineLayout, s
 
     VkPipeline pipeline;
     VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline));
+
+    std ::cout << "destroying shader module" << "\n";
+    vkDestroyShaderModule(device, shaderModule, nullptr);
+
     return pipeline;
 }
 
@@ -329,79 +284,88 @@ VkCommandBuffer allocateCommandBuffer(VkDevice device, VkCommandPool commandPool
     return commandBuffer;
 }
 
-int main() {
+struct VulkanSetupData {
+    VkInstance instance;
+    VkPhysicalDevice physicalDevice;
+    VkDevice device;
+    uint queueFamilyIndex;
+    VkQueue queue;
+};
+static thread_local VulkanSetupData global_s;
+
+void setupVulkan() {
     if (!checkValidationLayerSupport()) {
         throw std::runtime_error("validation layers requested, but not available!");
     }
 
     // === Vulkan instance + physical device + logical device ===
     VkInstance instance = createInstance();
-    DEFER(vkDestroyInstance(instance, nullptr));
 
     VkPhysicalDevice physicalDevice = getPhysicalDevice(instance);
 
     auto&& [_device, _queueFamilyIndex] = createLogicalDeviceAndQueue(physicalDevice);
     VkDevice device = _device;
     uint queueFamilyIndex = _queueFamilyIndex;
-    DEFER(vkDestroyDevice(device, nullptr));
 
     VkQueue queue;
     vkGetDeviceQueue(device, queueFamilyIndex, 0, &queue);
 
-    // === Buffers ===
-    std::vector<int> A = {1, 2, 3};
-    std::vector<int> B = {4, 5, 6};
-    std::vector<int> C(3);
+    global_s = VulkanSetupData{
+        .instance = instance,
+        .physicalDevice = physicalDevice,
+        .device = device,
+        .queueFamilyIndex = queueFamilyIndex,
+        .queue = queue,
+    };
+}
 
-    std::cout << "Allocating buffers A, B and C on GPU\n";
+void teardownVulkan() {
+    std ::cout << "destroying logical device" << "\n";
+    vkDestroyDevice(global_s.device, nullptr);
+    std ::cout << "destroying instance" << "\n";
+    vkDestroyInstance(global_s.instance, nullptr);
+}
 
-    VkDeviceSize bufferSize = A.size() * sizeof(int);
+struct CommonBuffer {
+    VkDevice device;
+    VkBuffer buf;
+    VkDeviceMemory mem;
+    VkDeviceSize size;
+};
 
-    VkBuffer bufA, bufB, bufC;
-    VkDeviceMemory memA, memB, memC;
-    auto bufA_dtor = createBuffer(
-        device,
-        physicalDevice,
-        bufferSize,
+CommonBuffer createCommonBuffer(VkDeviceSize size) {
+    VkBuffer buf;
+    VkDeviceMemory mem;
+    createBuffer(
+        global_s.device,
+        global_s.physicalDevice,
+        size,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        bufA,
-        memA
+        buf,
+        mem
     );
-    auto bufB_dtor = createBuffer(
-        device,
-        physicalDevice,
-        bufferSize,
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        bufB,
-        memB
-    );
-    auto bufC_dtor = createBuffer(
-        device,
-        physicalDevice,
-        bufferSize,
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        bufC,
-        memC
-    );
+    return CommonBuffer{global_s.device, buf, mem, size};
+}
 
+void destroyCommonBuffer(CommonBuffer&& buf) {
+    destroyBuffer(buf.device, buf.buf, buf.mem);
+}
 
-    std::cout << "Copying Host -> Device\n";
-    void* data;
-    vkMapMemory(device, memA, 0, bufferSize, 0, &data);
-    memcpy(data, A.data(), bufferSize);
-    vkUnmapMemory(device, memA);
+struct PerShaderData {
+    VkDescriptorSetLayout descriptorSetLayout;
+    VkDescriptorPool descriptorPool;
+    VkDescriptorSet descriptorSet;
+    VkPipelineLayout pipelineLayout;
+    VkPipeline pipeline;
+    VkCommandPool commandPool;
+    VkCommandBuffer commandBuffer;
+};
 
-    vkMapMemory(device, memB, 0, bufferSize, 0, &data);
-    memcpy(data, B.data(), bufferSize);
-    vkUnmapMemory(device, memB);
-
-    // === Descriptor Set Layout ===
+PerShaderData perShaderSetup(std::vector<CommonBuffer> buffersToBind) {
     std::cout << "Creating DescriptorSetLayouts\n";
     std::vector<VkDescriptorSetLayoutBinding> bindings;
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < buffersToBind.size(); ++i) {
         VkDescriptorSetLayoutBinding binding{};
         binding.binding = i;
         binding.descriptorCount = 1;
@@ -410,15 +374,11 @@ int main() {
         bindings.push_back(binding);
     }
 
-    VkDescriptorSetLayout descriptorSetLayout = createDescriptorSetLayout(device, bindings);
-    DEFER(vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr));
+    VkDescriptorSetLayout descriptorSetLayout = createDescriptorSetLayout(global_s.device, bindings);
 
-    VkDescriptorPool descriptorPool = createDescriptorPool(device);
-    DEFER(vkDestroyDescriptorPool(device, descriptorPool, nullptr));
+    VkDescriptorPool descriptorPool = createDescriptorPool(global_s.device);
 
-    VkDescriptorSet descriptorSet = allocateDescriptorSet(device, descriptorSetLayout, descriptorPool);
-    // not needed because descriptor sets are bound to their pool
-    // DEFER(vkFreeDescriptorSets(device, descriptorPool, 1, &descriptorSet));
+    VkDescriptorSet descriptorSet = allocateDescriptorSet(global_s.device, descriptorSetLayout, descriptorPool);
 
     // === Pipeline Layout ===
     VkPushConstantRange pushConstantRange{};
@@ -426,61 +386,134 @@ int main() {
     pushConstantRange.offset = 0;
     pushConstantRange.size = 4;
 
-    VkPipelineLayout pipelineLayout = createPipelineLayout(device, descriptorSetLayout, pushConstantRange);
-    DEFER(vkDestroyPipelineLayout(device, pipelineLayout, nullptr));
+    VkPipelineLayout pipelineLayout = createPipelineLayout(global_s.device, descriptorSetLayout, pushConstantRange);
 
-    VkPipeline pipeline = loadComputeShader(device, pipelineLayout, "compute.comp.spv");
-    DEFER(vkDestroyPipeline(device, pipeline, nullptr));
+    VkPipeline pipeline = loadComputeShader(global_s.device, pipelineLayout, "compute.comp.spv");
 
-    VkDescriptorBufferInfo infos[3] = {
-        {bufA, 0, bufferSize},
-        {bufB, 0, bufferSize},
-        {bufC, 0, bufferSize}
-    };
-
-    VkWriteDescriptorSet writes[3];
-    for (int i = 0; i < 3; ++i) {
-        writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        writes[i].dstSet = descriptorSet;
-        writes[i].dstBinding = i;
-        writes[i].descriptorCount = 1;
-        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[i].pBufferInfo = &infos[i];
+    std::vector<VkDescriptorBufferInfo> infos;
+    for (auto const& buffer : buffersToBind) {
+        infos.push_back(VkDescriptorBufferInfo{buffer.buf, 0, buffer.size});
     }
 
-    vkUpdateDescriptorSets(device, 3, writes, 0, nullptr);
+    std::vector<VkWriteDescriptorSet> writes;
+    for (int i = 0; i < infos.size(); ++i) {
+        VkWriteDescriptorSet wset{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        wset.dstSet = descriptorSet;
+        wset.dstBinding = i;
+        wset.descriptorCount = 1;
+        wset.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        wset.pBufferInfo = &infos[i];
+        writes.push_back(wset);
+    }
 
-    VkCommandPool commandPool = createCommandPool(device, queueFamilyIndex);
-    DEFER(vkDestroyCommandPool(device, commandPool, nullptr));
+    vkUpdateDescriptorSets(global_s.device, writes.size(), writes.data(), 0, nullptr);
 
-    VkCommandBuffer commandBuffer = allocateCommandBuffer(device, commandPool);
+    VkCommandPool commandPool = createCommandPool(global_s.device, global_s.queueFamilyIndex);
+    VkCommandBuffer commandBuffer = allocateCommandBuffer(global_s.device, commandPool);
 
+
+    return PerShaderData{
+        .descriptorSetLayout = descriptorSetLayout,
+        .descriptorPool = descriptorPool,
+        .descriptorSet = descriptorSet,
+        .pipelineLayout = pipelineLayout,
+        .pipeline = pipeline,
+        .commandPool = commandPool,
+        .commandBuffer = commandBuffer,
+    };
+}
+
+void perShaderTeardown(PerShaderData&& sd) {
+    std ::cout << "destroying pipeline" << "\n";
+    vkDestroyPipeline(global_s.device, sd.pipeline, nullptr);
+    std ::cout << "destroying command pool" << "\n";
+    vkDestroyCommandPool(global_s.device, sd.commandPool, nullptr);
+    std ::cout << "destroying pipeline_layout" << "\n";
+    vkDestroyPipelineLayout(global_s.device, sd.pipelineLayout, nullptr);
+    std ::cout << "destroying descriptor pool" << "\n";
+    vkDestroyDescriptorPool(global_s.device, sd.descriptorPool, nullptr);
+    std ::cout << "destroying descriptor set" << "\n";
+    vkDestroyDescriptorSetLayout(global_s.device, sd.descriptorSetLayout, nullptr);
+}
+
+void runShader(PerShaderData const& sd, uint computeSize) {
     std::cout << "Filling command buffer\n";
     VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
-    int computeSize = A.size();
-    vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &computeSize);
-    vkCmdDispatch(commandBuffer, (computeSize + 1023) / 1024, 1, 1);
-    vkEndCommandBuffer(commandBuffer);
+    vkBeginCommandBuffer(sd.commandBuffer, &beginInfo);
+    vkCmdBindPipeline(sd.commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, sd.pipeline);
+    vkCmdBindDescriptorSets(sd.commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, sd.pipelineLayout, 0, 1, &sd.descriptorSet, 0, nullptr);
+    vkCmdPushConstants(sd.commandBuffer, sd.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &computeSize);
+    vkCmdDispatch(sd.commandBuffer, (computeSize + 1023) / 1024, 1, 1);
+    vkEndCommandBuffer(sd.commandBuffer);
 
     std::cout << "Submitting command buffer\n";
     VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
-    VK_CHECK(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+    submitInfo.pCommandBuffers = &sd.commandBuffer;
+    VK_CHECK(vkQueueSubmit(global_s.queue, 1, &submitInfo, VK_NULL_HANDLE));
     std::cout << "Waiting for Device to finish computation\n";
-    VK_CHECK(vkQueueWaitIdle(queue));
+    VK_CHECK(vkQueueWaitIdle(global_s.queue));
+}
 
-    // === Read back results ===
+
+int main() {
+    setupVulkan();
+
+    // ----- Fleet -----
+    std::vector<int> A = {1, 2, 3};
+    std::vector<int> B = {4, 5, 6};
+    std::vector<int> C(3);
+    // ----- Fleet -----
+
+    std::cout << "Allocating buffers A, B and C on GPU\n";
+    VkDeviceSize bufferSize = A.size() * sizeof(int);
+
+    // fl_runtime_allocate_gpu_backing(&fleet_a, sizeof(fleet_a))
+    auto bufA = createCommonBuffer(bufferSize);
+    // fl_runtime_allocate_gpu_backing(&fleet_b, sizeof(fleet_b))
+    auto bufB = createCommonBuffer(bufferSize);
+    // fl_runtime_allocate_gpu_backing(&fleet_c, sizeof(fleet_c))
+    auto bufC = createCommonBuffer(bufferSize);
+
+
+    std::cout << "Copying Host -> Device\n";
+    void* data;
+    // fl_runtime_copy_to_backing(&fleet_a)
+    vkMapMemory(global_s.device, bufA.mem, 0, bufferSize, 0, &data);
+    memcpy(data, A.data(), bufferSize);
+    vkUnmapMemory(global_s.device, bufA.mem);
+
+    // fl_runtime_copy_to_backing(&fleet_b)
+    vkMapMemory(global_s.device, bufB.mem, 0, bufferSize, 0, &data);
+    memcpy(data, B.data(), bufferSize);
+    vkUnmapMemory(global_s.device, bufB.mem);
+
+    // void *buffers[3] = {&fleet_a, &fleet_b, &fleet_c}
+    // fl_runtime_bind_buffers(&buffers, 3)
+    auto shaderData = perShaderSetup({bufA, bufB, bufC});
+
+    // fl_runtime_dispatch_shader()
+    runShader(shaderData, C.size());
+
+    perShaderTeardown(std::move(shaderData));
+
     std::cout << "Copying Device -> Host\n";
-    vkMapMemory(device, memC, 0, bufferSize, 0, &data);
+    // fl_runtime_copy_from_backing(&fleet_c)
+    vkMapMemory(global_s.device, bufC.mem, 0, bufferSize, 0, &data);
     memcpy(C.data(), data, bufferSize);
-    vkUnmapMemory(device, memC);
+    vkUnmapMemory(global_s.device, bufC.mem);
 
     for (int v : C) {
         std::cout << v << " ";
     }
     std::cout << "\n";
+
+    // fl_runtime_free_gpu_backing(&fleet_a)
+    destroyCommonBuffer(std::move(bufA));
+    // fl_runtime_free_gpu_backing(&fleet_a)
+    destroyCommonBuffer(std::move(bufB));
+    // fl_runtime_free_gpu_backing(&fleet_a)
+    destroyCommonBuffer(std::move(bufC));
+
+    teardownVulkan();
 }

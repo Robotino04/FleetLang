@@ -1,3 +1,5 @@
 *.o
 template
 *.spv
+compile_commands.json
+.cache/
