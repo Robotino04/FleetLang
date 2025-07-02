@@ -1,5 +1,7 @@
 *.o
-template
+*.bc
 *.spv
+template
+
 compile_commands.json
 .cache/
