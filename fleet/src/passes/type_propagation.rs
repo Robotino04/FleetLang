@@ -7,12 +7,12 @@ use crate::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
         BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
         BreakStatement, CastExpression, Expression, ExpressionStatement, ExternFunctionBody,
-        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GroupingExpression,
-        GroupingLValue, HasID, IdkType, IfStatement, IntType, NumberExpression, OnStatement,
-        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
-        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor,
+        GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, IntType, NumberExpression,
+        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -188,7 +188,6 @@ impl RuntimeType {
         }
     }
 
-    /// true means a specialization happened
     #[must_use = "Failed merges usually indicate a compile error"]
     pub fn merge_types(
         a: UnionFindSetPtr,
@@ -633,14 +632,18 @@ impl AstVisitor for TypePropagator<'_> {
         &mut self,
         OnStatement {
             on_token: _,
-            open_paren_token: _,
             executor,
+            open_paren_token: _,
+            bindings,
             close_paren_token: _,
             body,
             id: _,
         }: &mut OnStatement,
     ) -> Self::StatementOutput {
         self.visit_executor(executor);
+        for (binding, _comma) in bindings {
+            self.visit_lvalue(binding);
+        }
         self.visit_statement(body);
     }
 
@@ -870,6 +873,49 @@ impl AstVisitor for TypePropagator<'_> {
             "numeric",
             *self.type_sets.get(index_type),
         );
+    }
+
+    fn visit_gpu_executor(
+        &mut self,
+        GPUExecutor {
+            host,
+            dot_token: _,
+            gpus_token: _,
+            open_bracket_token_1: _,
+            gpu_index,
+            close_bracket_token_1: _,
+            open_bracket_token_2: _,
+            iterator,
+            equal_token: _,
+            max_value,
+            close_bracket_token_2: _,
+            id: _,
+        }: &mut GPUExecutor,
+    ) -> Self::ExecutorOutput {
+        self.visit_executor_host(host);
+        let index_type = self.visit_expression(gpu_index);
+
+        self.generate_mismatched_type_error_if(
+            !self.type_sets.get(index_type).is_numeric(),
+            gpu_index.clone(),
+            "gpu index",
+            "numeric",
+            *self.type_sets.get(index_type),
+        );
+
+        let iterator_type = self.visit_simple_binding(iterator);
+        let max_value_type = self.visit_expression(max_value);
+        if !RuntimeType::merge_types(iterator_type, max_value_type, &mut self.type_sets) {
+            self.errors.push(FleetError::from_node(
+                iterator.clone(),
+                format!(
+                    "Iterator is defined as type {}, but has max value of type {}",
+                    self.stringify_type_ptr(iterator_type),
+                    self.stringify_type_ptr(max_value_type),
+                ),
+                ErrorSeverity::Error,
+            ));
+        }
     }
 
     fn visit_number_expression(
@@ -1567,7 +1613,6 @@ impl AstVisitor for TypePropagator<'_> {
         self.node_types.insert_node(expression, left_type);
         left_type
     }
-
     fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
         let lvalue_clone = lvalue.clone();
         let VariableLValue {
@@ -1588,6 +1633,7 @@ impl AstVisitor for TypePropagator<'_> {
             .insert_node(lvalue, ref_variable.borrow().type_);
         return ref_variable.borrow().type_;
     }
+
     fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
         let _lvalue_clone = lvalue.clone();
         let ArrayIndexLValue {

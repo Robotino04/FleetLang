@@ -3,12 +3,12 @@ use fleet::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
         BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
         BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GroupingExpression, GroupingLValue, HasID,
-        IdkType, IfStatement, IntType, NodeID, NumberExpression, OnStatement, PerNodeData, Program,
-        ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody,
-        ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+        GroupingLValue, HasID, IdkType, IfStatement, IntType, NodeID, NumberExpression,
+        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError, TokenizerOutput},
     passes::{
@@ -200,15 +200,22 @@ impl<S: Spawner> Backend<S> {
             ),
             AstNode::OnStatement(OnStatement {
                 on_token: _,
-                open_paren_token: _,
                 executor,
+                open_paren_token: _,
+                bindings,
                 close_paren_token: _,
                 body: _,
                 id: _,
             }) => (
                 format!(
-                    "on ({})",
-                    self.generate_node_hover(executor, analysis_data).0
+                    "on {} ({})",
+                    self.generate_node_hover(executor, analysis_data).0,
+                    bindings
+                        .iter()
+                        .map(|(binding, _comma)| {
+                            self.generate_node_hover(binding.clone(), analysis_data).0
+                        })
+                        .join(", "),
                 ),
                 "`on` statement".to_string(),
             ),
@@ -289,6 +296,29 @@ impl<S: Spawner> Backend<S> {
                 ),
                 "thread executor".to_string(),
             ),
+            AstNode::GPUExecutor(GPUExecutor {
+                host,
+                dot_token: _,
+                gpus_token: _,
+                open_bracket_token_1: _,
+                gpu_index,
+                close_bracket_token_1: _,
+                open_bracket_token_2: _,
+                iterator,
+                equal_token: _,
+                max_value,
+                close_bracket_token_2: _,
+                id: _,
+            }) => (
+                format!(
+                    "{}.gpus[{}][{} = {}]",
+                    self.generate_node_hover(host, analysis_data).0,
+                    self.generate_node_hover(gpu_index, analysis_data).0,
+                    self.generate_node_hover(iterator, analysis_data).0,
+                    self.generate_node_hover(max_value, analysis_data).0,
+                ),
+                "gpu executor".to_string(),
+            ),
             AstNode::UnaryExpression(UnaryExpression {
                 operator_token: _,
                 operation,
@@ -330,8 +360,11 @@ impl<S: Spawner> Backend<S> {
                 token: _,
                 id,
             }) => (
-                format!("{value} {}", self.get_type_as_hover(id, analysis_data)),
-                "number literal".to_string(),
+                format!("{value}"),
+                format!(
+                    "number literal ({})",
+                    self.get_type_as_hover(id, analysis_data)
+                ),
             ),
             AstNode::BoolExpression(BoolExpression {
                 value,
@@ -925,13 +958,54 @@ impl AstVisitor for ExtractSemanticTokensPass {
         self.build_comment_tokens_only(&executor_host.token);
     }
 
-    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) {
-        self.visit_executor_host(&mut executor.host);
-        self.build_comment_tokens_only(&executor.dot_token);
-        self.build_semantic_token(&executor.thread_token, SemanticTokenType::VARIABLE, vec![]);
-        self.build_comment_tokens_only(&executor.open_bracket_token);
-        self.visit_expression(&mut executor.index);
-        self.build_comment_tokens_only(&executor.close_bracket_token);
+    fn visit_thread_executor(
+        &mut self,
+        ThreadExecutor {
+            host,
+            dot_token,
+            thread_token,
+            open_bracket_token,
+            index,
+            close_bracket_token,
+            id: _,
+        }: &mut ThreadExecutor,
+    ) {
+        self.visit_executor_host(host);
+        self.build_comment_tokens_only(dot_token);
+        self.build_semantic_token(thread_token, SemanticTokenType::VARIABLE, vec![]);
+        self.build_comment_tokens_only(open_bracket_token);
+        self.visit_expression(index);
+        self.build_comment_tokens_only(close_bracket_token);
+    }
+
+    fn visit_gpu_executor(
+        &mut self,
+        GPUExecutor {
+            host,
+            dot_token,
+            gpus_token,
+            open_bracket_token_1,
+            gpu_index,
+            close_bracket_token_1,
+            open_bracket_token_2,
+            iterator,
+            equal_token,
+            max_value,
+            close_bracket_token_2,
+            id: _,
+        }: &mut GPUExecutor,
+    ) -> Self::ExecutorOutput {
+        self.visit_executor_host(host);
+        self.build_comment_tokens_only(dot_token);
+        self.build_semantic_token(gpus_token, SemanticTokenType::VARIABLE, vec![]);
+        self.build_comment_tokens_only(open_bracket_token_1);
+        self.visit_expression(gpu_index);
+        self.build_comment_tokens_only(close_bracket_token_1);
+        self.build_comment_tokens_only(open_bracket_token_2);
+        self.visit_simple_binding(iterator);
+        self.build_comment_tokens_only(equal_token);
+        self.visit_expression(max_value);
+        self.build_comment_tokens_only(close_bracket_token_2);
     }
 
     fn visit_number_expression(
@@ -1296,6 +1370,8 @@ impl<S: Spawner> LanguageServer for Backend<S> {
             }
             #[cfg(not(feature = "llvm_backend"))]
             let _ = analysis_output;
+
+            let _ = analysis_output.compile_c(&mut errors);
 
             errors
         }

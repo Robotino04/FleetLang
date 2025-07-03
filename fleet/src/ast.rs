@@ -29,6 +29,7 @@ pub enum AstNode {
     SelfExecutorHost(SelfExecutorHost),
 
     ThreadExecutor(ThreadExecutor),
+    GPUExecutor(GPUExecutor),
 
     NumberExpression(NumberExpression),
     BoolExpression(BoolExpression),
@@ -75,6 +76,7 @@ impl HasID for AstNode {
 
             AstNode::SelfExecutorHost(executor_host) => executor_host.get_id(),
             AstNode::ThreadExecutor(executor) => executor.get_id(),
+            AstNode::GPUExecutor(executor) => executor.get_id(),
 
             AstNode::ExpressionStatement(expression_statement) => expression_statement.get_id(),
             AstNode::OnStatement(on_statement) => on_statement.get_id(),
@@ -259,9 +261,11 @@ pub trait AstVisitor {
     fn visit_executor(&mut self, executor: &mut Executor) -> Self::ExecutorOutput {
         match executor {
             Executor::Thread(thread_executor) => self.visit_thread_executor(thread_executor),
+            Executor::GPU(gpu_executor) => self.visit_gpu_executor(gpu_executor),
         }
     }
     fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::ExecutorOutput;
+    fn visit_gpu_executor(&mut self, executor: &mut GPUExecutor) -> Self::ExecutorOutput;
 
     // expressions
     fn visit_expression(&mut self, expression: &mut Expression) -> Self::ExpressionOutput {
@@ -528,8 +532,9 @@ generate_ast_requirements!(ExpressionStatement, unwrap_expression_statement);
 #[derive(Clone, Debug)]
 pub struct OnStatement {
     pub on_token: Token,
-    pub open_paren_token: Token,
     pub executor: Executor,
+    pub open_paren_token: Token,
+    pub bindings: Vec<(LValue, Option<Token>)>,
     pub close_paren_token: Token,
     pub body: Box<Statement>,
     pub id: NodeID,
@@ -707,14 +712,33 @@ pub struct ThreadExecutor {
 generate_ast_requirements!(ThreadExecutor, unwrap_thread_executor);
 
 #[derive(Clone, Debug)]
+pub struct GPUExecutor {
+    pub host: ExecutorHost,
+    pub dot_token: Token,
+    pub gpus_token: Token,
+    pub open_bracket_token_1: Token,
+    pub gpu_index: Expression,
+    pub close_bracket_token_1: Token,
+    pub open_bracket_token_2: Token,
+    pub iterator: SimpleBinding,
+    pub equal_token: Token,
+    pub max_value: Expression,
+    pub close_bracket_token_2: Token,
+    pub id: NodeID,
+}
+generate_ast_requirements!(GPUExecutor, unwrap_gpu_executor);
+
+#[derive(Clone, Debug)]
 pub enum Executor {
     Thread(ThreadExecutor),
+    GPU(GPUExecutor),
 }
 
 impl HasID for Executor {
     fn get_id(&self) -> NodeID {
         match self {
             Executor::Thread(executor) => executor.get_id(),
+            Executor::GPU(gpuexecutor) => gpuexecutor.get_id(),
         }
     }
 }
@@ -723,6 +747,7 @@ impl From<Executor> for AstNode {
     fn from(value: Executor) -> Self {
         match value {
             Executor::Thread(thread_executor) => thread_executor.into(),
+            Executor::GPU(gpuexecutor) => gpuexecutor.into(),
         }
     }
 }

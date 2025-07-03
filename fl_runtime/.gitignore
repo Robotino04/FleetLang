@@ -1,7 +1,7 @@
 *.o
 *.bc
 *.spv
-template
-
+example
+templatetemplate
 compile_commands.json
 .cache/

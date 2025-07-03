@@ -3,9 +3,7 @@ use std::fmt::Debug;
 use std::process::Command;
 
 use inkwell::{
-    OptimizationLevel,
-    context::Context,
-    targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple},
+    context::Context, memory_buffer::MemoryBuffer, targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple}, OptimizationLevel
 };
 
 use fleet::{
@@ -346,6 +344,7 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
         )
         .unwrap();
 
+
     println!("Calling clang to link {object_file:?} to {binary_file:?}");
     let clang_out = Command::new("clang")
         .arg("-fdiagnostics-color=always")
@@ -371,7 +370,9 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     let (_tokenizer_output, _parser_output, analysis_output, _llvmcompilation_output) =
         compile_or_panic(&context, src);
 
-    let c_code = analysis_output.compile_c();
+    let mut errors = vec![];
+    let c_code = analysis_output.compile_c(&mut errors);
+    assert_no_fatal_errors(&errors);
 
     let c_file = dir.path().join("test.c");
     let binary_file = dir.path().join("test");

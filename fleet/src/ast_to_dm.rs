@@ -3,11 +3,11 @@ use crate::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, GroupingLValue, IdkType, IfStatement, IntType,
-        NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
+        IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     document_model::DocumentElement,
     tokenizer::{Keyword, Token, TokenType, Trivia, TriviaKind},
@@ -351,8 +351,9 @@ impl AstVisitor for AstToDocumentModelConverter {
         &mut self,
         OnStatement {
             on_token,
-            open_paren_token,
             executor,
+            open_paren_token,
+            bindings,
             close_paren_token,
             body,
             id: _,
@@ -362,9 +363,25 @@ impl AstVisitor for AstToDocumentModelConverter {
             DocumentElement::CollapsableSpace,
             vec![
                 self.token_to_element(on_token),
+                self.visit_executor(executor),
                 DocumentElement::Concatenation(vec![
                     self.token_to_element(open_paren_token),
-                    self.visit_executor(executor),
+                    DocumentElement::spaced_concatentation(
+                        DocumentElement::CollapsableSpace,
+                        bindings
+                            .iter_mut()
+                            .map(|(binding, comma)| {
+                                if let Some(comma) = comma {
+                                    DocumentElement::Concatenation(vec![
+                                        self.visit_lvalue(binding),
+                                        self.token_to_element(comma),
+                                    ])
+                                } else {
+                                    self.visit_lvalue(binding)
+                                }
+                            })
+                            .collect(),
+                    ),
                     self.token_to_element(close_paren_token),
                 ]),
                 self.visit_statement(body),
@@ -588,14 +605,59 @@ impl AstVisitor for AstToDocumentModelConverter {
         self.token_to_element(&executor_host.token)
     }
 
-    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
+    fn visit_thread_executor(
+        &mut self,
+        ThreadExecutor {
+            host,
+            dot_token,
+            thread_token,
+            open_bracket_token,
+            index,
+            close_bracket_token,
+            id: _,
+        }: &mut ThreadExecutor,
+    ) -> Self::ExecutorOutput {
         DocumentElement::Concatenation(vec![
-            self.visit_executor_host(&mut executor.host),
-            self.token_to_element(&executor.dot_token),
-            self.token_to_element(&executor.thread_token),
-            self.token_to_element(&executor.open_bracket_token),
-            self.visit_expression(&mut executor.index),
-            self.token_to_element(&executor.close_bracket_token),
+            self.visit_executor_host(host),
+            self.token_to_element(dot_token),
+            self.token_to_element(thread_token),
+            self.token_to_element(open_bracket_token),
+            self.visit_expression(index),
+            self.token_to_element(close_bracket_token),
+        ])
+    }
+
+    fn visit_gpu_executor(
+        &mut self,
+        GPUExecutor {
+            host,
+            dot_token,
+            gpus_token,
+            open_bracket_token_1,
+            gpu_index,
+            close_bracket_token_1,
+            open_bracket_token_2,
+            iterator,
+            equal_token,
+            max_value,
+            close_bracket_token_2,
+            id: _,
+        }: &mut GPUExecutor,
+    ) -> Self::ExecutorOutput {
+        DocumentElement::Concatenation(vec![
+            self.visit_executor_host(host),
+            self.token_to_element(dot_token),
+            self.token_to_element(gpus_token),
+            self.token_to_element(open_bracket_token_1),
+            self.visit_expression(gpu_index),
+            self.token_to_element(close_bracket_token_1),
+            self.token_to_element(open_bracket_token_2),
+            self.visit_simple_binding(iterator),
+            DocumentElement::CollapsableSpace,
+            self.token_to_element(equal_token),
+            DocumentElement::CollapsableSpace,
+            self.visit_expression(max_value),
+            self.token_to_element(close_bracket_token_2),
         ])
     }
 

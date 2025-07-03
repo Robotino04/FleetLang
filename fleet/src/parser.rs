@@ -1,11 +1,13 @@
 use std::fmt;
 
+use either::Either;
+
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, BinaryExpression,
         BinaryOperation, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
         Executor, ExecutorHost, Expression, ExpressionStatement, ExternFunctionBody,
-        ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition,
+        ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor,
         GroupingExpression, GroupingLValue, IdkType, IfStatement, IntType, LValue, NodeID,
         NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
         SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, Type, UnaryExpression,
@@ -345,14 +347,39 @@ impl<'errors> Parser<'errors> {
 
     pub fn parse_statement(&mut self) -> Result<Statement> {
         match self.current_token_type() {
-            Some(TokenType::Keyword(Keyword::On)) => Ok(Statement::On(OnStatement {
-                on_token: expect!(self, TokenType::Keyword(Keyword::On))?,
-                open_paren_token: expect!(self, TokenType::OpenParen)?,
-                executor: self.parse_executor()?,
-                close_paren_token: expect!(self, TokenType::CloseParen)?,
-                body: Box::new(self.parse_statement()?),
-                id: self.id_generator.next_node_id(),
-            })),
+            Some(TokenType::Keyword(Keyword::On)) => {
+                let on_token = expect!(self, TokenType::Keyword(Keyword::On))?;
+                let executor = self.parse_executor()?;
+                let open_paren_token = expect!(self, TokenType::OpenParen)?;
+
+                let mut bindings = vec![];
+
+                while self.current_token_type() != Some(TokenType::CloseParen) {
+                    let binding = self.parse_lvalue()?;
+                    match self.current_token_type() {
+                        Some(TokenType::Comma) => {
+                            bindings.push((binding, Some(expect!(self, TokenType::Comma)?)))
+                        }
+                        _ => {
+                            bindings.push((binding, None));
+                            break;
+                        }
+                    }
+                }
+
+                let close_paren_token = expect!(self, TokenType::CloseParen)?;
+                let body = self.parse_statement()?;
+
+                Ok(Statement::On(OnStatement {
+                    on_token,
+                    executor,
+                    open_paren_token,
+                    bindings,
+                    close_paren_token,
+                    body: Box::new(body),
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
             Some(TokenType::OpenBrace) => {
                 let open_brace_token = expect!(self, TokenType::OpenBrace)?;
 
@@ -870,12 +897,9 @@ impl<'errors> Parser<'errors> {
 
         Ok(left)
     }
-    fn parse_assignment_expression(&mut self) -> Result<Expression> {
-        let left = self.parse_logical_or_expression()?;
 
-        if !matches!(self.current_token_type(), Some(TokenType::EqualSign)) {
-            return Ok(left);
-        }
+    fn parse_lvalue_or_experssion(&mut self) -> Result<Either<(LValue, Expression), Expression>> {
+        let expr = self.parse_logical_or_expression()?;
 
         fn expression_to_lvalue(expression: &Expression) -> Option<LValue> {
             Some(match expression.clone() {
@@ -918,9 +942,39 @@ impl<'errors> Parser<'errors> {
             })
         }
 
-        let Some(lvalue) = expression_to_lvalue(&left) else {
-            return Ok(left);
+        if let Some(lvalue) = expression_to_lvalue(&expr) {
+            Ok(Either::Left((lvalue, expr)))
+        } else {
+            Ok(Either::Right(expr))
+        }
+    }
+
+    fn parse_lvalue(&mut self) -> Result<LValue> {
+        match self.parse_lvalue_or_experssion()? {
+            Either::Left((lvalue, _expr)) => Ok(lvalue),
+            Either::Right(expr) => {
+                let err = FleetError::from_node(
+                    expr,
+                    "This expression isn't a valid lvalue",
+                    ErrorSeverity::Error,
+                );
+                self.errors.push(err.clone());
+                Err(err.into())
+            }
+        }
+    }
+
+    fn parse_assignment_expression(&mut self) -> Result<Expression> {
+        let lv_or_expr = self.parse_lvalue_or_experssion()?;
+
+        let (lvalue, left_expr) = match lv_or_expr {
+            Either::Right(expr) => return Ok(expr),
+            Either::Left(x) => x,
         };
+
+        if !matches!(self.current_token_type(), Some(TokenType::EqualSign)) {
+            return Ok(left_expr);
+        }
 
         let equal_token = expect!(self, TokenType::EqualSign)?;
         let value = self.parse_assignment_expression()?;
@@ -936,18 +990,41 @@ impl<'errors> Parser<'errors> {
     }
 
     pub fn parse_executor(&mut self) -> Result<Executor> {
-        Ok(Executor::Thread(ThreadExecutor {
-            host: ExecutorHost::Self_(SelfExecutorHost {
-                token: expect!(self, TokenType::Keyword(Keyword::Self_))?,
-                id: self.id_generator.next_node_id(),
-            }),
-            dot_token: expect!(self, TokenType::Dot)?,
-            thread_token: expect!(self, = TokenType::Identifier("threads".to_string()))?,
-            open_bracket_token: expect!(self, TokenType::OpenBracket)?,
-            index: self.parse_expression()?,
-            close_bracket_token: expect!(self, TokenType::CloseBracket)?,
+        let host = ExecutorHost::Self_(SelfExecutorHost {
+            token: expect!(self, TokenType::Keyword(Keyword::Self_))?,
             id: self.id_generator.next_node_id(),
-        }))
+        });
+
+        let dot_token = expect!(self, TokenType::Dot)?;
+
+        match self.current_token_type() {
+            Some(TokenType::Identifier(name)) if name == "threads" => {
+                Ok(Executor::Thread(ThreadExecutor {
+                    host,
+                    dot_token,
+                    thread_token: expect!(self, = TokenType::Identifier("threads".to_string()))?,
+                    open_bracket_token: expect!(self, TokenType::OpenBracket)?,
+                    index: self.parse_expression()?,
+                    close_bracket_token: expect!(self, TokenType::CloseBracket)?,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
+            Some(TokenType::Identifier(name)) if name == "gpus" => Ok(Executor::GPU(GPUExecutor {
+                host,
+                dot_token,
+                gpus_token: expect!(self, = TokenType::Identifier("gpus".to_string()))?,
+                open_bracket_token_1: expect!(self, TokenType::OpenBracket)?,
+                gpu_index: self.parse_expression()?,
+                close_bracket_token_1: expect!(self, TokenType::CloseBracket)?,
+                open_bracket_token_2: expect!(self, TokenType::OpenBracket)?,
+                iterator: self.parse_simple_binding()?,
+                equal_token: expect!(self, TokenType::EqualSign)?,
+                max_value: self.parse_expression()?,
+                close_bracket_token_2: expect!(self, TokenType::CloseBracket)?,
+                id: self.id_generator.next_node_id(),
+            })),
+            _ => unable_to_parse!(self, "executor"),
+        }
     }
     pub fn parse_type(&mut self) -> Result<Type> {
         self.parse_postfix_type()

@@ -3,11 +3,11 @@ use crate::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, GroupingLValue, IdkType, IfStatement, IntType,
-        NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
+        IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -163,6 +163,10 @@ impl AstVisitor for AddTrailingTriviaPass {
 
     fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) {
         self.visit_token(&mut executor.close_bracket_token);
+    }
+
+    fn visit_gpu_executor(&mut self, executor: &mut GPUExecutor) -> Self::ExecutorOutput {
+        self.visit_token(&mut executor.close_bracket_token_2);
     }
 
     fn visit_number_expression(&mut self, expression: &mut NumberExpression) {

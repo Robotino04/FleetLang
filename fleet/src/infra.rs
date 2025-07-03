@@ -261,8 +261,15 @@ impl AnalysisOutput {
         }
     }
 
-    pub fn compile_c(&self) -> String {
-        CCodeGenerator::new(&self.type_analysis_data).visit_program(&mut self.program.clone())
+    pub fn compile_c(&self, errors: &mut Vec<FleetError>) -> String {
+        CCodeGenerator::new(
+            errors,
+            &self.type_analysis_data.variable_data,
+            &self.type_analysis_data.function_data,
+            &self.type_analysis_data.type_data,
+            &self.type_analysis_data.type_sets,
+        )
+        .visit_program(&mut self.program.clone())
     }
 }
 
@@ -282,6 +289,7 @@ impl LLVMCompilationOutput<'_> {
 
         self.module
             .run_passes("default<O1>", target_machine, PassBuilderOptions::create())?;
+
         Ok(())
     }
 }

@@ -7,8 +7,9 @@
 #include <iostream>
 #include <vector>
 #include <cassert>
-#include <vulkan/vulkan_core.h>
+#include <fstream>
 
+#include <vulkan/vulkan_core.h>
 #include <vulkan/vulkan_enums.hpp>
 #include <vulkan/vulkan_handles.hpp>
 #include <vulkan/vulkan_structs.hpp>
@@ -216,7 +217,7 @@ static VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLay
     return pipelineLayout;
 }
 
-static VkPipeline loadComputeShader(VkDevice device, VkPipelineLayout pipelineLayout, uint32_t* code, uint64_t code_size) {
+static VkPipeline loadComputeShader(VkDevice device, VkPipelineLayout pipelineLayout, const uint32_t* code, uint64_t code_size) {
     VkShaderModuleCreateInfo shaderModuleCreateInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     shaderModuleCreateInfo.codeSize = code_size;
     shaderModuleCreateInfo.pCode = code;
@@ -319,7 +320,7 @@ struct PerShaderData {
     VkCommandBuffer commandBuffer;
 };
 
-static PerShaderData perShaderSetup(std::vector<CommonBuffer> buffersToBind, uint32_t* code, uint64_t code_size) {
+static PerShaderData perShaderSetup(std::vector<CommonBuffer> buffersToBind, const uint32_t* code, uint64_t code_size) {
     std::cout << "Creating DescriptorSetLayouts\n";
     std::vector<VkDescriptorSetLayoutBinding> bindings;
     for (int i = 0; i < buffersToBind.size(); ++i) {
@@ -494,7 +495,7 @@ void fl_runtime_bind_buffers(void* (*buffers)[], uint64_t size) {
     memcpy(bound_buffers.data(), buffers, size * sizeof(void*));
 }
 
-void fl_runtime_dispatch_shader(uint64_t shader_dispatch_size, uint32_t* shader_code, uint64_t shader_code_size) {
+void fl_runtime_dispatch_shader(uint64_t shader_dispatch_size, const uint32_t* shader_code, uint64_t shader_code_size) {
     std::vector<CommonBuffer> backings;
     backings.reserve(bound_buffers.size());
     for (void* bound_buffer : bound_buffers) {
@@ -511,11 +512,6 @@ void fl_runtime_dispatch_shader(uint64_t shader_dispatch_size, uint32_t* shader_
     bound_buffers.clear();
 }
 }
-
-#include "fl_runtime.h"
-#include <fstream>
-#include <iostream>
-#include <vector>
 
 static std::vector<char> readSPV(const std::string& filename) {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);

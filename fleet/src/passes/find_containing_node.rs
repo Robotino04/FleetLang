@@ -2,9 +2,9 @@ use crate::ast::{
     ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
     BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
     ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-    FunctionDefinition, GroupingExpression, GroupingLValue, IdkType, IfStatement, IntType,
-    NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-    SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
+    FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
+    IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+    SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
     VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
     VariableLValue, WhileLoopStatement,
 };
@@ -376,6 +376,7 @@ impl AstVisitor for FindContainingNodePass {
 
         let (left_bound, right_bound) = self.visit_token(&executor_host.token)?;
 
+        // TODO: Make a function to check this fn(&[(SourceLocation, SourceLocation)]) -> bool
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());
         }
@@ -387,12 +388,60 @@ impl AstVisitor for FindContainingNodePass {
     fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
         self.node_hierarchy.push(executor.clone().into());
 
-        let left_bound = self.visit_executor_host(&mut executor.host)?.0;
-        self.visit_token(&executor.dot_token)?;
-        self.visit_token(&executor.thread_token)?;
-        self.visit_token(&executor.open_bracket_token)?;
-        self.visit_expression(&mut executor.index)?;
-        let right_bound = self.visit_token(&executor.close_bracket_token)?.1;
+        let ThreadExecutor {
+            host,
+            dot_token,
+            thread_token,
+            open_bracket_token,
+            index,
+            close_bracket_token,
+            id: _,
+        } = executor;
+
+        let left_bound = self.visit_executor_host(host)?.0;
+        self.visit_token(dot_token)?;
+        self.visit_token(thread_token)?;
+        self.visit_token(open_bracket_token)?;
+        self.visit_expression(index)?;
+        let right_bound = self.visit_token(close_bracket_token)?.1;
+
+        if left_bound <= self.search_position && self.search_position <= right_bound {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        Ok((left_bound, right_bound))
+    }
+
+    fn visit_gpu_executor(&mut self, executor: &mut GPUExecutor) -> Self::ExecutorOutput {
+        self.node_hierarchy.push(executor.clone().into());
+
+        let GPUExecutor {
+            host,
+            dot_token,
+            gpus_token,
+            open_bracket_token_1,
+            gpu_index,
+            close_bracket_token_1,
+            open_bracket_token_2,
+            iterator,
+            equal_token,
+            max_value,
+            close_bracket_token_2,
+            id: _,
+        } = executor;
+
+        let left_bound = self.visit_executor_host(host)?.0;
+        self.visit_token(dot_token)?;
+        self.visit_token(gpus_token)?;
+        self.visit_token(open_bracket_token_1)?;
+        self.visit_expression(gpu_index)?;
+        self.visit_token(close_bracket_token_1)?;
+        self.visit_token(open_bracket_token_2)?;
+        self.visit_simple_binding(iterator)?;
+        self.visit_token(equal_token)?;
+        self.visit_expression(max_value)?;
+        let right_bound = self.visit_token(close_bracket_token_2)?.1;
 
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());

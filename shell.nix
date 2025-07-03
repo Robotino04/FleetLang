@@ -17,7 +17,7 @@ in
       pkgs.libGL
       pkgs.libGL.dev
 
-      pkgs.glslang
+      pkgs.shaderc.bin #pkgs.glslang
       pkgs.vulkan-headers
       pkgs.vulkan-loader
       pkgs.vulkan-validation-layers
@@ -27,6 +27,7 @@ in
       LLVM_SYS_180_PREFIX = "${pkgs.llvmPackages_18.libllvm.dev}";
 
       VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
+      SHADERC_LIB_DIR = "${pkgs.shaderc.static}/lib/";
       /*
       LLVM_SYS_180_PREFIX = "${(
         pkgs.buildEnv {

@@ -17,10 +17,7 @@ fn ansi_color_for_severity(severity: ErrorSeverity) -> &'static str {
 }
 
 fn main() {
-    let input_path = args().nth(1).unwrap_or_else(|| {
-        eprintln!("No input file was given.");
-        exit(1);
-    });
+    let input_path = args().nth(1).unwrap_or("test.fl".into());
     let src = read_to_string(&input_path).unwrap_or_else(|_| {
         eprintln!("Input file {input_path:?} doesn't exist or isn't readable");
         exit(1);
@@ -112,7 +109,13 @@ fn main() {
         print_all_errors_and_message("LLVM compilation failed partially", &errors);
     }
 
-    let c_code = analysis_output.compile_c();
+    let c_code = analysis_output.compile_c(&mut errors);
+    if errors
+        .iter()
+        .any(|err| err.severity == ErrorSeverity::Error)
+    {
+        print_all_errors_and_message("C generation failed partially", &errors);
+    }
 
     println!("{}", generate_header("C Code", 50));
     println!("{}", c_code);
@@ -143,7 +146,7 @@ fn main() {
             "x86-64",
             "+avx2",
             OptimizationLevel::Aggressive,
-            RelocMode::Default,
+            RelocMode::PIC,
             CodeModel::Default,
         )
         .unwrap();

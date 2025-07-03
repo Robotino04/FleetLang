@@ -11,6 +11,7 @@ use inkwell::{
     basic_block::BasicBlock,
     builder::Builder,
     context::Context,
+    memory_buffer::MemoryBuffer,
     module::Module,
     types::{AnyTypeEnum, BasicMetadataTypeEnum, FunctionType},
     values::{
@@ -24,7 +25,7 @@ use crate::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
         BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
         BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionBody, FunctionCallExpression, FunctionDefinition, GroupingExpression,
+        FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, IntType, NumberExpression, OnStatement,
         PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
         StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
@@ -350,6 +351,29 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             });
         }
 
+        let runtime_module =
+            self.context
+                .create_module_from_ir(MemoryBuffer::create_from_memory_range(
+                    include_bytes!("../../fl_runtime/fl_runtime.bc"),
+                    "fl_runtime",
+                ))?;
+
+        if let Err(err) = self.module.link_in_module(runtime_module) {
+            self.errors.push(FleetError {
+                start: SourceLocation::start(),
+                end: program
+                    .functions
+                    .first()
+                    .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
+                message: format!(
+                    "Linking with runtime library failed: {}\nModule dump:\n{}",
+                    unescape(err.to_str().unwrap()),
+                    self.module.print_to_string().to_str().unwrap()
+                ),
+                severity: ErrorSeverity::Error,
+            });
+        }
+
         Ok(self.module)
     }
 
@@ -585,8 +609,15 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         Ok(())
     }
 
-    fn visit_on_statement(&mut self, _on_stmt: &mut OnStatement) -> Self::StatementOutput {
-        todo!()
+    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
+        Ok(())
+        /*
+        self.report_error(FleetError::from_node(
+            on_stmt.clone(),
+            "On statements aren't supported yet",
+            ErrorSeverity::Error,
+        ))
+        */
     }
 
     fn visit_block_statement(
@@ -926,6 +957,10 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
     }
 
     fn visit_thread_executor(&mut self, _executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
+        todo!()
+    }
+
+    fn visit_gpu_executor(&mut self, _executor: &mut GPUExecutor) -> Self::ExecutorOutput {
         todo!()
     }
 

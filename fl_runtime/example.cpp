@@ -43,8 +43,9 @@ int main() {
     fl_runtime_copy_to_backing(&fleet_a);
     fl_runtime_copy_to_backing(&fleet_b);
 
-    void* buffers[SIZE] = {&fleet_a, &fleet_b, &fleet_c};
-    fl_runtime_bind_buffers(&buffers, SIZE);
+    constexpr int NUM_BUFFERS = 3;
+    void* buffers[NUM_BUFFERS] = {&fleet_a, &fleet_b, &fleet_c};
+    fl_runtime_bind_buffers(&buffers, NUM_BUFFERS);
 
     fl_runtime_dispatch_shader(SIZE, reinterpret_cast<uint32_t*>(shaderCode.data()), shaderCode.size());
 

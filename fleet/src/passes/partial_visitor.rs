@@ -2,11 +2,12 @@ use crate::ast::{
     ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
     BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
     Executor, ExecutorHost, Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-    FunctionBody, FunctionCallExpression, FunctionDefinition, GroupingExpression, GroupingLValue,
-    IdkType, IfStatement, IntType, LValue, NumberExpression, OnStatement, Program, ReturnStatement,
-    SelfExecutorHost, SimpleBinding, SkipStatement, Statement, StatementFunctionBody,
-    ThreadExecutor, Type, UnaryExpression, UnitType, VariableAccessExpression,
-    VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+    FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+    GroupingLValue, IdkType, IfStatement, IntType, LValue, NumberExpression, OnStatement, Program,
+    ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, Statement,
+    StatementFunctionBody, ThreadExecutor, Type, UnaryExpression, UnitType,
+    VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+    VariableLValue, WhileLoopStatement,
 };
 
 pub trait PartialAstVisitor {
@@ -130,14 +131,18 @@ pub trait PartialAstVisitor {
         &mut self,
         OnStatement {
             on_token: _,
-            open_paren_token: _,
             executor,
+            open_paren_token: _,
+            bindings,
             close_paren_token: _,
             body,
             id: _,
         }: &mut OnStatement,
     ) {
         self.partial_visit_executor(executor);
+        for (binding, _comma) in bindings {
+            self.partial_visit_lvalue(binding);
+        }
         self.partial_visit_statement(body);
     }
 
@@ -281,6 +286,7 @@ pub trait PartialAstVisitor {
             Executor::Thread(thread_executor) => {
                 self.partial_visit_thread_executor(thread_executor)
             }
+            Executor::GPU(gpuexecutor) => self.partial_visit_gpu_executor(gpuexecutor),
         }
     }
     fn partial_visit_thread_executor(
@@ -297,6 +303,28 @@ pub trait PartialAstVisitor {
     ) {
         self.partial_visit_executor_host(host);
         self.partial_visit_expression(index);
+    }
+    fn partial_visit_gpu_executor(
+        &mut self,
+        GPUExecutor {
+            host,
+            dot_token: _,
+            gpus_token: _,
+            open_bracket_token_1: _,
+            gpu_index,
+            close_bracket_token_1: _,
+            open_bracket_token_2: _,
+            iterator,
+            equal_token: _,
+            max_value,
+            close_bracket_token_2: _,
+            id: _,
+        }: &mut GPUExecutor,
+    ) {
+        self.partial_visit_executor_host(host);
+        self.partial_visit_expression(gpu_index);
+        self.partial_visit_simple_binding(iterator);
+        self.partial_visit_expression(max_value);
     }
 
     // expressions
@@ -540,14 +568,7 @@ pub trait PartialAstVisitor {
     ) {
     }
     fn partial_visit_bool_type(&mut self, BoolType { token: _, id: _ }: &mut BoolType) {}
-    fn partial_visit_idk_type(
-        &mut self,
-        IdkType {
-            token: _,
-            id: _,
-        }: &mut IdkType,
-    ) {
-    }
+    fn partial_visit_idk_type(&mut self, IdkType { token: _, id: _ }: &mut IdkType) {}
     fn partial_visit_array_type(
         &mut self,
         ArrayType {
@@ -677,6 +698,10 @@ where
 
     fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
         self.partial_visit_thread_executor(executor);
+    }
+
+    fn visit_gpu_executor(&mut self, executor: &mut GPUExecutor) -> Self::ExecutorOutput {
+        self.partial_visit_gpu_executor(executor);
     }
 
     fn visit_expression(&mut self, expression: &mut Expression) -> Self::ExpressionOutput {

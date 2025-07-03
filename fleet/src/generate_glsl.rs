@@ -1,6 +1,5 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, error::Error, rc::Rc};
 
-use indent::indent_by;
 use indoc::formatdoc;
 
 use itertools::Itertools;
@@ -9,22 +8,22 @@ use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
-        BreakStatement, CastExpression, Executor, ExpressionStatement, ExternFunctionBody,
-        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor,
-        GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, IntType, NumberExpression,
-        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+        GroupingLValue, HasID, IdkType, IfStatement, IntType, NumberExpression, OnStatement,
+        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
+        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
-    generate_glsl::GLSLCodeGenerator,
     infra::{ErrorSeverity, FleetError},
     passes::type_propagation::{Function, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable},
 };
 
-pub struct CCodeGenerator<'inputs, 'errors> {
-    errors: &'errors mut Vec<FleetError>,
+type Result<T> = ::core::result::Result<T, Box<dyn Error>>;
 
+pub struct GLSLCodeGenerator<'inputs, 'errors> {
+    errors: &'errors mut Vec<FleetError>,
     variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
     function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
     type_data: &'inputs PerNodeData<UnionFindSetPtr>,
@@ -32,7 +31,7 @@ pub struct CCodeGenerator<'inputs, 'errors> {
 
     temporary_counter: u64,
 }
-impl<'inputs, 'errors> CCodeGenerator<'inputs, 'errors> {
+impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
     pub fn new(
         errors: &'errors mut Vec<FleetError>,
         variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
@@ -50,52 +49,61 @@ impl<'inputs, 'errors> CCodeGenerator<'inputs, 'errors> {
         }
     }
 
-    fn runtime_type_to_c(&self, type_: RuntimeType) -> (String, String) {
+    pub fn runtime_type_to_glsl(&self, type_: RuntimeType) -> (String, String) {
         match type_ {
             RuntimeType::I8 => ("int8_t".to_string(), "".to_string()),
             RuntimeType::I16 => ("int16_t".to_string(), "".to_string()),
             RuntimeType::I32 => ("int32_t".to_string(), "".to_string()),
             RuntimeType::I64 => ("int64_t".to_string(), "".to_string()),
             RuntimeType::UnsizedInt => {
-                unreachable!("unsized ints should have caused errors before calling c_generator")
+                unreachable!("unsized ints should have caused errors before calling glsl_generator")
             }
             RuntimeType::Boolean => ("bool".to_string(), "".to_string()),
             RuntimeType::Unit => ("void".to_string(), "".to_string()),
             RuntimeType::Unknown => {
-                unreachable!("unknown types should have caused errors before calling c_generator")
+                unreachable!(
+                    "unknown types should have caused errors before calling glsl_generator"
+                )
             }
             RuntimeType::Error => {
-                unreachable!("unknown types should have caused errors before calling c_generator")
+                unreachable!(
+                    "unknown types should have caused errors before calling glsl_generator"
+                )
             }
             RuntimeType::ArrayOf { subtype, size } => {
-                let (type_, after_id) = self.runtime_type_to_c(*self.type_sets.get(subtype));
+                let (type_, after_id) = self.runtime_type_to_glsl(*self.type_sets.get(subtype));
                 let Some(size) = size else {
-                    unreachable!("arrays should all have a size before calling c_generator");
+                    unreachable!("arrays should all have a size before calling glsl_generator");
                 };
                 (type_, format!("[{size}]{after_id}"))
             }
         }
     }
-    fn runtime_type_to_byte_size(&self, type_: RuntimeType) -> usize {
+    pub fn runtime_type_to_byte_size(&self, type_: RuntimeType) -> usize {
         match type_ {
             RuntimeType::I8 => 1,
             RuntimeType::I16 => 2,
             RuntimeType::I32 => 4,
             RuntimeType::I64 => 8,
             RuntimeType::UnsizedInt => {
-                unreachable!("unsized ints should have caused errors before calling c_generator")
+                unreachable!("unsized ints should have caused errors before calling glsl_generator")
             }
             RuntimeType::Boolean => 1,
             RuntimeType::Unit => 0,
             RuntimeType::Unknown => {
-                unreachable!("unknown types should have caused errors before calling c_generator")
+                unreachable!(
+                    "unknown types should have caused errors before calling glsl_generator"
+                )
             }
             RuntimeType::Error => {
-                unreachable!("unknown types should have caused errors before calling c_generator")
+                unreachable!(
+                    "unknown types should have caused errors before calling glsl_generator"
+                )
             }
             RuntimeType::ArrayOf { subtype, size } => {
                 let subtype_size = self.runtime_type_to_byte_size(*self.type_sets.get(subtype));
-                let size = size.expect("arrays should all have a size before calling c_generator");
+                let size =
+                    size.expect("arrays should all have a size before calling glsl_generator");
                 size * subtype_size
             }
         }
@@ -106,12 +114,13 @@ impl<'inputs, 'errors> CCodeGenerator<'inputs, 'errors> {
             .parameter_types
             .iter()
             .map(|(param, name)| {
-                let (type_, after_id) = self.runtime_type_to_c(*self.type_sets.get(*param));
+                let (type_, after_id) = self.runtime_type_to_glsl(*self.type_sets.get(*param));
                 type_ + " " + &self.mangle_variable(name) + &after_id
             })
             .join(", ");
 
-        let (type_, after_id) = self.runtime_type_to_c(*self.type_sets.get(function.return_type));
+        let (type_, after_id) =
+            self.runtime_type_to_glsl(*self.type_sets.get(function.return_type));
         type_
             + &after_id
             + " "
@@ -141,6 +150,11 @@ impl<'inputs, 'errors> CCodeGenerator<'inputs, 'errors> {
         self.temporary_counter += 1;
         format!("temporary_{name}_{count}")
     }
+
+    fn report_error<T>(&mut self, error: FleetError) -> Result<T> {
+        self.errors.push(error.clone());
+        Err(error.message.into())
+    }
 }
 
 #[derive(Default)]
@@ -149,12 +163,12 @@ pub struct PreStatementValue {
     pub out_value: String,
 }
 
-impl AstVisitor for CCodeGenerator<'_, '_> {
-    type ProgramOutput = String;
-    type FunctionDefinitionOutput = String;
-    type FunctionBodyOutput = String;
+impl AstVisitor for GLSLCodeGenerator<'_, '_> {
+    type ProgramOutput = Result<String>;
+    type FunctionDefinitionOutput = Result<String>;
+    type FunctionBodyOutput = Result<String>;
     type SimpleBindingOutput = String;
-    type StatementOutput = String;
+    type StatementOutput = Result<String>;
     type ExecutorHostOutput = String;
     type ExecutorOutput = String;
     type ExpressionOutput = PreStatementValue;
@@ -166,6 +180,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             .functions
             .iter_mut()
             .map(|f| self.visit_function_definition(f))
+            .collect::<Result<Vec<_>>>()?
             .join("\n");
 
         let function_declarations = program
@@ -176,15 +191,15 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                     &self
                         .function_data
                         .get(&f.get_id())
-                        .expect("Functions should be tracked before calling c_generator")
+                        .expect("Functions should be tracked before calling glsl_generator")
                         .borrow()
                         .clone(),
-                    true,
+                    f.name != "main",
                 ) + ";"
             })
             .join("\n");
 
-        formatdoc!(
+        Ok(formatdoc!(
             r##"
             #include <stdio.h>
             #include <stdlib.h>
@@ -192,30 +207,21 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             #include <stdbool.h>
             #include <string.h>
 
-            #include "fl_runtime/fl_runtime.h"
-
 
             // function declarations
             {function_declarations}
 
             // function definitions
             {function_definitions}
-
-            int main(int argc, const char** argv) {{
-                fl_runtime_init();
-                int retvalue = fleet_main();
-                fl_runtime_deinit();
-                return retvalue;
-            }}
             "##,
-        )
+        ))
     }
 
     fn visit_function_definition(
         &mut self,
         FunctionDefinition {
             let_token: _,
-            name: _,
+            name,
             name_token: _,
             equal_token: _,
             open_paren_token: _,
@@ -230,49 +236,30 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         let function = self
             .function_data
             .get(id)
-            .expect("Functions should be tracked before calling c_generator");
+            .expect("Functions should be tracked before calling glsl_generator");
 
-        self.generate_function_declaration(&function.borrow().clone(), true)
-            + self.visit_function_body(body).as_str()
+        Ok(
+            self.generate_function_declaration(&function.borrow().clone(), name != "main")
+                + self.visit_function_body(body)?.as_str(),
+        )
     }
 
     fn visit_statement_function_body(
         &mut self,
         StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
     ) -> Self::FunctionBodyOutput {
-        format!("{{{}}}", self.visit_statement(statement))
+        Ok(format!("{{{}}}", self.visit_statement(statement)?))
     }
 
     fn visit_extern_function_body(
         &mut self,
-        ExternFunctionBody {
-            at_token: _,
-            extern_token: _,
-            symbol,
-            symbol_token: _,
-            semicolon_token: _,
-            id,
-        }: &mut ExternFunctionBody,
+        body: &mut ExternFunctionBody,
     ) -> Self::FunctionBodyOutput {
-        let parent_function = self.function_data.get(id).unwrap();
-        let mut fake_extern_function = parent_function.borrow().clone();
-        fake_extern_function.name = symbol.clone();
-
-        formatdoc!(
-            "
-            {{
-                extern {};
-                return {symbol}({});
-            }}\
-            ",
-            self.generate_function_declaration(&fake_extern_function, false),
-            parent_function
-                .borrow()
-                .parameter_types
-                .iter()
-                .map(|(_param, name)| self.mangle_variable(name))
-                .join(",")
-        )
+        self.report_error(FleetError::from_node(
+            body.clone(),
+            "external functions cannot be called from the GPU",
+            ErrorSeverity::Error,
+        ))
     }
 
     fn visit_simple_binding(
@@ -288,10 +275,10 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             *self
                 .type_data
                 .get(id)
-                .expect("Bindings should have types before calling c_generator"),
+                .expect("Bindings should have types before calling glsl_generator"),
         );
 
-        let (type_, after_id) = self.runtime_type_to_c(inferred_type);
+        let (type_, after_id) = self.runtime_type_to_glsl(inferred_type);
 
         format!("{} {}{}", type_, self.mangle_variable(name), after_id)
     }
@@ -308,210 +295,15 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             pre_statements,
             out_value,
         } = self.visit_expression(expression);
-        format!("{}{};", pre_statements, out_value)
+        Ok(format!("{}{};", pre_statements, out_value))
     }
 
-    fn visit_on_statement(&mut self, stmt: &mut OnStatement) -> Self::StatementOutput {
-        let on_stmt_clone = stmt.clone();
-        let OnStatement {
-            on_token: _,
-            executor,
-            open_paren_token: _,
-            bindings,
-            close_paren_token: _,
-            body,
-            id: _,
-        } = stmt;
-
-        let Executor::GPU(GPUExecutor {
-            host: _,
-            dot_token: _,
-            gpus_token: _,
-            open_bracket_token_1: _,
-            gpu_index: _,
-            close_bracket_token_1: _,
-            open_bracket_token_2: _,
-            iterator,
-            equal_token: _,
-            max_value: iterator_end_value,
-            close_bracket_token_2: _,
-            id: _,
-        }) = executor
-        else {
-            todo!()
-        };
-
-        let mut buffers = vec![];
-
-        let (allocations, deallocations): (Vec<_>, Vec<_>) = bindings
-            .iter_mut()
-            .map(|(binding, _comma)| {
-                let PreStatementValue {
-                    pre_statements,
-                    out_value,
-                } = self.visit_lvalue(binding);
-                let size = self.runtime_type_to_byte_size(
-                    *self.type_sets.get(
-                        *self
-                            .type_data
-                            .get_node(binding)
-                            .expect("type data must be available before calling c_generator"),
-                    ),
-                );
-
-                let temporary = self.unique_temporary("lvalue_binding");
-
-                buffers.push(temporary.clone());
-
-                (
-                    formatdoc! {"
-                        {pre_statements}void* {temporary} = &{out_value};
-                        fl_runtime_allocate_gpu_backing({temporary}, {size});
-                        fl_runtime_copy_to_backing({temporary});
-                    "},
-                    formatdoc! {"
-                        fl_runtime_copy_from_backing({temporary});
-                        fl_runtime_free_gpu_backing({temporary});
-                    "},
-                )
-            })
-            .unzip();
-
-        let allocations = allocations.concat();
-        let deallocations = deallocations.concat();
-
-        let buffers_name = self.unique_temporary("buffers");
-        let buffers_str = format!("void* {buffers_name}[] = {{ {} }};", buffers.join(", "));
-        let buffers_len = buffers.len();
-
-        let mut glsl_generator = GLSLCodeGenerator::new(
-            self.errors,
-            self.variable_data,
-            self.function_data,
-            self.type_data,
-            self.type_sets,
-        );
-        let body_str = match glsl_generator.visit_statement(&mut *body) {
-            Ok(body_str) => body_str,
-            Err(err) => {
-                self.errors.push(FleetError::from_node(
-                    stmt.clone(),
-                    format!("GLSL generation failed: {err}"),
-                    ErrorSeverity::Error,
-                ));
-                return "".to_string();
-            }
-        };
-
-        let glsl_iterator_type = glsl_generator.runtime_type_to_glsl(
-            *self.type_sets.get(
-                *self
-                    .type_data
-                    .get_node(iterator)
-                    .expect("type data must exist before calling c_generator"),
-            ),
-        );
-
-        let glsl_buffer_definitions = bindings
-            .iter_mut()
-            .enumerate()
-            .map(|(i, (binding, _comma))| {
-                let glsl_type = glsl_generator.runtime_type_to_glsl(
-                    *self.type_sets.get(
-                        *self
-                            .type_data
-                            .get_node(binding)
-                            .expect("type data must exist before calling c_generator"),
-                    ),
-                );
-                format!(
-                    "layout(std430, binding = {i}) buffer Input{i} {{ {} {}{}; }};",
-                    glsl_type.0,
-                    glsl_generator.visit_lvalue(binding).out_value, // TODO: extract top-level variable and bind that instead of the lvalue
-                    glsl_type.1,
-                )
-            })
-            .join("\n");
-
-        let unescaped_glsl = formatdoc! {
-            "
-            #version 430
-            layout(local_size_x = 1024) in;
-
-            // https://github.com/Darkyenus/glsl4idea/issues/175
-            #extension GL_EXT_shader_explicit_arithmetic_types         : enable
-
-            {glsl_buffer_definitions}
-
-            layout(push_constant) uniform PushConstants {{
-                uint dispatch_size;
-            }};
-
-            void main() {{
-                if (gl_GlobalInvocationID.x >= dispatch_size) {{
-                    return;
-                }}
-                {} = {}(gl_GlobalInvocationID.x);
-                {}
-            }}
-            ",
-            glsl_generator.visit_simple_binding(iterator),
-            glsl_iterator_type.0 + &glsl_iterator_type.1,
-            indent_by(4, body_str),
-        };
-
-        let shaderc_output = {
-            let compiler = shaderc::Compiler::new().unwrap();
-            let options = shaderc::CompileOptions::new().unwrap();
-            let Ok(res) = compiler
-                .compile_into_spirv(
-                    &unescaped_glsl,
-                    shaderc::ShaderKind::Compute,
-                    "fleet_temporary.comp",
-                    "main",
-                    Some(&options),
-                )
-                .inspect_err(|e| {
-                    self.errors.push(FleetError::from_node(
-                        on_stmt_clone,
-                        "Internal shaderc error: ".to_string() + &e.to_string(),
-                        ErrorSeverity::Error,
-                    ));
-                })
-            else {
-                return format!("#error malformed on-statement\n/*\n{unescaped_glsl}\n*/\n");
-            };
-            res
-        };
-
-        let bytes_str = shaderc_output
-            .as_binary()
-            .iter()
-            .map(|chunk| format!("0x{:08x}", chunk))
-            .join(", ");
-
-        let spirv_temporary = self.unique_temporary("spirv");
-        let spirv_size = shaderc_output.len();
-
-        let PreStatementValue {
-            pre_statements: iterator_pre,
-            out_value: iterator_value,
-        } = self.visit_expression(iterator_end_value);
-
-        formatdoc! {"
-            {allocations}
-            {buffers_str}
-            fl_runtime_bind_buffers(&{buffers_name}, {buffers_len});
-
-            /*
-            {unescaped_glsl}
-            */
-
-            const uint32_t {spirv_temporary}[] = {{ {bytes_str} }};
-            {iterator_pre}fl_runtime_dispatch_shader({iterator_value}, {spirv_temporary}, {spirv_size});
-
-            {deallocations}
-        "}
+    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
+        self.report_error(FleetError::from_node(
+            on_stmt.clone(),
+            "Cannot use on-statements on the GPU",
+            ErrorSeverity::Error,
+        ))
     }
 
     fn visit_block_statement(
@@ -523,7 +315,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             id: _,
         }: &mut BlockStatement,
     ) -> Self::StatementOutput {
-        formatdoc!(
+        Ok(formatdoc!(
             "
             {{
                 {}
@@ -532,10 +324,10 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             indent::indent_by(
                 4,
                 body.iter_mut()
-                    .map(|stmt| self.visit_statement(stmt))
+                    .flat_map(|stmt| self.visit_statement(stmt))
                     .join("\n"),
             )
-        )
+        ))
     }
 
     fn visit_return_statement(
@@ -554,7 +346,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             .as_mut()
             .map(|expr| self.visit_expression(expr))
             .unwrap_or(PreStatementValue::default());
-        format!("{}return {};", pre_statements, out_value)
+        Ok(format!("{}return {};", pre_statements, out_value))
     }
 
     fn visit_variable_definition_statement(
@@ -571,7 +363,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         let ref_var = self
             .variable_data
             .get(&binding.get_id())
-            .expect("var data must exist before calling c_generator")
+            .expect("var data must exist before calling glsl_generator")
             .clone();
 
         let type_ = self.type_sets.get(ref_var.borrow().type_);
@@ -591,14 +383,14 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                 pre_statements: rvalue_pre_statements,
                 out_value: rvalue_out_value,
             } = self.visit_expression(&mut *value);
-            let (rvalue_type, rvalue_postfix) = self.runtime_type_to_c(*type_);
+            let (rvalue_type, rvalue_postfix) = self.runtime_type_to_glsl(*type_);
 
             let rvalue_gen =
-                format!("{rvalue_type} (*{rvalue_temporary}){rvalue_postfix} = {rvalue_out_value}");
+                format!("{rvalue_type} {rvalue_temporary}{rvalue_postfix} = {rvalue_out_value}");
 
             let memcpy = format!("memcpy(&{lvalue_temporary}, {rvalue_temporary}, {num_bytes})");
 
-            formatdoc!(
+            Ok(formatdoc!(
                 "
                 {lvalue_gen};
                 {rvalue_pre_statements}
@@ -609,16 +401,16 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                 ",
                 indent::indent_by(4, rvalue_gen),
                 indent::indent_by(4, memcpy),
-            )
+            ))
         } else {
             let PreStatementValue {
                 pre_statements,
                 out_value,
             } = self.visit_expression(&mut *value);
-            format!(
+            Ok(format!(
                 "{pre_statements}{} = ({out_value});",
                 self.visit_simple_binding(binding),
-            )
+            ))
         }
     }
 
@@ -645,7 +437,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                     pre_statements,
                     out_value,
                 } = self.visit_expression(condition);
-                (
+                Ok((
                     pre_statements,
                     formatdoc!(
                         "
@@ -653,13 +445,16 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                             {}
                         }}\
                         ",
-                        indent::indent_by(4, self.visit_statement(body))
+                        indent::indent_by(4, self.visit_statement(body)?)
                     ),
-                )
+                ))
             })
+            .collect::<Result<Vec<_>>>()?
+            .iter()
+            .cloned()
             .unzip();
 
-        formatdoc!(
+        Ok(formatdoc!(
             "
             {pre_statements}{}if ({out_value}) {{
                 {}
@@ -667,21 +462,20 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             {}\
             ",
             elif_prestatements.concat(),
-            indent::indent_by(4, self.visit_statement(&mut *if_body)),
+            indent::indent_by(4, self.visit_statement(&mut *if_body)?),
             elifs.join("\n")
-        ) + &else_
-            .as_mut()
-            .map(|(_token, body)| {
+        ) + &else_.as_mut().map_or(Ok(String::new()), |(_token, body)| {
+            self.visit_statement(&mut *body).map(|stmt| {
                 formatdoc!(
                     "
-                        else {{
-                            {}
-                        }}\
-                        ",
-                    self.visit_statement(&mut *body)
+                else {{
+                    {}
+                }}\
+                ",
+                    stmt
                 )
             })
-            .unwrap_or("".to_string())
+        })?)
     }
 
     fn visit_while_loop_statement(
@@ -697,14 +491,14 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             pre_statements,
             out_value,
         } = self.visit_expression(condition);
-        formatdoc!(
+        Ok(formatdoc!(
             "
             {pre_statements}while ({out_value}) {{
                 {}
             }}\
             ",
-            indent::indent_by(4, self.visit_statement(&mut *body))
-        )
+            indent::indent_by(4, self.visit_statement(&mut *body)?)
+        ))
     }
 
     fn visit_for_loop_statement(
@@ -735,15 +529,15 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             .as_mut()
             .map(|inc| self.visit_expression(inc))
             .unwrap_or(PreStatementValue::default());
-        formatdoc!(
+        Ok(formatdoc!(
             "
             {cond_pre_statements}{inc_pre_statements}for ({} {cond_out_value}; {inc_out_value}) {{
                 {}
             }}\
             ",
-            self.visit_statement(initializer),
-            indent::indent_by(4, self.visit_statement(&mut *body))
-        )
+            self.visit_statement(initializer)?,
+            indent::indent_by(4, self.visit_statement(&mut *body)?)
+        ))
     }
 
     fn visit_break_statement(
@@ -754,7 +548,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             id: _,
         }: &mut BreakStatement,
     ) -> Self::StatementOutput {
-        "break;".to_string()
+        Ok("break;".to_string())
     }
 
     fn visit_skip_statement(
@@ -765,7 +559,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             id: _,
         }: &mut SkipStatement,
     ) -> Self::StatementOutput {
-        "continue;".to_string()
+        Ok("continue;".to_string())
     }
 
     fn visit_self_executor_host(
@@ -824,10 +618,10 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             *self
                 .type_data
                 .get(id)
-                .expect("Array expressions should have types before calling c_generator"),
+                .expect("Array expressions should have types before calling glsl_generator"),
         );
 
-        let (type_, after_id) = self.runtime_type_to_c(inferred_type);
+        let (type_, after_id) = self.runtime_type_to_glsl(inferred_type);
 
         let RuntimeType::ArrayOf { subtype, size: _ } = inferred_type else {
             unreachable!("array expressions must have type ArrayOf(_)")
@@ -835,7 +629,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
 
         if let RuntimeType::ArrayOf { subtype: _, size } = self.type_sets.get(subtype) {
             let subtype = *self.type_sets.get(subtype);
-            let size = size.expect("arrays must have their size set before calling c_generator");
+            let size = size.expect("arrays must have their size set before calling glsl_generator");
             let (pre_statements, definitions, temporaries): (Vec<_>, Vec<_>, Vec<_>) = elements
                 .iter_mut()
                 .map(|(element, _comma)| {
@@ -844,10 +638,10 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                         pre_statements,
                         out_value,
                     } = self.visit_expression(element);
-                    let (rvalue_type, rvalue_postfix) = self.runtime_type_to_c(subtype);
+                    let (rvalue_type, rvalue_postfix) = self.runtime_type_to_glsl(subtype);
 
                     let rvalue_gen = format!(
-                        "{rvalue_type} (*{rvalue_temporary}){rvalue_postfix} = {out_value};\n"
+                        "{rvalue_type} {rvalue_temporary}{rvalue_postfix} = {out_value};\n"
                     );
 
                     (pre_statements, rvalue_gen, rvalue_temporary)
@@ -858,14 +652,14 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
 
             PreStatementValue {
                 pre_statements: format!(
-                    "{pre_statements}{type_} (*{out_temporary}){after_id};\n",
+                    "{pre_statements}{type_} {out_temporary}{after_id};\n",
                     pre_statements = indent::indent_by(4, pre_statements.concat()),
                 ),
                 out_value: formatdoc!(
                     "
                     ({{
                         {definitions}
-                        {out_temporary} = (&(({type_}{after_id}){{ {elements} }}));
+                        {out_temporary} = {type_}{after_id}({elements});
                         {out_temporary};
                     }})\
                     ",
@@ -875,9 +669,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                         temporaries
                             .iter()
                             .flat_map(|tmp| {
-                                (0..size)
-                                    .map(|i| format!("((*({tmp}))[{i}])"))
-                                    .collect_vec()
+                                (0..size).map(|i| format!("({tmp})[{i}])")).collect_vec()
                             })
                             .join(", ")
                     ),
@@ -896,7 +688,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                 .unzip();
             PreStatementValue {
                 pre_statements: pre_statements.concat(),
-                out_value: format!("(&(({}{}){{ {} }}))", type_, after_id, elements.join(", ")),
+                out_value: format!("{}{}({})", type_, after_id, elements.join(", ")),
             }
         }
     }
@@ -939,7 +731,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             open_bracket_token: _,
             index,
             close_bracket_token: _,
-            id,
+            id: _,
         }: &mut ArrayIndexExpression,
     ) -> Self::ExpressionOutput {
         let PreStatementValue {
@@ -951,24 +743,9 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             out_value: index_out_value,
         } = self.visit_expression(&mut *index);
 
-        if let RuntimeType::ArrayOf {
-            subtype: _,
-            size: _,
-        } = self.type_sets.get(
-            *self
-                .type_data
-                .get(id)
-                .expect("type data must exist before calling c_generator"),
-        ) {
-            PreStatementValue {
-                pre_statements: array_pre_statements + &index_pre_statements,
-                out_value: format!("(&(*({array_out_value}))[{index_out_value}])"),
-            }
-        } else {
-            PreStatementValue {
-                pre_statements: array_pre_statements + &index_pre_statements,
-                out_value: format!("((*({array_out_value}))[{index_out_value}])"),
-            }
+        PreStatementValue {
+            pre_statements: array_pre_statements + &index_pre_statements,
+            out_value: format!("(({array_out_value})[{index_out_value}])"),
         }
     }
 
@@ -1003,7 +780,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         let ref_var = self
             .variable_data
             .get(id)
-            .expect("var data must exist before calling c_generator")
+            .expect("var data must exist before calling glsl_generator")
             .clone();
 
         let type_ = self.type_sets.get(ref_var.borrow().type_);
@@ -1015,7 +792,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         {
             PreStatementValue {
                 pre_statements: "".to_string(),
-                out_value: format!("(&{})", self.mangle_variable(name)),
+                out_value: self.mangle_variable(name).to_string(),
             }
         } else {
             PreStatementValue {
@@ -1061,12 +838,12 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             id,
         }: &mut CastExpression,
     ) -> Self::ExpressionOutput {
-        let (type_, after_id) = self.runtime_type_to_c(
+        let (type_, after_id) = self.runtime_type_to_glsl(
             *self.type_sets.get(
                 *self
                     .type_data
                     .get(id)
-                    .expect("types should be inferred before calling c_generator"),
+                    .expect("types should be inferred before calling glsl_generator"),
             ),
         );
 
@@ -1136,7 +913,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             *self
                 .type_data
                 .get(id)
-                .expect("Types must exist before calling c_generator"),
+                .expect("Types must exist before calling glsl_generator"),
         );
         if let RuntimeType::ArrayOf {
             subtype: _,
@@ -1150,20 +927,20 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                 pre_statements: lvalue_pre_statements,
                 out_value: lvalue,
             } = self.visit_lvalue(lvalue);
-            let lvalue = format!("(&({lvalue}))");
-            let (lvalue_type, lvalue_postfix) = self.runtime_type_to_c(*type_);
+            let lvalue = format!("({lvalue})");
+            let (lvalue_type, lvalue_postfix) = self.runtime_type_to_glsl(*type_);
 
             let lvalue_gen =
-                format!("{lvalue_type} (*{lvalue_temporary}){lvalue_postfix} = {lvalue}");
+                format!("{lvalue_type} ({lvalue_temporary}){lvalue_postfix} = {lvalue}");
 
             let rvalue_temporary = self.unique_temporary("rvalue");
             let PreStatementValue {
                 pre_statements: rvalue_pre_statements,
                 out_value: rvalue_out_value,
             } = self.visit_expression(&mut *right);
-            let (rvalue_type, rvalue_postfix) = self.runtime_type_to_c(*type_);
+            let (rvalue_type, rvalue_postfix) = self.runtime_type_to_glsl(*type_);
 
-            let rvalue_pre = format!("{rvalue_type} (*{rvalue_temporary}){rvalue_postfix};\n");
+            let rvalue_pre = format!("{rvalue_type} {rvalue_temporary}{rvalue_postfix};\n");
             let rvalue_gen = format!("{rvalue_temporary} = {rvalue_out_value}");
 
             let memcpy = format!("memcpy({lvalue_temporary}, {rvalue_temporary}, {num_bytes})");
@@ -1198,7 +975,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
 
             PreStatementValue {
                 pre_statements: lpre_statements + &rpre_statements,
-                out_value: format!("(({out_lvalue}) = ({out_rvalue}))",),
+                out_value: format!("(({out_lvalue}) = ({out_rvalue}))"),
             }
         }
     }
@@ -1270,12 +1047,12 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             id,
         }: &mut IntType,
     ) -> Self::TypeOutput {
-        let (type_, after_id) = self.runtime_type_to_c(
+        let (type_, after_id) = self.runtime_type_to_glsl(
             *self.type_sets.get(
                 *self
                     .type_data
                     .get(id)
-                    .expect("type data should exist before calling c_generator"),
+                    .expect("type data should exist before calling glsl_generator"),
             ),
         );
         type_ + &after_id
@@ -1289,36 +1066,36 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             id,
         }: &mut UnitType,
     ) -> Self::TypeOutput {
-        let (type_, after_id) = self.runtime_type_to_c(
+        let (type_, after_id) = self.runtime_type_to_glsl(
             *self.type_sets.get(
                 *self
                     .type_data
                     .get(id)
-                    .expect("type data should exist before calling c_generator"),
+                    .expect("type data should exist before calling glsl_generator"),
             ),
         );
         type_ + &after_id
     }
 
     fn visit_bool_type(&mut self, BoolType { token: _, id }: &mut BoolType) -> Self::TypeOutput {
-        let (type_, after_id) = self.runtime_type_to_c(
+        let (type_, after_id) = self.runtime_type_to_glsl(
             *self.type_sets.get(
                 *self
                     .type_data
                     .get(id)
-                    .expect("type data should exist before calling c_generator"),
+                    .expect("type data should exist before calling glsl_generator"),
             ),
         );
         type_ + &after_id
     }
 
     fn visit_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> Self::TypeOutput {
-        let (type_, after_id) = self.runtime_type_to_c(
+        let (type_, after_id) = self.runtime_type_to_glsl(
             *self.type_sets.get(
                 *self
                     .type_data
                     .get(id)
-                    .expect("type data should exist before calling c_generator"),
+                    .expect("type data should exist before calling glsl_generator"),
             ),
         );
         type_ + &after_id
@@ -1334,12 +1111,12 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             id,
         }: &mut ArrayType,
     ) -> Self::TypeOutput {
-        let (type_, after_id) = self.runtime_type_to_c(
+        let (type_, after_id) = self.runtime_type_to_glsl(
             *self.type_sets.get(
                 *self
                     .type_data
                     .get(id)
-                    .expect("type data should exist before calling c_generator"),
+                    .expect("type data should exist before calling glsl_generator"),
             ),
         );
         type_ + &after_id

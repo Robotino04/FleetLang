@@ -5,10 +5,10 @@ use crate::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GroupingExpression, GroupingLValue, IdkType, IfStatement, IntType,
-        NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
+        IntType, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement,
+        SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor,
+        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
@@ -381,6 +381,31 @@ impl AstVisitor for FunctionTerminationAnalyzer<'_, '_> {
         let index_term = self.visit_expression(&mut executor.index);
         let term = host_term.or(index_term);
         self.termination.insert_node(executor, term);
+        term
+    }
+
+    fn visit_gpu_executor(
+        &mut self,
+        GPUExecutor {
+            host,
+            dot_token: _,
+            gpus_token: _,
+            open_bracket_token_1: _,
+            gpu_index,
+            close_bracket_token_1: _,
+            open_bracket_token_2: _,
+            iterator,
+            equal_token: _,
+            max_value,
+            close_bracket_token_2: _,
+            id,
+        }: &mut GPUExecutor,
+    ) -> Self::ExecutorOutput {
+        let mut term = self.visit_executor_host(host);
+        term = term.or(self.visit_expression(gpu_index));
+        term = term.or(self.visit_simple_binding(iterator));
+        term = term.or(self.visit_expression(max_value));
+        self.termination.insert(*id, term);
         term
     }
 
