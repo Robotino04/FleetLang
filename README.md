@@ -36,11 +36,20 @@
 ## Building
 ### LLVM
 > [!TIP]
-> There is a Nix shell available which includes the Rust tooling, Clang, libllvm and some other libraries and automatically sets the correct environment variables for Cargo to find libllvm. This lets you skip straight to [FleetC and FleetLS](#fleetc-and-fleetls).
+> There is a Nix shell available which includes the Rust tooling, Clang, libllvm and some other libraries and automatically sets the correct environment variables for Cargo to find libllvm. This lets you skip straight to [Compiling the Runtime](#compiling-the-runtime).
 
 
 FleetC uses LLVM as a backend and it is therefore required to have a static build of libllvm 18. If this isn't found, Cargo should detect it and give instructions on how to acquire libllvm.
 Some other libraries are also linked by `inkwell` (the LLVM crate) and may need to be installed as well.
+
+### Compiling the Runtime
+Compiling parts of the fl runtime is required for building fleet. Assuming you are using the nix shell, this can be done using
+```sh
+cd fl_runtime/ && make -j
+```
+
+Without nix, you need to have the vulkan headers (or the whole SDK) installed. You can then either try if the Makefile works or adjust it to the point where you can compile and run the example. FleetC also needs the `fl_runtime.bc` file so make sure to also build that.
+
 
 ### FleetC and FleetLS
 After setting up libllvm and the other libraries, the project can be built using a simple 
@@ -50,6 +59,10 @@ cargo build
 ```
 
 This should compile FleetC (the compiler) to `target/debug/fleetc` and FleetLS (the language server) to `target/debug/fleetls`.
+
+### Tests
+Tests can only be run on Linux for now as they rely on loading `libvulkan` and `libstdc++` at runtime.
+If you aren't using using nix, you need to ensure those libraries are installed and can be found by dlopen.
 
 
 ## Setup (FleetLS)
@@ -63,4 +76,6 @@ For VSCode users, there is no Fleet-specific extension (yet). However, there is 
   "glspc.server.languageId": ["plaintext"], // can also be changed to any other filetype
 }
 ```
-**Note:** using FleetLS through VSCode isn't tested well and may not work as intended. There may be an official extension in the future.
+
+> [!NOTE]
+> Using FleetLS through VSCode isn't tested well and may not work as intended. There may be an official extension in the future.
