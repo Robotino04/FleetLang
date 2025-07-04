@@ -437,6 +437,7 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     assert_no_fatal_errors(&errors);
 
     let c_file = dir.path().join("test.c");
+    let obj_file = dir.path().join("test.o");
     let binary_file = dir.path().join("test");
 
     println!("Writing C code to {c_file:?}");
@@ -455,17 +456,36 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     )
     .unwrap();
 
-    println!("Calling clang to compile {c_file:?} to {binary_file:?}");
+    println!("Calling clang to compile {c_file:?} to {obj_file:?}");
     let clang_out = Command::new("clang++")
         .arg("-fdiagnostics-color=always")
+        .arg("-c")
+        .args(["-x", "c"]) // important for compound literals to have the correct semantics
         .arg(c_file.to_str().unwrap())
-        .args(["-o", binary_file.to_str().unwrap()])
-        .arg("-lvulkan")
+        .args(["-o", obj_file.to_str().unwrap()])
         .arg(format!(
             "-I{}",
             fl_runtime_header.parent().unwrap().display()
         ))
+        .output()
+        .unwrap();
+    print!(
+        "Clang stdout:\n{}",
+        String::from_utf8(clang_out.stdout).unwrap()
+    );
+    print!(
+        "Clang stderr:\n{}",
+        String::from_utf8(clang_out.stderr).unwrap()
+    );
+    assert!(clang_out.status.success());
+
+    println!("Calling clang to link {obj_file:?}, {fl_runtime_obj:?} to {binary_file:?}");
+    let clang_out = Command::new("clang++")
+        .arg("-fdiagnostics-color=always")
+        .arg(obj_file.to_str().unwrap())
         .arg(fl_runtime_obj)
+        .arg("-lvulkan")
+        .args(["-o", binary_file.to_str().unwrap()])
         .output()
         .unwrap();
     print!(
