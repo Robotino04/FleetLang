@@ -192,7 +192,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             #include <stdbool.h>
             #include <string.h>
 
-            #include "fl_runtime/fl_runtime.h"
+            #include "fl_runtime.h"
 
 
             // function declarations

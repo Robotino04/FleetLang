@@ -12,7 +12,7 @@ use inkwell::{
     builder::Builder,
     context::Context,
     memory_buffer::MemoryBuffer,
-    module::Module,
+    module::{Linkage, Module},
     types::{AnyTypeEnum, BasicMetadataTypeEnum, FunctionType},
     values::{
         BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue,
@@ -298,7 +298,7 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
         let ir_function = self.module.add_function(
             &name,
             self.make_into_function_type(return_type_ir, params.as_slice(), false)?,
-            None,
+            Some(Linkage::External),
         );
         let ref_function = self
             .function_data

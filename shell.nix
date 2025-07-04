@@ -1,7 +1,7 @@
 let
   pkgs = import <nixpkgs> {};
 in
-  pkgs.mkShell {
+  pkgs.mkShell rec {
     packages = [
       pkgs.cargo
       pkgs.rustc
@@ -28,6 +28,8 @@ in
 
       VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
       SHADERC_LIB_DIR = "${pkgs.shaderc.static}/lib/";
+
+      LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath packages}";
       /*
       LLVM_SYS_180_PREFIX = "${(
         pkgs.buildEnv {

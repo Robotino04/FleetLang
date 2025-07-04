@@ -153,6 +153,7 @@ dependencies = [
  "indoc",
  "inkwell",
  "itertools",
+ "libc",
  "shaderc",
  "tempfile",
 ]

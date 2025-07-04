@@ -1,9 +1,19 @@
 #[cfg(test)]
 use std::fmt::Debug;
-use std::process::Command;
+use std::{
+    ffi::{CStr, CString, c_char, c_void},
+    mem::MaybeUninit,
+    path::PathBuf,
+    process::Command,
+    ptr::null_mut,
+};
 
 use inkwell::{
-    context::Context, memory_buffer::MemoryBuffer, targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple}, OptimizationLevel
+    OptimizationLevel,
+    context::Context,
+    llvm_sys::support::LLVMLoadLibraryPermanently,
+    memory_buffer::MemoryBuffer,
+    targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple},
 };
 
 use fleet::{
@@ -13,6 +23,7 @@ use fleet::{
     },
     tokenizer::SourceLocation,
 };
+use libc::{RTLD_DI_LINKMAP, RTLD_LAZY, dlclose, dlinfo, dlopen};
 use tempfile::{TempDir, tempdir};
 
 pub trait SubprocessTestableReturnType {
@@ -287,9 +298,61 @@ fn execute_function<ReturnType>(
     Target::initialize_native(&InitializationConfig::default())
         .expect("Failed to initialize native LLVM target");
 
+    fn find_library(name: &str) -> PathBuf {
+        #[repr(C)]
+        struct LinkMap {
+            l_addr: usize,
+            l_name: *const c_char,
+            l_ld: *mut c_void,
+            l_next: *mut LinkMap,
+            l_prev: *mut LinkMap,
+        }
+
+        unsafe {
+            let library = dlopen(CString::new(name).unwrap().as_c_str().as_ptr(), RTLD_LAZY);
+            if library.is_null() {
+                panic!("Failed to open library");
+            }
+            let mut link_map: MaybeUninit<*mut LinkMap> = MaybeUninit::uninit();
+            let result = dlinfo(
+                library,
+                RTLD_DI_LINKMAP,
+                link_map.as_mut_ptr() as *mut c_void,
+            );
+            if result != 0 {
+                dlclose(library);
+                panic!("Failed to get link map");
+            }
+            let lib_path = CStr::from_ptr((*link_map.assume_init()).l_name)
+                .to_str()
+                .unwrap()
+                .to_string();
+            if dlclose(library) != 0 {
+                panic!("Failed to close library");
+            }
+            lib_path.parse::<PathBuf>().unwrap()
+        }
+    }
+
+    inkwell::support::load_library_permanently(&find_library("libstdc++.so")).unwrap();
+    inkwell::support::load_library_permanently(&find_library("libvulkan.so")).unwrap();
+
+    let dso_module = compilation_output
+        .module
+        .get_context()
+        .create_module_from_ir(MemoryBuffer::create_from_memory_range(
+            include_bytes!("../../../fl_runtime/dso_handle.bc"),
+            "dso_module",
+        ))
+        .unwrap();
+    compilation_output
+        .module
+        .link_in_module(dso_module)
+        .unwrap();
+
     let execution_engine = compilation_output
         .module
-        .create_jit_execution_engine(inkwell::OptimizationLevel::None)
+        .create_jit_execution_engine(OptimizationLevel::None)
         .unwrap();
     let main_function = unsafe {
         execution_engine
@@ -324,7 +387,7 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
             "x86-64",
             "+avx2",
             OptimizationLevel::Aggressive,
-            RelocMode::Default,
+            RelocMode::PIC,
             CodeModel::Default,
         )
         .unwrap();
@@ -344,13 +407,12 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
         )
         .unwrap();
 
-
     println!("Calling clang to link {object_file:?} to {binary_file:?}");
-    let clang_out = Command::new("clang")
+    let clang_out = Command::new("clang++")
         .arg("-fdiagnostics-color=always")
         .arg(object_file.to_str().unwrap())
-        .arg("-o")
-        .arg(binary_file.to_str().unwrap())
+        .args(["-o", binary_file.to_str().unwrap()])
+        .arg("-lvulkan")
         .output()
         .unwrap();
     print!(
@@ -380,12 +442,30 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     println!("Writing C code to {c_file:?}");
     std::fs::write(&c_file, c_code).unwrap();
 
+    let fl_runtime_header = dir.path().join("fl_runtime.h");
+    std::fs::write(
+        &fl_runtime_header,
+        include_bytes!("../../../fl_runtime/fl_runtime.h"),
+    )
+    .unwrap();
+    let fl_runtime_obj = dir.path().join("fl_runtime.o");
+    std::fs::write(
+        &fl_runtime_obj,
+        include_bytes!("../../../fl_runtime/fl_runtime.o"),
+    )
+    .unwrap();
+
     println!("Calling clang to compile {c_file:?} to {binary_file:?}");
-    let clang_out = Command::new("clang")
+    let clang_out = Command::new("clang++")
         .arg("-fdiagnostics-color=always")
         .arg(c_file.to_str().unwrap())
-        .arg("-o")
-        .arg(binary_file.to_str().unwrap())
+        .args(["-o", binary_file.to_str().unwrap()])
+        .arg("-lvulkan")
+        .arg(format!(
+            "-I{}",
+            fl_runtime_header.parent().unwrap().display()
+        ))
+        .arg(fl_runtime_obj)
         .output()
         .unwrap();
     print!(

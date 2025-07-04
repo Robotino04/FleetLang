@@ -27,6 +27,12 @@
         }                                                                                                   \
     } while (0)
 
+#ifdef DO_LOG
+    #define LOG(X) X
+#else
+    #define LOG(X)
+#endif
+
 struct VulkanSetupData {
     VkInstance instance;
     VkPhysicalDevice physicalDevice;
@@ -56,14 +62,14 @@ static bool checkValidationLayerSupport() {
     std::vector<VkLayerProperties> availableLayers(layerCount);
     vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
 
-    std::cout << "Available validation layers:\n";
+    LOG(std::cout << "Available validation layers:\n");
     for (const auto& layerProperties : availableLayers) {
-        std::cout << "- " << layerProperties.layerName << "\n";
+        LOG(std::cout << "- " << layerProperties.layerName << "\n");
     }
 
-    std::cout << "Requested validation layers:\n";
+    LOG(std::cout << "Requested validation layers:\n");
     for (const auto& layerName : validationLayers) {
-        std::cout << "- " << layerName << "\n";
+        LOG(std::cout << "- " << layerName << "\n");
     }
 
     for (const auto& layerName : validationLayers) {
@@ -95,7 +101,7 @@ static void createBuffer(
     VkBuffer& buffer,
     VkDeviceMemory& bufferMemory
 ) {
-    std::cout << "Creating " << size << " bytes large storage buffer\n";
+    LOG(std::cout << "Creating " << size << " bytes large storage buffer\n");
     VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     bufferInfo.size = size;
     bufferInfo.usage = usage;
@@ -123,14 +129,14 @@ static void createBuffer(
 }
 
 static void destroyBuffer(VkDevice device, VkBuffer buffer, VkDeviceMemory bufferMemory) {
-    std ::cout << "destroying buffer" << "\n";
+    LOG(std::cout << "destroying buffer" << "\n");
     vkDestroyBuffer(device, buffer, nullptr);
-    std ::cout << "freeing buffer memory" << "\n";
+    LOG(std::cout << "freeing buffer memory" << "\n");
     vkFreeMemory(device, bufferMemory, nullptr);
 }
 
 static VkInstance createInstance() {
-    std::cout << "Creating instance\n";
+    LOG(std::cout << "Creating instance\n");
     VkInstance instance;
     VkInstanceCreateInfo instInfo{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     instInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
@@ -145,21 +151,21 @@ static VkPhysicalDevice getPhysicalDevice(VkInstance instance) {
     std::vector<VkPhysicalDevice> physicalDevices(devCount);
     vkEnumeratePhysicalDevices(instance, &devCount, physicalDevices.data());
 
-    std::cout << "Available physical devices:\n";
+    LOG(std::cout << "Available physical devices:\n");
     for (auto const& dev : physicalDevices) {
         VkPhysicalDeviceProperties props;
         vkGetPhysicalDeviceProperties(dev, &props);
-        std::cout << "- " << props.deviceName << " (type: " << vk::to_string((vk::PhysicalDeviceType)props.deviceType)
-                  << ", vendor: " << vk::to_string((vk::VendorId)props.vendorID) << ")\n";
+        LOG(std::cout << "- " << props.deviceName << " (type: " << vk::to_string((vk::PhysicalDeviceType)props.deviceType)
+                      << ", vendor: " << vk::to_string((vk::VendorId)props.vendorID) << ")\n");
     }
 
-    std::cout << "Using first device\n";
+    LOG(std::cout << "Using first device\n");
 
     return physicalDevices[0];
 }
 
 static std::pair<VkDevice, uint> createLogicalDeviceAndQueue(VkPhysicalDevice physicalDevice) {
-    std::cout << "Searching for compute-only queue family\n";
+    LOG(std::cout << "Searching for compute-only queue family\n");
     uint queueFamilyCount;
     vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
     std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
@@ -174,7 +180,7 @@ static std::pair<VkDevice, uint> createLogicalDeviceAndQueue(VkPhysicalDevice ph
         }
     }
     if (foundIndex == -1) {
-        std::cout << "No compute-only queue family found. Falling back to index 0\n";
+        LOG(std::cout << "No compute-only queue family found. Falling back to index 0\n");
         foundIndex = 0;
     }
 
@@ -184,7 +190,7 @@ static std::pair<VkDevice, uint> createLogicalDeviceAndQueue(VkPhysicalDevice ph
     queueCreateInfo.queueCount = 1;
     queueCreateInfo.pQueuePriorities = &priority;
 
-    std::cout << "Creating logical device\n";
+    LOG(std::cout << "Creating logical device\n");
     VkDevice device;
     VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     deviceInfo.queueCreateInfoCount = 1;
@@ -205,7 +211,7 @@ static VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, std::vec
 }
 
 static VkPipelineLayout createPipelineLayout(VkDevice device, VkDescriptorSetLayout setLayout, VkPushConstantRange pushConstants) {
-    std::cout << "Creating PipelineLayout\n";
+    LOG(std::cout << "Creating PipelineLayout\n");
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pipelineLayoutInfo.setLayoutCount = 1;
     pipelineLayoutInfo.pSetLayouts = &setLayout;
@@ -225,7 +231,7 @@ static VkPipeline loadComputeShader(VkDevice device, VkPipelineLayout pipelineLa
     VkShaderModule shaderModule;
     VK_CHECK(vkCreateShaderModule(device, &shaderModuleCreateInfo, nullptr, &shaderModule));
 
-    std::cout << "Creating Pipeline\n";
+    LOG(std::cout << "Creating Pipeline\n");
     VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
     pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -237,7 +243,7 @@ static VkPipeline loadComputeShader(VkDevice device, VkPipelineLayout pipelineLa
     VkPipeline pipeline;
     VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline));
 
-    std ::cout << "destroying shader module" << "\n";
+    LOG(std::cout << "destroying shader module" << "\n");
     vkDestroyShaderModule(device, shaderModule, nullptr);
 
     return pipeline;
@@ -245,7 +251,7 @@ static VkPipeline loadComputeShader(VkDevice device, VkPipelineLayout pipelineLa
 
 
 static VkDescriptorPool createDescriptorPool(VkDevice device) {
-    std::cout << "Creating Descriptor Pool\n";
+    LOG(std::cout << "Creating Descriptor Pool\n");
     VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3};
     VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     poolInfo.maxSets = 1;
@@ -258,7 +264,7 @@ static VkDescriptorPool createDescriptorPool(VkDevice device) {
 }
 
 static VkDescriptorSet allocateDescriptorSet(VkDevice device, VkDescriptorSetLayout descriptorSetLayout, VkDescriptorPool descriptorPool) {
-    std::cout << "Creating Descriptor Set\n";
+    LOG(std::cout << "Creating Descriptor Set\n");
     VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     allocInfo.descriptorPool = descriptorPool;
     allocInfo.descriptorSetCount = 1;
@@ -270,7 +276,7 @@ static VkDescriptorSet allocateDescriptorSet(VkDevice device, VkDescriptorSetLay
 }
 
 static VkCommandPool createCommandPool(VkDevice device, uint queueFamilyIndex) {
-    std::cout << "Creating Command pool\n";
+    LOG(std::cout << "Creating Command pool\n");
     VkCommandPoolCreateInfo poolCreateInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     poolCreateInfo.queueFamilyIndex = queueFamilyIndex;
     poolCreateInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -284,7 +290,7 @@ static VkCommandBuffer allocateCommandBuffer(VkDevice device, VkCommandPool comm
     cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cmdAlloc.commandBufferCount = 1;
 
-    std::cout << "Allocating command buffer\n";
+    LOG(std::cout << "Allocating command buffer\n");
     VkCommandBuffer commandBuffer;
     VK_CHECK(vkAllocateCommandBuffers(device, &cmdAlloc, &commandBuffer));
     return commandBuffer;
@@ -321,7 +327,7 @@ struct PerShaderData {
 };
 
 static PerShaderData perShaderSetup(std::vector<CommonBuffer> buffersToBind, const uint32_t* code, uint64_t code_size) {
-    std::cout << "Creating DescriptorSetLayouts\n";
+    LOG(std::cout << "Creating DescriptorSetLayouts\n");
     std::vector<VkDescriptorSetLayoutBinding> bindings;
     for (int i = 0; i < buffersToBind.size(); ++i) {
         VkDescriptorSetLayoutBinding binding{};
@@ -382,20 +388,20 @@ static PerShaderData perShaderSetup(std::vector<CommonBuffer> buffersToBind, con
 }
 
 static void perShaderTeardown(PerShaderData&& sd) {
-    std ::cout << "destroying pipeline" << "\n";
+    LOG(std::cout << "destroying pipeline" << "\n");
     vkDestroyPipeline(global_s.device, sd.pipeline, nullptr);
-    std ::cout << "destroying command pool" << "\n";
+    LOG(std::cout << "destroying command pool" << "\n");
     vkDestroyCommandPool(global_s.device, sd.commandPool, nullptr);
-    std ::cout << "destroying pipeline_layout" << "\n";
+    LOG(std::cout << "destroying pipeline_layout" << "\n");
     vkDestroyPipelineLayout(global_s.device, sd.pipelineLayout, nullptr);
-    std ::cout << "destroying descriptor pool" << "\n";
+    LOG(std::cout << "destroying descriptor pool" << "\n");
     vkDestroyDescriptorPool(global_s.device, sd.descriptorPool, nullptr);
-    std ::cout << "destroying descriptor set" << "\n";
+    LOG(std::cout << "destroying descriptor set" << "\n");
     vkDestroyDescriptorSetLayout(global_s.device, sd.descriptorSetLayout, nullptr);
 }
 
 static void runShader(PerShaderData const& sd, uint computeSize) {
-    std::cout << "Filling command buffer\n";
+    LOG(std::cout << "Filling command buffer\n");
     VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     vkBeginCommandBuffer(sd.commandBuffer, &beginInfo);
     vkCmdBindPipeline(sd.commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, sd.pipeline);
@@ -404,12 +410,12 @@ static void runShader(PerShaderData const& sd, uint computeSize) {
     vkCmdDispatch(sd.commandBuffer, (computeSize + 1023) / 1024, 1, 1);
     vkEndCommandBuffer(sd.commandBuffer);
 
-    std::cout << "Submitting command buffer\n";
+    LOG(std::cout << "Submitting command buffer\n");
     VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &sd.commandBuffer;
     VK_CHECK(vkQueueSubmit(global_s.queue, 1, &submitInfo, VK_NULL_HANDLE));
-    std::cout << "Waiting for Device to finish computation\n";
+    LOG(std::cout << "Waiting for Device to finish computation\n");
     VK_CHECK(vkQueueWaitIdle(global_s.queue));
 }
 
@@ -444,9 +450,9 @@ void fl_runtime_init() {
 }
 
 void fl_runtime_deinit() {
-    std ::cout << "destroying logical device" << "\n";
+    LOG(std::cout << "destroying logical device" << "\n");
     vkDestroyDevice(global_s.device, nullptr);
-    std ::cout << "destroying instance" << "\n";
+    LOG(std::cout << "destroying instance" << "\n");
     vkDestroyInstance(global_s.instance, nullptr);
 }
 
@@ -524,53 +530,4 @@ static std::vector<char> readSPV(const std::string& filename) {
     file.seekg(0);
     file.read(buffer.data(), size);
     return buffer;
-}
-
-extern "C" int main2() {
-    fl_runtime_init();
-
-    const std::string filename = "compute.comp.spv";
-    std::cout << "Loading ShaderModule \"" << filename << "\"\n";
-    auto shaderCode = readSPV(filename);
-
-    constexpr int SIZE = 3;
-
-    // ----- Fleet -----
-    int fleet_a[SIZE] = {1, 2, 3};
-    int fleet_b[SIZE] = {4, 5, 6};
-    int fleet_c[SIZE] = {0};
-    // ----- Fleet -----
-
-    std::cout << "Allocating buffers A, B and C on GPU\n";
-
-    fl_runtime_allocate_gpu_backing(&fleet_a, sizeof(fleet_a));
-    fl_runtime_allocate_gpu_backing(&fleet_b, sizeof(fleet_b));
-    fl_runtime_allocate_gpu_backing(&fleet_c, sizeof(fleet_c));
-
-
-    std::cout << "Copying Host -> Device\n";
-    fl_runtime_copy_to_backing(&fleet_a);
-    fl_runtime_copy_to_backing(&fleet_b);
-
-    void* buffers[SIZE] = {&fleet_a, &fleet_b, &fleet_c};
-    fl_runtime_bind_buffers(&buffers, SIZE);
-
-    fl_runtime_dispatch_shader(SIZE, reinterpret_cast<uint32_t*>(shaderCode.data()), shaderCode.size());
-
-    std::cout << "Copying Device -> Host\n";
-    fl_runtime_copy_from_backing(&fleet_c);
-
-    // ----- Fleet -----
-    for (int i = 0; i < SIZE; i++) {
-        std::cout << fleet_c[i] << " ";
-    }
-    std::cout << "\n";
-    // ----- Fleet -----
-
-    fl_runtime_free_gpu_backing(&fleet_a);
-    fl_runtime_free_gpu_backing(&fleet_b);
-    fl_runtime_free_gpu_backing(&fleet_c);
-
-    fl_runtime_deinit();
-    return 0;
 }
