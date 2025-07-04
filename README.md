@@ -10,6 +10,9 @@
 - Error messages for invalid Fleet programs
 - Formatting for valid Fleet programs with `textDocument/formatting`
     - Automatically removes unnecessary parentheses in expressions: `((1 * 2) + 3)` → `1 * 2 + 3`
+- signature help
+- hover information
+
 
 ## TODOs
 - if expressions
