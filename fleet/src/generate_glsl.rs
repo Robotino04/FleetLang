@@ -27,7 +27,7 @@ pub struct GLSLCodeGenerator<'inputs, 'errors> {
     errors: &'errors mut Vec<FleetError>,
     variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
     function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
-    type_data: &'inputs PerNodeData<UnionFindSetPtr>,
+    type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
     type_sets: &'inputs UnionFindSet<RuntimeType>,
 
     temporary_counter: u64,
@@ -37,7 +37,7 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
         errors: &'errors mut Vec<FleetError>,
         variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
         function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
-        type_data: &'inputs PerNodeData<UnionFindSetPtr>,
+        type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
         type_sets: &'inputs UnionFindSet<RuntimeType>,
     ) -> Self {
         Self {

@@ -1,4 +1,11 @@
-use std::{cell::RefCell, collections::HashMap, error::Error, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    error::Error,
+    hash::{Hash, Hasher},
+    marker::PhantomData,
+    rc::Rc,
+};
 
 use itertools::{EitherOrBoth, Itertools};
 
@@ -20,14 +27,36 @@ use crate::{
 
 type AnyResult<T> = ::core::result::Result<T, Box<dyn Error>>;
 
-#[derive(Copy, Clone, Debug, Hash, Default, PartialEq, Eq)]
-pub struct UnionFindSetPtr(u64);
+#[derive(Debug, Default)]
+pub struct UnionFindSetPtr<T>(u64, PhantomData<T>);
+
+impl<T> PartialEq for UnionFindSetPtr<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<T> Eq for UnionFindSetPtr<T> {}
+
+impl<T> Hash for UnionFindSetPtr<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl<T> Copy for UnionFindSetPtr<T> {}
+
+impl<T> Clone for UnionFindSetPtr<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct UnionFindSet<T> {
-    parent: HashMap<UnionFindSetPtr, UnionFindSetPtr>,
-    pub data: HashMap<UnionFindSetPtr, T>,
-    highest_ptr: UnionFindSetPtr,
+    parent: HashMap<UnionFindSetPtr<T>, UnionFindSetPtr<T>>,
+    pub data: HashMap<UnionFindSetPtr<T>, T>,
+    highest_ptr: UnionFindSetPtr<T>,
 }
 
 impl<T> Default for UnionFindSet<T> {
@@ -35,7 +64,7 @@ impl<T> Default for UnionFindSet<T> {
         Self {
             parent: HashMap::default(),
             data: HashMap::default(),
-            highest_ptr: UnionFindSetPtr(0),
+            highest_ptr: UnionFindSetPtr(0, PhantomData),
         }
     }
 }
@@ -46,7 +75,7 @@ pub enum UnionFindSetMergeResult<T> {
 }
 
 impl<T> UnionFindSet<T> {
-    pub fn insert_set(&mut self, initial_data: T) -> UnionFindSetPtr {
+    pub fn insert_set(&mut self, initial_data: T) -> UnionFindSetPtr<T> {
         let current_ptr = self.highest_ptr;
         self.highest_ptr.0 += 1;
         self.data.insert(current_ptr, initial_data);
@@ -54,28 +83,28 @@ impl<T> UnionFindSet<T> {
         current_ptr
     }
     /// Creates a new, detached, set with the representative being a copy of the one for [`ptr`]
-    pub fn detach(&mut self, ptr: UnionFindSetPtr) -> UnionFindSetPtr
+    pub fn detach(&mut self, ptr: UnionFindSetPtr<T>) -> UnionFindSetPtr<T>
     where
         T: Clone,
     {
         self.insert_set(self.get(ptr).clone())
     }
-    pub fn get_repr(&self, mut ptr: UnionFindSetPtr) -> UnionFindSetPtr {
+    pub fn get_repr(&self, mut ptr: UnionFindSetPtr<T>) -> UnionFindSetPtr<T> {
         while self.parent.get(&ptr) != Some(&ptr) {
             ptr = *self.parent.get(&ptr).unwrap();
         }
         ptr
     }
-    pub fn get(&self, ptr: UnionFindSetPtr) -> &T {
+    pub fn get(&self, ptr: UnionFindSetPtr<T>) -> &T {
         self.data.get(&self.get_repr(ptr)).unwrap()
     }
-    pub fn get_mut(&mut self, ptr: UnionFindSetPtr) -> &mut T {
+    pub fn get_mut(&mut self, ptr: UnionFindSetPtr<T>) -> &mut T {
         self.data.get_mut(&self.get_repr(ptr)).unwrap()
     }
     pub fn try_merge<Combiner: FnOnce(T, T, &mut Self) -> UnionFindSetMergeResult<T>>(
         &mut self,
-        a: UnionFindSetPtr,
-        b: UnionFindSetPtr,
+        a: UnionFindSetPtr<T>,
+        b: UnionFindSetPtr<T>,
         combiner: Combiner,
     ) -> bool {
         let a_repr = self.get_repr(a);
@@ -116,7 +145,7 @@ pub enum RuntimeType {
     Unknown,
     Error,
     ArrayOf {
-        subtype: UnionFindSetPtr,
+        subtype: UnionFindSetPtr<RuntimeType>,
         size: Option<usize>,
     },
 }
@@ -190,8 +219,8 @@ impl RuntimeType {
 
     #[must_use = "Failed merges usually indicate a compile error"]
     pub fn merge_types(
-        a: UnionFindSetPtr,
-        b: UnionFindSetPtr,
+        a: UnionFindSetPtr<RuntimeType>,
+        b: UnionFindSetPtr<RuntimeType>,
         types: &mut UnionFindSet<RuntimeType>,
     ) -> bool {
         types.try_merge(a, b, |mut a, b, types| {
@@ -303,15 +332,15 @@ pub struct FunctionID(pub u64);
 #[derive(Clone, Debug)]
 pub struct Variable {
     pub name: String,
-    pub type_: UnionFindSetPtr,
+    pub type_: UnionFindSetPtr<RuntimeType>,
     pub id: VariableID,
 }
 
 #[derive(Clone, Debug)]
 pub struct Function {
     pub name: String,
-    pub return_type: UnionFindSetPtr,
-    pub parameter_types: Vec<(UnionFindSetPtr, String)>,
+    pub return_type: UnionFindSetPtr<RuntimeType>,
+    pub parameter_types: Vec<(UnionFindSetPtr<RuntimeType>, String)>,
     pub id: FunctionID,
 }
 
@@ -358,7 +387,7 @@ impl VariableScopeStack {
 
 pub struct TypePropagator<'a> {
     type_sets: UnionFindSet<RuntimeType>,
-    node_types: PerNodeData<UnionFindSetPtr>,
+    node_types: PerNodeData<UnionFindSetPtr<RuntimeType>>,
     errors: &'a mut Vec<FleetError>,
     variable_scopes: VariableScopeStack,
     referenced_variable: PerNodeData<Rc<RefCell<Variable>>>,
@@ -451,14 +480,14 @@ impl<'a> TypePropagator<'a> {
         }
     }
 
-    fn stringify_type_ptr(&self, ptr: UnionFindSetPtr) -> String {
+    fn stringify_type_ptr(&self, ptr: UnionFindSetPtr<RuntimeType>) -> String {
         self.type_sets.get(ptr).stringify(&self.type_sets)
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct TypeAnalysisData {
-    pub type_data: PerNodeData<UnionFindSetPtr>,
+    pub type_data: PerNodeData<UnionFindSetPtr<RuntimeType>>,
     pub type_sets: UnionFindSet<RuntimeType>,
     pub variable_data: PerNodeData<Rc<RefCell<Variable>>>,
     pub function_data: PerNodeData<Rc<RefCell<Function>>>,
@@ -468,13 +497,13 @@ impl AstVisitor for TypePropagator<'_> {
     type ProgramOutput = TypeAnalysisData;
     type FunctionDefinitionOutput = ();
     type FunctionBodyOutput = ();
-    type SimpleBindingOutput = UnionFindSetPtr;
+    type SimpleBindingOutput = UnionFindSetPtr<RuntimeType>;
     type StatementOutput = ();
     type ExecutorHostOutput = ();
     type ExecutorOutput = ();
-    type ExpressionOutput = UnionFindSetPtr;
-    type LValueOutput = UnionFindSetPtr;
-    type TypeOutput = UnionFindSetPtr;
+    type ExpressionOutput = UnionFindSetPtr<RuntimeType>;
+    type LValueOutput = UnionFindSetPtr<RuntimeType>;
+    type TypeOutput = UnionFindSetPtr<RuntimeType>;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         for f in &mut program.functions {
@@ -1216,8 +1245,8 @@ impl AstVisitor for TypePropagator<'_> {
             from: RuntimeType,
             to: RuntimeType,
             expression_clone: CastExpression,
-            from_ptr: UnionFindSetPtr,
-            to_ptr: UnionFindSetPtr,
+            from_ptr: UnionFindSetPtr<RuntimeType>,
+            to_ptr: UnionFindSetPtr<RuntimeType>,
             self_errors: &mut Vec<FleetError>,
             types: &mut UnionFindSet<RuntimeType>,
         ) -> CastResult {

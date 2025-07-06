@@ -93,7 +93,7 @@ pub struct IrGenerator<'a, 'errors, 'inputs> {
 
     variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
     function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
-    type_data: &'inputs PerNodeData<UnionFindSetPtr>,
+    type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
     type_sets: &'inputs UnionFindSet<RuntimeType>,
 
     break_block: Option<BasicBlock<'a>>,

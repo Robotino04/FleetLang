@@ -54,9 +54,9 @@ pub struct FunctionTerminationAnalyzer<'errors, 'inputs> {
     termination: PerNodeData<FunctionTermination>,
     errors: &'errors mut Vec<FleetError>,
 
-    type_data: &'inputs PerNodeData<UnionFindSetPtr>,
+    _type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
     type_sets: &'inputs UnionFindSet<RuntimeType>,
-    variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
+    _variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
     function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
 
     current_function: Option<Rc<RefCell<Function>>>,
@@ -72,9 +72,9 @@ impl<'errors, 'inputs> FunctionTerminationAnalyzer<'errors, 'inputs> {
             termination: PerNodeData::default(),
             errors: error_output,
 
-            type_data: &analysis_data.type_data,
+            _type_data: &analysis_data.type_data,
             type_sets: &analysis_data.type_sets,
-            variable_data: &analysis_data.variable_data,
+            _variable_data: &analysis_data.variable_data,
             function_data: &analysis_data.function_data,
 
             current_function: None,
