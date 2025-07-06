@@ -12,8 +12,8 @@ use fleet::{
     },
     infra::{ErrorSeverity, FleetError, TokenizerOutput},
     passes::{
-        find_containing_node::FindContainingNodePass,
-        function_termination_analysis::FunctionTermination, type_propagation::TypeAnalysisData,
+        find_containing_node::FindContainingNodePass, stat_tracker::NodeStats,
+        type_propagation::TypeAnalysisData,
     },
     tokenizer::{SourceLocation, Token, Trivia, TriviaKind},
 };
@@ -594,7 +594,7 @@ impl<S: Spawner> Backend<S> {
     fn full_hover_text(
         &self,
         node_hierarchy: &[AstNode],
-        terminations: Option<&PerNodeData<FunctionTermination>>,
+        stats: Option<&PerNodeData<NodeStats>>,
         analysis_data: Option<&TypeAnalysisData>,
         hovered_token: Option<&Token>,
     ) -> String {
@@ -605,7 +605,9 @@ impl<S: Spawner> Backend<S> {
                         ```
 
                         ---- Debug Stats ----
+                        ```rust
                         {}
+                        ```
 
                         ---- Token ----
                         ```rust
@@ -618,11 +620,11 @@ impl<S: Spawner> Backend<S> {
                 .map_or("No AST Node".to_string(), |(info, debug)| format!(
                     "{info} // {debug}"
                 )),
-            terminations
+            stats
                 .as_ref()
-                .and_then(|ts| ts.get_node(node_hierarchy.last()?).cloned())
-                .map_or("No termination info available".to_string(), |t| format!(
-                    "{t:?}"
+                .and_then(|stat| stat.get_node(node_hierarchy.last()?).cloned())
+                .map_or("No stats available".to_string(), |stat| format!(
+                    "{stat:#?}"
                 )),
             hovered_token,
         )
@@ -1502,7 +1504,7 @@ impl<S: Spawner> LanguageServer for Backend<S> {
                     kind: MarkupKind::Markdown,
                     value: self.full_hover_text(
                         &node_hierarchy,
-                        analysis_output.as_ref().map(|a| &a.function_terminations),
+                        analysis_output.as_ref().map(|a| &a.stats),
                         analysis_output.as_ref().map(|a| &a.type_analysis_data),
                         hovered_token.as_ref(),
                     ),

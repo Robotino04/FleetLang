@@ -189,11 +189,18 @@ pub fn assert_compile_and_return_value_unformatted<ReturnType>(
     ReturnType: Debug + PartialEq,
 {
     let context = Context::create();
-    let (_tokenizer_output, _parser_output, _analysis_output, llvmcompilation_output) =
+    let (_tokenizer_output, _parser_output, analysis_output, llvmcompilation_output) =
         compile_or_panic(&context, src);
 
+    let needs_runtime = analysis_output
+        .stats
+        .get_node(&analysis_output.program)
+        .expect("No stats available for function to test")
+        .uses_runtime
+        .at_least_maybe();
+
     let actual_return_value =
-        execute_function::<ReturnType>(&llvmcompilation_output, function_name);
+        execute_function::<ReturnType>(&llvmcompilation_output, function_name, needs_runtime);
     assert_eq!(
         actual_return_value, expected_return_value,
         "expected {function_name:?} to return {expected_return_value:?} instead of {actual_return_value:?}"
@@ -283,15 +290,23 @@ fn format_or_panic(src: &str) -> String {
 
 fn execute_or_panic<ReturnType>(src: &str, function_name: &str) -> ReturnType {
     let context = Context::create();
-    let (_tokenizer_output, _parser_output, _analysis_output, llvmcompilation_output) =
+    let (_tokenizer_output, _parser_output, analysis_output, llvmcompilation_output) =
         compile_or_panic(&context, src);
 
-    execute_function::<ReturnType>(&llvmcompilation_output, function_name)
+    let needs_runtime = analysis_output
+        .stats
+        .get_node(&analysis_output.program)
+        .expect("No stats available for function to test")
+        .uses_runtime
+        .at_least_maybe();
+
+    execute_function::<ReturnType>(&llvmcompilation_output, function_name, needs_runtime)
 }
 
 fn execute_function<ReturnType>(
     compilation_output: &LLVMCompilationOutput<'_>,
     function_name: &str,
+    needs_runtime: bool,
 ) -> ReturnType {
     Target::initialize_native(&InitializationConfig::default())
         .expect("Failed to initialize native LLVM target");
@@ -332,18 +347,20 @@ fn execute_function<ReturnType>(
         }
     }
 
-    let dir = TempDir::new().unwrap();
+    if needs_runtime {
+        let dir = TempDir::new().unwrap();
 
-    let fl_runtime_so = dir.path().join("fl_runtime.so");
-    std::fs::write(
-        &fl_runtime_so,
-        include_bytes!("../../../fl_runtime/fl_runtime.so"),
-    )
-    .unwrap();
+        let fl_runtime_so = dir.path().join("fl_runtime.so");
+        std::fs::write(
+            &fl_runtime_so,
+            include_bytes!("../../../fl_runtime/fl_runtime.so"),
+        )
+        .unwrap();
 
-    inkwell::support::load_library_permanently(&find_library("libstdc++.so")).unwrap();
-    inkwell::support::load_library_permanently(&find_library("libvulkan.so")).unwrap();
-    inkwell::support::load_library_permanently(fl_runtime_so.as_path()).unwrap();
+        inkwell::support::load_library_permanently(&find_library("libvulkan.so")).unwrap();
+        inkwell::support::load_library_permanently(fl_runtime_so.as_path()).unwrap();
+        inkwell::support::load_library_permanently(&find_library("libstdc++.so")).unwrap();
+    }
 
     let execution_engine = compilation_output
         .module
@@ -369,8 +386,15 @@ fn assert_is_formatted(src: &str) {
 
 fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
     let context = Context::create();
-    let (_tokenizer_output, _parser_output, _analysis_output, llvmcompilation_output) =
+    let (_tokenizer_output, _parser_output, analysis_output, llvmcompilation_output) =
         compile_or_panic(&context, src);
+
+    let needs_runtime = analysis_output
+        .stats
+        .get_node(&analysis_output.program)
+        .expect("No stats available for function to test")
+        .uses_runtime
+        .at_least_maybe();
 
     Target::initialize_all(&inkwell::targets::InitializationConfig::default());
 
@@ -402,22 +426,29 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
         )
         .unwrap();
 
-    let fl_runtime_obj = dir.path().join("fl_runtime.o");
-    std::fs::write(
-        &fl_runtime_obj,
-        include_bytes!("../../../fl_runtime/fl_runtime.o"),
-    )
-    .unwrap();
+    let mut clang_cmd = Command::new("clang++");
+    clang_cmd.arg("-fdiagnostics-color=always");
+    clang_cmd.arg(object_file.to_str().unwrap());
+    clang_cmd.args(["-o", binary_file.to_str().unwrap()]);
 
-    println!("Calling clang to link {object_file:?} and {fl_runtime_obj:?} to {binary_file:?}");
-    let clang_out = Command::new("clang++")
-        .arg("-fdiagnostics-color=always")
-        .arg(object_file.to_str().unwrap())
-        .arg(fl_runtime_obj.to_str().unwrap())
-        .args(["-o", binary_file.to_str().unwrap()])
-        .arg("-lvulkan")
-        .output()
+    if needs_runtime {
+        let fl_runtime_obj = dir.path().join("fl_runtime.o");
+        std::fs::write(
+            &fl_runtime_obj,
+            include_bytes!("../../../fl_runtime/fl_runtime.o"),
+        )
         .unwrap();
+
+        clang_cmd.arg(fl_runtime_obj.to_str().unwrap());
+        clang_cmd.arg("-lvulkan");
+
+        println!("Calling clang to link {object_file:?} and {fl_runtime_obj:?} to {binary_file:?}");
+    } else {
+        println!("Calling clang to link {object_file:?} to {binary_file:?}");
+    }
+
+    let clang_out = clang_cmd.output().unwrap();
+
     print!(
         "Clang stdout:\n{}",
         String::from_utf8(clang_out.stdout).unwrap()
@@ -435,6 +466,13 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     let (_tokenizer_output, _parser_output, analysis_output, _llvmcompilation_output) =
         compile_or_panic(&context, src);
 
+    let needs_runtime = analysis_output
+        .stats
+        .get_node(&analysis_output.program)
+        .expect("No stats available for function to test")
+        .uses_runtime
+        .at_least_maybe();
+
     let mut errors = vec![];
     let c_code = analysis_output.compile_c(&mut errors);
     assert_no_fatal_errors(&errors);
@@ -446,60 +484,63 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     println!("Writing C code to {c_file:?}");
     std::fs::write(&c_file, c_code).unwrap();
 
-    let fl_runtime_header = dir.path().join("fl_runtime.h");
-    std::fs::write(
-        &fl_runtime_header,
-        include_bytes!("../../../fl_runtime/fl_runtime.h"),
-    )
-    .unwrap();
-    let fl_runtime_obj = dir.path().join("fl_runtime.o");
-    std::fs::write(
-        &fl_runtime_obj,
-        include_bytes!("../../../fl_runtime/fl_runtime.o"),
-    )
-    .unwrap();
+    let mut clang_compile = Command::new("clang++");
+    clang_compile.arg("-fdiagnostics-color=always");
+    clang_compile.arg("-c");
+    clang_compile.args(["-x", "c"]); // important for compound literals to have the correct semantics
+    clang_compile.arg(c_file.to_str().unwrap());
+    clang_compile.args(["-o", obj_file.to_str().unwrap()]);
 
-    println!("Calling clang to compile {c_file:?} to {obj_file:?}");
-    let clang_out = Command::new("clang++")
-        .arg("-fdiagnostics-color=always")
-        .arg("-c")
-        .args(["-x", "c"]) // important for compound literals to have the correct semantics
-        .arg(c_file.to_str().unwrap())
-        .args(["-o", obj_file.to_str().unwrap()])
-        .arg(format!(
+    let mut clang_link = Command::new("clang++");
+    clang_link.arg("-fdiagnostics-color=always");
+    clang_link.arg(obj_file.to_str().unwrap());
+    clang_link.args(["-o", binary_file.to_str().unwrap()]);
+
+    if needs_runtime {
+        let fl_runtime_header = dir.path().join("fl_runtime.h");
+        std::fs::write(
+            &fl_runtime_header,
+            include_bytes!("../../../fl_runtime/fl_runtime.h"),
+        )
+        .unwrap();
+        let fl_runtime_obj = dir.path().join("fl_runtime.o");
+        std::fs::write(
+            &fl_runtime_obj,
+            include_bytes!("../../../fl_runtime/fl_runtime.o"),
+        )
+        .unwrap();
+        clang_compile.arg(format!(
             "-I{}",
             fl_runtime_header.parent().unwrap().display()
-        ))
-        .output()
-        .unwrap();
-    print!(
-        "Clang stdout:\n{}",
-        String::from_utf8(clang_out.stdout).unwrap()
-    );
-    print!(
-        "Clang stderr:\n{}",
-        String::from_utf8(clang_out.stderr).unwrap()
-    );
-    assert!(clang_out.status.success());
+        ));
 
-    println!("Calling clang to link {obj_file:?}, {fl_runtime_obj:?} to {binary_file:?}");
-    let clang_out = Command::new("clang++")
-        .arg("-fdiagnostics-color=always")
-        .arg(obj_file.to_str().unwrap())
-        .arg(fl_runtime_obj)
-        .arg("-lvulkan")
-        .args(["-o", binary_file.to_str().unwrap()])
-        .output()
-        .unwrap();
+        clang_link.arg(fl_runtime_obj);
+        clang_link.arg("-lvulkan");
+    }
+
+    println!("Calling clang to compile {c_file:?} to {obj_file:?}");
+    let clang_compile_out = clang_compile.output().unwrap();
     print!(
         "Clang stdout:\n{}",
-        String::from_utf8(clang_out.stdout).unwrap()
+        String::from_utf8(clang_compile_out.stdout).unwrap()
     );
     print!(
         "Clang stderr:\n{}",
-        String::from_utf8(clang_out.stderr).unwrap()
+        String::from_utf8(clang_compile_out.stderr).unwrap()
     );
-    assert!(clang_out.status.success());
+    assert!(clang_compile_out.status.success());
+
+    println!("Calling clang to link {obj_file:?}  to {binary_file:?}");
+    let clang_link_out = clang_link.output().unwrap();
+    print!(
+        "Clang stdout:\n{}",
+        String::from_utf8(clang_link_out.stdout).unwrap()
+    );
+    print!(
+        "Clang stderr:\n{}",
+        String::from_utf8(clang_link_out.stderr).unwrap()
+    );
+    assert!(clang_link_out.status.success());
 
     binary_file.to_str().unwrap().to_string()
 }

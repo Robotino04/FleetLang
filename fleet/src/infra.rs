@@ -16,8 +16,8 @@ use crate::{
         find_node_bonds::find_node_bounds,
         fix_non_block_statements::FixNonBlockStatements,
         fix_trailing_comma::FixTrailingComma,
-        function_termination_analysis::{FunctionTermination, FunctionTerminationAnalyzer},
         remove_parens::RemoveParensPass,
+        stat_tracker::{NodeStats, StatTracker},
         type_propagation::{TypeAnalysisData, TypePropagator},
     },
     tokenizer::{SourceLocation, Token, Tokenizer},
@@ -184,15 +184,15 @@ impl ParserOutput {
         let type_analysis_data =
             TypePropagator::new(errors, &mut id_generator).visit_program(&mut program);
 
-        let term_analyzer = FunctionTerminationAnalyzer::new(errors, &type_analysis_data);
-        let function_terminations = term_analyzer.visit_program(&mut program);
+        let stat_tracker = StatTracker::new(errors, &type_analysis_data);
+        let stats = stat_tracker.visit_program(&mut program);
 
         run_fix_passes(errors, &mut program, &mut id_generator);
 
         Some(AnalysisOutput {
             program,
             id_generator,
-            function_terminations,
+            stats,
             type_analysis_data,
         })
     }
@@ -214,7 +214,7 @@ pub struct AnalysisOutput {
     pub program: Program,
     pub id_generator: IdGenerator,
 
-    pub function_terminations: PerNodeData<FunctionTermination>,
+    pub stats: PerNodeData<NodeStats>,
     pub type_analysis_data: TypeAnalysisData,
 }
 
@@ -233,12 +233,7 @@ impl AnalysisOutput {
         {
             return None;
         }
-        let ir_generator = IrGenerator::new(
-            context,
-            errors,
-            &self.function_terminations,
-            &self.type_analysis_data,
-        );
+        let ir_generator = IrGenerator::new(context, errors, &self.stats, &self.type_analysis_data);
         match ir_generator.visit_program(&mut self.program.clone()) {
             Ok(module) => Some(LLVMCompilationOutput { module }),
             Err(error) => {
@@ -268,6 +263,7 @@ impl AnalysisOutput {
             &self.type_analysis_data.function_data,
             &self.type_analysis_data.type_data,
             &self.type_analysis_data.type_sets,
+            &self.stats,
         )
         .visit_program(&mut self.program.clone())
     }

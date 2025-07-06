@@ -36,7 +36,7 @@ use crate::{
     generate_glsl::GLSLCodeGenerator,
     infra::{ErrorSeverity, FleetError},
     passes::{
-        function_termination_analysis::FunctionTermination,
+        stat_tracker::{NodeStats, YesNoMaybe},
         type_propagation::{
             Function, FunctionID, RuntimeType, TypeAnalysisData, UnionFindSet, UnionFindSetPtr,
             Variable, VariableID,
@@ -87,7 +87,7 @@ pub struct IrGenerator<'a, 'errors, 'inputs> {
     builder: Builder<'a>,
     errors: &'errors mut Vec<FleetError>,
 
-    function_termination: &'inputs PerNodeData<FunctionTermination>,
+    node_stats: &'inputs PerNodeData<NodeStats>,
     variable_storage: HashMap<VariableID, VariableStorage<'a>>,
     function_locations: HashMap<FunctionID, FunctionLocation<'a>>,
 
@@ -103,7 +103,7 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
     pub fn new(
         context: &'a Context,
         errors: &'errors mut Vec<FleetError>,
-        function_termination: &'inputs PerNodeData<FunctionTermination>,
+        stats: &'inputs PerNodeData<NodeStats>,
         analysis_data: &'inputs TypeAnalysisData,
     ) -> Self {
         let module = context.create_module("module");
@@ -121,7 +121,7 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
             module,
             builder,
             errors,
-            function_termination,
+            node_stats: stats,
             variable_data,
             variable_storage: HashMap::new(),
             function_data,
@@ -332,27 +332,36 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
     type TypeOutput = Result<AnyTypeEnum<'a>>;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
-        let runtime_module_declarations =
-            self.context
-                .create_module_from_ir(MemoryBuffer::create_from_memory_range(
-                    include_bytes!("../../fl_runtime/fl_runtime_declarations.bc"),
-                    "fl_runtime_declarations",
-                ))?;
+        let needs_runtime = self
+            .node_stats
+            .get_node(program)
+            .expect("Program must have stats")
+            .uses_runtime
+            .at_least_maybe();
 
-        if let Err(err) = self.module.link_in_module(runtime_module_declarations) {
-            self.errors.push(FleetError {
-                start: SourceLocation::start(),
-                end: program
-                    .functions
-                    .first()
-                    .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
-                message: format!(
-                    "Linking with runtime library declarations failed: {}\nModule dump:\n{}",
-                    unescape(err.to_str().unwrap()),
-                    self.module.print_to_string().to_str().unwrap()
-                ),
-                severity: ErrorSeverity::Error,
-            });
+        if needs_runtime {
+            let runtime_module_declarations =
+                self.context
+                    .create_module_from_ir(MemoryBuffer::create_from_memory_range(
+                        include_bytes!("../../fl_runtime/fl_runtime_declarations.bc"),
+                        "fl_runtime_declarations",
+                    ))?;
+
+            if let Err(err) = self.module.link_in_module(runtime_module_declarations) {
+                self.errors.push(FleetError {
+                    start: SourceLocation::start(),
+                    end: program
+                        .functions
+                        .first()
+                        .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
+                    message: format!(
+                        "Linking with runtime library declarations failed: {}\nModule dump:\n{}",
+                        unescape(err.to_str().unwrap()),
+                        self.module.print_to_string().to_str().unwrap()
+                    ),
+                    severity: ErrorSeverity::Error,
+                });
+            }
         }
 
         for f in &mut program.functions {
@@ -376,18 +385,17 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
 
             let entry = self.context.append_basic_block(actual_main_fn, "entry");
 
-            let fl_runtime_init = self
-                .module
-                .get_function("fl_runtime_init")
-                .expect("fl runtime functions should exist before walking the ast");
-            let fl_runtime_deinit = self
-                .module
-                .get_function("fl_runtime_deinit")
-                .expect("fl runtime functions should exist before walking the ast");
-
             self.builder.position_at_end(entry);
-            self.builder
-                .build_call(fl_runtime_init, &[], "fl_runtime_init")?;
+
+            if needs_runtime {
+                let fl_runtime_init = self
+                    .module
+                    .get_function("fl_runtime_init")
+                    .expect("fl runtime functions should exist before walking the ast");
+
+                self.builder
+                    .build_call(fl_runtime_init, &[], "fl_runtime_init")?;
+            }
 
             let retvalue = self.builder.build_call(fleet_main_fn, &[], "main call")?;
 
@@ -430,8 +438,15 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                 ))?,
             };
 
-            self.builder
-                .build_call(fl_runtime_deinit, &[], "fl_runtime_deinit")?;
+            if needs_runtime {
+                let fl_runtime_deinit = self
+                    .module
+                    .get_function("fl_runtime_deinit")
+                    .expect("fl runtime functions should exist before walking the ast");
+
+                self.builder
+                    .build_call(fl_runtime_deinit, &[], "fl_runtime_deinit")?;
+            }
 
             self.builder.build_return(Some(&cast_retvalue))?;
         }
@@ -505,11 +520,12 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
 
         self.visit_function_body(&mut function.body)?;
 
-        if *self
-            .function_termination
+        if self
+            .node_stats
             .get_node(&function.body)
-            .expect("all function bodies should have been analyzed for termination")
-            == FunctionTermination::Terminates
+            .expect("stats should be available before calling ir_generator")
+            .terminates_function
+            == YesNoMaybe::Yes
         {
             for block in ir_function.get_basic_blocks() {
                 if block.get_first_use().is_none() && block != entry {
@@ -986,11 +1002,12 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         self.builder.position_at_end(body_block);
         self.visit_statement(&mut if_stmt.if_body)?;
 
-        if *self
-            .function_termination
+        if self
+            .node_stats
             .get_node(&*if_stmt.if_body)
-            .unwrap_or_else(|| panic!("{:?} didn't get analyzed for termination", if_stmt.if_body))
-            != FunctionTermination::Terminates
+            .unwrap_or_else(|| panic!("{:?} doesn't have stats", if_stmt.if_body))
+            .terminates_function
+            != YesNoMaybe::Yes
         {
             self.builder.build_unconditional_branch(end_block)?;
         }
@@ -1020,11 +1037,12 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             self.builder.position_at_end(body_block);
             self.visit_statement(body)?;
 
-            if *self
-                .function_termination
+            if self
+                .node_stats
                 .get_node(body)
-                .unwrap_or_else(|| panic!("{body:?} didn't get analyzed for termination"))
-                != FunctionTermination::Terminates
+                .unwrap_or_else(|| panic!("{body:?} doesn't have stats"))
+                .terminates_function
+                != YesNoMaybe::Yes
             {
                 self.builder.build_unconditional_branch(end_block)?;
             }
@@ -1035,11 +1053,12 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             next_block.set_name("else_body");
 
             self.visit_statement(else_body)?;
-            if *self
-                .function_termination
+            if self
+                .node_stats
                 .get_node(&**else_body)
-                .unwrap_or_else(|| panic!("{:?} didn't get analyzed for termination", else_body))
-                != FunctionTermination::Terminates
+                .unwrap_or_else(|| panic!("{:?} doesn't have stats", else_body))
+                .terminates_function
+                != YesNoMaybe::Yes
             {
                 self.builder.build_unconditional_branch(end_block)?;
             }

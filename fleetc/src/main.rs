@@ -84,7 +84,7 @@ fn main() {
     };
 
     println!("{}", generate_header("Function Terminations", 50));
-    println!("{:#?}", analysis_output.function_terminations);
+    println!("{:#?}", analysis_output.stats);
 
     if errors
         .iter()
@@ -100,7 +100,7 @@ fn main() {
     };
 
     println!("{}", generate_header("LLVM IR (unoptimized)", 50));
-    println!("{:#?}", analysis_output.function_terminations);
+    println!("{:#?}", analysis_output.stats);
 
     if errors
         .iter()

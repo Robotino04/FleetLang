@@ -18,11 +18,16 @@ use crate::{
     },
     generate_glsl::GLSLCodeGenerator,
     infra::FleetError,
-    passes::type_propagation::{Function, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable},
+    passes::{
+        stat_tracker::NodeStats,
+        type_propagation::{Function, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable},
+    },
 };
 
 pub struct CCodeGenerator<'inputs, 'errors> {
     errors: &'errors mut Vec<FleetError>,
+
+    node_stats: &'inputs PerNodeData<NodeStats>,
 
     variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
     function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
@@ -38,9 +43,11 @@ impl<'inputs, 'errors> CCodeGenerator<'inputs, 'errors> {
         function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
         type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
         type_sets: &'inputs UnionFindSet<RuntimeType>,
+        stats: &'inputs PerNodeData<NodeStats>,
     ) -> Self {
         Self {
             errors,
+            node_stats: stats,
             variable_data,
             function_data,
             type_data,
@@ -183,6 +190,23 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             })
             .join("\n");
 
+        let needs_runtime = self
+            .node_stats
+            .get_node(program)
+            .expect("Program must have stats")
+            .uses_runtime
+            .at_least_maybe();
+
+        let (runtime_include_str, runtime_init_str, runtime_deinit_str) = if needs_runtime {
+            (
+                "#include \"fl_runtime.h\"",
+                "fl_runtime_init();",
+                "fl_runtime_deinit();",
+            )
+        } else {
+            ("", "", "")
+        };
+
         formatdoc!(
             r##"
             #include <stdio.h>
@@ -191,7 +215,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             #include <stdbool.h>
             #include <string.h>
 
-            #include "fl_runtime.h"
+            {runtime_include_str}
 
 
             // function declarations
@@ -201,9 +225,9 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             {function_definitions}
 
             int main(int argc, const char** argv) {{
-                fl_runtime_init();
+                {runtime_init_str}
                 int retvalue = fleet_main();
-                fl_runtime_deinit();
+                {runtime_deinit_str}
                 return retvalue;
             }}
             "##,

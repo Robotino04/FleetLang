@@ -27,8 +27,7 @@ impl FindContainingNodePass {
 
     fn visit_token(&mut self, token: &Token) -> Result<(SourceLocation, SourceLocation), ()> {
         if (token.start.line..=token.end.line).contains(&self.search_position.line)
-            && (token.start.column..token.end.column)
-                .contains(&self.search_position.column)
+            && (token.start.column..token.end.column).contains(&self.search_position.column)
         {
             self.token = Some(token.clone());
             return Err(());
