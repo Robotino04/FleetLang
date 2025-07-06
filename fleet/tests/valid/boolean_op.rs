@@ -10,7 +10,9 @@ fn eq_false() {
                 return 1 == 2;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         false,
     );
 }
@@ -23,7 +25,9 @@ fn eq_true() {
                 return 1 == 1;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         true,
     );
 }
@@ -36,7 +40,9 @@ fn ge_false() {
                 return 1 >= 2;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         false,
     );
 }
@@ -49,7 +55,9 @@ fn ge_true() {
                 return 1 >= 1;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         true,
     );
 }
@@ -62,7 +70,9 @@ fn gt_false() {
                 return 1 > 2;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         false,
     );
 }
@@ -75,7 +85,9 @@ fn gt_true() {
                 return 1 > 0;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         true,
     );
 }
@@ -88,7 +100,9 @@ fn le_false() {
                 return 1 <= -1;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         false,
     );
 }
@@ -101,7 +115,9 @@ fn le_true() {
                 return 0 <= 2;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         true,
     );
 }
@@ -114,7 +130,9 @@ fn lt_false() {
                 return 2 < 1;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         false,
     );
 }
@@ -127,7 +145,9 @@ fn ne_false() {
                 return 0 != 0;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         false,
     );
 }
@@ -140,7 +160,9 @@ fn ne_true() {
                 return -1 != -2;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         true,
     );
 }
@@ -153,7 +175,9 @@ fn and_false() {
                 return true && false;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         false,
     );
 }
@@ -166,7 +190,9 @@ fn and_true() {
                 return true && true;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         true,
     );
 }
@@ -179,7 +205,9 @@ fn or_false() {
                 return false || false;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         false,
     );
 }
@@ -192,7 +220,9 @@ fn or_true() {
                 return true || false;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         true,
     );
 }
@@ -205,7 +235,9 @@ fn precedence_1() {
                 return true || false && true;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         true,
     );
 }
@@ -218,7 +250,9 @@ fn precedence_2() {
                 return (true || false) && false;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         false,
     );
 }
@@ -231,7 +265,9 @@ fn precedence_3() {
                 return true == 3 >= 2;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         true,
     );
 }
@@ -244,7 +280,9 @@ fn precedence_4() {
                 return 2 == 2 || false;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         true,
     );
 }

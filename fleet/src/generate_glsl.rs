@@ -1,5 +1,6 @@
 use std::{cell::RefCell, error::Error, rc::Rc};
 
+use indent::indent_by;
 use indoc::formatdoc;
 
 use itertools::Itertools;
@@ -10,11 +11,11 @@ use crate::{
         BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
         BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, IdkType, IfStatement, IntType, NumberExpression, OnStatement,
-        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
-        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        GroupingLValue, HasID, IdkType, IfStatement, IntType, LValue, NumberExpression,
+        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::type_propagation::{Function, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable},
@@ -49,7 +50,122 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
         }
     }
 
-    pub fn runtime_type_to_glsl(&self, type_: RuntimeType) -> (String, String) {
+    pub fn generate_on_statement_shader(
+        mut self,
+        mut bindings: Vec<&mut LValue>,
+        main_body: &mut Statement,
+        gpu_executor: &mut GPUExecutor,
+    ) -> Result<(String, Result<shaderc::CompilationArtifact>)> {
+        let GPUExecutor {
+            host: _,
+            dot_token: _,
+            gpus_token: _,
+            open_bracket_token_1: _,
+            gpu_index: _,
+            close_bracket_token_1: _,
+            open_bracket_token_2: _,
+            iterator,
+            equal_token: _,
+            max_value: _,
+            close_bracket_token_2: _,
+            id: _,
+        } = gpu_executor;
+
+        let body_str = match self.visit_statement(main_body) {
+            Ok(body_str) => body_str,
+            Err(err) => {
+                self.errors.push(FleetError::from_node(
+                    main_body.clone(),
+                    format!("GLSL generation failed: {err}"),
+                    ErrorSeverity::Error,
+                ));
+                return Err(err);
+            }
+        };
+
+        let glsl_iterator_type = self.runtime_type_to_glsl(
+            *self.type_sets.get(
+                *self
+                    .type_data
+                    .get_node(iterator)
+                    .expect("type data must exist before calling glsl_generator"),
+            ),
+        );
+
+        let glsl_buffer_definitions = bindings
+            .iter_mut()
+            .enumerate()
+            .map(|(i, binding)| {
+                let glsl_type = self.runtime_type_to_glsl(
+                    *self.type_sets.get(
+                        *self
+                            .type_data
+                            .get_node(*binding)
+                            .expect("type data must exist before calling c_generator"),
+                    ),
+                );
+                format!(
+                    "layout(std430, binding = {i}) buffer Input{i} {{ {} {}{}; }};",
+                    glsl_type.0,
+                    self.visit_lvalue(binding).out_value, // TODO: extract top-level variable and bind that instead of the lvalue
+                    glsl_type.1,
+                )
+            })
+            .join("\n");
+
+        let unescaped_glsl = formatdoc! {
+            "
+            #version 430
+            layout(local_size_x = 1024) in;
+
+            // https://github.com/Darkyenus/glsl4idea/issues/175
+            #extension GL_EXT_shader_explicit_arithmetic_types         : enable
+
+            {glsl_buffer_definitions}
+
+            layout(push_constant) uniform PushConstants {{
+                uint dispatch_size;
+            }};
+
+            void main() {{
+                if (gl_GlobalInvocationID.x >= dispatch_size) {{
+                    return;
+                }}
+                {} = {}(gl_GlobalInvocationID.x);
+                {}
+            }}
+            ",
+            self.visit_simple_binding(iterator),
+            glsl_iterator_type.0 + &glsl_iterator_type.1,
+            indent_by(4, body_str),
+        };
+
+        let shaderc_output = {
+            let compiler = shaderc::Compiler::new().unwrap();
+            let options = shaderc::CompileOptions::new().unwrap();
+            match compiler.compile_into_spirv(
+                &unescaped_glsl,
+                shaderc::ShaderKind::Compute,
+                "fleet_temporary.comp",
+                "main",
+                Some(&options),
+            ) {
+                Err(err) => {
+                    self.errors.push(FleetError::from_node(
+                        main_body.clone(),
+                        format!("{unescaped_glsl}\n----------\nInternal shaderc error: {err}"),
+                        ErrorSeverity::Error,
+                    ));
+                    return Ok((unescaped_glsl, Err(err.into())));
+                }
+                Ok(res) => res,
+            }
+        };
+
+        Ok((unescaped_glsl, Ok(shaderc_output)))
+    }
+
+    fn runtime_type_to_glsl(&self, type_: RuntimeType) -> (String, String) {
         match type_ {
             RuntimeType::I8 => ("int8_t".to_string(), "".to_string()),
             RuntimeType::I16 => ("int16_t".to_string(), "".to_string()),
@@ -79,7 +195,7 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
             }
         }
     }
-    pub fn runtime_type_to_byte_size(&self, type_: RuntimeType) -> usize {
+    fn runtime_type_to_byte_size(&self, type_: RuntimeType) -> usize {
         match type_ {
             RuntimeType::I8 => 1,
             RuntimeType::I16 => 2,

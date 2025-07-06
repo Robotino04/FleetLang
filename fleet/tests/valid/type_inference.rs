@@ -41,7 +41,9 @@ fn missing_variable_type() {
                 return a;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         true,
     );
 }

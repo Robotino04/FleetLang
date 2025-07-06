@@ -187,7 +187,9 @@ fn upcast_i16_i64_negative() {
                 return -5 as i16 as i64;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         -5i64,
     );
 }
@@ -213,7 +215,9 @@ fn upcast_i32_i64_negative() {
                 return -5 as i32 as i64;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         -5i64,
     );
 }
@@ -239,7 +243,9 @@ fn upcast_i8_i64_negative() {
                 return -5 as i8 as i64;
             }
         "##},
-        "main",
+        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
+        // limited to main returning an i32. Tests should whenever possible call real main
+        "fleet_main",
         -5i64,
     );
 }

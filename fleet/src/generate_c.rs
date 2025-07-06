@@ -1,6 +1,5 @@
 use std::{cell::RefCell, rc::Rc};
 
-use indent::indent_by;
 use indoc::formatdoc;
 
 use itertools::Itertools;
@@ -18,7 +17,7 @@ use crate::{
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     generate_glsl::GLSLCodeGenerator,
-    infra::{ErrorSeverity, FleetError},
+    infra::FleetError,
     passes::type_propagation::{Function, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable},
 };
 
@@ -312,7 +311,6 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
     }
 
     fn visit_on_statement(&mut self, stmt: &mut OnStatement) -> Self::StatementOutput {
-        let on_stmt_clone = stmt.clone();
         let OnStatement {
             on_token: _,
             executor,
@@ -323,7 +321,12 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             id: _,
         } = stmt;
 
-        let Executor::GPU(GPUExecutor {
+        let Executor::GPU(gpu_executor) = executor else {
+            todo!()
+        };
+
+        let mut gpu_executor_clone = gpu_executor.clone();
+        let GPUExecutor {
             host: _,
             dot_token: _,
             gpus_token: _,
@@ -331,15 +334,12 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             gpu_index: _,
             close_bracket_token_1: _,
             open_bracket_token_2: _,
-            iterator,
+            iterator: _,
             equal_token: _,
             max_value: iterator_end_value,
             close_bracket_token_2: _,
             id: _,
-        }) = executor
-        else {
-            todo!()
-        };
+        } = gpu_executor;
 
         let mut buffers = vec![];
 
@@ -384,104 +384,25 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         let buffers_str = format!("void* {buffers_name}[] = {{ {} }};", buffers.join(", "));
         let buffers_len = buffers.len();
 
-        let mut glsl_generator = GLSLCodeGenerator::new(
+        let glsl_generator = GLSLCodeGenerator::new(
             self.errors,
             self.variable_data,
             self.function_data,
             self.type_data,
             self.type_sets,
         );
-        let body_str = match glsl_generator.visit_statement(&mut *body) {
-            Ok(body_str) => body_str,
-            Err(err) => {
-                self.errors.push(FleetError::from_node(
-                    stmt.clone(),
-                    format!("GLSL generation failed: {err}"),
-                    ErrorSeverity::Error,
-                ));
-                return "".to_string();
-            }
+        let Ok((unescaped_glsl, shaderc_output)) = glsl_generator.generate_on_statement_shader(
+            bindings
+                .iter_mut()
+                .map(|(binding, _comma)| binding)
+                .collect_vec(),
+            body,
+            &mut gpu_executor_clone,
+        ) else {
+            return "#error glsl generation failed completely\n".to_string();
         };
-
-        let glsl_iterator_type = glsl_generator.runtime_type_to_glsl(
-            *self.type_sets.get(
-                *self
-                    .type_data
-                    .get_node(iterator)
-                    .expect("type data must exist before calling c_generator"),
-            ),
-        );
-
-        let glsl_buffer_definitions = bindings
-            .iter_mut()
-            .enumerate()
-            .map(|(i, (binding, _comma))| {
-                let glsl_type = glsl_generator.runtime_type_to_glsl(
-                    *self.type_sets.get(
-                        *self
-                            .type_data
-                            .get_node(binding)
-                            .expect("type data must exist before calling c_generator"),
-                    ),
-                );
-                format!(
-                    "layout(std430, binding = {i}) buffer Input{i} {{ {} {}{}; }};",
-                    glsl_type.0,
-                    glsl_generator.visit_lvalue(binding).out_value, // TODO: extract top-level variable and bind that instead of the lvalue
-                    glsl_type.1,
-                )
-            })
-            .join("\n");
-
-        let unescaped_glsl = formatdoc! {
-            "
-            #version 430
-            layout(local_size_x = 1024) in;
-
-            // https://github.com/Darkyenus/glsl4idea/issues/175
-            #extension GL_EXT_shader_explicit_arithmetic_types         : enable
-
-            {glsl_buffer_definitions}
-
-            layout(push_constant) uniform PushConstants {{
-                uint dispatch_size;
-            }};
-
-            void main() {{
-                if (gl_GlobalInvocationID.x >= dispatch_size) {{
-                    return;
-                }}
-                {} = {}(gl_GlobalInvocationID.x);
-                {}
-            }}
-            ",
-            glsl_generator.visit_simple_binding(iterator),
-            glsl_iterator_type.0 + &glsl_iterator_type.1,
-            indent_by(4, body_str),
-        };
-
-        let shaderc_output = {
-            let compiler = shaderc::Compiler::new().unwrap();
-            let options = shaderc::CompileOptions::new().unwrap();
-            let Ok(res) = compiler
-                .compile_into_spirv(
-                    &unescaped_glsl,
-                    shaderc::ShaderKind::Compute,
-                    "fleet_temporary.comp",
-                    "main",
-                    Some(&options),
-                )
-                .inspect_err(|e| {
-                    self.errors.push(FleetError::from_node(
-                        on_stmt_clone,
-                        "Internal shaderc error: ".to_string() + &e.to_string(),
-                        ErrorSeverity::Error,
-                    ));
-                })
-            else {
-                return format!("#error malformed on-statement\n/*\n{unescaped_glsl}\n*/\n");
-            };
-            res
+        let Ok(shaderc_output) = shaderc_output else {
+            return format!("#error malformed on-statement\n/*\n{unescaped_glsl}\n*/\n");
         };
 
         let bytes_str = shaderc_output

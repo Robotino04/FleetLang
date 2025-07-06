@@ -7,13 +7,13 @@ use std::{
 };
 
 use inkwell::{
-    IntPredicate,
+    AddressSpace, IntPredicate,
     basic_block::BasicBlock,
     builder::Builder,
     context::Context,
     memory_buffer::MemoryBuffer,
     module::{Linkage, Module},
-    types::{AnyTypeEnum, BasicMetadataTypeEnum, FunctionType},
+    types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, FunctionType},
     values::{
         BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue,
     },
@@ -24,15 +24,16 @@ use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
         BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
-        BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, IdkType, IfStatement, IntType, NumberExpression, OnStatement,
-        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
-        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        BreakStatement, CastExpression, Executor, ExpressionStatement, ExternFunctionBody,
+        ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor,
+        GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, IntType, NumberExpression,
+        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     escape::unescape,
+    generate_glsl::GLSLCodeGenerator,
     infra::{ErrorSeverity, FleetError},
     passes::{
         function_termination_analysis::FunctionTermination,
@@ -230,6 +231,10 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
         })
     }
 
+    fn mangle_function(&self, name: &str) -> String {
+        format!("fleet_{name}")
+    }
+
     fn register_function(&mut self, function: &mut FunctionDefinition) -> Result<()> {
         let return_type_ir = function
             .return_type
@@ -254,7 +259,7 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
                 semicolon_token: _,
                 id: _,
             }) => symbol.clone(),
-            FunctionBody::Statement(_) => function.name.clone(),
+            FunctionBody::Statement(_) => self.mangle_function(&function.name),
         };
 
         let params = function
@@ -327,12 +332,108 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
     type TypeOutput = Result<AnyTypeEnum<'a>>;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
+        let runtime_module_declarations =
+            self.context
+                .create_module_from_ir(MemoryBuffer::create_from_memory_range(
+                    include_bytes!("../../fl_runtime/fl_runtime_declarations.bc"),
+                    "fl_runtime_declarations",
+                ))?;
+
+        if let Err(err) = self.module.link_in_module(runtime_module_declarations) {
+            self.errors.push(FleetError {
+                start: SourceLocation::start(),
+                end: program
+                    .functions
+                    .first()
+                    .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
+                message: format!(
+                    "Linking with runtime library declarations failed: {}\nModule dump:\n{}",
+                    unescape(err.to_str().unwrap()),
+                    self.module.print_to_string().to_str().unwrap()
+                ),
+                severity: ErrorSeverity::Error,
+            });
+        }
+
         for f in &mut program.functions {
             self.register_function(f)?;
         }
 
         for f in &mut program.functions {
             self.visit_function_definition(f)?;
+        }
+
+        {
+            let fleet_main_fn = self
+                .module
+                .get_function(&self.mangle_function("main"))
+                .expect("Program must have a main function");
+
+            let actual_main_return_type = self.context.i32_type();
+            let actual_main_fn =
+                self.module
+                    .add_function("main", actual_main_return_type.fn_type(&[], false), None);
+
+            let entry = self.context.append_basic_block(actual_main_fn, "entry");
+
+            let fl_runtime_init = self
+                .module
+                .get_function("fl_runtime_init")
+                .expect("fl runtime functions should exist before walking the ast");
+            let fl_runtime_deinit = self
+                .module
+                .get_function("fl_runtime_deinit")
+                .expect("fl runtime functions should exist before walking the ast");
+
+            self.builder.position_at_end(entry);
+            self.builder
+                .build_call(fl_runtime_init, &[], "fl_runtime_init")?;
+
+            let retvalue = self.builder.build_call(fleet_main_fn, &[], "main call")?;
+
+            let cast_retvalue = match fleet_main_fn.get_type().get_return_type() {
+                None => actual_main_return_type.const_zero(),
+                Some(BasicTypeEnum::IntType(int_type)) if int_type.get_bit_width() == 1 => {
+                    self.builder.build_int_z_extend_or_bit_cast(
+                        retvalue.try_as_basic_value().unwrap_left().into_int_value(),
+                        actual_main_return_type,
+                        "upcast",
+                    )?
+                }
+                Some(BasicTypeEnum::IntType(int_type))
+                    if int_type.get_bit_width() <= actual_main_return_type.get_bit_width() =>
+                {
+                    self.builder.build_int_s_extend_or_bit_cast(
+                        retvalue.try_as_basic_value().unwrap_left().into_int_value(),
+                        actual_main_return_type,
+                        "upcast",
+                    )?
+                }
+                Some(BasicTypeEnum::IntType(int_type))
+                    if int_type.get_bit_width() > actual_main_return_type.get_bit_width() =>
+                {
+                    self.builder.build_int_truncate_or_bit_cast(
+                        retvalue.try_as_basic_value().unwrap_left().into_int_value(),
+                        actual_main_return_type,
+                        "downcast",
+                    )?
+                }
+                Some(other_type) => self.report_error(FleetError::from_node(
+                    program
+                        .functions
+                        .iter()
+                        .find(|f| f.name == "main")
+                        .expect("Main function must exist")
+                        .clone(),
+                    format!("Main function returns unsupported type {other_type}"),
+                    ErrorSeverity::Error,
+                ))?,
+            };
+
+            self.builder
+                .build_call(fl_runtime_deinit, &[], "fl_runtime_deinit")?;
+
+            self.builder.build_return(Some(&cast_retvalue))?;
         }
 
         if let Err(err) = self.module.verify() {
@@ -344,29 +445,6 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                     .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
                 message: format!(
                     "LLVM module is invalid: {}\nModule dump:\n{}",
-                    unescape(err.to_str().unwrap()),
-                    self.module.print_to_string().to_str().unwrap()
-                ),
-                severity: ErrorSeverity::Error,
-            });
-        }
-
-        let runtime_module =
-            self.context
-                .create_module_from_ir(MemoryBuffer::create_from_memory_range(
-                    include_bytes!("../../fl_runtime/fl_runtime.bc"),
-                    "fl_runtime",
-                ))?;
-
-        if let Err(err) = self.module.link_in_module(runtime_module) {
-            self.errors.push(FleetError {
-                start: SourceLocation::start(),
-                end: program
-                    .functions
-                    .first()
-                    .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
-                message: format!(
-                    "Linking with runtime library failed: {}\nModule dump:\n{}",
                     unescape(err.to_str().unwrap()),
                     self.module.print_to_string().to_str().unwrap()
                 ),
@@ -610,14 +688,218 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
     }
 
     fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
+        let OnStatement {
+            on_token: _,
+            executor,
+            open_paren_token: _,
+            bindings,
+            close_paren_token: _,
+            body,
+            id: _,
+        } = on_stmt;
+
+        let Executor::GPU(gpu_executor) = executor else {
+            todo!()
+        };
+
+        let mut gpu_executor_clone = gpu_executor.clone();
+        let GPUExecutor {
+            host: _,
+            dot_token: _,
+            gpus_token: _,
+            open_bracket_token_1: _,
+            gpu_index: _,
+            close_bracket_token_1: _,
+            open_bracket_token_2: _,
+            iterator: _,
+            equal_token: _,
+            max_value: iterator_end_value,
+            close_bracket_token_2: _,
+            id: _,
+        } = gpu_executor;
+
+        let current_block = self
+            .builder
+            .get_insert_block()
+            .expect("Builder should always be in a block");
+
+        let bindings_block = self
+            .context
+            .insert_basic_block_after(current_block, "on-statement bindings");
+        let allocations_block = self
+            .context
+            .insert_basic_block_after(bindings_block, "on-statement allocations");
+        let exec_block = self
+            .context
+            .insert_basic_block_after(allocations_block, "on-statement dispatch");
+        let deallocations_block = self
+            .context
+            .insert_basic_block_after(exec_block, "on-statement deallocations");
+
+        self.builder.position_at_end(bindings_block);
+        let iterator_end_value_ir = self
+            .visit_expression(iterator_end_value)?
+            .expect("iterator cannot have Unit type");
+
+        let mut buffers = vec![];
+
+        for (binding, _comma) in &mut *bindings {
+            self.builder.position_at_end(bindings_block);
+            let binding_ir = self.visit_lvalue(binding)?;
+            let size = self
+                .runtime_type_to_llvm(
+                    *self.type_sets.get(
+                        *self
+                            .type_data
+                            .get_node(binding)
+                            .expect("type data must be available before calling c_generator"),
+                    ),
+                    binding.clone(),
+                )?
+                .size_of()
+                .expect("data passed to GPU must be sized");
+
+            let fl_runtime_allocate_gpu_backing = self
+                .module
+                .get_function("fl_runtime_allocate_gpu_backing")
+                .expect("fl runtime functions should exist before walking the ast");
+            let fl_runtime_copy_to_backing = self
+                .module
+                .get_function("fl_runtime_copy_to_backing")
+                .expect("fl runtime functions should exist before walking the ast");
+            let fl_runtime_copy_from_backing = self
+                .module
+                .get_function("fl_runtime_copy_from_backing")
+                .expect("fl runtime functions should exist before walking the ast");
+            let fl_runtime_free_gpu_backing = self
+                .module
+                .get_function("fl_runtime_free_gpu_backing")
+                .expect("fl runtime functions should exist before walking the ast");
+
+            buffers.push(binding_ir);
+
+            self.builder.position_at_end(allocations_block);
+            self.builder.build_call(
+                fl_runtime_allocate_gpu_backing,
+                &[binding_ir.into(), size.into()],
+                "fl_runtime_allocate_gpu_backing",
+            )?;
+            self.builder.build_call(
+                fl_runtime_copy_to_backing,
+                &[binding_ir.into()],
+                "fl_runtime_copy_to_backing",
+            )?;
+
+            self.builder.position_at_end(deallocations_block);
+            self.builder.build_call(
+                fl_runtime_copy_from_backing,
+                &[binding_ir.into()],
+                "fl_runtime_copy_from_backing",
+            )?;
+            self.builder.build_call(
+                fl_runtime_free_gpu_backing,
+                &[binding_ir.into()],
+                "fl_runtime_free_gpu_backing",
+            )?;
+        }
+
+        let glsl_generator = GLSLCodeGenerator::new(
+            self.errors,
+            self.variable_data,
+            self.function_data,
+            self.type_data,
+            self.type_sets,
+        );
+        let (_unescaped_glsl, shaderc_output) = glsl_generator.generate_on_statement_shader(
+            bindings
+                .iter_mut()
+                .map(|(binding, _comma)| binding)
+                .collect_vec(),
+            body,
+            &mut gpu_executor_clone,
+        )?;
+        let shaderc_output = shaderc_output?;
+
+        self.builder.position_at_end(exec_block);
+
+        let shader_code = self.context.i32_type().const_array(
+            &shaderc_output
+                .as_binary()
+                .iter()
+                .map(|x| self.context.i32_type().const_int(*x as u64, false))
+                .collect_vec(),
+        );
+        let global_shader_code =
+            self.module
+                .add_global(shader_code.get_type(), None, "shader code");
+        global_shader_code.set_initializer(&shader_code);
+        global_shader_code.set_constant(true);
+
+        let void_ptr_type = self.context.ptr_type(AddressSpace::default());
+        let mut buffers_ir = void_ptr_type.array_type(buffers.len() as u32).const_zero();
+        for (i, buffer) in buffers.iter().enumerate() {
+            buffers_ir = self
+                .builder
+                .build_insert_value(buffers_ir, *buffer, i as u32, "buffers construction")?
+                .into_array_value();
+        }
+
+        let buffers_ir_ptr = self
+            .builder
+            .build_alloca(buffers_ir.get_type(), "buffers alloca")?;
+        self.builder.build_store(buffers_ir_ptr, buffers_ir)?;
+
+        let fl_runtime_bind_buffers = self
+            .module
+            .get_function("fl_runtime_bind_buffers")
+            .expect("fl runtime functions should exist before walking the ast");
+        let fl_runtime_dispatch_shader = self
+            .module
+            .get_function("fl_runtime_dispatch_shader")
+            .expect("fl runtime functions should exist before walking the ast");
+
+        self.builder.build_call(
+            fl_runtime_bind_buffers,
+            &[
+                buffers_ir_ptr.into(),
+                self.context
+                    .i64_type()
+                    .const_int(buffers_ir.get_type().len() as u64, false)
+                    .into(),
+            ],
+            "fl_runtime_bind_buffers",
+        )?;
+        self.builder.build_call(
+            fl_runtime_dispatch_shader,
+            &[
+                self.builder
+                    .build_int_z_extend_or_bit_cast(
+                        iterator_end_value_ir.into_int_value(),
+                        self.context.i64_type(),
+                        "iterator upcast",
+                    )?
+                    .into(),
+                global_shader_code.as_pointer_value().into(),
+                self.context
+                    .i64_type()
+                    .const_int(shaderc_output.len() as u64, false)
+                    .into(),
+            ],
+            "fl_runtime_dispatch_shader",
+        )?;
+
+        self.builder.position_at_end(current_block);
+        self.builder.build_unconditional_branch(bindings_block)?;
+        self.builder.position_at_end(bindings_block);
+        self.builder.build_unconditional_branch(allocations_block)?;
+        self.builder.position_at_end(allocations_block);
+        self.builder.build_unconditional_branch(exec_block)?;
+        self.builder.position_at_end(exec_block);
+        self.builder
+            .build_unconditional_branch(deallocations_block)?;
+        self.builder.position_at_end(deallocations_block);
+
         Ok(())
-        /*
-        self.report_error(FleetError::from_node(
-            on_stmt.clone(),
-            "On statements aren't supported yet",
-            ErrorSeverity::Error,
-        ))
-        */
     }
 
     fn visit_block_statement(

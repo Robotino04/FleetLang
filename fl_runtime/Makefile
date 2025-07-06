@@ -1,25 +1,26 @@
-CFLAGS = -std=c++2a -O3 -fno-use-cxa-atexit
+CFLAGS = -O3 -fno-use-cxa-atexit
+CXXFLAGS = $(CFLAGS) -std=c++2a
 LDFLAGS = -lvulkan
 
 
-all: example fl_runtime.bc dso_handle.bc
+all: example fl_runtime.bc dso_handle.bc fl_runtime_declarations.bc fl_runtime.so
+
+fl_runtime.o: fl_runtime.cpp Makefile
+	clang++ -c $(CXXFLAGS) -o fl_runtime.o fl_runtime.cpp
+
+# for testing only
+fl_runtime.so: fl_runtime.o Makefile
+	clang++ -shared -o fl_runtime.so fl_runtime.o
+
+fl_runtime_declarations.bc: fl_runtime.h Makefile
+	clang++ -c $(CFLAGS) -emit-llvm -o fl_runtime_declarations.bc -x c++ fl_runtime.h -DFL_RUNTIME_DECLARATION_AS_BITCODE
+
 
 example: example.o fl_runtime.o compute.comp.spv Makefile
 	clang++ $(LDFLAGS) -o example example.o fl_runtime.o
 
 example.o: example.cpp Makefile
-	clang++ -c $(CFLAGS) -o example.o example.cpp
-
-fl_runtime.o: fl_runtime.cpp Makefile
-	clang++ -c $(CFLAGS) -o fl_runtime.o fl_runtime.cpp
-
-fl_runtime.bc: fl_runtime.cpp Makefile
-	clang++ -c $(CFLAGS) -emit-llvm -o fl_runtime.bc fl_runtime.cpp
-
-# https://root-forum.cern.ch/t/cling-execution---dso-handle-missing/13216
-# provides a fake __dso_handle for test execution
-dso_handle.bc: dso_handle.cpp Makefile
-	clang++ -c $(CFLAGS) -emit-llvm -o dso_handle.bc dso_handle.cpp
+	clang++ -c $(CXXFLAGS) -o example.o example.cpp
 
 compute.comp.spv: compute.comp Makefile
 	glslc compute.comp -o compute.comp.spv
@@ -28,7 +29,7 @@ compute.comp.spv: compute.comp Makefile
 
 
 clean:
-	rm -f example example.o compute.comp.spv fl_runtime.o fl_runtime.bc dso_handle.bc
+	rm -f example example.o compute.comp.spv fl_runtime.o fl_runtime_declarations.bc fl_runtime.so
 
 run: example
 	./example

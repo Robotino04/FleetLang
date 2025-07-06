@@ -423,7 +423,7 @@ static thread_local std::unordered_map<void*, CommonBuffer> backing_registry;
 static thread_local std::vector<void*> bound_buffers;
 
 extern "C" {
-void fl_runtime_init() {
+void fl_runtime_init(void) {
     if (!checkValidationLayerSupport()) {
         throw std::runtime_error("validation layers requested, but not available!");
     }
@@ -449,7 +449,7 @@ void fl_runtime_init() {
     };
 }
 
-void fl_runtime_deinit() {
+void fl_runtime_deinit(void) {
     LOG(std::cout << "destroying logical device" << "\n");
     vkDestroyDevice(global_s.device, nullptr);
     LOG(std::cout << "destroying instance" << "\n");

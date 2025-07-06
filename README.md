@@ -31,6 +31,7 @@
 - simplify `get_precedence` and `get_associativity` using impl or a trait
 - add way to get length of array
 - consistent error language style
+- add tests for on-statement bindings that modify state. make sure order is correct in llvm backend specifically
 
 
 ## Building
@@ -48,7 +49,7 @@ Compiling parts of the fl runtime is required for building fleet. Assuming you a
 cd fl_runtime/ && make -j
 ```
 
-Without nix, you need to have the vulkan headers (or the whole SDK) installed. You can then either try if the Makefile works or adjust it to the point where you can compile and run the example. FleetC also needs the `fl_runtime.bc` file so make sure to also build that.
+Without nix, you need to have the vulkan headers (or the whole SDK) installed. You can then either try if the Makefile works or adjust it to the point where you can compile and run the example. FleetC also needs the `fl_runtime_declarationc.bc` file so make sure to also build that.
 
 
 ### FleetC and FleetLS
@@ -63,6 +64,7 @@ This should compile FleetC (the compiler) to `target/debug/fleetc` and FleetLS (
 ### Tests
 Tests can only be run on Linux for now as they rely on loading `libvulkan` and `libstdc++` at runtime.
 If you aren't using using nix, you need to ensure those libraries are installed and can be found by dlopen.
+Make sure to also compile `fl_runtime.so` in case you aren't using the Makefile.
 
 
 ## Setup (FleetLS)

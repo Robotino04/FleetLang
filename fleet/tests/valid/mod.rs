@@ -5,6 +5,7 @@ mod comments;
 mod conditional_statements;
 mod function;
 mod loops;
+mod on_gpu;
 mod sized_integers;
 mod type_inference;
 mod unary_op;

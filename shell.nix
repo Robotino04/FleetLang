@@ -10,6 +10,7 @@ in
       pkgs.libxml2
       pkgs.libffi
       pkgs.ncurses # pkgs.libtinfo is broken atm
+      pkgs.llvmPackages_18.bintools
       pkgs.llvmPackages_18.clang-tools
       pkgs.llvmPackages_18.clang # required for tests
 

@@ -5,14 +5,11 @@ use std::{
     mem::MaybeUninit,
     path::PathBuf,
     process::Command,
-    ptr::null_mut,
 };
 
 use inkwell::{
     OptimizationLevel,
     context::Context,
-    llvm_sys::support::LLVMLoadLibraryPermanently,
-    memory_buffer::MemoryBuffer,
     targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple},
 };
 
@@ -195,7 +192,8 @@ pub fn assert_compile_and_return_value_unformatted<ReturnType>(
     let (_tokenizer_output, _parser_output, _analysis_output, llvmcompilation_output) =
         compile_or_panic(&context, src);
 
-    let actual_return_value: ReturnType = execute_function(&llvmcompilation_output, function_name);
+    let actual_return_value =
+        execute_function::<ReturnType>(&llvmcompilation_output, function_name);
     assert_eq!(
         actual_return_value, expected_return_value,
         "expected {function_name:?} to return {expected_return_value:?} instead of {actual_return_value:?}"
@@ -334,21 +332,18 @@ fn execute_function<ReturnType>(
         }
     }
 
+    let dir = TempDir::new().unwrap();
+
+    let fl_runtime_so = dir.path().join("fl_runtime.so");
+    std::fs::write(
+        &fl_runtime_so,
+        include_bytes!("../../../fl_runtime/fl_runtime.so"),
+    )
+    .unwrap();
+
     inkwell::support::load_library_permanently(&find_library("libstdc++.so")).unwrap();
     inkwell::support::load_library_permanently(&find_library("libvulkan.so")).unwrap();
-
-    let dso_module = compilation_output
-        .module
-        .get_context()
-        .create_module_from_ir(MemoryBuffer::create_from_memory_range(
-            include_bytes!("../../../fl_runtime/dso_handle.bc"),
-            "dso_module",
-        ))
-        .unwrap();
-    compilation_output
-        .module
-        .link_in_module(dso_module)
-        .unwrap();
+    inkwell::support::load_library_permanently(fl_runtime_so.as_path()).unwrap();
 
     let execution_engine = compilation_output
         .module
@@ -407,10 +402,18 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
         )
         .unwrap();
 
-    println!("Calling clang to link {object_file:?} to {binary_file:?}");
+    let fl_runtime_obj = dir.path().join("fl_runtime.o");
+    std::fs::write(
+        &fl_runtime_obj,
+        include_bytes!("../../../fl_runtime/fl_runtime.o"),
+    )
+    .unwrap();
+
+    println!("Calling clang to link {object_file:?} and {fl_runtime_obj:?} to {binary_file:?}");
     let clang_out = Command::new("clang++")
         .arg("-fdiagnostics-color=always")
         .arg(object_file.to_str().unwrap())
+        .arg(fl_runtime_obj.to_str().unwrap())
         .args(["-o", binary_file.to_str().unwrap()])
         .arg("-lvulkan")
         .output()

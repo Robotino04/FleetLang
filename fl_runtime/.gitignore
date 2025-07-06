@@ -1,6 +1,7 @@
 *.o
 *.bc
 *.spv
+*.so
 example
 templatetemplate
 compile_commands.json
