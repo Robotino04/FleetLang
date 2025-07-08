@@ -25,7 +25,7 @@ local configs = require 'lspconfig.configs'
 local server_config = {
     filetypes = { "fleet" },
     root_dir = lspconfig.util.root_pattern('.git'),
-    cmd = --[[vim.lsp.rpc.connect("127.0.0.1", 1234),]] { "target/debug/fleetls", "--stdio" },
+    cmd = vim.lsp.rpc.connect("127.0.0.1", 1234), --{ "target/debug/fleetls", "--stdio" },
     settings = {
 
     },

@@ -408,14 +408,14 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         let buffers_str = format!("void* {buffers_name}[] = {{ {} }};", buffers.join(", "));
         let buffers_len = buffers.len();
 
-        let glsl_generator = GLSLCodeGenerator::new(
+        let mut glsl_generator = GLSLCodeGenerator::new(
             self.errors,
             self.variable_data,
             self.function_data,
             self.type_data,
             self.type_sets,
         );
-        let Ok((unescaped_glsl, shaderc_output)) = glsl_generator.generate_on_statement_shader(
+        let Ok(glsl_source) = glsl_generator.generate_on_statement_shader(
             bindings
                 .iter_mut()
                 .map(|(binding, _comma)| binding)
@@ -425,31 +425,63 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         ) else {
             return "#error glsl generation failed completely\n".to_string();
         };
-        let Ok(shaderc_output) = shaderc_output else {
-            return format!("#error malformed on-statement\n/*\n{unescaped_glsl}\n*/\n");
-        };
+        #[cfg(not(feature = "gpu_backend"))]
+        {
+            use crate::infra::ErrorSeverity;
 
-        let bytes_str = shaderc_output
-            .as_binary()
-            .iter()
-            .map(|chunk| format!("0x{:08x}", chunk))
-            .join(", ");
+            let _ = iterator_end_value;
 
-        let spirv_temporary = self.unique_temporary("spirv");
-        let spirv_size = shaderc_output.len();
+            self.errors.push(FleetError::from_node(
+                *body.clone(),
+                "The GPU backend is disabled for this build of Fleet",
+                ErrorSeverity::Error,
+            ));
 
-        let PreStatementValue {
-            pre_statements: iterator_pre,
-            out_value: iterator_value,
-        } = self.visit_expression(iterator_end_value);
-
-        formatdoc! {"
+            formatdoc! {"
             {allocations}
             {buffers_str}
             fl_runtime_bind_buffers(&{buffers_name}, {buffers_len});
 
             /*
-            {unescaped_glsl}
+            {glsl_source}
+            */
+
+            const uint32_t /* GPU backend missing */[] = {{ /* GPU backend missing */ }};
+            fl_runtime_dispatch_shader(/* GPU backend missing */, /* GPU backend missing */, /* GPU backend missing */);
+
+            {deallocations}
+        "}
+        }
+
+        #[cfg(feature = "gpu_backend")]
+        {
+            let Ok(shaderc_output) =
+                glsl_generator.compile_on_statement_shader(&glsl_source, &**body)
+            else {
+                return format!("#error malformed on-statement\n/*\n{glsl_source}\n*/\n");
+            };
+
+            let bytes_str = shaderc_output
+                .as_binary()
+                .iter()
+                .map(|chunk| format!("0x{:08x}", chunk))
+                .join(", ");
+
+            let spirv_temporary = self.unique_temporary("spirv");
+            let spirv_size = shaderc_output.len();
+
+            let PreStatementValue {
+                pre_statements: iterator_pre,
+                out_value: iterator_value,
+            } = self.visit_expression(iterator_end_value);
+
+            formatdoc! {"
+            {allocations}
+            {buffers_str}
+            fl_runtime_bind_buffers(&{buffers_name}, {buffers_len});
+
+            /*
+            {glsl_source}
             */
 
             const uint32_t {spirv_temporary}[] = {{ {bytes_str} }};
@@ -457,6 +489,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
 
             {deallocations}
         "}
+        }
     }
 
     fn visit_block_statement(

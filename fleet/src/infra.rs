@@ -256,16 +256,25 @@ impl AnalysisOutput {
         }
     }
 
-    pub fn compile_c(&self, errors: &mut Vec<FleetError>) -> String {
-        CCodeGenerator::new(
-            errors,
-            &self.type_analysis_data.variable_data,
-            &self.type_analysis_data.function_data,
-            &self.type_analysis_data.type_data,
-            &self.type_analysis_data.type_sets,
-            &self.stats,
+    pub fn compile_c(&self, errors: &mut Vec<FleetError>) -> Option<String> {
+        if errors
+            .iter()
+            .any(|err| err.severity == ErrorSeverity::Error)
+        {
+            return None;
+        }
+
+        Some(
+            CCodeGenerator::new(
+                errors,
+                &self.type_analysis_data.variable_data,
+                &self.type_analysis_data.function_data,
+                &self.type_analysis_data.type_data,
+                &self.type_analysis_data.type_sets,
+                &self.stats,
+            )
+            .visit_program(&mut self.program.clone()),
         )
-        .visit_program(&mut self.program.clone())
     }
 }
 

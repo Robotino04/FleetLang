@@ -819,14 +819,14 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             )?;
         }
 
-        let glsl_generator = GLSLCodeGenerator::new(
+        let mut glsl_generator = GLSLCodeGenerator::new(
             self.errors,
             self.variable_data,
             self.function_data,
             self.type_data,
             self.type_sets,
         );
-        let (_unescaped_glsl, shaderc_output) = glsl_generator.generate_on_statement_shader(
+        let glsl_source = glsl_generator.generate_on_statement_shader(
             bindings
                 .iter_mut()
                 .map(|(binding, _comma)| binding)
@@ -834,86 +834,100 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             body,
             &mut gpu_executor_clone,
         )?;
-        let shaderc_output = shaderc_output?;
 
-        self.builder.position_at_end(exec_block);
-
-        let shader_code = self.context.i32_type().const_array(
-            &shaderc_output
-                .as_binary()
-                .iter()
-                .map(|x| self.context.i32_type().const_int(*x as u64, false))
-                .collect_vec(),
-        );
-        let global_shader_code =
-            self.module
-                .add_global(shader_code.get_type(), None, "shader code");
-        global_shader_code.set_initializer(&shader_code);
-        global_shader_code.set_constant(true);
-
-        let void_ptr_type = self.context.ptr_type(AddressSpace::default());
-        let mut buffers_ir = void_ptr_type.array_type(buffers.len() as u32).const_zero();
-        for (i, buffer) in buffers.iter().enumerate() {
-            buffers_ir = self
-                .builder
-                .build_insert_value(buffers_ir, *buffer, i as u32, "buffers construction")?
-                .into_array_value();
+        #[cfg(not(feature = "gpu_backend"))]
+        {
+            self.errors.push(FleetError::from_node(
+                *body.clone(),
+                "The GPU backend is disabled for this build of Fleet",
+                ErrorSeverity::Error,
+            ));
         }
 
-        let buffers_ir_ptr = self
-            .builder
-            .build_alloca(buffers_ir.get_type(), "buffers alloca")?;
-        self.builder.build_store(buffers_ir_ptr, buffers_ir)?;
+        #[cfg(feature = "gpu_backend")]
+        {
+            let shaderc_output =
+                glsl_generator.compile_on_statement_shader(&glsl_source, &**body)?;
 
-        let fl_runtime_bind_buffers = self
-            .module
-            .get_function("fl_runtime_bind_buffers")
-            .expect("fl runtime functions should exist before walking the ast");
-        let fl_runtime_dispatch_shader = self
-            .module
-            .get_function("fl_runtime_dispatch_shader")
-            .expect("fl runtime functions should exist before walking the ast");
+            self.builder.position_at_end(exec_block);
 
-        self.builder.build_call(
-            fl_runtime_bind_buffers,
-            &[
-                buffers_ir_ptr.into(),
-                self.context
-                    .i64_type()
-                    .const_int(buffers_ir.get_type().len() as u64, false)
-                    .into(),
-            ],
-            "fl_runtime_bind_buffers",
-        )?;
-        self.builder.build_call(
-            fl_runtime_dispatch_shader,
-            &[
-                self.builder
-                    .build_int_z_extend_or_bit_cast(
-                        iterator_end_value_ir.into_int_value(),
-                        self.context.i64_type(),
-                        "iterator upcast",
-                    )?
-                    .into(),
-                global_shader_code.as_pointer_value().into(),
-                self.context
-                    .i64_type()
-                    .const_int(shaderc_output.len() as u64, false)
-                    .into(),
-            ],
-            "fl_runtime_dispatch_shader",
-        )?;
+            let shader_code = self.context.i32_type().const_array(
+                &shaderc_output
+                    .as_binary()
+                    .iter()
+                    .map(|x| self.context.i32_type().const_int(*x as u64, false))
+                    .collect_vec(),
+            );
+            let global_shader_code =
+                self.module
+                    .add_global(shader_code.get_type(), None, "shader code");
+            global_shader_code.set_initializer(&shader_code);
+            global_shader_code.set_constant(true);
 
-        self.builder.position_at_end(current_block);
-        self.builder.build_unconditional_branch(bindings_block)?;
-        self.builder.position_at_end(bindings_block);
-        self.builder.build_unconditional_branch(allocations_block)?;
-        self.builder.position_at_end(allocations_block);
-        self.builder.build_unconditional_branch(exec_block)?;
-        self.builder.position_at_end(exec_block);
-        self.builder
-            .build_unconditional_branch(deallocations_block)?;
-        self.builder.position_at_end(deallocations_block);
+            let void_ptr_type = self.context.ptr_type(AddressSpace::default());
+            let mut buffers_ir = void_ptr_type.array_type(buffers.len() as u32).const_zero();
+            for (i, buffer) in buffers.iter().enumerate() {
+                buffers_ir = self
+                    .builder
+                    .build_insert_value(buffers_ir, *buffer, i as u32, "buffers construction")?
+                    .into_array_value();
+            }
+
+            let buffers_ir_ptr = self
+                .builder
+                .build_alloca(buffers_ir.get_type(), "buffers alloca")?;
+            self.builder.build_store(buffers_ir_ptr, buffers_ir)?;
+
+            let fl_runtime_bind_buffers = self
+                .module
+                .get_function("fl_runtime_bind_buffers")
+                .expect("fl runtime functions should exist before walking the ast");
+            let fl_runtime_dispatch_shader = self
+                .module
+                .get_function("fl_runtime_dispatch_shader")
+                .expect("fl runtime functions should exist before walking the ast");
+
+            self.builder.build_call(
+                fl_runtime_bind_buffers,
+                &[
+                    buffers_ir_ptr.into(),
+                    self.context
+                        .i64_type()
+                        .const_int(buffers_ir.get_type().len() as u64, false)
+                        .into(),
+                ],
+                "fl_runtime_bind_buffers",
+            )?;
+            self.builder.build_call(
+                fl_runtime_dispatch_shader,
+                &[
+                    self.builder
+                        .build_int_z_extend_or_bit_cast(
+                            iterator_end_value_ir.into_int_value(),
+                            self.context.i64_type(),
+                            "iterator upcast",
+                        )?
+                        .into(),
+                    global_shader_code.as_pointer_value().into(),
+                    self.context
+                        .i64_type()
+                        .const_int(shaderc_output.len() as u64, false)
+                        .into(),
+                ],
+                "fl_runtime_dispatch_shader",
+            )?;
+
+            self.builder.position_at_end(current_block);
+            self.builder.build_unconditional_branch(bindings_block)?;
+            self.builder.position_at_end(bindings_block);
+            self.builder.build_unconditional_branch(allocations_block)?;
+            self.builder.position_at_end(allocations_block);
+            self.builder.build_unconditional_branch(exec_block)?;
+            self.builder.position_at_end(exec_block);
+            self.builder
+                .build_unconditional_branch(deallocations_block)?;
+            self.builder.position_at_end(deallocations_block);
+        }
 
         Ok(())
     }

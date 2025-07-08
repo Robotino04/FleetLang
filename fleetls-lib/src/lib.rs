@@ -19,22 +19,26 @@ use fleet::{
 };
 use indoc::indoc;
 use itertools::Itertools;
-use std::{collections::HashMap, sync::LazyLock};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, LazyLock, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::{Client, LanguageServer, lsp_types::*};
 
 pub extern crate tower_lsp_server;
 
-pub trait Spawner: Send + Sync + 'static {
-    fn spawn<F>(&self, fut: F)
-    where
-        F: std::future::Future<Output = ()> + Send + 'static;
+pub struct BackgroundThreadState {
+    pub semantic_tokens_refresh: AtomicBool,
 }
 
-pub struct Backend<S: Spawner> {
+pub struct Backend {
     pub client: Client,
     pub documents: std::sync::RwLock<HashMap<Uri, String>>,
-    pub spawner: S,
+    pub background_state: Arc<Mutex<BackgroundThreadState>>,
 }
 
 static SEMANTIC_TOKEN_TYPES: LazyLock<Vec<SemanticTokenType>> = std::sync::LazyLock::new(|| {
@@ -94,7 +98,7 @@ fn token_length(start: SourceLocation, end: SourceLocation) -> u32 {
     (end.index - start.index) as u32
 }
 
-impl<S: Spawner> Backend<S> {
+impl Backend {
     fn get_type_as_hover(&self, id: NodeID, analysis_data: Option<&TypeAnalysisData>) -> String {
         let Some(analysis_data) = analysis_data else {
             return "/* No type data available */".to_string();
@@ -1265,7 +1269,7 @@ impl AstVisitor for ExtractSemanticTokensPass {
     }
 }
 
-impl<S: Spawner> LanguageServer for Backend<S> {
+impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         eprintln!("{}", "-".repeat(80));
         eprintln!("{params:#?}");
@@ -1427,9 +1431,11 @@ impl<S: Spawner> LanguageServer for Backend<S> {
         );
 
         let client = self.client.clone();
-        self.spawner.spawn(async move {
-            let _ = client.semantic_tokens_refresh().await;
-        });
+        self.background_state
+            .lock()
+            .unwrap()
+            .semantic_tokens_refresh
+            .store(true, Ordering::Relaxed);
     }
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         eprintln!("{}", "-".repeat(80));
@@ -1441,9 +1447,11 @@ impl<S: Spawner> LanguageServer for Backend<S> {
             .insert(params.text_document.uri, params.text_document.text);
 
         let client = self.client.clone();
-        self.spawner.spawn(async move {
-            let _ = client.semantic_tokens_refresh().await;
-        });
+        self.background_state
+            .lock()
+            .unwrap()
+            .semantic_tokens_refresh
+            .store(true, Ordering::Relaxed);
     }
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         eprintln!("{}", "-".repeat(80));
@@ -1618,9 +1626,11 @@ impl<S: Spawner> LanguageServer for Backend<S> {
             .insert(params.text_document.uri, new_text.clone());
 
         let client = self.client.clone();
-        self.spawner.spawn(async move {
-            let _ = client.semantic_tokens_refresh().await;
-        });
+        self.background_state
+            .lock()
+            .unwrap()
+            .semantic_tokens_refresh
+            .store(true, Ordering::Relaxed);
 
         let doc_end = SourceLocation::end(src.clone());
 
@@ -1786,6 +1796,24 @@ impl<S: Spawner> LanguageServer for Backend<S> {
             }))
         } else {
             Ok(None)
+        }
+    }
+}
+
+impl BackgroundThreadState {
+    pub async fn run_background_thread(self_: &Arc<Mutex<Self>>, client: &Client) {
+        if self_
+            .lock()
+            .unwrap()
+            .semantic_tokens_refresh
+            .load(Ordering::Relaxed)
+        {
+            self_
+                .lock()
+                .unwrap()
+                .semantic_tokens_refresh
+                .store(false, Ordering::Relaxed);
+            let _ = client.semantic_tokens_refresh().await;
         }
     }
 }

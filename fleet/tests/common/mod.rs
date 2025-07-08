@@ -474,7 +474,9 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
         .at_least_maybe();
 
     let mut errors = vec![];
-    let c_code = analysis_output.compile_c(&mut errors);
+    let c_code = analysis_output
+        .compile_c(&mut errors)
+        .expect("C generation failed completely");
     assert_no_fatal_errors(&errors);
 
     let c_file = dir.path().join("test.c");

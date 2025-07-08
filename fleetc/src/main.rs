@@ -109,7 +109,10 @@ fn main() {
         print_all_errors_and_message("LLVM compilation failed partially", &errors);
     }
 
-    let c_code = analysis_output.compile_c(&mut errors);
+    let Some(c_code) = analysis_output.compile_c(&mut errors) else {
+        print_all_errors_and_message("C generation failed completely", &errors);
+        exit(1);
+    };
     if errors
         .iter()
         .any(|err| err.severity == ErrorSeverity::Error)

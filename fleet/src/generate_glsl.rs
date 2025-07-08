@@ -5,6 +5,8 @@ use indoc::formatdoc;
 
 use itertools::Itertools;
 
+#[cfg(feature = "gpu_backend")]
+use crate::ast::AstNode;
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
@@ -51,11 +53,11 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
     }
 
     pub fn generate_on_statement_shader(
-        mut self,
+        &mut self,
         mut bindings: Vec<&mut LValue>,
         main_body: &mut Statement,
         gpu_executor: &mut GPUExecutor,
-    ) -> Result<(String, Result<shaderc::CompilationArtifact>)> {
+    ) -> Result<String> {
         let GPUExecutor {
             host: _,
             dot_token: _,
@@ -140,29 +142,32 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
             indent_by(4, body_str),
         };
 
-        let shaderc_output = {
-            let compiler = shaderc::Compiler::new().unwrap();
-            let options = shaderc::CompileOptions::new().unwrap();
-            match compiler.compile_into_spirv(
-                &unescaped_glsl,
+        Ok(unescaped_glsl)
+    }
+
+    #[cfg(feature = "gpu_backend")]
+    pub fn compile_on_statement_shader<I: Into<AstNode> + Clone>(
+        self,
+        source: &str,
+        error_node: &I,
+    ) -> Result<shaderc::CompilationArtifact> {
+        let compiler = shaderc::Compiler::new().unwrap();
+        let options = shaderc::CompileOptions::new().unwrap();
+        Ok(compiler
+            .compile_into_spirv(
+                source,
                 shaderc::ShaderKind::Compute,
                 "fleet_temporary.comp",
                 "main",
                 Some(&options),
-            ) {
-                Err(err) => {
-                    self.errors.push(FleetError::from_node(
-                        main_body.clone(),
-                        format!("{unescaped_glsl}\n----------\nInternal shaderc error: {err}"),
-                        ErrorSeverity::Error,
-                    ));
-                    return Ok((unescaped_glsl, Err(err.into())));
-                }
-                Ok(res) => res,
-            }
-        };
-
-        Ok((unescaped_glsl, Ok(shaderc_output)))
+            )
+            .inspect_err(|err| {
+                self.errors.push(FleetError::from_node(
+                    error_node.clone(),
+                    format!("{source}\n----------\nInternal shaderc error: {err}"),
+                    ErrorSeverity::Error,
+                ));
+            })?)
     }
 
     fn runtime_type_to_glsl(&self, type_: RuntimeType) -> (String, String) {

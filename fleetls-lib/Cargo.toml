@@ -11,5 +11,6 @@ itertools = "0.14.0"
 
 [features]
 llvm_backend = ["fleet/llvm_backend"]
-default = ["llvm_backend", "tower-lsp-server/runtime-tokio"]
+gpu_backend = ["fleet/gpu_backend"]
+default = ["llvm_backend", "gpu_backend", "tower-lsp-server/runtime-tokio"]
 runtime-agnostic = ["tower-lsp-server/runtime-agnostic"]
