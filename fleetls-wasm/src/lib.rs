@@ -1,21 +1,11 @@
+use std::sync::{Arc, Mutex, atomic::AtomicBool};
+
 use fleetls_lib::{
-    Backend, Spawner,
-    tower_lsp_server::{LspService, Server},
+    tower_lsp_server::{LspService, Server}, Backend, BackgroundThreadState
 };
 use futures::stream::TryStreamExt;
 use wasm_bindgen::{JsCast, prelude::*};
-use wasm_bindgen_futures::stream::JsStream;
-
-pub struct WasmSpawner;
-
-impl Spawner for WasmSpawner {
-    fn spawn<F>(&self, fut: F)
-    where
-        F: std::future::Future<Output = ()> + Send + 'static,
-    {
-        wasm_bindgen_futures::spawn_local(fut);
-    }
-}
+use wasm_bindgen_futures::{spawn_local, stream::JsStream};
 
 #[wasm_bindgen]
 pub struct ServerConfig {
@@ -65,10 +55,29 @@ pub async fn serve(config: ServerConfig) -> Result<(), JsValue> {
     let output = wasm_streams::WritableStream::from_raw(output);
     let output = output.try_into_async_write().map_err(|err| err.0)?;
 
-    let (service, messages) = LspService::new(|client| Backend {
-        client,
-        documents: Default::default(),
-        spawner: WasmSpawner,
+    let (service, messages) = LspService::new(|client| {
+        let shared_state = Arc::new(Mutex::new(BackgroundThreadState {
+            semantic_tokens_refresh: AtomicBool::new(false),
+        }));
+
+        let client_clone = client.clone();
+        let state_for_task = shared_state.clone();
+        spawn_local(async move {
+            loop {
+                BackgroundThreadState::run_background_thread(
+                    &state_for_task,
+                    &client_clone,
+                )
+                .await;
+                gloo_timers::future::TimeoutFuture::new(100).await;
+            }
+        });
+
+        Backend {
+            client,
+            background_state: shared_state,
+            documents: Default::default(),
+        }
     });
     Server::new(input, output, messages).serve(service).await;
 
