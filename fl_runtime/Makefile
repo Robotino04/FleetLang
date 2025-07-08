@@ -3,7 +3,7 @@ CXXFLAGS = $(CFLAGS) -std=c++2a
 LDFLAGS = -lvulkan
 
 
-all: example fl_runtime.bc dso_handle.bc fl_runtime_declarations.bc fl_runtime.so
+all: example fl_runtime_declarations.bc fl_runtime.so
 
 fl_runtime.o: fl_runtime.cpp Makefile
 	clang++ -c $(CXXFLAGS) -o fl_runtime.o fl_runtime.cpp
