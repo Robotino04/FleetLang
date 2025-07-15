@@ -5,6 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::sleep;
+use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 #[tokio::main]
 async fn main() {
@@ -18,11 +19,8 @@ async fn main() {
             let state_for_task = shared_state.clone();
             tokio::spawn(async move {
                 loop {
-                    BackgroundThreadState::run_background_thread(
-                        &state_for_task,
-                        &client_clone,
-                    )
-                    .await;
+                    BackgroundThreadState::run_background_thread(&state_for_task, &client_clone)
+                        .await;
                     sleep(Duration::from_millis(50)).await;
                 }
             });
@@ -36,7 +34,7 @@ async fn main() {
 
         let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
 
-        Server::new(stdin, stdout, loopback_socket)
+        Server::new(stdin.compat(), stdout.compat_write(), loopback_socket)
             .serve(service)
             .await;
     } else {
@@ -78,7 +76,9 @@ async fn main() {
                     }
                 });
 
-                let (mut read_half, mut write_half) = tokio::io::split(client_connection);
+                let (read_half, write_half) = tokio::io::split(client_connection);
+                let (mut read_half, mut write_half) =
+                    (read_half.compat(), write_half.compat_write());
                 Server::new(&mut read_half, &mut write_half, loopback_socket)
                     .serve(service)
                     .await;
