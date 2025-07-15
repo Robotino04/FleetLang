@@ -1,4 +1,5 @@
 import init, { InitOutput, serve, ServerConfig } from "../assets/wasm/fleetls_wasm";
+import { Codec } from "./codec";
 import { FromServer, IntoServer } from "./codec";
 
 let server: null | Server;

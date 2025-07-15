@@ -1,8 +1,15 @@
 {
-  "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "src"
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowSyntheticDefaultImports": true,
+    "paths": {
+      "@wasm/*": ["./assets/wasm/*"]
+    }
   },
-  "exclude": []
+  "include": ["src/*", "vite.config.ts"],
+  "exclude": ["node_modules", "dist"]
 }

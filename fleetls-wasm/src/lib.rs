@@ -1,7 +1,12 @@
-use std::sync::{Arc, Mutex, atomic::AtomicBool};
+use std::{
+    sync::{Arc, Mutex, atomic::AtomicBool},
+    time::Duration,
+};
 
 use fleetls_lib::{
-    tower_lsp_server::{LspService, Server}, Backend, BackgroundThreadState
+    Backend, BackgroundThreadState,
+    fleet::infra::TokenizerOutput,
+    tower_lsp_server::{LspService, Server},
 };
 use futures::stream::TryStreamExt;
 use wasm_bindgen::{JsCast, prelude::*};
@@ -22,6 +27,28 @@ impl ServerConfig {
             from_server,
         }
     }
+}
+
+#[wasm_bindgen]
+pub fn compile_to_c(src: String) -> Option<String> {
+    let mut errors = vec![];
+    let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
+        return None;
+    };
+
+    let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
+        return None;
+    };
+
+    let Some(analysis_output) = parser_output.analyze(&mut errors) else {
+        return None;
+    };
+
+    let Some(c_code) = analysis_output.compile_c(&mut errors) else {
+        return None;
+    };
+
+    return Some(c_code);
 }
 
 // NOTE: we don't use web_sys::ReadableStream for input here because on the
@@ -64,12 +91,8 @@ pub async fn serve(config: ServerConfig) -> Result<(), JsValue> {
         let state_for_task = shared_state.clone();
         spawn_local(async move {
             loop {
-                BackgroundThreadState::run_background_thread(
-                    &state_for_task,
-                    &client_clone,
-                )
-                .await;
-                gloo_timers::future::TimeoutFuture::new(100).await;
+                BackgroundThreadState::run_background_thread(&state_for_task, &client_clone).await;
+                gloo_timers::future::sleep(Duration::from_millis(100)).await;
             }
         });
 
@@ -79,6 +102,7 @@ pub async fn serve(config: ServerConfig) -> Result<(), JsValue> {
             documents: Default::default(),
         }
     });
+    web_sys::console::log_1(&"Server setup".into());
     Server::new(input, output, messages).serve(service).await;
 
     Ok(())

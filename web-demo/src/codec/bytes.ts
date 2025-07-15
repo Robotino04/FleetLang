@@ -9,15 +9,12 @@ export default class Bytes {
     return decoder.decode(input);
   }
 
-  static append<T extends { length: number; set(arr: T, offset: number): void }>(
-    constructor: { new (length: number): T },
-    ...arrays: T[]
-  ) {
+  static append(...arrays: Uint8Array[]): Uint8Array<ArrayBuffer> {
     let totalLength = 0;
     for (const arr of arrays) {
       totalLength += arr.length;
     }
-    const result = new constructor(totalLength);
+    const result = new Uint8Array(totalLength);
     let offset = 0;
     for (const arr of arrays) {
       result.set(arr, offset);

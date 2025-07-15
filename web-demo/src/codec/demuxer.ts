@@ -3,12 +3,14 @@ import * as vsrpc from "vscode-jsonrpc";
 import Bytes from "./bytes";
 import PromiseMap from "./map";
 import Queue from "./queue";
-import Tracer from "../tracer";
 
 export default class StreamDemuxer extends Queue<Uint8Array> {
-  readonly responses: PromiseMap<number | string, vsrpc.ResponseMessage> = new PromiseMap();
-  readonly notifications: Queue<vsrpc.NotificationMessage> = new Queue<vsrpc.NotificationMessage>();
-  readonly requests: Queue<vsrpc.RequestMessage> = new Queue<vsrpc.RequestMessage>();
+  readonly responses: PromiseMap<number | string, vsrpc.ResponseMessage> =
+    new PromiseMap();
+  readonly notifications: Queue<vsrpc.NotificationMessage> =
+    new Queue<vsrpc.NotificationMessage>();
+  readonly requests: Queue<vsrpc.RequestMessage> =
+    new Queue<vsrpc.RequestMessage>();
 
   readonly #start: Promise<void>;
 
@@ -22,7 +24,7 @@ export default class StreamDemuxer extends Queue<Uint8Array> {
     let buffer = new Uint8Array();
 
     for await (const bytes of this) {
-      buffer = Bytes.append(Uint8Array, buffer, bytes);
+      buffer = Bytes.append(buffer, bytes);
 
       // check if the content length is known
       if (null == contentLength) {
@@ -53,7 +55,7 @@ export default class StreamDemuxer extends Queue<Uint8Array> {
       contentLength = null;
 
       const message = JSON.parse(delimited) as vsrpc.Message;
-      Tracer.server(message);
+      console.debug("[FROM LSP]", message);
 
       // demux the message stream
       if (vsrpc.Message.isResponse(message) && null != message.id) {

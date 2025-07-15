@@ -13,17 +13,16 @@ futures = "0.3.21"
 gloo-timers = { version = "0.3.0", features = ["futures"] }
 js-sys = "0.3.57"
 wasm-bindgen = "0.2.81"
-wasm-bindgen-futures = { version = "0.4.30", features = ["futures-core-03-stream"] }
+wasm-bindgen-futures = { version = "0.4.30", features = [
+    "futures-core-03-stream",
+] }
 wasm-streams = "0.2.3"
 
 [dependencies.web-sys]
 version = "0.3.57"
 features = [
-  "console",
-  "HtmlTextAreaElement",
-  "ReadableStream",
-  "WritableStream",
+    "console",
+    "HtmlTextAreaElement",
+    "ReadableStream",
+    "WritableStream",
 ]
-
-[features]
-default = ["fleetls-lib/runtime-agnostic"]
