@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{RefCell, RefMut},
     collections::HashMap,
     error::Error,
     hash::{Hash, Hasher},
@@ -333,6 +333,7 @@ pub struct FunctionID(pub u64);
 pub struct Variable {
     pub name: String,
     pub type_: UnionFindSetPtr<RuntimeType>,
+    pub is_constant: bool,
     pub id: VariableID,
 }
 
@@ -344,44 +345,117 @@ pub struct Function {
     pub id: FunctionID,
 }
 
-#[derive(Clone)]
-struct VariableScopeStack {
-    scopes: Vec<HashMap<String, Rc<RefCell<Variable>>>>,
+#[derive(Clone, Default, Debug)]
+pub struct VariableScope {
+    pub variable_map: HashMap<String, Rc<RefCell<Variable>>>,
+    pub copy_from_parent: bool,
+    pub is_read_guard: bool,
+    pub is_write_guard: bool,
+    pub parent: Option<Rc<RefCell<VariableScope>>>,
+}
+
+#[derive(Default)]
+pub struct VariableScopeStack {
+    current: Rc<RefCell<VariableScope>>,
 }
 
 impl VariableScopeStack {
-    fn new() -> Self {
-        Self {
-            scopes: vec![HashMap::new()],
-        }
-    }
+    pub fn get_read(&self, name: &str) -> Option<Rc<RefCell<Variable>>> {
+        let mut copy_from_parent_scopes = vec![];
 
-    pub fn get<'b>(&'b self, name: &String) -> Option<&'b Rc<RefCell<Variable>>> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(value) = scope.get(name) {
-                return Some(value);
+        let mut current = Some(self.current.clone());
+
+        let mut res = None;
+        while let Some(scope) = current {
+            if let Some(value) = scope.borrow().variable_map.get(name) {
+                res = Some(value.clone());
+                break;
+            }
+            if scope.borrow().copy_from_parent {
+                copy_from_parent_scopes.push(scope.clone());
+            }
+            if scope.borrow().is_read_guard {
+                break;
+            }
+
+            current = scope.borrow().parent.clone();
+        }
+
+        if let Some(res) = res.clone() {
+            for scope in copy_from_parent_scopes {
+                scope
+                    .borrow_mut()
+                    .variable_map
+                    .insert(name.to_string(), res.clone());
             }
         }
-        None
+
+        res
     }
+    pub fn get_write(&self, name: &str) -> Option<Rc<RefCell<Variable>>> {
+        let mut copy_from_parent_scopes = vec![];
+
+        let mut current = Some(self.current.clone());
+
+        let mut res = None;
+        while let Some(scope) = current {
+            if let Some(value) = scope.borrow().variable_map.get(name) {
+                res = Some(value.clone());
+                break;
+            }
+            if scope.borrow().copy_from_parent {
+                copy_from_parent_scopes.push(scope.clone());
+            }
+            if scope.borrow().is_write_guard {
+                break;
+            }
+
+            current = scope.borrow().parent.clone();
+        }
+
+        if let Some(res) = res.clone() {
+            for scope in copy_from_parent_scopes {
+                scope
+                    .borrow_mut()
+                    .variable_map
+                    .insert(name.to_string(), res.clone());
+            }
+        }
+
+        res
+    }
+
     pub fn try_insert(&mut self, var: Variable) -> AnyResult<()> {
-        let scope = self
-            .scopes
-            .last_mut()
-            .expect("A variable scope stack must always contain at least one scope");
-        if scope.contains_key(&var.name) {
+        if self.current.borrow().variable_map.contains_key(&var.name) {
             Err("variable already exists".into())
         } else {
-            scope.insert(var.name.clone(), Rc::new(RefCell::new(var)));
+            self.current
+                .borrow_mut()
+                .variable_map
+                .insert(var.name.clone(), Rc::new(RefCell::new(var)));
             Ok(())
         }
     }
     pub fn push_child(&mut self) {
-        self.scopes.push(HashMap::new());
+        self.current = Rc::new(RefCell::new(VariableScope {
+            parent: Some(self.current.clone()),
+            ..Default::default()
+        }));
     }
     pub fn pop(&mut self) {
-        self.scopes.pop();
-        assert!(!self.scopes.is_empty());
+        let tmp = self
+            .current
+            .borrow()
+            .parent
+            .as_ref()
+            .expect("Tried popping the global scope")
+            .clone();
+
+        self.current = tmp;
+    }
+
+    pub fn top_mut(&self) -> RefMut<VariableScope> {
+        self.current.borrow_mut()
     }
 }
 
@@ -395,6 +469,7 @@ pub struct TypePropagator<'a> {
     referenced_function: PerNodeData<Rc<RefCell<Function>>>,
     id_generator: &'a mut IdGenerator,
     current_function: Option<Rc<RefCell<Function>>>,
+    contained_scope: PerNodeData<Rc<RefCell<VariableScope>>>,
 }
 
 impl<'a> TypePropagator<'a> {
@@ -403,12 +478,13 @@ impl<'a> TypePropagator<'a> {
             type_sets: UnionFindSet::default(),
             node_types: PerNodeData::default(),
             errors: error_output,
-            variable_scopes: VariableScopeStack::new(),
+            variable_scopes: VariableScopeStack::default(),
             referenced_variable: PerNodeData::default(),
             function_list: HashMap::new(),
             referenced_function: PerNodeData::default(),
             id_generator,
             current_function: None,
+            contained_scope: PerNodeData::default(),
         }
     }
 
@@ -451,17 +527,17 @@ impl<'a> TypePropagator<'a> {
             .is_some()
         {
             self.errors.push(FleetError::from_node(
-                function_clone,
+                &function_clone,
                 format!("Multiple functions named {name:?} defined"),
                 ErrorSeverity::Error,
             ));
         }
     }
 
-    fn generate_mismatched_type_error_if(
+    fn generate_mismatched_type_error_if<I: Into<AstNode> + Clone>(
         &mut self,
         condition: bool,
-        node: impl Into<AstNode>,
+        node: &I,
         expression_type: impl AsRef<str>,
         expected_name: impl AsRef<str>,
         actual_type: RuntimeType,
@@ -491,6 +567,7 @@ pub struct TypeAnalysisData {
     pub type_sets: UnionFindSet<RuntimeType>,
     pub variable_data: PerNodeData<Rc<RefCell<Variable>>>,
     pub function_data: PerNodeData<Rc<RefCell<Function>>>,
+    pub scope_data: PerNodeData<Rc<RefCell<VariableScope>>>,
 }
 
 impl AstVisitor for TypePropagator<'_> {
@@ -523,6 +600,7 @@ impl AstVisitor for TypePropagator<'_> {
             type_sets: self.type_sets,
             variable_data: self.referenced_variable,
             function_data: self.referenced_function,
+            scope_data: self.contained_scope,
         }
     }
 
@@ -566,6 +644,9 @@ impl AstVisitor for TypePropagator<'_> {
             .insert(body.get_id(), this_function.clone());
 
         self.referenced_function.insert(*id, this_function);
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_statement_function_body(
@@ -610,12 +691,13 @@ impl AstVisitor for TypePropagator<'_> {
             .try_insert(Variable {
                 name: name.clone(),
                 type_: defined_type,
+                is_constant: false,
                 id: self.id_generator.next_variable_id(),
             })
             .is_err()
         {
             self.errors.push(FleetError::from_node(
-                simple_binding_clone.clone(),
+                &simple_binding_clone,
                 format!(
                     "A variable named {} was already defined in this scope",
                     name.clone()
@@ -625,8 +707,8 @@ impl AstVisitor for TypePropagator<'_> {
         }
         if *self.type_sets.get(defined_type) == RuntimeType::Unit {
             self.errors.push(FleetError::from_node(
-                type_
-                    .clone()
+                &type_
+                    .as_ref()
                     .map(|(_colon, type_)| Into::<AstNode>::into(type_.clone()))
                     .unwrap_or(simple_binding_clone.into()),
                 "Variables cannot have Unit type".to_string(),
@@ -637,11 +719,15 @@ impl AstVisitor for TypePropagator<'_> {
         self.referenced_variable.insert(
             *id,
             self.variable_scopes
-                .get(name)
+                .get_write(name)
                 .expect("This variable should have just been added")
                 .clone(),
         );
         self.node_types.insert(*id, defined_type);
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
         defined_type
     }
 
@@ -650,11 +736,14 @@ impl AstVisitor for TypePropagator<'_> {
         ExpressionStatement {
             expression,
             semicolon_token: _,
-            id: _,
+            id,
         }: &mut ExpressionStatement,
     ) -> Self::StatementOutput {
         let type_ = self.visit_expression(expression);
         self.type_sets.get_mut(type_).specialize_int_size();
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_on_statement(
@@ -666,14 +755,27 @@ impl AstVisitor for TypePropagator<'_> {
             bindings,
             close_paren_token: _,
             body,
-            id: _,
+            id,
         }: &mut OnStatement,
     ) -> Self::StatementOutput {
+        self.variable_scopes.push_child();
+        self.variable_scopes.top_mut().copy_from_parent = true;
+
         self.visit_executor(executor);
+
         for (binding, _comma) in bindings {
             self.visit_lvalue(binding);
         }
+
+        // cannot write to the outside anymore
+        self.variable_scopes.top_mut().is_write_guard = true;
+
         self.visit_statement(body);
+
+        self.variable_scopes.pop();
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_block_statement(
@@ -682,7 +784,7 @@ impl AstVisitor for TypePropagator<'_> {
             open_brace_token: _,
             body,
             close_brace_token: _,
-            id: _,
+            id,
         }: &mut BlockStatement,
     ) -> Self::StatementOutput {
         self.variable_scopes.push_child();
@@ -692,6 +794,9 @@ impl AstVisitor for TypePropagator<'_> {
         }
 
         self.variable_scopes.pop();
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_return_statement(&mut self, stmt: &mut ReturnStatement) -> Self::StatementOutput {
@@ -717,7 +822,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         if !RuntimeType::merge_types(this_type, expected_type, &mut self.type_sets) {
             self.errors.push(FleetError::from_node(
-                stmt_clone.clone(),
+                &stmt_clone,
                 format!(
                     "Expected this functions to return {}. Got {}",
                     self.stringify_type_ptr(expected_type),
@@ -729,6 +834,9 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.type_sets.get_mut(this_type).specialize_int_size();
         self.node_types.insert(*id, this_type);
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_variable_definition_statement(
@@ -742,7 +850,7 @@ impl AstVisitor for TypePropagator<'_> {
             equals_token: _,
             value,
             semicolon_token: _,
-            id: _,
+            id,
         } = vardef_stmt;
 
         // evaluated before the binding so it can potentially access variables that get shadowed
@@ -752,7 +860,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         if !RuntimeType::merge_types(value_type, defined_type, &mut self.type_sets) {
             self.errors.push(FleetError::from_node(
-                stmt_clone.clone(),
+                &stmt_clone,
                 format!(
                     "Variable {:?} is defined as type {}, but the initializer value has type {}",
                     binding.name,
@@ -762,6 +870,9 @@ impl AstVisitor for TypePropagator<'_> {
                 ErrorSeverity::Error,
             ));
         }
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_if_statement(
@@ -772,14 +883,14 @@ impl AstVisitor for TypePropagator<'_> {
             if_body,
             elifs,
             else_,
-            id: _,
+            id,
         }: &mut IfStatement,
     ) -> Self::StatementOutput {
         let cond_type = self.visit_expression(condition);
 
         self.generate_mismatched_type_error_if(
             !self.type_sets.get(cond_type).is_boolean(),
-            condition.clone(),
+            condition,
             "if condition",
             "of type bool",
             *self.type_sets.get(cond_type),
@@ -790,7 +901,7 @@ impl AstVisitor for TypePropagator<'_> {
             let elif_type = self.visit_expression(elif_condition);
             self.generate_mismatched_type_error_if(
                 !self.type_sets.get(elif_type).is_boolean(),
-                elif_condition.clone(),
+                elif_condition,
                 "elif condition",
                 "of type bool",
                 *self.type_sets.get(elif_type),
@@ -801,22 +912,33 @@ impl AstVisitor for TypePropagator<'_> {
         if let Some((_else_token, else_body)) = else_ {
             self.visit_statement(else_body);
         }
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_while_loop_statement(
         &mut self,
-        while_stmt: &mut WhileLoopStatement,
+        WhileLoopStatement {
+            while_token: _,
+            condition,
+            body,
+            id,
+        }: &mut WhileLoopStatement,
     ) -> Self::StatementOutput {
-        let cond_type = self.visit_expression(&mut while_stmt.condition);
+        let cond_type = self.visit_expression(condition);
 
         self.generate_mismatched_type_error_if(
             !self.type_sets.get(cond_type).is_boolean(),
-            while_stmt.condition.clone(),
+            condition,
             "while condition",
             "of type bool",
             *self.type_sets.get(cond_type),
         );
-        self.visit_statement(&mut while_stmt.body);
+        self.visit_statement(body);
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_for_loop_statement(
@@ -830,7 +952,7 @@ impl AstVisitor for TypePropagator<'_> {
             incrementer,
             close_paren_token: _,
             body,
-            id: _,
+            id,
         }: &mut ForLoopStatement,
     ) -> Self::StatementOutput {
         self.variable_scopes.push_child();
@@ -840,7 +962,7 @@ impl AstVisitor for TypePropagator<'_> {
             let cond_type = self.visit_expression(con);
             self.generate_mismatched_type_error_if(
                 !self.type_sets.get(cond_type).is_boolean(),
-                con.clone(),
+                con,
                 "for condition",
                 "of type bool",
                 *self.type_sets.get(cond_type),
@@ -852,6 +974,9 @@ impl AstVisitor for TypePropagator<'_> {
         self.visit_statement(body);
 
         self.variable_scopes.pop();
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_break_statement(
@@ -859,9 +984,11 @@ impl AstVisitor for TypePropagator<'_> {
         BreakStatement {
             break_token: _,
             semicolon_token: _,
-            id: _,
+            id,
         }: &mut BreakStatement,
     ) -> Self::StatementOutput {
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_skip_statement(
@@ -869,15 +996,19 @@ impl AstVisitor for TypePropagator<'_> {
         SkipStatement {
             skip_token: _,
             semicolon_token: _,
-            id: _,
+            id,
         }: &mut SkipStatement,
     ) -> Self::StatementOutput {
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_self_executor_host(
         &mut self,
-        SelfExecutorHost { token: _, id: _ }: &mut SelfExecutorHost,
+        SelfExecutorHost { token: _, id }: &mut SelfExecutorHost,
     ) -> Self::ExecutorHostOutput {
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_thread_executor(
@@ -889,7 +1020,7 @@ impl AstVisitor for TypePropagator<'_> {
             open_bracket_token: _,
             index,
             close_bracket_token: _,
-            id: _,
+            id,
         }: &mut ThreadExecutor,
     ) -> Self::ExecutorOutput {
         self.visit_executor_host(host);
@@ -897,11 +1028,14 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.generate_mismatched_type_error_if(
             !self.type_sets.get(index_type).is_numeric(),
-            index.clone(),
+            index,
             "thread index",
             "numeric",
             *self.type_sets.get(index_type),
         );
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_gpu_executor(
@@ -918,7 +1052,7 @@ impl AstVisitor for TypePropagator<'_> {
             equal_token: _,
             max_value,
             close_bracket_token_2: _,
-            id: _,
+            id,
         }: &mut GPUExecutor,
     ) -> Self::ExecutorOutput {
         self.visit_executor_host(host);
@@ -926,7 +1060,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.generate_mismatched_type_error_if(
             !self.type_sets.get(index_type).is_numeric(),
-            gpu_index.clone(),
+            gpu_index,
             "gpu index",
             "numeric",
             *self.type_sets.get(index_type),
@@ -936,7 +1070,7 @@ impl AstVisitor for TypePropagator<'_> {
         let max_value_type = self.visit_expression(max_value);
         if !RuntimeType::merge_types(iterator_type, max_value_type, &mut self.type_sets) {
             self.errors.push(FleetError::from_node(
-                iterator.clone(),
+                iterator,
                 format!(
                     "Iterator is defined as type {}, but has max value of type {}",
                     self.stringify_type_ptr(iterator_type),
@@ -945,6 +1079,30 @@ impl AstVisitor for TypePropagator<'_> {
                 ErrorSeverity::Error,
             ));
         }
+
+        // TODO: HACK: remive when we have proper constness and mutability
+        self.referenced_variable
+            .get(&iterator.id)
+            .expect("variable data should exist by now")
+            .borrow_mut()
+            .is_constant = true;
+
+        let is_iterator_const = self
+            .referenced_variable
+            .get(&iterator.id)
+            .expect("variable data should exist by now")
+            .borrow()
+            .is_constant;
+        if !is_iterator_const {
+            self.errors.push(FleetError::from_node(
+                iterator,
+                "The iterator of an on-statement cannot be mutable",
+                ErrorSeverity::Error,
+            ));
+        }
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_number_expression(
@@ -954,10 +1112,14 @@ impl AstVisitor for TypePropagator<'_> {
         let NumberExpression {
             value: _,
             token: _,
-            id: _,
+            id,
         } = expression;
         let type_ = self.type_sets.insert_set(RuntimeType::UnsizedInt);
-        self.node_types.insert_node(expression, type_);
+        self.node_types.insert(*id, type_);
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
         type_
     }
 
@@ -965,10 +1127,14 @@ impl AstVisitor for TypePropagator<'_> {
         let BoolExpression {
             value: _,
             token: _,
-            id: _,
+            id,
         } = expression;
         let type_ = self.type_sets.insert_set(RuntimeType::Boolean);
-        self.node_types.insert_node(expression, type_);
+        self.node_types.insert(*id, type_);
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
         type_
     }
 
@@ -980,7 +1146,7 @@ impl AstVisitor for TypePropagator<'_> {
             open_bracket_token: _,
             elements,
             close_bracket_token: _,
-            id: _,
+            id,
         } = expression;
 
         let element_type = self.type_sets.insert_set(RuntimeType::Unknown);
@@ -989,7 +1155,7 @@ impl AstVisitor for TypePropagator<'_> {
 
             if !RuntimeType::merge_types(element_type, this_item_type, &mut self.type_sets) {
                 self.errors.push(FleetError::from_node(
-                    item.clone(),
+                    item,
                     format!(
                         "This item has type {}, but was expected \
                         to have type {} (inferred from the first element)",
@@ -1002,11 +1168,14 @@ impl AstVisitor for TypePropagator<'_> {
         }
         self.type_sets.get_mut(element_type).specialize_int_size();
 
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
         let type_ = self.type_sets.insert_set(RuntimeType::ArrayOf {
             subtype: element_type,
             size: Some(elements.len()),
         });
-        self.node_types.insert_node(expression, type_);
+        self.node_types.insert(*id, type_);
         type_
     }
 
@@ -1025,7 +1194,7 @@ impl AstVisitor for TypePropagator<'_> {
         } = expression;
         let Some(ref_function) = self.function_list.get(name).cloned() else {
             self.errors.push(FleetError::from_node(
-                expression_clone.clone(),
+                &expression_clone,
                 format!("No function named {name:?} is defined"),
                 ErrorSeverity::Error,
             ));
@@ -1057,7 +1226,7 @@ impl AstVisitor for TypePropagator<'_> {
 
                     if !RuntimeType::merge_types(*arg_type, param_type, &mut self.type_sets) {
                         self.errors.push(FleetError::from_node(
-                            (*arg).clone(),
+                            *arg,
                             format!(
                                 "{name:?} expects a value of type {} as argument {param_name:?} (Nr. {}). Got {}",
                                 self.stringify_type_ptr(param_type),
@@ -1070,7 +1239,7 @@ impl AstVisitor for TypePropagator<'_> {
                 }
                 EitherOrBoth::Left((_arg_type, arg)) => {
                     self.errors.push(FleetError::from_node(
-                        (*arg).clone(),
+                        *arg,
                         format!("{name:?} only has {num_expected_arguments} parameters"),
                         ErrorSeverity::Error,
                     ));
@@ -1089,29 +1258,37 @@ impl AstVisitor for TypePropagator<'_> {
             }
         }
 
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
         let detached_return_type = self.type_sets.detach(ref_function.borrow().return_type);
 
-        self.node_types
-            .insert_node(expression, detached_return_type);
+        self.node_types.insert(*id, detached_return_type);
 
         detached_return_type
     }
 
     fn visit_array_index_expression(
         &mut self,
-        expression: &mut ArrayIndexExpression,
+        ArrayIndexExpression {
+            array,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id,
+        }: &mut ArrayIndexExpression,
     ) -> Self::ExpressionOutput {
-        let array_type = self.visit_expression(&mut expression.array);
-        let index_type = self.visit_expression(&mut expression.index);
+        let array_type = self.visit_expression(array);
+        let index_type = self.visit_expression(index);
 
         let &RuntimeType::ArrayOf { subtype, size: _ } = self.type_sets.get(array_type) else {
             self.errors.push(FleetError::from_node(
-                *expression.array.clone(),
+                &**array,
                 "Trying to index into non-array typed value",
                 ErrorSeverity::Error,
             ));
             let err_type = self.type_sets.insert_set(RuntimeType::Error);
-            self.node_types.insert_node(expression, err_type);
+            self.node_types.insert(*id, err_type);
             return err_type;
         };
 
@@ -1119,7 +1296,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         if !self.type_sets.get(index_type).is_numeric() {
             self.errors.push(FleetError::from_node(
-                *expression.index.clone(),
+                &**index,
                 format!(
                     "Cannot index into array using index of type {}",
                     self.stringify_type_ptr(index_type)
@@ -1128,16 +1305,27 @@ impl AstVisitor for TypePropagator<'_> {
             ));
         }
 
-        self.node_types.insert_node(expression, subtype);
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
+        self.node_types.insert(*id, subtype);
         subtype
     }
 
     fn visit_grouping_expression(
         &mut self,
-        expression: &mut GroupingExpression,
+        GroupingExpression {
+            open_paren_token: _,
+            subexpression,
+            close_paren_token: _,
+            id,
+        }: &mut GroupingExpression,
     ) -> Self::ExpressionOutput {
-        let type_ = self.visit_expression(&mut expression.subexpression);
-        self.node_types.insert_node(expression, type_);
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
+        let type_ = self.visit_expression(subexpression);
+        self.node_types.insert(*id, type_);
         type_
     }
 
@@ -1151,15 +1339,18 @@ impl AstVisitor for TypePropagator<'_> {
             name_token: _,
             id,
         } = expression;
-        let Some(ref_variable) = self.variable_scopes.get(name) else {
+        let Some(ref_variable) = self.variable_scopes.get_read(name) else {
             self.errors.push(FleetError::from_node(
-                expression_clone,
+                &expression_clone,
                 format!("No variable named {name:?} is defined"),
                 ErrorSeverity::Error,
             ));
             return self.type_sets.insert_set(RuntimeType::Unknown);
         };
         self.referenced_variable.insert(*id, ref_variable.clone());
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
 
         self.node_types.insert(*id, ref_variable.borrow().type_);
         return ref_variable.borrow().type_;
@@ -1209,7 +1400,7 @@ impl AstVisitor for TypePropagator<'_> {
                 UnaryOperation::Negate => ("arithmetically negate", "a number"),
             };
             self.errors.push(FleetError::from_node(
-                expression_clone,
+                &expression_clone,
                 format!(
                     "Cannot {verb} {}. Expected {expected}.",
                     self.stringify_type_ptr(type_)
@@ -1217,6 +1408,10 @@ impl AstVisitor for TypePropagator<'_> {
                 ErrorSeverity::Error,
             ));
         }
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
         self.node_types.insert(*id, this_type);
         this_type
     }
@@ -1260,7 +1455,7 @@ impl AstVisitor for TypePropagator<'_> {
                 | (Boolean, Boolean)
                 | (Unit, Unit) => {
                     self_errors.push(FleetError::from_node(
-                        expression_clone,
+                        &expression_clone,
                         format!("Casting {} to itself is redundant", from.stringify(types)),
                         ErrorSeverity::Warning,
                     ));
@@ -1279,7 +1474,7 @@ impl AstVisitor for TypePropagator<'_> {
 
                 (_, Unit) | (Unit, _) => {
                     self_errors.push(FleetError::from_node(
-                        expression_clone,
+                        &expression_clone,
                         "Cannot cast to or from Unit".to_string(),
                         ErrorSeverity::Error,
                     ));
@@ -1309,7 +1504,7 @@ impl AstVisitor for TypePropagator<'_> {
                         CastResult::Possible => CastResult::Possible,
                         CastResult::Redundant => {
                             self_errors.push(FleetError::from_node(
-                                expression_clone,
+                                &expression_clone,
                                 format!(
                                     "Casting array of type {} to array of type {} is \
                                     redundant because the element types are equal",
@@ -1322,7 +1517,7 @@ impl AstVisitor for TypePropagator<'_> {
                         }
                         CastResult::Impossible => {
                             self_errors.push(FleetError::from_node(
-                                expression_clone,
+                                &expression_clone,
                                 format!(
                                     "Casting array of type {} to array of type {} is \
                                     impossible because the element types can't be cast",
@@ -1346,7 +1541,7 @@ impl AstVisitor for TypePropagator<'_> {
                     },
                 ) => {
                     self_errors.push(FleetError::from_node(
-                        expression_clone,
+                        &expression_clone,
                         format!(
                             "Casting array with length {} to length {} is impossible",
                             a_size
@@ -1368,7 +1563,7 @@ impl AstVisitor for TypePropagator<'_> {
                     },
                 ) => {
                     self_errors.push(FleetError::from_node(
-                        expression_clone,
+                        &expression_clone,
                         format!(
                             "Casting non-array of type {} to array of type {} is impossible",
                             from.stringify(types),
@@ -1386,7 +1581,7 @@ impl AstVisitor for TypePropagator<'_> {
                     _,
                 ) => {
                     self_errors.push(FleetError::from_node(
-                        expression_clone,
+                        &expression_clone,
                         format!(
                             "Casting array of type {} to non-array of type {} is impossible",
                             from.stringify(types),
@@ -1399,7 +1594,7 @@ impl AstVisitor for TypePropagator<'_> {
                 (Unknown, Unknown) => {
                     if !RuntimeType::merge_types(from_ptr, to_ptr, types) {
                         self_errors.push(FleetError::from_node(
-                            expression_clone.clone(),
+                            &expression_clone,
                             format!(
                                 "Casting value of type {} to value of type {} is impossible",
                                 from.stringify(types),
@@ -1409,7 +1604,7 @@ impl AstVisitor for TypePropagator<'_> {
                         ));
                     }
                     self_errors.push(FleetError::from_node(
-                        expression_clone.clone(),
+                        &expression_clone,
                         format!(
                             "Casting value of type {} to value of type {} is redundant",
                             from.stringify(types),
@@ -1423,7 +1618,7 @@ impl AstVisitor for TypePropagator<'_> {
                 (Unknown, _) => {
                     if !RuntimeType::merge_types(from_ptr, to_ptr, types) {
                         self_errors.push(FleetError::from_node(
-                            expression_clone,
+                            &expression_clone,
                             format!(
                                 "Casting value of type {} to value of type {} is impossible",
                                 from.stringify(types),
@@ -1445,6 +1640,9 @@ impl AstVisitor for TypePropagator<'_> {
             self.errors,
             &mut self.type_sets,
         );
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
 
         self.node_types.insert(*id, to_ptr);
         to_ptr
@@ -1559,7 +1757,7 @@ impl AstVisitor for TypePropagator<'_> {
             };
             if !is_left_ok {
                 self.errors.push(FleetError::from_node(
-                    (**left).clone(),
+                    &**left,
                     format!(
                         "Cannot {verb} {}. Expected {l_expected}.",
                         self.stringify_type_ptr(left_type)
@@ -1569,7 +1767,7 @@ impl AstVisitor for TypePropagator<'_> {
             }
             if !is_right_ok {
                 self.errors.push(FleetError::from_node(
-                    (**right).clone(),
+                    &**right,
                     format!(
                         "Cannot {verb} {preposition} {}. Expected {r_expected}.",
                         self.stringify_type_ptr(right_type)
@@ -1579,7 +1777,7 @@ impl AstVisitor for TypePropagator<'_> {
             }
             if is_left_ok && is_right_ok && left_type != right_type {
                 self.errors.push(FleetError::from_node(
-                    expression_clone,
+                    &expression_clone,
                     format!(
                         "Cannot {} {} {} {}. Expected {} and {}.",
                         verb,
@@ -1593,6 +1791,9 @@ impl AstVisitor for TypePropagator<'_> {
                 ));
             }
         }
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
 
         let this_type = match operation {
             BinaryOperation::Add
@@ -1622,14 +1823,14 @@ impl AstVisitor for TypePropagator<'_> {
             lvalue,
             equal_token: _,
             right,
-            id: _,
+            id,
         } = expression;
         let left_type = self.visit_lvalue(lvalue);
         let right_type = self.visit_expression(right);
 
         if !RuntimeType::merge_types(left_type, right_type, &mut self.type_sets) {
             self.errors.push(FleetError::from_node(
-                expression_clone.clone(),
+                &expression_clone,
                 format!(
                     "Cannot assign value of type {} to lvalue of type {}",
                     self.stringify_type_ptr(right_type),
@@ -1639,7 +1840,10 @@ impl AstVisitor for TypePropagator<'_> {
             ));
         }
 
-        self.node_types.insert_node(expression, left_type);
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
+        self.node_types.insert(*id, left_type);
         left_type
     }
     fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
@@ -1649,17 +1853,27 @@ impl AstVisitor for TypePropagator<'_> {
             name_token: _,
             id,
         } = lvalue;
-        let Some(ref_variable) = self.variable_scopes.get(name).cloned() else {
+        let Some(ref_variable) = self.variable_scopes.get_write(name) else {
             self.errors.push(FleetError::from_node(
-                lvalue_clone.clone(),
+                &lvalue_clone,
                 format!("No variable named {name:?} is defined"),
                 ErrorSeverity::Error,
             ));
             return self.type_sets.insert_set(RuntimeType::Unknown);
         };
+        if ref_variable.borrow().is_constant {
+            self.errors.push(FleetError::from_node(
+                &lvalue_clone,
+                format!("Variable {name:?} is constant and can't be used as an lvalue"),
+                ErrorSeverity::Error,
+            ));
+        }
         self.referenced_variable.insert(*id, ref_variable.clone());
-        self.node_types
-            .insert_node(lvalue, ref_variable.borrow().type_);
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
+        self.node_types.insert(*id, ref_variable.borrow().type_);
         return ref_variable.borrow().type_;
     }
 
@@ -1678,7 +1892,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         let RuntimeType::ArrayOf { subtype, size: _ } = *self.type_sets.get(array_type) else {
             self.errors.push(FleetError::from_node(
-                *array.clone(),
+                &**array,
                 "Trying to index into non-array typed value",
                 ErrorSeverity::Error,
             ));
@@ -1693,7 +1907,7 @@ impl AstVisitor for TypePropagator<'_> {
             &mut self.type_sets,
         ) {
             self.errors.push(FleetError::from_node(
-                *index.clone(),
+                &**index,
                 format!(
                     "Cannot index into array using index of type {}",
                     self.stringify_type_ptr(index_type)
@@ -1703,6 +1917,9 @@ impl AstVisitor for TypePropagator<'_> {
         }
 
         self.type_sets.get_mut(index_type).specialize_int_size();
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
 
         self.node_types.insert(*id, subtype);
         subtype
@@ -1731,6 +1948,9 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         }: &mut IntType,
     ) -> Self::TypeOutput {
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
         // make sure function registration gets the same type as the full eval
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
@@ -1748,6 +1968,9 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         }: &mut UnitType,
     ) -> Self::TypeOutput {
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
         // make sure function registration gets the same type as the full eval
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
@@ -1758,6 +1981,9 @@ impl AstVisitor for TypePropagator<'_> {
     }
 
     fn visit_bool_type(&mut self, BoolType { token: _, id }: &mut BoolType) -> Self::TypeOutput {
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
         // make sure function registration gets the same type as the full eval
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
@@ -1768,6 +1994,9 @@ impl AstVisitor for TypePropagator<'_> {
     }
 
     fn visit_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> Self::TypeOutput {
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
         }
@@ -1786,6 +2015,9 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         }: &mut ArrayType,
     ) -> Self::TypeOutput {
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
         }
@@ -1793,7 +2025,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         if matches!(self.type_sets.get(subtype_t), RuntimeType::Unit) {
             self.errors.push(FleetError::from_node(
-                *subtype.clone(),
+                &**subtype,
                 "Cannot have array of Unit".to_string(),
                 ErrorSeverity::Error,
             ));
@@ -1807,7 +2039,7 @@ impl AstVisitor for TypePropagator<'_> {
             Some(_) => {
                 // TODO: once we have consteval, relax this restriction
                 self.errors.push(FleetError::from_node(
-                    *subtype.clone(),
+                    &**subtype,
                     "Arrays can only have number literals as a size for now".to_string(),
                     ErrorSeverity::Error,
                 ));

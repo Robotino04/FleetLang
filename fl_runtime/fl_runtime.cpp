@@ -202,7 +202,7 @@ static std::pair<VkDevice, uint> createLogicalDeviceAndQueue(VkPhysicalDevice ph
 
 static VkDescriptorSetLayout createDescriptorSetLayout(VkDevice device, std::vector<VkDescriptorSetLayoutBinding> const& bindings) {
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layoutInfo.bindingCount = 3;
+    layoutInfo.bindingCount = bindings.size();
     layoutInfo.pBindings = bindings.data();
 
     VkDescriptorSetLayout descriptorSetLayout;
@@ -250,9 +250,9 @@ static VkPipeline loadComputeShader(VkDevice device, VkPipelineLayout pipelineLa
 }
 
 
-static VkDescriptorPool createDescriptorPool(VkDevice device) {
+static VkDescriptorPool createDescriptorPool(VkDevice device, uint32_t numBuffers) {
     LOG(std::cout << "Creating Descriptor Pool\n");
-    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3};
+    VkDescriptorPoolSize poolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, numBuffers};
     VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     poolInfo.maxSets = 1;
     poolInfo.poolSizeCount = 1;
@@ -340,7 +340,7 @@ static PerShaderData perShaderSetup(std::vector<CommonBuffer> buffersToBind, con
 
     VkDescriptorSetLayout descriptorSetLayout = createDescriptorSetLayout(global_s.device, bindings);
 
-    VkDescriptorPool descriptorPool = createDescriptorPool(global_s.device);
+    VkDescriptorPool descriptorPool = createDescriptorPool(global_s.device, bindings.size());
 
     VkDescriptorSet descriptorSet = allocateDescriptorSet(global_s.device, descriptorSetLayout, descriptorPool);
 

@@ -37,9 +37,10 @@ use crate::{
     infra::{ErrorSeverity, FleetError},
     passes::{
         stat_tracker::{NodeStats, YesNoMaybe},
+        top_level_binding_finder::TopLevelBindingFinder,
         type_propagation::{
             Function, FunctionID, RuntimeType, TypeAnalysisData, UnionFindSet, UnionFindSetPtr,
-            Variable, VariableID,
+            Variable, VariableID, VariableScope,
         },
     },
     tokenizer::SourceLocation,
@@ -95,6 +96,7 @@ pub struct IrGenerator<'a, 'errors, 'inputs> {
     function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
     type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
     type_sets: &'inputs UnionFindSet<RuntimeType>,
+    scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
 
     break_block: Option<BasicBlock<'a>>,
     skip_block: Option<BasicBlock<'a>>,
@@ -114,6 +116,7 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
             type_sets,
             variable_data,
             function_data,
+            scope_data,
         } = &analysis_data;
 
         IrGenerator {
@@ -128,6 +131,7 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
             function_locations: HashMap::new(),
             type_data,
             type_sets,
+            scope_data,
             break_block: None,
             skip_block: None,
         }
@@ -158,10 +162,10 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
         )
     }
 
-    fn runtime_type_to_llvm(
+    fn runtime_type_to_llvm<I: Into<AstNode> + Clone>(
         &mut self,
         type_: RuntimeType,
-        error_node: impl Into<AstNode> + Clone,
+        error_node: &I,
     ) -> Result<AnyTypeEnum<'a>> {
         Ok(match type_ {
             RuntimeType::I8 => self.context.i8_type().into(),
@@ -196,7 +200,7 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
                 size,
             } => {
                 let inner_type_ir =
-                    self.runtime_type_to_llvm(*self.type_sets.get(inner_type), error_node.clone())?;
+                    self.runtime_type_to_llvm(*self.type_sets.get(inner_type), error_node)?;
 
                 let Some(size) = size else {
                     return self.report_error(FleetError::from_node(
@@ -247,7 +251,7 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
                     .expect("Function data should exist before calling ir_generator")
                     .borrow()
                     .return_type;
-                self.runtime_type_to_llvm(*self.type_sets.get(inferred_type), function.clone())
+                self.runtime_type_to_llvm(*self.type_sets.get(inferred_type), function)
             })?;
 
         let name = match &function.body {
@@ -278,20 +282,20 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
             .iter()
             .flat_map(|(param, var)| -> Result<_> {
                 Ok(match_any_type_enum_as_basic_type!(
-                    self.runtime_type_to_llvm(*self.type_sets.get(var.borrow().type_), param.clone())?,
+                    self.runtime_type_to_llvm(*self.type_sets.get(var.borrow().type_), param)?,
                     type_ => {
                         type_.into()
                     },
                     function(_) => {
                         return self.report_error(FleetError::from_node(
-                            param.clone(),
+                            param,
                             "cannot have function types as parameter",
                             ErrorSeverity::Error,
                         ));
                     },
                     unit(_) => {
                         return self.report_error(FleetError::from_node(
-                            param.clone(),
+                            param,
                             "cannot have unit type as parameter",
                             ErrorSeverity::Error,
                         ));
@@ -334,7 +338,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         let needs_runtime = self
             .node_stats
-            .get_node(program)
+            .get(&program.id)
             .expect("Program must have stats")
             .uses_runtime
             .at_least_maybe();
@@ -431,8 +435,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                         .functions
                         .iter()
                         .find(|f| f.name == "main")
-                        .expect("Main function must exist")
-                        .clone(),
+                        .expect("Main function must exist"),
                     format!("Main function returns unsupported type {other_type}"),
                     ErrorSeverity::Error,
                 ))?,
@@ -485,7 +488,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                     .expect("Function data should exist before calling ir_generator")
                     .borrow()
                     .return_type;
-                self.runtime_type_to_llvm(*self.type_sets.get(inferred_type), function.clone())
+                self.runtime_type_to_llvm(*self.type_sets.get(inferred_type), function)
             })?;
         let ir_function = self
             .function_locations
@@ -522,7 +525,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
 
         if self
             .node_stats
-            .get_node(&function.body)
+            .get(&function.body.get_id())
             .expect("stats should be available before calling ir_generator")
             .terminates_function
             == YesNoMaybe::Yes
@@ -579,7 +582,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
 
         if !ir_function.verify(false) {
             self.errors.push(FleetError::from_node(
-                function.clone(),
+                function,
                 "The IR generated for this function is invalid. See the ".to_string()
                     + "global error at the start of the file for more info",
                 ErrorSeverity::Error,
@@ -587,20 +590,6 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         }
 
         Ok(ir_function)
-    }
-
-    fn visit_function_body(
-        &mut self,
-        function_body: &mut FunctionBody,
-    ) -> Self::FunctionBodyOutput {
-        match function_body {
-            FunctionBody::Statement(statement_function_body) => {
-                self.visit_statement_function_body(statement_function_body)
-            }
-            FunctionBody::Extern(extern_function_body) => {
-                self.visit_extern_function_body(extern_function_body)
-            }
-        }
     }
 
     fn visit_statement_function_body(
@@ -640,10 +629,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                     .expect("variable data should exist before calling ir_generator")
                     .borrow()
                     .type_;
-                self.runtime_type_to_llvm(
-                    *self.type_sets.get(inferred_type),
-                    simple_binding.clone(),
-                )
+                self.runtime_type_to_llvm(*self.type_sets.get(inferred_type), simple_binding)
             })?;
 
         let ptr = match_any_type_enum_as_basic_type!(
@@ -655,14 +641,14 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             },
             function(_) => {
                 return self.report_error(FleetError::from_node(
-                    simple_binding.clone(),
+                    simple_binding,
                     "Somehow tried to bind a function type",
                     ErrorSeverity::Error,
                 ));
             },
             unit(_) => {
                 return self.report_error(FleetError::from_node(
-                    simple_binding.clone(),
+                    simple_binding,
                     "Somehow tried to bind a void type",
                     ErrorSeverity::Error,
                 ));
@@ -727,12 +713,20 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             gpu_index: _,
             close_bracket_token_1: _,
             open_bracket_token_2: _,
-            iterator: _,
+            iterator,
             equal_token: _,
             max_value: iterator_end_value,
             close_bracket_token_2: _,
             id: _,
         } = gpu_executor;
+        let bindings = bindings
+            .iter_mut()
+            .map(|binding| {
+                let mut tlbf = TopLevelBindingFinder::default();
+                tlbf.visit_lvalue(&mut binding.0);
+                tlbf.get_result().unwrap()
+            })
+            .collect_vec();
 
         let current_block = self
             .builder
@@ -742,15 +736,21 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         let bindings_block = self
             .context
             .insert_basic_block_after(current_block, "on-statement bindings");
-        let allocations_block = self
+        let ro_allocations_block = self
             .context
-            .insert_basic_block_after(bindings_block, "on-statement allocations");
+            .insert_basic_block_after(bindings_block, "on-statement ro allocations");
+        let rw_allocations_block = self
+            .context
+            .insert_basic_block_after(ro_allocations_block, "on-statement rw allocations");
         let exec_block = self
             .context
-            .insert_basic_block_after(allocations_block, "on-statement dispatch");
-        let deallocations_block = self
+            .insert_basic_block_after(rw_allocations_block, "on-statement dispatch");
+        let rw_deallocations_block = self
             .context
             .insert_basic_block_after(exec_block, "on-statement deallocations");
+        let ro_deallocations_block = self
+            .context
+            .insert_basic_block_after(rw_deallocations_block, "on-statement deallocations");
 
         self.builder.position_at_end(bindings_block);
         let iterator_end_value_ir = self
@@ -759,42 +759,48 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
 
         let mut buffers = vec![];
 
-        for (binding, _comma) in &mut *bindings {
+        let mut bindings = GLSLCodeGenerator::get_on_statement_bindings(
+            self.variable_data,
+            self.scope_data,
+            self.type_sets,
+            self.type_data,
+            bindings,
+            vec![
+                self.variable_data
+                    .get(&iterator.id)
+                    .expect("Variable data should exist before calling c_generator")
+                    .clone(),
+            ],
+            body,
+        );
+        let fl_runtime_allocate_gpu_backing = self
+            .module
+            .get_function("fl_runtime_allocate_gpu_backing")
+            .expect("fl runtime functions should exist before walking the ast");
+        let fl_runtime_copy_to_backing = self
+            .module
+            .get_function("fl_runtime_copy_to_backing")
+            .expect("fl runtime functions should exist before walking the ast");
+        let fl_runtime_copy_from_backing = self
+            .module
+            .get_function("fl_runtime_copy_from_backing")
+            .expect("fl runtime functions should exist before walking the ast");
+        let fl_runtime_free_gpu_backing = self
+            .module
+            .get_function("fl_runtime_free_gpu_backing")
+            .expect("fl runtime functions should exist before walking the ast");
+
+        for (_name, type_, top_level_binding) in &mut bindings.rw {
             self.builder.position_at_end(bindings_block);
-            let binding_ir = self.visit_lvalue(binding)?;
+            let binding_ir = self.visit_variable_lvalue(top_level_binding)?;
             let size = self
-                .runtime_type_to_llvm(
-                    *self.type_sets.get(
-                        *self
-                            .type_data
-                            .get_node(binding)
-                            .expect("type data must be available before calling c_generator"),
-                    ),
-                    binding.clone(),
-                )?
+                .runtime_type_to_llvm(*type_, top_level_binding)?
                 .size_of()
                 .expect("data passed to GPU must be sized");
 
-            let fl_runtime_allocate_gpu_backing = self
-                .module
-                .get_function("fl_runtime_allocate_gpu_backing")
-                .expect("fl runtime functions should exist before walking the ast");
-            let fl_runtime_copy_to_backing = self
-                .module
-                .get_function("fl_runtime_copy_to_backing")
-                .expect("fl runtime functions should exist before walking the ast");
-            let fl_runtime_copy_from_backing = self
-                .module
-                .get_function("fl_runtime_copy_from_backing")
-                .expect("fl runtime functions should exist before walking the ast");
-            let fl_runtime_free_gpu_backing = self
-                .module
-                .get_function("fl_runtime_free_gpu_backing")
-                .expect("fl runtime functions should exist before walking the ast");
-
             buffers.push(binding_ir);
 
-            self.builder.position_at_end(allocations_block);
+            self.builder.position_at_end(rw_allocations_block);
             self.builder.build_call(
                 fl_runtime_allocate_gpu_backing,
                 &[binding_ir.into(), size.into()],
@@ -806,7 +812,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                 "fl_runtime_copy_to_backing",
             )?;
 
-            self.builder.position_at_end(deallocations_block);
+            self.builder.position_at_end(rw_deallocations_block);
             self.builder.build_call(
                 fl_runtime_copy_from_backing,
                 &[binding_ir.into()],
@@ -819,6 +825,49 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             )?;
         }
 
+        for (_name, type_, top_level_binding) in &mut bindings.ro {
+            self.builder.position_at_end(bindings_block);
+            let binding_ir = self
+                .variable_storage
+                .get(&top_level_binding.borrow().id)
+                .expect("variable used in on-statement must already have storage")
+                .0;
+
+            let size = self
+                .runtime_type_to_llvm(*type_, &**body)?
+                .size_of()
+                .expect("data passed to GPU must be sized");
+
+            buffers.push(binding_ir);
+
+            self.builder.position_at_end(ro_allocations_block);
+            self.builder.build_call(
+                fl_runtime_allocate_gpu_backing,
+                &[binding_ir.into(), size.into()],
+                "fl_runtime_allocate_gpu_backing",
+            )?;
+            self.builder.build_call(
+                fl_runtime_copy_to_backing,
+                &[binding_ir.into()],
+                "fl_runtime_copy_to_backing",
+            )?;
+
+            self.builder.position_at_end(ro_deallocations_block);
+            self.builder.build_call(
+                fl_runtime_free_gpu_backing,
+                &[binding_ir.into()],
+                "fl_runtime_free_gpu_backing",
+            )?;
+        }
+
+        if cfg!(not(feature = "gpu_backend")) {
+            self.errors.push(FleetError::from_node(
+                &**body,
+                "The GPU backend is disabled for this build of Fleet",
+                ErrorSeverity::Error,
+            ));
+        }
+
         let mut glsl_generator = GLSLCodeGenerator::new(
             self.errors,
             self.variable_data,
@@ -827,22 +876,10 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             self.type_sets,
         );
         let glsl_source = glsl_generator.generate_on_statement_shader(
-            bindings
-                .iter_mut()
-                .map(|(binding, _comma)| binding)
-                .collect_vec(),
+            &bindings,
             body,
             &mut gpu_executor_clone,
         )?;
-
-        #[cfg(not(feature = "gpu_backend"))]
-        {
-            self.errors.push(FleetError::from_node(
-                *body.clone(),
-                "The GPU backend is disabled for this build of Fleet",
-                ErrorSeverity::Error,
-            ));
-        }
 
         #[cfg(feature = "gpu_backend")]
         {
@@ -920,13 +957,20 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             self.builder.position_at_end(current_block);
             self.builder.build_unconditional_branch(bindings_block)?;
             self.builder.position_at_end(bindings_block);
-            self.builder.build_unconditional_branch(allocations_block)?;
-            self.builder.position_at_end(allocations_block);
+            self.builder
+                .build_unconditional_branch(ro_allocations_block)?;
+            self.builder.position_at_end(ro_allocations_block);
+            self.builder
+                .build_unconditional_branch(rw_allocations_block)?;
+            self.builder.position_at_end(rw_allocations_block);
             self.builder.build_unconditional_branch(exec_block)?;
             self.builder.position_at_end(exec_block);
             self.builder
-                .build_unconditional_branch(deallocations_block)?;
-            self.builder.position_at_end(deallocations_block);
+                .build_unconditional_branch(rw_deallocations_block)?;
+            self.builder.position_at_end(rw_deallocations_block);
+            self.builder
+                .build_unconditional_branch(ro_deallocations_block)?;
+            self.builder.position_at_end(ro_deallocations_block);
         }
 
         Ok(())
@@ -1018,7 +1062,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
 
         if self
             .node_stats
-            .get_node(&*if_stmt.if_body)
+            .get(&if_stmt.if_body.get_id())
             .unwrap_or_else(|| panic!("{:?} doesn't have stats", if_stmt.if_body))
             .terminates_function
             != YesNoMaybe::Yes
@@ -1053,7 +1097,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
 
             if self
                 .node_stats
-                .get_node(body)
+                .get(&body.get_id())
                 .unwrap_or_else(|| panic!("{body:?} doesn't have stats"))
                 .terminates_function
                 != YesNoMaybe::Yes
@@ -1069,7 +1113,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             self.visit_statement(else_body)?;
             if self
                 .node_stats
-                .get_node(&**else_body)
+                .get(&else_body.get_id())
                 .unwrap_or_else(|| panic!("{:?} doesn't have stats", else_body))
                 .terminates_function
                 != YesNoMaybe::Yes
@@ -1236,7 +1280,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             self.builder.position_at_end(next_block);
         } else {
             self.errors.push(FleetError::from_node(
-                break_stmt.clone(),
+                break_stmt,
                 "Break statements can only appear inside of loops",
                 ErrorSeverity::Error,
             ));
@@ -1256,7 +1300,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             self.builder.position_at_end(next_block);
         } else {
             self.errors.push(FleetError::from_node(
-                skip_stmt.clone(),
+                skip_stmt,
                 "Skip statements can only appear inside of loops",
                 ErrorSeverity::Error,
             ));
@@ -1292,7 +1336,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             .expect("type data should exist before running ir_generator");
 
         return Ok(Some(
-            self.runtime_type_to_llvm(*self.type_sets.get(type_), number_clone)?
+            self.runtime_type_to_llvm(*self.type_sets.get(type_), &number_clone)?
                 .into_int_type()
                 .const_int(*value, false)
                 .as_basic_value_enum(),
@@ -1334,14 +1378,14 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                 .expect("type data should exist before running ir_generator"),
         ) else {
             return self.report_error(FleetError::from_node(
-                expression_clone.clone(),
+                &expression_clone,
                 "This array doesn't have an ArrayOf(_) type",
                 ErrorSeverity::Error,
             ));
         };
 
         let mut array_ir = self
-            .runtime_type_to_llvm(*type_, expression_clone)?
+            .runtime_type_to_llvm(*type_, &expression_clone)?
             .into_array_type()
             .get_undef();
 
@@ -1477,7 +1521,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
 
         let Some(storage) = self.variable_storage.get(&var.borrow().id) else {
             return self.report_error(FleetError::from_node(
-                expr_clone,
+                &expr_clone,
                 format!(
                     "Variables should have storage before being accessed.\nVarData: {:#?}\nVarStorage: {:#?}\nThis ID: {id:?}",
                     self.variable_data, self.variable_storage
@@ -1487,20 +1531,20 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         };
         let storage = storage.clone();
         return match_any_type_enum_as_basic_type!(
-            self.runtime_type_to_llvm(*self.type_sets.get(var.borrow().type_), expr_clone.clone())?,
+            self.runtime_type_to_llvm(*self.type_sets.get(var.borrow().type_), &expr_clone)?,
             type_ => {
                 Ok(Some(self.builder.build_load(type_, storage.0, name)?))
             },
             function(_) => {
                 return self.report_error(FleetError::from_node(
-                    expr_clone.clone(),
+                    &expr_clone,
                     "Cannot load function",
                     ErrorSeverity::Error,
                 ));
             },
             unit(_) => {
                 return self.report_error(FleetError::from_node(
-                    expr_clone.clone(),
+                    &expr_clone,
                     "Cannot load Unit value",
                     ErrorSeverity::Error,
                 ));
@@ -1558,7 +1602,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         let value = self.visit_expression(&mut *operand)?;
         let value_type = *self
             .type_data
-            .get_node(&**operand)
+            .get(&operand.get_id())
             .expect("type data should exist before calling ir_generator");
 
         let target_type = *self
@@ -1609,7 +1653,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                 subtype: _,
                 size: _,
             } => self.report_error(FleetError::from_node(
-                type_.clone(),
+                type_,
                 "cannot cast to array currently",
                 ErrorSeverity::Error,
             )),
@@ -1627,17 +1671,17 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             }
             RuntimeType::Unit => Ok(None),
             RuntimeType::Unknown => self.report_error(FleetError::from_node(
-                type_.clone(),
+                type_,
                 "ir_generator shouldn't run if there are unknown types",
                 ErrorSeverity::Error,
             )),
             RuntimeType::Error => self.report_error(FleetError::from_node(
-                type_.clone(),
+                type_,
                 "ir_generator shouldn't run if there are error types",
                 ErrorSeverity::Error,
             )),
             RuntimeType::UnsizedInt => self.report_error(FleetError::from_node(
-                type_.clone(),
+                type_,
                 "ir_generator shouldn't run if there are unsized int types",
                 ErrorSeverity::Error,
             )),
@@ -1959,7 +2003,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             .expect("type data should exist before calling ir_generator");
 
         let element_type =
-            self.runtime_type_to_llvm(*self.type_sets.get(infered_type), *array.clone())?;
+            self.runtime_type_to_llvm(*self.type_sets.get(infered_type), &**array)?;
 
         let index_ptr = match_any_type_enum_as_basic_type!(
             element_type,
@@ -1970,14 +2014,14 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             },
             function(_) => {
                 return self.report_error(FleetError::from_node(
-                    *array.clone(),
+                    &**array,
                     "Cannot have array of functions",
                     ErrorSeverity::Error,
                 ));
             },
             unit(_) => {
                 return self.report_error(FleetError::from_node(
-                    *array.clone(),
+                    &**array,
                     "Cannot have array of Unit",
                     ErrorSeverity::Error,
                 ));
@@ -2000,10 +2044,9 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
     }
 
     fn visit_int_type(&mut self, type_: &mut IntType) -> Self::TypeOutput {
-        let type_clone = type_.clone();
         let IntType {
             token: _,
-            type_,
+            type_: runtime_type,
             id,
         } = type_;
         let infered_type = self
@@ -2012,11 +2055,11 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             .expect("type data should exist before calling ir_generator");
 
         assert_eq!(
-            *type_,
+            *runtime_type,
             *self.type_sets.get(*infered_type),
             "Inferred type (right) of IntType doesn't match its actual type (left)"
         );
-        self.runtime_type_to_llvm(*type_, type_clone)
+        self.runtime_type_to_llvm(*runtime_type, type_)
     }
 
     fn visit_unit_type(
@@ -2055,18 +2098,16 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
     }
 
     fn visit_idk_type(&mut self, type_: &mut IdkType) -> Self::TypeOutput {
-        let type_clone = type_.clone();
         let IdkType { token: _, id } = type_;
         let infered_type = *self
             .type_data
             .get(id)
             .expect("type data should exist before calling ir_generator");
 
-        self.runtime_type_to_llvm(*self.type_sets.get(infered_type), type_clone)
+        self.runtime_type_to_llvm(*self.type_sets.get(infered_type), type_)
     }
 
     fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
-        let array_type_clone = array_type.clone();
         let ArrayType {
             subtype: _,
             open_bracket_token: _,
@@ -2080,6 +2121,6 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             .get(id)
             .expect("type data should exist before calling ir_generator");
 
-        self.runtime_type_to_llvm(*self.type_sets.get(infered_type), array_type_clone)
+        self.runtime_type_to_llvm(*self.type_sets.get(infered_type), array_type)
     }
 }

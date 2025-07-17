@@ -608,3 +608,22 @@ fn extern_function_renamed() {
         "",
     );
 }
+
+#[test]
+fn two_parameters_with_same_name() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let foo = (a: i32) -> i32 {
+                return a;
+            }
+            let bar = (a: i32) -> i32 {
+                return a;
+            }
+            let main = () -> i32 {
+                return foo(1) + bar(2);
+            }
+        "##},
+        "main",
+        3,
+    );
+}

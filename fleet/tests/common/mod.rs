@@ -15,8 +15,8 @@ use inkwell::{
 
 use fleet::{
     infra::{
-        AnalysisOutput, ErrorSeverity, FleetError, LLVMCompilationOutput, ParserOutput,
-        TokenizerOutput,
+        ErrorSeverity, FixupOutput, FleetError, LLVMCompilationOutput, ParserOutput,
+        TokenizerOutput, TypeAnalysisOutput,
     },
     tokenizer::SourceLocation,
 };
@@ -122,10 +122,13 @@ pub fn assert_compile_error_no_formatting(src: &str, error_start: SourceLocation
         panic!("Parser failed completely");
     };
     assert_no_fatal_errors(&errors);
-    let Some(_analysis_output) = parser_output.analyze(&mut errors) else {
+    let Some(analysis_output) = parser_output.analyze(&mut errors) else {
         panic!("Analysis failed completely");
     };
-    //_analysis_output.compile_llvm(&mut errors, &Context::create());
+    let Some(fixup_output) = analysis_output.fixup(&mut errors) else {
+        panic!("Fixup failed completely");
+    };
+    fixup_output.compile_llvm(&mut errors, &Context::create(), &analysis_output);
 
     assert_error_at_position(&errors, error_start);
 }
@@ -144,7 +147,12 @@ pub fn assert_compile_and_warning(src: &str, warning_start: SourceLocation) {
         panic!("Analysis failed completely");
     };
     assert_no_fatal_errors(&errors);
-    let Some(_llvm_output) = analysis_output.compile_llvm(&mut errors, &context) else {
+    let Some(fixup_output) = analysis_output.fixup(&mut errors) else {
+        panic!("Fixup failed completely");
+    };
+    assert_no_fatal_errors(&errors);
+    let Some(_llvm_output) = fixup_output.compile_llvm(&mut errors, &context, &analysis_output)
+    else {
         panic!("LLVM compilation failed completely");
     };
     assert_no_fatal_errors(&errors);
@@ -152,16 +160,6 @@ pub fn assert_compile_and_warning(src: &str, warning_start: SourceLocation) {
     assert_warning_at_position(&errors, warning_start);
 }
 
-pub fn assert_compile_and_return_value_llvm_only<ReturnType>(
-    src: &str,
-    function_name: &str,
-    expected_return_value: ReturnType,
-) where
-    ReturnType: Debug + PartialEq,
-{
-    assert_compile_and_return_value_unformatted(src, function_name, expected_return_value);
-    assert_is_formatted(src.trim());
-}
 pub fn assert_compile_and_return_value<ReturnType>(
     src: &str,
     function_name: &str,
@@ -189,12 +187,12 @@ pub fn assert_compile_and_return_value_unformatted<ReturnType>(
     ReturnType: Debug + PartialEq,
 {
     let context = Context::create();
-    let (_tokenizer_output, _parser_output, analysis_output, llvmcompilation_output) =
+    let (_tokenizer_output, _parser_output, _analysis_output, fixup_output, llvmcompilation_output) =
         compile_or_panic(&context, src);
 
-    let needs_runtime = analysis_output
+    let needs_runtime = fixup_output
         .stats
-        .get_node(&analysis_output.program)
+        .get(&fixup_output.program.id)
         .expect("No stats available for function to test")
         .uses_runtime
         .at_least_maybe();
@@ -241,7 +239,8 @@ fn compile_or_panic<'a>(
 ) -> (
     TokenizerOutput,
     ParserOutput,
-    AnalysisOutput,
+    TypeAnalysisOutput,
+    FixupOutput,
     LLVMCompilationOutput<'a>,
 ) {
     let mut errors = vec![];
@@ -257,7 +256,12 @@ fn compile_or_panic<'a>(
         panic!("Analysis failed completely");
     };
     assert_no_fatal_errors(&errors);
-    let Some(llvm_output) = analysis_output.compile_llvm(&mut errors, context) else {
+    let Some(fixup_output) = analysis_output.fixup(&mut errors) else {
+        panic!("Fixup failed completely");
+    };
+    assert_no_fatal_errors(&errors);
+    let Some(llvm_output) = fixup_output.compile_llvm(&mut errors, context, &analysis_output)
+    else {
         panic!("LLVM compilation failed completely");
     };
     assert_no_fatal_errors(&errors);
@@ -270,6 +274,7 @@ fn compile_or_panic<'a>(
         tokenizer_output,
         parser_output,
         analysis_output,
+        fixup_output,
         llvm_output,
     )
 }
@@ -290,12 +295,12 @@ fn format_or_panic(src: &str) -> String {
 
 fn execute_or_panic<ReturnType>(src: &str, function_name: &str) -> ReturnType {
     let context = Context::create();
-    let (_tokenizer_output, _parser_output, analysis_output, llvmcompilation_output) =
+    let (_tokenizer_output, _parser_output, _analysis_output, fixup_output, llvmcompilation_output) =
         compile_or_panic(&context, src);
 
-    let needs_runtime = analysis_output
+    let needs_runtime = fixup_output
         .stats
-        .get_node(&analysis_output.program)
+        .get(&fixup_output.program.id)
         .expect("No stats available for function to test")
         .uses_runtime
         .at_least_maybe();
@@ -386,12 +391,12 @@ fn assert_is_formatted(src: &str) {
 
 fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
     let context = Context::create();
-    let (_tokenizer_output, _parser_output, analysis_output, llvmcompilation_output) =
+    let (_tokenizer_output, _parser_output, _analysis_output, fixup_output, llvmcompilation_output) =
         compile_or_panic(&context, src);
 
-    let needs_runtime = analysis_output
+    let needs_runtime = fixup_output
         .stats
-        .get_node(&analysis_output.program)
+        .get(&fixup_output.program.id)
         .expect("No stats available for function to test")
         .uses_runtime
         .at_least_maybe();
@@ -463,19 +468,19 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
 }
 fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     let context = Context::create();
-    let (_tokenizer_output, _parser_output, analysis_output, _llvmcompilation_output) =
+    let (_tokenizer_output, _parser_output, analysis_output, fixup_output, _llvmcompilation_output) =
         compile_or_panic(&context, src);
 
-    let needs_runtime = analysis_output
+    let needs_runtime = fixup_output
         .stats
-        .get_node(&analysis_output.program)
+        .get(&fixup_output.program.id)
         .expect("No stats available for function to test")
         .uses_runtime
         .at_least_maybe();
 
     let mut errors = vec![];
-    let c_code = analysis_output
-        .compile_c(&mut errors)
+    let c_code = fixup_output
+        .compile_c(&mut errors, &analysis_output)
         .expect("C generation failed completely");
     assert_no_fatal_errors(&errors);
 

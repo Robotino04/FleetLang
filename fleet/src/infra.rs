@@ -16,6 +16,7 @@ use crate::{
         find_node_bonds::find_node_bounds,
         fix_non_block_statements::FixNonBlockStatements,
         fix_trailing_comma::FixTrailingComma,
+        lvalue_reducer::LValueReducer,
         remove_parens::RemoveParensPass,
         stat_tracker::{NodeStats, StatTracker},
         type_propagation::{TypeAnalysisData, TypePropagator},
@@ -58,8 +59,8 @@ impl FleetError {
             severity,
         }
     }
-    pub fn from_node(
-        node: impl Into<AstNode>,
+    pub fn from_node<I: Into<AstNode> + Clone>(
+        node: &I,
         msg: impl ToString,
         severity: ErrorSeverity,
     ) -> Self {
@@ -178,21 +179,15 @@ pub struct ParserOutput {
 }
 
 impl ParserOutput {
-    pub fn analyze(&self, errors: &mut Vec<FleetError>) -> Option<AnalysisOutput> {
+    pub fn analyze(&self, errors: &mut Vec<FleetError>) -> Option<TypeAnalysisOutput> {
         let mut id_generator = self.id_generator.clone();
         let mut program = self.program.clone();
         let type_analysis_data =
             TypePropagator::new(errors, &mut id_generator).visit_program(&mut program);
 
-        let stat_tracker = StatTracker::new(errors, &type_analysis_data);
-        let stats = stat_tracker.visit_program(&mut program);
-
-        run_fix_passes(errors, &mut program, &mut id_generator);
-
-        Some(AnalysisOutput {
+        Some(TypeAnalysisOutput {
             program,
             id_generator,
-            stats,
             type_analysis_data,
         })
     }
@@ -210,20 +205,44 @@ impl ParserOutput {
 }
 
 #[derive(Clone, Debug)]
-pub struct AnalysisOutput {
+pub struct TypeAnalysisOutput {
     pub program: Program,
     pub id_generator: IdGenerator,
-
-    pub stats: PerNodeData<NodeStats>,
     pub type_analysis_data: TypeAnalysisData,
 }
 
-impl AnalysisOutput {
+impl TypeAnalysisOutput {
+    pub fn fixup(&self, errors: &mut Vec<FleetError>) -> Option<FixupOutput> {
+        let mut id_generator = self.id_generator.clone();
+        let mut program = self.program.clone();
+
+        LValueReducer::new(errors, None, &self.type_analysis_data).visit_program(&mut program);
+        let stats = StatTracker::new(errors, &self.type_analysis_data).visit_program(&mut program);
+
+        run_fix_passes(errors, &mut program, &mut id_generator);
+
+        Some(FixupOutput {
+            program,
+            id_generator,
+            stats,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FixupOutput {
+    pub program: Program,
+    pub id_generator: IdGenerator,
+    pub stats: PerNodeData<NodeStats>,
+}
+
+impl FixupOutput {
     #[cfg(feature = "llvm_backend")]
     pub fn compile_llvm<'a>(
         &self,
         errors: &mut Vec<FleetError>,
         context: &'a Context,
+        type_analysis_output: &TypeAnalysisOutput,
     ) -> Option<LLVMCompilationOutput<'a>> {
         use crate::ir_generator::IrGenerator;
 
@@ -233,7 +252,12 @@ impl AnalysisOutput {
         {
             return None;
         }
-        let ir_generator = IrGenerator::new(context, errors, &self.stats, &self.type_analysis_data);
+        let ir_generator = IrGenerator::new(
+            context,
+            errors,
+            &self.stats,
+            &type_analysis_output.type_analysis_data,
+        );
         match ir_generator.visit_program(&mut self.program.clone()) {
             Ok(module) => Some(LLVMCompilationOutput { module }),
             Err(error) => {
@@ -256,7 +280,11 @@ impl AnalysisOutput {
         }
     }
 
-    pub fn compile_c(&self, errors: &mut Vec<FleetError>) -> Option<String> {
+    pub fn compile_c(
+        &self,
+        errors: &mut Vec<FleetError>,
+        type_analysis_output: &TypeAnalysisOutput,
+    ) -> Option<String> {
         if errors
             .iter()
             .any(|err| err.severity == ErrorSeverity::Error)
@@ -264,13 +292,22 @@ impl AnalysisOutput {
             return None;
         }
 
+        let TypeAnalysisData {
+            type_data,
+            type_sets,
+            variable_data,
+            function_data,
+            scope_data,
+        } = &type_analysis_output.type_analysis_data;
+
         Some(
             CCodeGenerator::new(
                 errors,
-                &self.type_analysis_data.variable_data,
-                &self.type_analysis_data.function_data,
-                &self.type_analysis_data.type_data,
-                &self.type_analysis_data.type_sets,
+                variable_data,
+                function_data,
+                type_data,
+                type_sets,
+                scope_data,
                 &self.stats,
             )
             .visit_program(&mut self.program.clone()),

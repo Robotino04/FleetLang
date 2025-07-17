@@ -12,11 +12,14 @@ use crate::{
     tokenizer::SourceLocation,
 };
 
-pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLocation) {
-    match node.into() {
+pub fn find_node_bounds<I>(node: &I) -> (SourceLocation, SourceLocation)
+where
+    I: Into<AstNode> + Clone,
+{
+    match &node.clone().into() {
         AstNode::Program(Program { functions, id: _ }) => functions
             .iter()
-            .map(|f| find_node_bounds(f.clone()))
+            .map(find_node_bounds)
             .reduce(|(start1, end1), (start2, end2)| (start1.min(start2), end1.max(end2)))
             .unwrap_or((SourceLocation::start(), SourceLocation::start())),
         AstNode::FunctionDefinition(FunctionDefinition {
@@ -69,7 +72,7 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             close_paren_token: _,
             body,
             id: _,
-        }) => (on_token.start, find_node_bounds(*body).1),
+        }) => (on_token.start, find_node_bounds(&**body).1),
         AstNode::BlockStatement(BlockStatement {
             open_brace_token,
             body: _,
@@ -102,18 +105,18 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             if_token.start,
             else_
                 .clone()
-                .map(|(_else_token, else_body)| find_node_bounds(*else_body).1)
-                .or(elifs.last().map(|(_elif_token, _condition, elif_body)| {
-                    find_node_bounds(elif_body.clone()).1
-                }))
-                .unwrap_or(find_node_bounds(*if_body).1),
+                .map(|(_else_token, else_body)| find_node_bounds(&*else_body).1)
+                .or(elifs
+                    .last()
+                    .map(|(_elif_token, _condition, elif_body)| find_node_bounds(elif_body).1))
+                .unwrap_or(find_node_bounds(&**if_body).1),
         ),
         AstNode::WhileLoopStatement(WhileLoopStatement {
             while_token,
             condition: _,
             body,
             id: _,
-        }) => (while_token.start, find_node_bounds(*body).1),
+        }) => (while_token.start, find_node_bounds(&**body).1),
         AstNode::ForLoopStatement(ForLoopStatement {
             for_token,
             open_paren_token: _,
@@ -124,7 +127,7 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             close_paren_token: _,
             body,
             id: _,
-        }) => (for_token.start, find_node_bounds(*body).1),
+        }) => (for_token.start, find_node_bounds(&**body).1),
         AstNode::BreakStatement(BreakStatement {
             break_token,
             semicolon_token,
@@ -165,13 +168,13 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             operation: _,
             operand,
             id: _,
-        }) => (operator_token.start, find_node_bounds(*operand).1),
+        }) => (operator_token.start, find_node_bounds(&**operand).1),
         AstNode::CastExpression(CastExpression {
             operand,
             as_token: _,
             type_,
             id: _,
-        }) => (find_node_bounds(*operand).0, find_node_bounds(type_).1),
+        }) => (find_node_bounds(&**operand).0, find_node_bounds(type_).1),
         AstNode::NumberExpression(NumberExpression {
             value: _,
             token,
@@ -194,7 +197,7 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             operation: _,
             right,
             id: _,
-        }) => (find_node_bounds(*left).0, find_node_bounds(*right).1),
+        }) => (find_node_bounds(&**left).0, find_node_bounds(&**right).1),
         AstNode::GroupingExpression(GroupingExpression {
             open_paren_token,
             subexpression: _,
@@ -216,7 +219,7 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             index: _,
             close_bracket_token,
             id: _,
-        }) => (find_node_bounds(*array).0, close_bracket_token.end),
+        }) => (find_node_bounds(&**array).0, close_bracket_token.end),
         AstNode::VariableAccessExpression(VariableAccessExpression {
             name: _,
             name_token,
@@ -227,7 +230,7 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             equal_token: _,
             right,
             id: _,
-        }) => (find_node_bounds(lvalue).0, find_node_bounds(*right).1),
+        }) => (find_node_bounds(lvalue).0, find_node_bounds(&**right).1),
         AstNode::VariableLValue(VariableLValue {
             name: _,
             name_token,
@@ -239,7 +242,7 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             index: _,
             close_bracket_token,
             id: _,
-        }) => (find_node_bounds(*array).0, close_bracket_token.end),
+        }) => (find_node_bounds(&**array).0, close_bracket_token.end),
         AstNode::GroupingLValue(GroupingLValue {
             open_paren_token,
             sublvalue: _,
@@ -264,6 +267,6 @@ pub fn find_node_bounds(node: impl Into<AstNode>) -> (SourceLocation, SourceLoca
             size: _,
             close_bracket_token,
             id: _,
-        }) => (find_node_bounds(*subtype).0, close_bracket_token.end),
+        }) => (find_node_bounds(&**subtype).0, close_bracket_token.end),
     }
 }

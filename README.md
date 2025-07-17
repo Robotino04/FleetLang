@@ -32,6 +32,9 @@
 - add way to get length of array
 - consistent error language style
 - add tests for on-statement bindings that modify state. make sure order is correct in llvm backend specifically
+- `let x = () -> @extern "asd";` panics
+- real mutability/constant system
+- array-to-array assignments in glsl (maybe c as well)
 
 
 ## Building

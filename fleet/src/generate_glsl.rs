@@ -1,4 +1,4 @@
-use std::{cell::RefCell, error::Error, rc::Rc};
+use std::{cell::RefCell, collections::HashSet, error::Error, rc::Rc};
 
 use indent::indent_by;
 use indoc::formatdoc;
@@ -13,14 +13,16 @@ use crate::{
         BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
         BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, IdkType, IfStatement, IntType, LValue, NumberExpression,
-        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        GroupingLValue, HasID, IdkType, IfStatement, IntType, NumberExpression, OnStatement,
+        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
+        Statement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
-    passes::type_propagation::{Function, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable},
+    passes::type_propagation::{
+        Function, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable, VariableScope,
+    },
 };
 
 type Result<T> = ::core::result::Result<T, Box<dyn Error>>;
@@ -34,6 +36,12 @@ pub struct GLSLCodeGenerator<'inputs, 'errors> {
 
     temporary_counter: u64,
 }
+
+pub struct OnStatementBindings {
+    pub rw: Vec<(String, RuntimeType, VariableLValue)>,
+    pub ro: Vec<(String, RuntimeType, Rc<RefCell<Variable>>)>,
+}
+
 impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
     pub fn new(
         errors: &'errors mut Vec<FleetError>,
@@ -52,9 +60,94 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
         }
     }
 
+    fn generate_buffer_definition(
+        &self,
+        name: &str,
+        index: u32,
+        type_: RuntimeType,
+        modifiers: &str,
+    ) -> String {
+        let (pre_name, post_name) = self.runtime_type_to_glsl(type_);
+        let name = self.mangle_variable(name);
+        format!(
+            "layout(std430, binding = {index}) buffer Input{index} {{ {modifiers} {pre_name} {name}{post_name}; }};",
+        )
+    }
+
+    pub fn get_on_statement_bindings(
+        variable_data: &PerNodeData<Rc<RefCell<Variable>>>,
+        scope_data: &PerNodeData<Rc<RefCell<VariableScope>>>,
+        type_sets: &UnionFindSet<RuntimeType>,
+        type_data: &PerNodeData<UnionFindSetPtr<RuntimeType>>,
+        bindings: Vec<VariableLValue>,
+        iterators: Vec<Rc<RefCell<Variable>>>,
+        main_body: &Statement,
+    ) -> OnStatementBindings {
+        let iterator_ids = iterators
+            .iter()
+            .map(|var| var.borrow().id)
+            .collect::<HashSet<_>>();
+
+        let r_buffer_definitions = scope_data
+            .get(&main_body.get_id())
+            .expect("scope data should exist before calling generate_glsl")
+            .borrow()
+            .variable_map
+            .iter()
+            .filter(|(_name, variable)| !iterator_ids.contains(&variable.borrow().id))
+            .filter(|(_name, variable)| {
+                // remove any rw bindings
+                !bindings.iter().any(|el| {
+                    variable_data
+                        .get(&el.id)
+                        .expect("variable data should exist before calling generate_glsl")
+                        .borrow()
+                        .id
+                        == variable.borrow().id
+                })
+            })
+            .map(|(name, variable)| {
+                (
+                    name.clone(),
+                    *type_sets.get(variable.borrow().type_),
+                    variable.clone(),
+                )
+            })
+            .collect_vec();
+
+        let rw_buffer_definitions = bindings
+            .into_iter()
+            .filter(|variable| {
+                !iterator_ids.contains(
+                    &variable_data
+                        .get(&variable.id)
+                        .expect("variable data should exist before calling generate_glsl")
+                        .borrow()
+                        .id,
+                )
+            })
+            .map(|binding| {
+                (
+                    binding.name.clone(),
+                    *type_sets.get(
+                        *type_data
+                            .get(&binding.id)
+                            .expect("type data must exist before calling c_generator"),
+                    ),
+                    binding,
+                )
+            })
+            .collect_vec();
+
+        OnStatementBindings {
+            rw: rw_buffer_definitions,
+            ro: r_buffer_definitions,
+        }
+    }
+
     pub fn generate_on_statement_shader(
         &mut self,
-        mut bindings: Vec<&mut LValue>,
+        bindings: &OnStatementBindings,
         main_body: &mut Statement,
         gpu_executor: &mut GPUExecutor,
     ) -> Result<String> {
@@ -77,7 +170,7 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
             Ok(body_str) => body_str,
             Err(err) => {
                 self.errors.push(FleetError::from_node(
-                    main_body.clone(),
+                    main_body,
                     format!("GLSL generation failed: {err}"),
                     ErrorSeverity::Error,
                 ));
@@ -89,29 +182,30 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
             *self.type_sets.get(
                 *self
                     .type_data
-                    .get_node(iterator)
+                    .get(&iterator.id)
                     .expect("type data must exist before calling glsl_generator"),
             ),
         );
 
-        let glsl_buffer_definitions = bindings
-            .iter_mut()
-            .enumerate()
-            .map(|(i, binding)| {
-                let glsl_type = self.runtime_type_to_glsl(
-                    *self.type_sets.get(
-                        *self
-                            .type_data
-                            .get_node(*binding)
-                            .expect("type data must exist before calling c_generator"),
-                    ),
-                );
-                format!(
-                    "layout(std430, binding = {i}) buffer Input{i} {{ {} {}{}; }};",
-                    glsl_type.0,
-                    self.visit_lvalue(binding).out_value, // TODO: extract top-level variable and bind that instead of the lvalue
-                    glsl_type.1,
-                )
+        let mut buffer_count = 0;
+
+        let rw_buffer_definitions = bindings
+            .rw
+            .iter()
+            .map(|(name, type_, _binding)| {
+                let res = self.generate_buffer_definition(name, buffer_count, *type_, "");
+                buffer_count += 1;
+                res
+            })
+            .join("\n");
+
+        let ro_buffer_definitions = bindings
+            .ro
+            .iter()
+            .map(|(name, type_, _variable)| {
+                let res = self.generate_buffer_definition(name, buffer_count, *type_, "readonly");
+                buffer_count += 1;
+                res
             })
             .join("\n");
 
@@ -123,7 +217,10 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
             // https://github.com/Darkyenus/glsl4idea/issues/175
             #extension GL_EXT_shader_explicit_arithmetic_types         : enable
 
-            {glsl_buffer_definitions}
+            // Read + Write buffers
+            {rw_buffer_definitions}
+            // Read only buffers
+            {ro_buffer_definitions}
 
             layout(push_constant) uniform PushConstants {{
                 uint dispatch_size;
@@ -163,7 +260,7 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
             )
             .inspect_err(|err| {
                 self.errors.push(FleetError::from_node(
-                    error_node.clone(),
+                    error_node,
                     format!("{source}\n----------\nInternal shaderc error: {err}"),
                     ErrorSeverity::Error,
                 ));
@@ -377,7 +474,7 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
         body: &mut ExternFunctionBody,
     ) -> Self::FunctionBodyOutput {
         self.report_error(FleetError::from_node(
-            body.clone(),
+            body,
             "external functions cannot be called from the GPU",
             ErrorSeverity::Error,
         ))
@@ -421,7 +518,7 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
 
     fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
         self.report_error(FleetError::from_node(
-            on_stmt.clone(),
+            on_stmt,
             "Cannot use on-statements on the GPU",
             ErrorSeverity::Error,
         ))

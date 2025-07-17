@@ -37,7 +37,7 @@ impl PartialAstVisitor for ErrMissingTypeInParam<'_> {
             self.visit_simple_binding(param);
             if param.type_.is_none() {
                 self.errors.push(FleetError::from_node(
-                    param.clone(),
+                    param,
                     "Function parameters must always have a type",
                     ErrorSeverity::Error,
                 ));

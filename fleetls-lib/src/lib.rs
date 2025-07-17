@@ -604,6 +604,11 @@ impl Backend {
                         {}
                         ```
 
+                        ---- Current Scope ----
+                        ```rust
+                        {}
+                        ```
+
                         ---- Token ----
                         ```rust
                         {:#?}
@@ -617,9 +622,18 @@ impl Backend {
                 )),
             stats
                 .as_ref()
-                .and_then(|stat| stat.get_node(node_hierarchy.last()?).cloned())
+                .and_then(|stat| stat.get(&node_hierarchy.last()?.get_id()).cloned())
                 .map_or("No stats available".to_string(), |stat| format!(
                     "{stat:#?}"
+                )),
+            analysis_data
+                .as_ref()
+                .and_then(|stat| stat
+                    .scope_data
+                    .get(&node_hierarchy.last()?.get_id())
+                    .cloned())
+                .map_or("No scope available".to_string(), |scope| format!(
+                    "{scope:#?}"
                 )),
             hovered_token,
         )
@@ -731,18 +745,19 @@ impl LanguageServer for Backend {
             let Some(analysis_output) = parser_output.analyze(&mut errors) else {
                 return errors;
             };
+            let Some(fixup_output) = analysis_output.fixup(&mut errors) else {
+                return errors;
+            };
 
             #[cfg(feature = "llvm_backend")]
             {
                 use fleet::inkwell::context::Context;
 
                 let context = Context::create();
-                let _ = analysis_output.compile_llvm(&mut errors, &context);
+                let _ = fixup_output.compile_llvm(&mut errors, &context, &analysis_output);
             }
-            #[cfg(not(feature = "llvm_backend"))]
-            let _ = analysis_output;
 
-            let _ = analysis_output.compile_c(&mut errors);
+            let _ = fixup_output.compile_c(&mut errors, &analysis_output);
 
             errors
         }
@@ -861,6 +876,9 @@ impl LanguageServer for Backend {
             });
         };
         let analysis_output = parser_output.analyze(&mut errors);
+        let fixup_output = analysis_output
+            .as_ref()
+            .and_then(|ao| ao.fixup(&mut errors));
 
         let cpos = params.text_document_position_params.position;
         let find_pass = FindContainingNodePass::new(SourceLocation {
@@ -880,7 +898,7 @@ impl LanguageServer for Backend {
                     kind: MarkupKind::Markdown,
                     value: self.full_hover_text(
                         &node_hierarchy,
-                        analysis_output.as_ref().map(|a| &a.stats),
+                        fixup_output.as_ref().map(|fo| &fo.stats),
                         analysis_output.as_ref().map(|a| &a.type_analysis_data),
                         hovered_token.as_ref(),
                     ),

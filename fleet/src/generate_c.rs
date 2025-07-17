@@ -20,7 +20,10 @@ use crate::{
     infra::FleetError,
     passes::{
         stat_tracker::NodeStats,
-        type_propagation::{Function, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable},
+        top_level_binding_finder::TopLevelBindingFinder,
+        type_propagation::{
+            Function, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable, VariableScope,
+        },
     },
 };
 
@@ -33,6 +36,7 @@ pub struct CCodeGenerator<'inputs, 'errors> {
     function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
     type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
     type_sets: &'inputs UnionFindSet<RuntimeType>,
+    scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
 
     temporary_counter: u64,
 }
@@ -43,6 +47,7 @@ impl<'inputs, 'errors> CCodeGenerator<'inputs, 'errors> {
         function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
         type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
         type_sets: &'inputs UnionFindSet<RuntimeType>,
+        scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
         stats: &'inputs PerNodeData<NodeStats>,
     ) -> Self {
         Self {
@@ -52,6 +57,7 @@ impl<'inputs, 'errors> CCodeGenerator<'inputs, 'errors> {
             function_data,
             type_data,
             type_sets,
+            scope_data,
             temporary_counter: 0,
         }
     }
@@ -192,7 +198,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
 
         let needs_runtime = self
             .node_stats
-            .get_node(program)
+            .get(&program.id)
             .expect("Program must have stats")
             .uses_runtime
             .at_least_maybe();
@@ -358,7 +364,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             gpu_index: _,
             close_bracket_token_1: _,
             open_bracket_token_2: _,
-            iterator: _,
+            iterator,
             equal_token: _,
             max_value: iterator_end_value,
             close_bracket_token_2: _,
@@ -367,21 +373,39 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
 
         let mut buffers = vec![];
 
-        let (allocations, deallocations): (Vec<_>, Vec<_>) = bindings
+        let bindings = bindings
             .iter_mut()
-            .map(|(binding, _comma)| {
+            .map(|binding| {
+                let mut tlbf = TopLevelBindingFinder::default();
+                tlbf.visit_lvalue(&mut binding.0);
+                tlbf.get_result().unwrap()
+            })
+            .collect_vec();
+
+        let mut bindings = GLSLCodeGenerator::get_on_statement_bindings(
+            self.variable_data,
+            self.scope_data,
+            self.type_sets,
+            self.type_data,
+            bindings,
+            vec![
+                self.variable_data
+                    .get(&iterator.id)
+                    .expect("Variable data should exist before calling c_generator")
+                    .clone(),
+            ],
+            body,
+        );
+
+        let (rw_allocations, rw_deallocations): (Vec<_>, Vec<_>) = bindings
+            .rw
+            .iter_mut()
+            .map(|(_name, type_, top_level_binding)| {
                 let PreStatementValue {
                     pre_statements,
                     out_value,
-                } = self.visit_lvalue(binding);
-                let size = self.runtime_type_to_byte_size(
-                    *self.type_sets.get(
-                        *self
-                            .type_data
-                            .get_node(binding)
-                            .expect("type data must be available before calling c_generator"),
-                    ),
-                );
+                } = self.visit_variable_lvalue(top_level_binding);
+                let size = self.runtime_type_to_byte_size(*type_);
 
                 let temporary = self.unique_temporary("lvalue_binding");
 
@@ -401,8 +425,36 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             })
             .unzip();
 
-        let allocations = allocations.concat();
-        let deallocations = deallocations.concat();
+        let rw_allocations = rw_allocations.concat();
+        let rw_deallocations = rw_deallocations.concat();
+
+        let (ro_allocations, ro_deallocations): (Vec<_>, Vec<_>) = bindings
+            .ro
+            .iter_mut()
+            .map(|(name, type_, _variable)| {
+                let size = self.runtime_type_to_byte_size(*type_);
+
+                let temporary = self.unique_temporary("lvalue_binding");
+
+                buffers.push(temporary.clone());
+
+                let name = self.mangle_variable(name);
+
+                (
+                    formatdoc! {"
+                        void* {temporary} = &{name};
+                        fl_runtime_allocate_gpu_backing({temporary}, {size});
+                        fl_runtime_copy_to_backing({temporary});
+                    "},
+                    formatdoc! {"
+                        fl_runtime_free_gpu_backing({temporary});
+                    "},
+                )
+            })
+            .unzip();
+
+        let ro_allocations = ro_allocations.concat();
+        let ro_deallocations = ro_deallocations.concat();
 
         let buffers_name = self.unique_temporary("buffers");
         let buffers_str = format!("void* {buffers_name}[] = {{ {} }};", buffers.join(", "));
@@ -415,50 +467,19 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             self.type_data,
             self.type_sets,
         );
-        let Ok(glsl_source) = glsl_generator.generate_on_statement_shader(
-            bindings
-                .iter_mut()
-                .map(|(binding, _comma)| binding)
-                .collect_vec(),
-            body,
-            &mut gpu_executor_clone,
-        ) else {
+
+        let Ok(glsl_source) =
+            glsl_generator.generate_on_statement_shader(&bindings, body, &mut gpu_executor_clone)
+        else {
             return "#error glsl generation failed completely\n".to_string();
         };
-        #[cfg(not(feature = "gpu_backend"))]
-        {
-            use crate::infra::ErrorSeverity;
-
-            let _ = iterator_end_value;
-
-            self.errors.push(FleetError::from_node(
-                *body.clone(),
-                "The GPU backend is disabled for this build of Fleet",
-                ErrorSeverity::Error,
-            ));
-
-            formatdoc! {"
-            {allocations}
-            {buffers_str}
-            fl_runtime_bind_buffers(&{buffers_name}, {buffers_len});
-
-            /*
-            {glsl_source}
-            */
-
-            const uint32_t /* GPU backend missing */[] = {{ /* GPU backend missing */ }};
-            fl_runtime_dispatch_shader(/* GPU backend missing */, /* GPU backend missing */, /* GPU backend missing */);
-
-            {deallocations}
-        "}
-        }
 
         #[cfg(feature = "gpu_backend")]
-        {
+        let prepare_shader = || -> Option<(String, usize)> {
             let Ok(shaderc_output) =
                 glsl_generator.compile_on_statement_shader(&glsl_source, &**body)
             else {
-                return format!("#error malformed on-statement\n/*\n{glsl_source}\n*/\n");
+                return None;
             };
 
             let bytes_str = shaderc_output
@@ -467,16 +488,34 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                 .map(|chunk| format!("0x{:08x}", chunk))
                 .join(", ");
 
-            let spirv_temporary = self.unique_temporary("spirv");
-            let spirv_size = shaderc_output.len();
+            Some((bytes_str, shaderc_output.len()))
+        };
+        #[cfg(not(feature = "gpu_backend"))]
+        let prepare_shader = || -> Option<(String, usize)> {
+            self.errors.push(FleetError::from_node(
+                &**body,
+                "The GPU backend is disabled for this build of Fleet",
+                ErrorSeverity::Error,
+            ));
+            Some(("/* GPU backend missing */".to_string(), 42))
+        };
 
-            let PreStatementValue {
-                pre_statements: iterator_pre,
-                out_value: iterator_value,
-            } = self.visit_expression(iterator_end_value);
+        let Some((bytes_str, spirv_size)) = prepare_shader() else {
+            return format!("#error malformed on-statement\n/*\n{glsl_source}\n*/\n");
+        };
 
-            formatdoc! {"
-            {allocations}
+        let spirv_temporary = self.unique_temporary("spirv");
+
+        let PreStatementValue {
+            pre_statements: iterator_pre,
+            out_value: iterator_value,
+        } = self.visit_expression(iterator_end_value);
+
+        formatdoc! {"
+            // Read + Write allocations
+            {rw_allocations}
+            // Read only allocations
+            {ro_allocations}
             {buffers_str}
             fl_runtime_bind_buffers(&{buffers_name}, {buffers_len});
 
@@ -487,9 +526,11 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             const uint32_t {spirv_temporary}[] = {{ {bytes_str} }};
             {iterator_pre}fl_runtime_dispatch_shader({iterator_value}, {spirv_temporary}, {spirv_size});
 
-            {deallocations}
-        "}
-        }
+            // Read + Write deallocations
+            {rw_deallocations}
+            // Read only deallocations
+            {ro_deallocations}
+            "}
     }
 
     fn visit_block_statement(

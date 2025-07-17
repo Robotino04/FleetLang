@@ -24,7 +24,7 @@ impl<'a> FixNonBlockStatements<'a> {
     }
 
     fn create_fake_block_arround(&mut self, node: &Statement) -> Statement {
-        let (start, end) = find_node_bounds(node.clone());
+        let (start, end) = find_node_bounds(node);
 
         Statement::Block(BlockStatement {
             open_brace_token: Token {
@@ -76,12 +76,12 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
         if let FunctionBody::Statement(stmt_body) = body {
             if !matches!(stmt_body.statement, Statement::Block { .. }) {
                 self.errors.push(FleetError::from_node(
-                    body_clone.clone(),
+                    &body_clone,
                     "Functions must have a block as the body",
                     ErrorSeverity::Error,
                 ));
                 self.errors.push(FleetError::from_node(
-                    body_clone.clone(),
+                    &body_clone,
                     "Formatting will fix this",
                     ErrorSeverity::Note,
                 ));
@@ -106,12 +106,12 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
     ) {
         if !matches!(**if_body, Statement::Block { .. }) {
             self.errors.push(FleetError::from_node(
-                *if_body.clone(),
+                &**if_body,
                 "If statements must always have a block as the body.",
                 ErrorSeverity::Error,
             ));
             self.errors.push(FleetError::from_node(
-                *if_body.clone(),
+                &**if_body,
                 "Formatting will fix this",
                 ErrorSeverity::Note,
             ));
@@ -125,12 +125,12 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
         for (_token, elif_condition, elif_body) in elifs {
             if !matches!(elif_body, Statement::Block { .. }) {
                 self.errors.push(FleetError::from_node(
-                    elif_body.clone(),
+                    elif_body,
                     "Elif statements must always have a block as the body.",
                     ErrorSeverity::Error,
                 ));
                 self.errors.push(FleetError::from_node(
-                    elif_body.clone(),
+                    elif_body,
                     "Formatting will fix this",
                     ErrorSeverity::Note,
                 ));
@@ -144,12 +144,12 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
         if let Some((_token, else_body)) = else_ {
             if !matches!(**else_body, Statement::Block { .. }) {
                 self.errors.push(FleetError::from_node(
-                    *else_body.clone(),
+                    &**else_body,
                     "Else statements must always have a block as the body.",
                     ErrorSeverity::Error,
                 ));
                 self.errors.push(FleetError::from_node(
-                    *else_body.clone(),
+                    &**else_body,
                     "Formatting will fix this",
                     ErrorSeverity::Note,
                 ));
@@ -172,12 +172,12 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
     ) {
         if !matches!(**body, Statement::Block { .. }) {
             self.errors.push(FleetError::from_node(
-                *body.clone(),
+                &**body,
                 "While loops must always have a block as the body.",
                 ErrorSeverity::Error,
             ));
             self.errors.push(FleetError::from_node(
-                *body.clone(),
+                &**body,
                 "Formatting will fix this",
                 ErrorSeverity::Note,
             ));
@@ -205,12 +205,12 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
     ) {
         if !matches!(**body, Statement::Block { .. }) {
             self.errors.push(FleetError::from_node(
-                *body.clone(),
+                &**body,
                 "For loops must always have a block as the body.",
                 ErrorSeverity::Error,
             ));
             self.errors.push(FleetError::from_node(
-                *body.clone(),
+                &**body,
                 "Formatting will fix this",
                 ErrorSeverity::Note,
             ));

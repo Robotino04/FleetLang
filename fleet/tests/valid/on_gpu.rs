@@ -10,7 +10,7 @@ fn vector_addition() {
                 let a = [1, 2, 3];
                 let b = [4, 5, 6];
                 let c = [0, 0, 0];
-                on self.gpus[0][i = 3] (a, b, c) {
+                on self.gpus[0][i = 3] (c[i]) {
                     c[i] = a[i] + b[i];
                 }
                 return c[0] + c[1] + c[2];

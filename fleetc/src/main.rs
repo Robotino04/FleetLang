@@ -83,8 +83,17 @@ fn main() {
         exit(1);
     };
 
-    println!("{}", generate_header("Function Terminations", 50));
-    println!("{:#?}", analysis_output.stats);
+    println!("{}", generate_header("Referenced Variables", 50));
+    println!("{:#?}", analysis_output.type_analysis_data.variable_data);
+    println!("{}", generate_header("Referenced Functions", 50));
+    println!("{:#?}", analysis_output.type_analysis_data.function_data);
+
+    let Some(fixup_output) = analysis_output.fixup(&mut errors) else {
+        print_all_errors_and_message("Analysis failed completely", &errors);
+        exit(1);
+    };
+    println!("{}", generate_header("Node Stats", 50));
+    println!("{:#?}", fixup_output.stats);
 
     if errors
         .iter()
@@ -94,13 +103,15 @@ fn main() {
     }
 
     let context = Context::create();
-    let Some(llvm_output) = analysis_output.compile_llvm(&mut errors, &context) else {
+    let Some(llvm_output) =
+        fixup_output.compile_llvm(&mut errors, &context, &analysis_output)
+    else {
         print_all_errors_and_message("LLVM compilation failed completely", &errors);
         exit(1);
     };
 
     println!("{}", generate_header("LLVM IR (unoptimized)", 50));
-    println!("{:#?}", analysis_output.stats);
+    println!("{:#?}", llvm_output.module.to_string());
 
     if errors
         .iter()
@@ -109,7 +120,8 @@ fn main() {
         print_all_errors_and_message("LLVM compilation failed partially", &errors);
     }
 
-    let Some(c_code) = analysis_output.compile_c(&mut errors) else {
+    let Some(c_code) = fixup_output.compile_c(&mut errors, &analysis_output)
+    else {
         print_all_errors_and_message("C generation failed completely", &errors);
         exit(1);
     };

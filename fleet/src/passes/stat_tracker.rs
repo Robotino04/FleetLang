@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashSet, rc::Rc, vec::Vec};
 
 use crate::{
     ast::{
@@ -20,6 +20,11 @@ use crate::{
 
 use super::find_node_bonds::find_node_bounds;
 
+pub trait MergableStat {
+    fn serial(self, other: Self) -> Self;
+    fn parallel(self, other: Self) -> Self;
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FlRuntimeUsage {
     Used,
@@ -32,8 +37,8 @@ pub enum YesNoMaybe {
     Maybe,
     No,
 }
-impl YesNoMaybe {
-    pub fn serial(&self, other: YesNoMaybe) -> YesNoMaybe {
+impl MergableStat for YesNoMaybe {
+    fn serial(self, other: YesNoMaybe) -> YesNoMaybe {
         match (self, other) {
             (YesNoMaybe::Yes, _) => YesNoMaybe::Yes,
             (_, YesNoMaybe::Yes) => YesNoMaybe::Yes,
@@ -41,14 +46,16 @@ impl YesNoMaybe {
             _ => YesNoMaybe::Maybe,
         }
     }
-    pub fn parallel(&self, other: YesNoMaybe) -> YesNoMaybe {
+    fn parallel(self, other: YesNoMaybe) -> YesNoMaybe {
         match (self, other) {
             (YesNoMaybe::No, YesNoMaybe::No) => YesNoMaybe::No,
             (YesNoMaybe::Yes, YesNoMaybe::Yes) => YesNoMaybe::Yes,
             _ => YesNoMaybe::Maybe,
         }
     }
+}
 
+impl YesNoMaybe {
     pub fn at_least_maybe(self) -> bool {
         match self {
             YesNoMaybe::Yes => true,
@@ -67,10 +74,37 @@ impl From<bool> for YesNoMaybe {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
+pub struct AccessRecord {
+    functions: Vec<Rc<RefCell<Function>>>,
+    used_variables: Vec<Rc<RefCell<Variable>>>,
+}
+
+impl MergableStat for AccessRecord {
+    fn serial(mut self, mut other: Self) -> Self {
+        self.functions.append(&mut other.functions);
+        let mut seen_functions = HashSet::new();
+        self.functions
+            .retain(|el| seen_functions.insert(el.borrow().id));
+
+        self.used_variables.append(&mut other.used_variables);
+        let mut seen_variables = HashSet::new();
+        self.used_variables
+            .retain(|el| seen_variables.insert(el.borrow().id));
+
+        self
+    }
+
+    fn parallel(self, other: Self) -> Self {
+        self.serial(other)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct NodeStats {
     pub terminates_function: YesNoMaybe,
     pub uses_runtime: YesNoMaybe,
+    pub accessed_items: AccessRecord,
 }
 
 impl NodeStats {
@@ -78,19 +112,24 @@ impl NodeStats {
         Self {
             terminates_function: YesNoMaybe::No,
             uses_runtime: YesNoMaybe::No,
+            accessed_items: AccessRecord::default(),
         }
     }
+}
 
-    pub fn serial(&self, other: Self) -> Self {
+impl MergableStat for NodeStats {
+    fn serial(self, other: Self) -> Self {
         Self {
             terminates_function: self.terminates_function.serial(other.terminates_function),
             uses_runtime: self.uses_runtime.serial(other.uses_runtime),
+            accessed_items: self.accessed_items.serial(other.accessed_items),
         }
     }
-    pub fn parallel(&self, other: Self) -> Self {
+    fn parallel(self, other: Self) -> Self {
         Self {
             terminates_function: self.terminates_function.parallel(other.terminates_function),
             uses_runtime: self.uses_runtime.parallel(other.uses_runtime),
+            accessed_items: self.accessed_items.parallel(other.accessed_items),
         }
     }
 }
@@ -101,7 +140,7 @@ pub struct StatTracker<'errors, 'inputs> {
 
     _type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
     type_sets: &'inputs UnionFindSet<RuntimeType>,
-    _variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
+    variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
     function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
 
     current_function: Option<Rc<RefCell<Function>>>,
@@ -119,7 +158,7 @@ impl<'errors, 'inputs> StatTracker<'errors, 'inputs> {
 
             _type_data: &analysis_data.type_data,
             type_sets: &analysis_data.type_sets,
-            _variable_data: &analysis_data.variable_data,
+            variable_data: &analysis_data.variable_data,
             function_data: &analysis_data.function_data,
 
             current_function: None,
@@ -146,6 +185,7 @@ impl AstVisitor for StatTracker<'_, '_> {
             let NodeStats {
                 terminates_function,
                 uses_runtime,
+                accessed_items: _,
             } = self.visit_function_definition(f);
 
             if f.name == "main" {
@@ -155,13 +195,12 @@ impl AstVisitor for StatTracker<'_, '_> {
         }
 
         if let Some(main_function) = program.functions.iter().find(|f| f.name == "main") {
-            self.stats.insert_node(
-                program,
-                *self
-                    .stats
-                    .get_node(main_function)
-                    .expect("All functions should have been analyzed by now"),
-            );
+            let main_stat = self
+                .stats
+                .get(&main_function.id)
+                .expect("All functions should have been analyzed by now")
+                .clone();
+            self.stats.insert(program.id, main_stat);
         } else {
             self.errors.push(FleetError {
                 start: SourceLocation::start(),
@@ -178,15 +217,20 @@ impl AstVisitor for StatTracker<'_, '_> {
 
     fn visit_function_definition(
         &mut self,
-        function: &mut FunctionDefinition,
-    ) -> Self::FunctionDefinitionOutput {
-        let FunctionDefinition {
+        FunctionDefinition {
+            let_token: _,
+            name: _,
+            name_token: _,
+            equal_token: _,
+            open_paren_token: _,
+            parameters,
+            close_paren_token: _,
+            right_arrow_token: _,
             return_type,
             body,
             id,
-            ..
-        } = function;
-
+        }: &mut FunctionDefinition,
+    ) -> Self::FunctionDefinitionOutput {
         self.current_function = Some(
             self.function_data
                 .get(id)
@@ -194,11 +238,15 @@ impl AstVisitor for StatTracker<'_, '_> {
                 .clone(),
         );
 
+        for (param, _comma) in parameters {
+            self.visit_simple_binding(param);
+        }
+
         if let Some(return_type) = return_type {
             self.visit_type(return_type);
         }
         let body_stat = self.visit_function_body(body);
-        self.stats.insert_node(function, body_stat);
+        self.stats.insert(*id, body_stat.clone());
 
         self.current_function = None;
 
@@ -207,9 +255,10 @@ impl AstVisitor for StatTracker<'_, '_> {
 
     fn visit_statement_function_body(
         &mut self,
-        statement_function_body: &mut StatementFunctionBody,
+        body: &mut StatementFunctionBody,
     ) -> Self::FunctionBodyOutput {
-        let StatementFunctionBody { statement, id: _ } = statement_function_body;
+        let body_clone = body.clone();
+        let StatementFunctionBody { statement, id } = body;
         let stat = self.visit_statement(statement);
 
         if stat.terminates_function != YesNoMaybe::Yes {
@@ -221,14 +270,14 @@ impl AstVisitor for StatTracker<'_, '_> {
 
             if *self.type_sets.get(current_function.borrow().return_type) != RuntimeType::Unit {
                 self.errors.push(FleetError::from_node(
-                    statement_function_body.clone(),
+                    &body_clone,
                     "All code paths must return.",
                     ErrorSeverity::Error,
                 ));
             }
         }
 
-        self.stats.insert_node(statement_function_body, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
@@ -242,65 +291,109 @@ impl AstVisitor for StatTracker<'_, '_> {
             symbol: _,
             symbol_token: _,
             semicolon_token: _,
-            id: _,
+            id,
         } = extern_function_body;
 
         let stat = NodeStats {
             terminates_function: YesNoMaybe::Maybe,
             uses_runtime: YesNoMaybe::No,
+            accessed_items: AccessRecord::default(),
         };
-        self.stats.insert_node(extern_function_body, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_simple_binding(
         &mut self,
-        simple_binding: &mut SimpleBinding,
+        SimpleBinding {
+            name_token: _,
+            name: _,
+            type_,
+            id,
+        }: &mut SimpleBinding,
     ) -> Self::SimpleBindingOutput {
-        let stat = if let Some((_colon, type_)) = &mut simple_binding.type_ {
+        let stat = if let Some((_colon, type_)) = type_ {
             self.visit_type(type_)
         } else {
             NodeStats::nothing()
-        };
-        self.stats.insert_node(simple_binding, stat);
+        }
+        .serial(NodeStats {
+            terminates_function: YesNoMaybe::No,
+            uses_runtime: YesNoMaybe::No,
+            accessed_items: AccessRecord {
+                functions: vec![],
+                used_variables: vec![],
+            },
+        });
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_expression_statement(
         &mut self,
-        expr_stmt: &mut ExpressionStatement,
+        ExpressionStatement {
+            expression,
+            semicolon_token: _,
+            id,
+        }: &mut ExpressionStatement,
     ) -> Self::StatementOutput {
-        let exp_stat = self.visit_expression(&mut expr_stmt.expression);
-        self.stats.insert_node(expr_stmt, exp_stat);
+        let exp_stat = self.visit_expression(expression);
+        self.stats.insert(*id, exp_stat.clone());
         exp_stat
     }
 
-    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
-        let exec_stats = self.visit_executor(&mut on_stmt.executor);
-        let body_stats = self.visit_statement(&mut on_stmt.body);
-        if exec_stats.terminates_function == YesNoMaybe::Yes {
+    fn visit_on_statement(
+        &mut self,
+        OnStatement {
+            on_token: _,
+            executor,
+            open_paren_token: _,
+            bindings,
+            close_paren_token: _,
+            body,
+            id,
+        }: &mut OnStatement,
+    ) -> Self::StatementOutput {
+        let exec_stats = self.visit_executor(executor);
+        let mut binding_stats = NodeStats::nothing();
+        for (binding, _comma) in bindings {
+            binding_stats = binding_stats.serial(self.visit_lvalue(binding));
+        }
+
+        if exec_stats.terminates_function == YesNoMaybe::Yes
+            || binding_stats.terminates_function == YesNoMaybe::Yes
+        {
             self.errors.push(FleetError::from_node(
-                *on_stmt.body.clone(),
+                &**body,
                 "This code is unreachable",
                 ErrorSeverity::Warning,
             ));
         }
+        let body_stats = self.visit_statement(body);
 
-        let stats = exec_stats.parallel(body_stats);
+        let stats = exec_stats.serial(binding_stats).serial(body_stats);
 
-        self.stats.insert_node(on_stmt, stats);
+        self.stats.insert(*id, stats.clone());
         stats
     }
 
-    fn visit_block_statement(&mut self, block_stmt: &mut BlockStatement) -> Self::StatementOutput {
+    fn visit_block_statement(
+        &mut self,
+        BlockStatement {
+            open_brace_token: _,
+            body,
+            close_brace_token: _,
+            id,
+        }: &mut BlockStatement,
+    ) -> Self::StatementOutput {
         let mut body_stat = NodeStats::nothing();
         let mut unreachable_range = None;
-        for stmt in &mut block_stmt.body {
+        for stmt in body {
             if body_stat.terminates_function == YesNoMaybe::Yes {
                 if let Some((prev_start, _prev_end)) = unreachable_range {
-                    unreachable_range = Some((prev_start, find_node_bounds(stmt.clone()).1));
+                    unreachable_range = Some((prev_start, find_node_bounds(stmt).1));
                 } else {
-                    unreachable_range = Some(find_node_bounds(stmt.clone()));
+                    unreachable_range = Some(find_node_bounds(stmt));
                 }
             }
             body_stat = body_stat.serial(self.visit_statement(stmt));
@@ -313,101 +406,138 @@ impl AstVisitor for StatTracker<'_, '_> {
                 severity: ErrorSeverity::Warning,
             });
         }
-        self.stats.insert_node(block_stmt, body_stat);
+        self.stats.insert(*id, body_stat.clone());
         body_stat
     }
 
     fn visit_return_statement(
         &mut self,
-        return_stmt: &mut ReturnStatement,
+        ReturnStatement {
+            return_token: _,
+            value,
+            semicolon_token: _,
+            id,
+        }: &mut ReturnStatement,
     ) -> Self::StatementOutput {
-        if let Some(retvalue) = &mut return_stmt.value {
-            self.visit_expression(retvalue);
+        let stat = match value {
+            Some(retvalue) => self.visit_expression(retvalue),
+            None => NodeStats::nothing(),
         }
-        let stat = NodeStats {
+        .serial(NodeStats {
             terminates_function: YesNoMaybe::Yes,
             uses_runtime: YesNoMaybe::No,
-        };
-        self.stats.insert_node(return_stmt, stat);
+            accessed_items: AccessRecord::default(),
+        });
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_variable_definition_statement(
         &mut self,
-        vardef_stmt: &mut VariableDefinitionStatement,
+        VariableDefinitionStatement {
+            let_token: _,
+            binding,
+            equals_token: _,
+            value,
+            semicolon_token: _,
+            id,
+        }: &mut VariableDefinitionStatement,
     ) -> Self::StatementOutput {
-        self.visit_simple_binding(&mut vardef_stmt.binding);
-        let stat = self.visit_expression(&mut vardef_stmt.value);
-        self.stats.insert_node(vardef_stmt, stat);
+        self.visit_simple_binding(binding);
+        let stat = self.visit_expression(value);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::StatementOutput {
-        let if_stat = self.visit_expression(&mut if_stmt.condition);
-        let mut substats = self.visit_statement(&mut if_stmt.if_body);
-        for (_elif_token, elif_condition, elif_body) in &mut if_stmt.elifs {
+    fn visit_if_statement(
+        &mut self,
+        IfStatement {
+            if_token: _,
+            condition,
+            if_body,
+            elifs,
+            else_,
+            id,
+        }: &mut IfStatement,
+    ) -> Self::StatementOutput {
+        let if_stat = self.visit_expression(condition);
+        let mut substats = self.visit_statement(if_body);
+        for (_elif_token, elif_condition, elif_body) in elifs {
             substats = substats.parallel(
                 self.visit_expression(elif_condition)
                     .serial(self.visit_statement(elif_body)),
             );
         }
-        substats = if_stmt
-            .else_
-            .as_mut()
-            .map(|(_else_token, else_body)| substats.parallel(self.visit_statement(else_body)))
-            .unwrap_or(substats.parallel(NodeStats::nothing()));
+        substats = if let Some((_else_token, else_body)) = else_ {
+            substats.parallel(self.visit_statement(else_body))
+        } else {
+            substats.parallel(NodeStats::nothing())
+        };
         let stat = if_stat.serial(substats);
-        self.stats.insert_node(if_stmt, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_while_loop_statement(
         &mut self,
-        while_stmt: &mut WhileLoopStatement,
+        WhileLoopStatement {
+            while_token: _,
+            condition,
+            body,
+            id,
+        }: &mut WhileLoopStatement,
     ) -> Self::StatementOutput {
-        let con_stat = self.visit_expression(&mut while_stmt.condition);
+        let con_stat = self.visit_expression(condition);
         self.loop_count += 1;
-        let body_stat = self.visit_statement(&mut while_stmt.body);
+        let body_stat = self.visit_statement(body);
         self.loop_count -= 1;
         let stat = con_stat.serial(body_stat);
-        self.stats.insert_node(while_stmt, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_for_loop_statement(
         &mut self,
-        for_stmt: &mut ForLoopStatement,
+        ForLoopStatement {
+            for_token: _,
+            open_paren_token: _,
+            initializer,
+            condition,
+            second_semicolon_token: _,
+            incrementer,
+            close_paren_token: _,
+            body,
+            id,
+        }: &mut ForLoopStatement,
     ) -> Self::StatementOutput {
-        let init_stat = self.visit_statement(&mut for_stmt.initializer);
+        let init_stat = self.visit_statement(initializer);
 
-        let con_stat = for_stmt
-            .condition
+        let con_stat = condition
             .as_mut()
             .map(|condition| self.visit_expression(condition))
             .unwrap_or(NodeStats::nothing());
-        let inc_stat = for_stmt
-            .incrementer
+        let inc_stat = incrementer
             .as_mut()
             .map(|incrementer| self.visit_expression(incrementer))
             .unwrap_or(NodeStats::nothing());
 
         self.loop_count += 1;
-        let body_stat = self.visit_statement(&mut for_stmt.body);
+        let body_stat = self.visit_statement(body);
         self.loop_count -= 1;
         let stat = init_stat
             .parallel(con_stat)
             .parallel(inc_stat)
             .parallel(body_stat);
-        self.stats.insert_node(for_stmt, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
         let stat = NodeStats::nothing();
-        self.stats.insert_node(break_stmt, stat);
+        self.stats.insert(break_stmt.id, stat.clone());
         if self.loop_count == 0 {
             self.errors.push(FleetError::from_node(
-                break_stmt.clone(),
+                break_stmt,
                 "Break statements cannot appear outside loops",
                 ErrorSeverity::Error,
             ));
@@ -418,10 +548,10 @@ impl AstVisitor for StatTracker<'_, '_> {
 
     fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
         let stat = NodeStats::nothing();
-        self.stats.insert_node(skip_stmt, stat);
+        self.stats.insert(skip_stmt.id, stat.clone());
         if self.loop_count == 0 {
             self.errors.push(FleetError::from_node(
-                skip_stmt.clone(),
+                skip_stmt,
                 "Skip statements cannot appear outside loops",
                 ErrorSeverity::Error,
             ));
@@ -435,15 +565,26 @@ impl AstVisitor for StatTracker<'_, '_> {
         executor_host: &mut SelfExecutorHost,
     ) -> Self::ExecutorHostOutput {
         let stat = NodeStats::nothing();
-        self.stats.insert_node(executor_host, stat);
+        self.stats.insert(executor_host.id, stat.clone());
         stat
     }
 
-    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
-        let host_stat = self.visit_executor_host(&mut executor.host);
-        let index_stat = self.visit_expression(&mut executor.index);
+    fn visit_thread_executor(
+        &mut self,
+        ThreadExecutor {
+            host,
+            dot_token: _,
+            thread_token: _,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id,
+        }: &mut ThreadExecutor,
+    ) -> Self::ExecutorOutput {
+        let host_stat = self.visit_executor_host(host);
+        let index_stat = self.visit_expression(index);
         let stat = host_stat.serial(index_stat);
-        self.stats.insert_node(executor, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
@@ -467,170 +608,313 @@ impl AstVisitor for StatTracker<'_, '_> {
         let stat = NodeStats {
             terminates_function: YesNoMaybe::No,
             uses_runtime: YesNoMaybe::Yes,
+            accessed_items: AccessRecord::default(),
         }
         .serial(self.visit_executor_host(host))
         .serial(self.visit_expression(gpu_index))
         .serial(self.visit_simple_binding(iterator))
         .serial(self.visit_expression(max_value));
-        self.stats.insert(*id, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_number_expression(
         &mut self,
-        expression: &mut NumberExpression,
+        NumberExpression {
+            value: _,
+            token: _,
+            id,
+        }: &mut NumberExpression,
     ) -> Self::ExpressionOutput {
         let stat = NodeStats::nothing();
-        self.stats.insert_node(expression, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput {
+    fn visit_bool_expression(
+        &mut self,
+        BoolExpression {
+            value: _,
+            token: _,
+            id,
+        }: &mut BoolExpression,
+    ) -> Self::ExpressionOutput {
         let stat = NodeStats::nothing();
-        self.stats.insert_node(expression, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_array_expression(
         &mut self,
-        expression: &mut ArrayExpression,
+        ArrayExpression {
+            open_bracket_token: _,
+            elements,
+            close_bracket_token: _,
+            id,
+        }: &mut ArrayExpression,
     ) -> Self::ExpressionOutput {
         let mut stat = NodeStats::nothing();
-        for (item, _comma) in &mut expression.elements {
+        for (item, _comma) in elements {
             stat = stat.serial(self.visit_expression(item));
         }
 
-        self.stats.insert_node(expression, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_function_call_expression(
         &mut self,
-        expression: &mut FunctionCallExpression,
+        FunctionCallExpression {
+            name: _,
+            name_token: _,
+            open_paren_token: _,
+            arguments,
+            close_paren_token: _,
+            id,
+        }: &mut FunctionCallExpression,
     ) -> Self::ExpressionOutput {
-        let mut stat = NodeStats::nothing();
-        for (arg, _comma) in &mut expression.arguments {
+        let mut stat = NodeStats {
+            terminates_function: YesNoMaybe::No,
+            uses_runtime: YesNoMaybe::No,
+            accessed_items: AccessRecord {
+                functions: self
+                    .function_data
+                    .get(id)
+                    .map_or_else(Vec::new, |fd| vec![fd.clone()]),
+                used_variables: vec![],
+            },
+        };
+        for (arg, _comma) in arguments {
             stat = stat.serial(self.visit_expression(arg));
         }
-        self.stats.insert_node(expression, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_array_index_expression(
         &mut self,
-        expression: &mut ArrayIndexExpression,
+        ArrayIndexExpression {
+            array,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id,
+        }: &mut ArrayIndexExpression,
     ) -> Self::ExpressionOutput {
         let stat = self
-            .visit_expression(&mut expression.array)
-            .serial(self.visit_expression(&mut expression.index));
-        self.stats.insert_node(expression, stat);
+            .visit_expression(array)
+            .serial(self.visit_expression(index));
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_grouping_expression(
         &mut self,
-        expression: &mut GroupingExpression,
+        GroupingExpression {
+            open_paren_token: _,
+            subexpression,
+            close_paren_token: _,
+            id,
+        }: &mut GroupingExpression,
     ) -> Self::ExpressionOutput {
-        let stat = self.visit_expression(&mut expression.subexpression);
-        self.stats.insert_node(expression, stat);
+        let stat = self.visit_expression(subexpression);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_variable_access_expression(
         &mut self,
-        expression: &mut VariableAccessExpression,
+        VariableAccessExpression {
+            name: _,
+            name_token: _,
+            id,
+        }: &mut VariableAccessExpression,
     ) -> Self::ExpressionOutput {
-        let stat = NodeStats::nothing();
-        self.stats.insert_node(expression, stat);
+        let stat = NodeStats {
+            terminates_function: YesNoMaybe::No,
+            uses_runtime: YesNoMaybe::No,
+            accessed_items: AccessRecord {
+                functions: vec![],
+                used_variables: self
+                    .variable_data
+                    .get(id)
+                    .map_or_else(Vec::new, |vd| vec![vd.clone()]),
+            },
+        };
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_unary_expression(
         &mut self,
-        expression: &mut UnaryExpression,
+        UnaryExpression {
+            operator_token: _,
+            operation: _,
+            operand,
+            id,
+        }: &mut UnaryExpression,
     ) -> Self::ExpressionOutput {
-        let stat = self.visit_expression(&mut expression.operand);
-        self.stats.insert_node(expression, stat);
+        let stat = self.visit_expression(operand);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
-        let operand_stat = self.visit_expression(&mut expression.operand);
-        let type_stat = self.visit_type(&mut expression.type_);
+    fn visit_cast_expression(
+        &mut self,
+        CastExpression {
+            operand,
+            as_token: _,
+            type_,
+            id,
+        }: &mut CastExpression,
+    ) -> Self::ExpressionOutput {
+        let operand_stat = self.visit_expression(operand);
+        let type_stat = self.visit_type(type_);
         let stat = operand_stat.serial(type_stat);
-        self.stats.insert_node(expression, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_binary_expression(
         &mut self,
-        expression: &mut BinaryExpression,
+        BinaryExpression {
+            left,
+            operator_token: _,
+            operation: _,
+            right,
+            id,
+        }: &mut BinaryExpression,
     ) -> Self::ExpressionOutput {
         let stat = self
-            .visit_expression(&mut expression.left)
-            .serial(self.visit_expression(&mut expression.right));
-        self.stats.insert_node(expression, stat);
+            .visit_expression(left)
+            .serial(self.visit_expression(right));
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
     fn visit_variable_assignment_expression(
         &mut self,
-        expression: &mut VariableAssignmentExpression,
+        VariableAssignmentExpression {
+            lvalue,
+            equal_token: _,
+            right,
+            id,
+        }: &mut VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
         let stat = self
-            .visit_lvalue(&mut expression.lvalue)
-            .serial(self.visit_expression(&mut expression.right));
-        self.stats.insert_node(expression, stat);
+            .visit_lvalue(lvalue)
+            .serial(self.visit_expression(right));
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
-        let stat = NodeStats::nothing();
-        self.stats.insert_node(lvalue, stat);
+    fn visit_variable_lvalue(
+        &mut self,
+        VariableLValue {
+            name: _,
+            name_token: _,
+            id,
+        }: &mut VariableLValue,
+    ) -> Self::LValueOutput {
+        let stat = NodeStats {
+            terminates_function: YesNoMaybe::No,
+            uses_runtime: YesNoMaybe::No,
+            accessed_items: AccessRecord {
+                functions: vec![],
+                used_variables: self
+                    .variable_data
+                    .get(id)
+                    .map_or_else(Vec::new, |vd| vec![vd.clone()]),
+            },
+        };
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
+    fn visit_array_index_lvalue(
+        &mut self,
+        ArrayIndexLValue {
+            array,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id,
+        }: &mut ArrayIndexLValue,
+    ) -> Self::LValueOutput {
         let stat = self
-            .visit_lvalue(&mut lvalue.array)
-            .serial(self.visit_expression(&mut lvalue.index));
-        self.stats.insert_node(lvalue, stat);
+            .visit_lvalue(array)
+            .serial(self.visit_expression(index));
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {
-        let stat = self.visit_lvalue(&mut lvalue.sublvalue);
-        self.stats.insert_node(lvalue, stat);
+    fn visit_grouping_lvalue(
+        &mut self,
+        GroupingLValue {
+            open_paren_token: _,
+            sublvalue,
+            close_paren_token: _,
+            id,
+        }: &mut GroupingLValue,
+    ) -> Self::LValueOutput {
+        let stat = self.visit_lvalue(sublvalue);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_int_type(&mut self, type_: &mut IntType) -> Self::TypeOutput {
+    fn visit_int_type(
+        &mut self,
+        IntType {
+            token: _,
+            type_: _,
+            id,
+        }: &mut IntType,
+    ) -> Self::TypeOutput {
         let stat = NodeStats::nothing();
-        self.stats.insert_node(type_, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
+    fn visit_unit_type(
+        &mut self,
+        UnitType {
+            open_paren_token: _,
+            close_paren_token: _,
+            id,
+        }: &mut UnitType,
+    ) -> Self::TypeOutput {
         let stat = NodeStats::nothing();
-        self.stats.insert_node(unit_type, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
+    fn visit_bool_type(&mut self, BoolType { token: _, id }: &mut BoolType) -> Self::TypeOutput {
         let stat = NodeStats::nothing();
-        self.stats.insert_node(bool_type, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {
+    fn visit_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> Self::TypeOutput {
         let stat = NodeStats::nothing();
-        self.stats.insert_node(idk_type, stat);
+        self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
-        let stat = NodeStats::nothing();
-        self.stats.insert_node(array_type, stat);
+    fn visit_array_type(
+        &mut self,
+        ArrayType {
+            subtype,
+            open_bracket_token: _,
+            size,
+            close_bracket_token: _,
+            id,
+        }: &mut ArrayType,
+    ) -> Self::TypeOutput {
+        let mut stat = self.visit_type(subtype);
+        if let Some(size) = size {
+            stat = stat.serial(self.visit_expression(size))
+        }
+        self.stats.insert(*id, stat.clone());
         stat
     }
 }

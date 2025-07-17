@@ -954,7 +954,7 @@ impl<'errors> Parser<'errors> {
             Either::Left((lvalue, _expr)) => Ok(lvalue),
             Either::Right(expr) => {
                 let err = FleetError::from_node(
-                    expr,
+                    &expr,
                     "This expression isn't a valid lvalue",
                     ErrorSeverity::Error,
                 );
