@@ -504,6 +504,7 @@ impl<'a> TypePropagator<'a> {
             id: _,
         } = function;
 
+        self.variable_scopes.push_child(); // temporary parameter scope
         let return_type = return_type
             .as_mut()
             .map(|t| self.visit_type(t))
@@ -532,6 +533,8 @@ impl<'a> TypePropagator<'a> {
                 ErrorSeverity::Error,
             ));
         }
+
+        self.variable_scopes.pop();
     }
 
     fn generate_mismatched_type_error_if<I: Into<AstNode> + Clone>(
