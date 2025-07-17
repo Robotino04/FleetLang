@@ -19,22 +19,16 @@ vim.filetype.add({
     },
 })
 
-local lspconfig = require('lspconfig')
-local configs = require 'lspconfig.configs'
-
-local server_config = {
+vim.lsp.config["fleetls"] = {
     filetypes = { "fleet" },
-    root_dir = lspconfig.util.root_pattern('.git'),
+    root_markers = { '.git' },
     cmd = vim.lsp.rpc.connect("127.0.0.1", 1234), --{ "target/debug/fleetls", "--stdio" },
     settings = {
 
     },
 }
 
-configs.fleetls = { default_config = server_config }
-vim.lsp.config["fleetls"] = server_config
 vim.lsp.enable("fleetls")
-lspconfig.fleetls.setup {}
 
 if vim.fn.expand('%:e') == "fl" or vim.fn.expand('%:e')  == 'fleet' then
     vim.cmd[[:setfiletype fleet]]
