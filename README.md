@@ -25,6 +25,7 @@
 - structs
 - sum types
 - f32, f64
+- strings
 - comptime evaluation
 - comptime type eval for generics (similar to zig/hblang)
 - use AstVisitor for `find_node_bounds`
