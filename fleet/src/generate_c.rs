@@ -7,11 +7,11 @@ use itertools::Itertools;
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
-        BreakStatement, CastExpression, Executor, ExpressionStatement, ExternFunctionBody,
-        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor,
-        GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, IntType, NumberExpression,
-        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
+        Executor, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+        GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
+        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
         SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
         UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
@@ -68,11 +68,21 @@ impl<'inputs, 'errors> CCodeGenerator<'inputs, 'errors> {
             RuntimeType::I16 => ("int16_t".to_string(), "".to_string()),
             RuntimeType::I32 => ("int32_t".to_string(), "".to_string()),
             RuntimeType::I64 => ("int64_t".to_string(), "".to_string()),
-            RuntimeType::UnsizedInt => {
-                unreachable!("unsized ints should have caused errors before calling c_generator")
-            }
+            RuntimeType::F32 => ("float".to_string(), "".to_string()),
+            RuntimeType::F64 => ("double".to_string(), "".to_string()),
             RuntimeType::Boolean => ("bool".to_string(), "".to_string()),
             RuntimeType::Unit => ("void".to_string(), "".to_string()),
+            RuntimeType::Number => {
+                unreachable!(
+                    "undetermined numbers should have caused errors before calling c_generator"
+                )
+            }
+            RuntimeType::UnsizedInteger => {
+                unreachable!("unsized ints should have caused errors before calling c_generator")
+            }
+            RuntimeType::UnsizedFloat => {
+                unreachable!("unsized ints should have caused errors before calling c_generator")
+            }
             RuntimeType::Unknown => {
                 unreachable!("unknown types should have caused errors before calling c_generator")
             }
@@ -94,7 +104,17 @@ impl<'inputs, 'errors> CCodeGenerator<'inputs, 'errors> {
             RuntimeType::I16 => 2,
             RuntimeType::I32 => 4,
             RuntimeType::I64 => 8,
-            RuntimeType::UnsizedInt => {
+            RuntimeType::F32 => 4,
+            RuntimeType::F64 => 8,
+            RuntimeType::Number => {
+                unreachable!(
+                    "undetermined numbers should have caused errors before calling c_generator"
+                )
+            }
+            RuntimeType::UnsizedInteger => {
+                unreachable!("unsized ints should have caused errors before calling c_generator")
+            }
+            RuntimeType::UnsizedFloat => {
                 unreachable!("unsized ints should have caused errors before calling c_generator")
             }
             RuntimeType::Boolean => 1,
@@ -220,6 +240,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             #include <stdint.h>
             #include <stdbool.h>
             #include <string.h>
+            #include <math.h>
 
             {runtime_include_str}
 
@@ -230,10 +251,17 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             // function definitions
             {function_definitions}
 
-            int main(int argc, const char** argv) {{
+            void initialize_fleet(void) {{
                 {runtime_init_str}
-                int retvalue = fleet_main();
+            }}
+            void deinitialize_fleet(void) {{
                 {runtime_deinit_str}
+            }}
+
+            int main(int argc, const char** argv) {{
+                initialize_fleet();
+                int retvalue = fleet_main();
+                deinitialize_fleet();
                 return retvalue;
             }}
             "##,
@@ -802,31 +830,55 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         todo!()
     }
 
-    fn visit_number_expression(
+    fn visit_literal_expression(
         &mut self,
-        NumberExpression {
+        LiteralExpression {
             value,
             token: _,
-            id: _,
-        }: &mut NumberExpression,
+            id,
+        }: &mut LiteralExpression,
     ) -> Self::ExpressionOutput {
-        PreStatementValue {
-            pre_statements: "".to_string(),
-            out_value: value.to_string(),
-        }
-    }
+        let format_float = |x: f64| {
+            let nr = x.to_string();
+            let zeroes = if x.round() == x { ".0" } else { "" };
 
-    fn visit_bool_expression(
-        &mut self,
-        BoolExpression {
-            value,
-            token: _,
-            id: _,
-        }: &mut BoolExpression,
-    ) -> Self::ExpressionOutput {
+            let suffix = if *self.type_sets.get(
+                *self
+                    .type_data
+                    .get(id)
+                    .expect("type data must be available before calling c_generator"),
+            ) == RuntimeType::F32
+            {
+                "f"
+            } else {
+                ""
+            };
+
+            nr + zeroes + suffix
+        };
+
         PreStatementValue {
             pre_statements: "".to_string(),
-            out_value: value.to_string(),
+            out_value: match value {
+                LiteralKind::Number(value) => {
+                    if self
+                        .type_sets
+                        .get(
+                            *self
+                                .type_data
+                                .get(id)
+                                .expect("type data must be available before calling c_generator"),
+                        )
+                        .is_float()
+                    {
+                        format_float(*value as f64)
+                    } else {
+                        value.to_string()
+                    }
+                }
+                LiteralKind::Float(value) => format_float(*value),
+                LiteralKind::Bool(value) => value.to_string(),
+            },
         }
     }
 
@@ -1121,24 +1173,60 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
 
         PreStatementValue {
             pre_statements: left_pre_statements + &right_pre_statements,
-            out_value: format!(
-                "(({left_out_value}) {} ({right_out_value}))",
-                match operation {
-                    BinaryOperation::Add => "+",
-                    BinaryOperation::Subtract => "-",
-                    BinaryOperation::Multiply => "*",
-                    BinaryOperation::Divide => "/",
-                    BinaryOperation::Modulo => "%",
-                    BinaryOperation::GreaterThan => ">",
-                    BinaryOperation::GreaterThanOrEqual => ">=",
-                    BinaryOperation::LessThan => "<",
-                    BinaryOperation::LessThanOrEqual => "<=",
-                    BinaryOperation::Equal => "==",
-                    BinaryOperation::NotEqual => "!=",
-                    BinaryOperation::LogicalAnd => "&&",
-                    BinaryOperation::LogicalOr => "||",
-                },
-            ),
+            out_value: match operation {
+                BinaryOperation::Add => {
+                    format!("(({left_out_value}) + ({right_out_value}))")
+                }
+                BinaryOperation::Subtract => {
+                    format!("(({left_out_value}) - ({right_out_value}))")
+                }
+                BinaryOperation::Multiply => {
+                    format!("(({left_out_value}) * ({right_out_value}))")
+                }
+                BinaryOperation::Divide => {
+                    format!("(({left_out_value}) / ({right_out_value}))")
+                }
+                BinaryOperation::Modulo => {
+                    if self
+                        .type_sets
+                        .get(
+                            *self
+                                .type_data
+                                .get(&left.get_id())
+                                .expect("type data must exist before calling c_generator"),
+                        )
+                        .is_float()
+                    {
+                        format!("(fmod(({left_out_value}), ({right_out_value})))")
+                    } else {
+                        format!("(({left_out_value}) % ({right_out_value}))")
+                    }
+                }
+                BinaryOperation::GreaterThan => {
+                    format!("(({left_out_value}) > ({right_out_value}))")
+                }
+                BinaryOperation::GreaterThanOrEqual => {
+                    format!("(({left_out_value}) >= ({right_out_value}))")
+                }
+                BinaryOperation::LessThan => {
+                    format!("(({left_out_value}) < ({right_out_value}))")
+                }
+                BinaryOperation::LessThanOrEqual => {
+                    format!("(({left_out_value}) <= ({right_out_value}))")
+                }
+                BinaryOperation::Equal => {
+                    format!("(({left_out_value}) == ({right_out_value}))")
+                }
+                BinaryOperation::NotEqual => {
+                    format!("(({left_out_value}) != ({right_out_value}))")
+                }
+                BinaryOperation::LogicalAnd => {
+                    format!("(({left_out_value}) && ({right_out_value}))")
+                }
+                BinaryOperation::LogicalOr => {
+                    format!("(({left_out_value}) || ({right_out_value}))")
+                }
+            },
         }
     }
 
@@ -1281,13 +1369,13 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         }
     }
 
-    fn visit_int_type(
+    fn visit_simple_type(
         &mut self,
-        IntType {
+        SimpleType {
             token: _,
             type_: _,
             id,
-        }: &mut IntType,
+        }: &mut SimpleType,
     ) -> Self::TypeOutput {
         let (type_, after_id) = self.runtime_type_to_c(
             *self.type_sets.get(
@@ -1308,18 +1396,6 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             id,
         }: &mut UnitType,
     ) -> Self::TypeOutput {
-        let (type_, after_id) = self.runtime_type_to_c(
-            *self.type_sets.get(
-                *self
-                    .type_data
-                    .get(id)
-                    .expect("type data should exist before calling c_generator"),
-            ),
-        );
-        type_ + &after_id
-    }
-
-    fn visit_bool_type(&mut self, BoolType { token: _, id }: &mut BoolType) -> Self::TypeOutput {
         let (type_, after_id) = self.runtime_type_to_c(
             *self.type_sets.get(
                 *self

@@ -10,14 +10,14 @@ use crate::ast::AstNode;
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
-        BreakStatement, CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, IdkType, IfStatement, IntType, NumberExpression, OnStatement,
-        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement,
-        Statement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
+        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
+        IfStatement, LiteralExpression, LiteralKind, OnStatement, PerNodeData, Program,
+        ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement,
+        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::type_propagation::{
@@ -273,11 +273,21 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
             RuntimeType::I16 => ("int16_t".to_string(), "".to_string()),
             RuntimeType::I32 => ("int32_t".to_string(), "".to_string()),
             RuntimeType::I64 => ("int64_t".to_string(), "".to_string()),
-            RuntimeType::UnsizedInt => {
-                unreachable!("unsized ints should have caused errors before calling glsl_generator")
-            }
+            RuntimeType::F32 => ("float".to_string(), "".to_string()),
+            RuntimeType::F64 => ("double".to_string(), "".to_string()),
             RuntimeType::Boolean => ("bool".to_string(), "".to_string()),
             RuntimeType::Unit => ("void".to_string(), "".to_string()),
+            RuntimeType::Number => {
+                unreachable!(
+                    "undetermined numbers should have caused errors before calling c_generator"
+                )
+            }
+            RuntimeType::UnsizedInteger => {
+                unreachable!("unsized ints should have caused errors before calling c_generator")
+            }
+            RuntimeType::UnsizedFloat => {
+                unreachable!("unsized ints should have caused errors before calling c_generator")
+            }
             RuntimeType::Unknown => {
                 unreachable!(
                     "unknown types should have caused errors before calling glsl_generator"
@@ -303,8 +313,18 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
             RuntimeType::I16 => 2,
             RuntimeType::I32 => 4,
             RuntimeType::I64 => 8,
-            RuntimeType::UnsizedInt => {
-                unreachable!("unsized ints should have caused errors before calling glsl_generator")
+            RuntimeType::F32 => 4,
+            RuntimeType::F64 => 8,
+            RuntimeType::Number => {
+                unreachable!(
+                    "undetermined numbers should have caused errors before calling c_generator"
+                )
+            }
+            RuntimeType::UnsizedInteger => {
+                unreachable!("unsized ints should have caused errors before calling c_generator")
+            }
+            RuntimeType::UnsizedFloat => {
+                unreachable!("unsized ints should have caused errors before calling c_generator")
             }
             RuntimeType::Boolean => 1,
             RuntimeType::Unit => 0,
@@ -795,31 +815,21 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
         todo!()
     }
 
-    fn visit_number_expression(
+    fn visit_literal_expression(
         &mut self,
-        NumberExpression {
+        LiteralExpression {
             value,
             token: _,
             id: _,
-        }: &mut NumberExpression,
+        }: &mut LiteralExpression,
     ) -> Self::ExpressionOutput {
         PreStatementValue {
             pre_statements: "".to_string(),
-            out_value: value.to_string(),
-        }
-    }
-
-    fn visit_bool_expression(
-        &mut self,
-        BoolExpression {
-            value,
-            token: _,
-            id: _,
-        }: &mut BoolExpression,
-    ) -> Self::ExpressionOutput {
-        PreStatementValue {
-            pre_statements: "".to_string(),
-            out_value: value.to_string(),
+            out_value: match value {
+                LiteralKind::Number(value) => value.to_string(),
+                LiteralKind::Float(value) => value.to_string(),
+                LiteralKind::Bool(value) => value.to_string(),
+            },
         }
     }
 
@@ -1257,13 +1267,13 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
         }
     }
 
-    fn visit_int_type(
+    fn visit_simple_type(
         &mut self,
-        IntType {
+        SimpleType {
             token: _,
             type_: _,
             id,
-        }: &mut IntType,
+        }: &mut SimpleType,
     ) -> Self::TypeOutput {
         let (type_, after_id) = self.runtime_type_to_glsl(
             *self.type_sets.get(
@@ -1284,18 +1294,6 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
             id,
         }: &mut UnitType,
     ) -> Self::TypeOutput {
-        let (type_, after_id) = self.runtime_type_to_glsl(
-            *self.type_sets.get(
-                *self
-                    .type_data
-                    .get(id)
-                    .expect("type data should exist before calling glsl_generator"),
-            ),
-        );
-        type_ + &after_id
-    }
-
-    fn visit_bool_type(&mut self, BoolType { token: _, id }: &mut BoolType) -> Self::TypeOutput {
         let (type_, after_id) = self.runtime_type_to_glsl(
             *self.type_sets.get(
                 *self

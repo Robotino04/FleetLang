@@ -197,11 +197,8 @@ impl PartialAstVisitor for RemoveParensPass {
                     *expression = *subexpression.clone();
                 }
             }
-            Expression::Number(number_expression) => {
-                self.partial_visit_number_expression(number_expression)
-            }
-            Expression::Bool(bool_expression) => {
-                self.partial_visit_bool_expression(bool_expression)
+            Expression::Literal(literal_expression) => {
+                self.partial_visit_literal_expression(literal_expression)
             }
             Expression::Array(array_expression) => {
                 self.partial_visit_array_expression(array_expression)

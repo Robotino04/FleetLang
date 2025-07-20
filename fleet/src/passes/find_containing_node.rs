@@ -1,9 +1,9 @@
 use crate::ast::{
     ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
-    BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
+    BinaryExpression, BlockStatement,  BreakStatement, CastExpression,
     ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
     FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-    IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+    SimpleType, LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
     SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
     VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
     VariableLValue, WhileLoopStatement,
@@ -450,23 +450,10 @@ impl AstVisitor for FindContainingNodePass {
         Ok((left_bound, right_bound))
     }
 
-    fn visit_number_expression(
+    fn visit_literal_expression(
         &mut self,
-        expression: &mut NumberExpression,
+        expression: &mut LiteralExpression,
     ) -> Self::ExpressionOutput {
-        self.node_hierarchy.push(expression.clone().into());
-
-        let (left_bound, right_bound) = self.visit_token(&expression.token)?;
-
-        if left_bound <= self.search_position && self.search_position <= right_bound {
-            return Err(());
-        }
-
-        self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
-    }
-
-    fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput {
         self.node_hierarchy.push(expression.clone().into());
 
         let (left_bound, right_bound) = self.visit_token(&expression.token)?;
@@ -693,7 +680,7 @@ impl AstVisitor for FindContainingNodePass {
         Ok((left_bound, right_bound))
     }
 
-    fn visit_int_type(&mut self, type_: &mut IntType) -> Self::TypeOutput {
+    fn visit_simple_type(&mut self, type_: &mut SimpleType) -> Self::TypeOutput {
         self.node_hierarchy.push(type_.clone().into());
 
         let (left_bound, right_bound) = self.visit_token(&type_.token)?;
@@ -711,19 +698,6 @@ impl AstVisitor for FindContainingNodePass {
 
         let left_bound = self.visit_token(&unit_type.open_paren_token)?.0;
         let right_bound = self.visit_token(&unit_type.close_paren_token)?.1;
-
-        if left_bound <= self.search_position && self.search_position <= right_bound {
-            return Err(());
-        }
-
-        self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
-    }
-
-    fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
-        self.node_hierarchy.push(bool_type.clone().into());
-
-        let (left_bound, right_bound) = self.visit_token(&bool_type.token)?;
 
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());

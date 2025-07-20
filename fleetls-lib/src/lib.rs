@@ -1,14 +1,14 @@
 use fleet::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
-        BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
-        CastExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, IdkType, IfStatement, IntType, NodeID, NumberExpression,
-        OnStatement, PerNodeData, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        BinaryExpression, BinaryOperation, BlockStatement, CastExpression, ExpressionStatement,
+        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
+        GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement,
+        LiteralExpression, LiteralKind, NodeID, OnStatement, PerNodeData, ReturnStatement,
+        SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody, ThreadExecutor,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError, TokenizerOutput},
     passes::{
@@ -350,24 +350,17 @@ impl Backend {
                 },
                 "type cast".to_string(),
             ),
-            AstNode::NumberExpression(NumberExpression {
+            AstNode::LiteralExpression(LiteralExpression {
                 value,
                 token: _,
                 id,
             }) => (
-                format!("{value}"),
-                format!(
-                    "number literal ({})",
-                    self.get_type_as_hover(id, analysis_data)
-                ),
-            ),
-            AstNode::BoolExpression(BoolExpression {
-                value,
-                token: _,
-                id,
-            }) => (
-                format!("{value} {}", self.get_type_as_hover(id, analysis_data)),
-                "boolean literal".to_string(),
+                match value {
+                    LiteralKind::Number(value) => value.to_string(),
+                    LiteralKind::Float(value) => value.to_string(),
+                    LiteralKind::Bool(value) => value.to_string(),
+                },
+                format!("literal ({})", self.get_type_as_hover(id, analysis_data)),
             ),
             AstNode::ArrayExpression(ArrayExpression {
                 open_bracket_token: _,
@@ -551,7 +544,7 @@ impl Backend {
                 ),
                 "lvalue grouping".to_string(),
             ),
-            AstNode::IntType(IntType {
+            AstNode::SimpleType(SimpleType {
                 token: _,
                 type_,
                 id: _,
@@ -566,9 +559,6 @@ impl Backend {
                 close_paren_token: _,
                 id: _,
             }) => ("()".to_string(), "type".to_string()),
-            AstNode::BoolType(BoolType { token: _, id: _ }) => {
-                ("bool".to_string(), "type".to_string())
-            }
             AstNode::IdkType(IdkType { token: _, id }) => {
                 let type_ = self.get_type_as_hover(id, analysis_data);
                 (type_.to_string(), "idk type".to_string())

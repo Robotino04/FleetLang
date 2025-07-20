@@ -104,3 +104,37 @@ fn mixed_bool_int() {
         },
     );
 }
+
+#[test]
+fn bool_index() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = [1, 2, 3];
+                return a[true];
+            }
+        "##},
+        SourceLocation {
+            index: 59,
+            line: 3,
+            column: 13,
+        },
+    );
+}
+
+#[test]
+fn float_index() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = [1, 2, 3];
+                return a[2.7];
+            }
+        "##},
+        SourceLocation {
+            index: 59,
+            line: 3,
+            column: 13,
+        },
+    );
+}

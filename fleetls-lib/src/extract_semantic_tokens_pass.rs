@@ -1,11 +1,11 @@
 use fleet::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
-        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-        IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        BinaryExpression, BlockStatement, BreakStatement, CastExpression, ExpressionStatement,
+        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
+        GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression,
+        LiteralKind, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
         UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
@@ -413,26 +413,23 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
         self.build_comment_tokens_only(close_bracket_token_2);
     }
 
-    fn visit_number_expression(
+    fn visit_literal_expression(
         &mut self,
-        NumberExpression {
-            value: _,
+        LiteralExpression {
+            value,
             token,
             id: _,
-        }: &mut NumberExpression,
+        }: &mut LiteralExpression,
     ) -> Self::ExpressionOutput {
-        self.build_semantic_token(token, SemanticTokenType::NUMBER, vec![]);
-    }
-
-    fn visit_bool_expression(
-        &mut self,
-        BoolExpression {
-            value: _,
+        self.build_semantic_token(
             token,
-            id: _,
-        }: &mut BoolExpression,
-    ) -> Self::ExpressionOutput {
-        self.build_semantic_token(token, SemanticTokenType::KEYWORD, vec![]);
+            match value {
+                LiteralKind::Number(_) => SemanticTokenType::NUMBER,
+                LiteralKind::Float(_) => SemanticTokenType::NUMBER,
+                LiteralKind::Bool(_) => SemanticTokenType::KEYWORD,
+            },
+            vec![],
+        );
     }
 
     fn visit_array_expression(
@@ -618,13 +615,13 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
         self.build_comment_tokens_only(close_paren_token);
     }
 
-    fn visit_int_type(
+    fn visit_simple_type(
         &mut self,
-        IntType {
+        SimpleType {
             token,
             type_: _,
             id: _,
-        }: &mut IntType,
+        }: &mut SimpleType,
     ) {
         self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
     }
@@ -639,10 +636,6 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
     ) -> Self::TypeOutput {
         self.build_comment_tokens_only(open_paren_token);
         self.build_comment_tokens_only(close_paren_token);
-    }
-
-    fn visit_bool_type(&mut self, BoolType { token, id: _ }: &mut BoolType) -> Self::TypeOutput {
-        self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
     }
 
     fn visit_idk_type(&mut self, IdkType { token, id: _ }: &mut IdkType) -> Self::TypeOutput {

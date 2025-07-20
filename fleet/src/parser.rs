@@ -5,11 +5,11 @@ use either::Either;
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, BinaryExpression,
-        BinaryOperation, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
-        Executor, ExecutorHost, Expression, ExpressionStatement, ExternFunctionBody,
-        ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor,
-        GroupingExpression, GroupingLValue, IdkType, IfStatement, IntType, LValue, NodeID,
-        NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        BinaryOperation, BlockStatement, BreakStatement, CastExpression, Executor, ExecutorHost,
+        Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
+        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+        GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression, LiteralKind, NodeID,
+        OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
         SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, Type, UnaryExpression,
         UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
@@ -539,21 +539,28 @@ impl<'errors> Parser<'errors> {
 
     fn parse_primary_expression(&mut self) -> Result<Expression> {
         match self.current_token_type() {
-            Some(TokenType::Number(value)) => Ok(Expression::Number(NumberExpression {
-                value,
-                token: expect!(self, TokenType::Number(_))?,
+            Some(TokenType::Integer(value, _)) => Ok(Expression::Literal(LiteralExpression {
+                value: LiteralKind::Number(value),
+                token: expect!(self, TokenType::Integer(_, _))?,
                 id: self.id_generator.next_node_id(),
             })),
-            Some(TokenType::Keyword(Keyword::True)) => Ok(Expression::Bool(BoolExpression {
-                value: true,
+            Some(TokenType::Float(value, _)) => Ok(Expression::Literal(LiteralExpression {
+                value: LiteralKind::Float(value),
+                token: expect!(self, TokenType::Float(_, _))?,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::Keyword(Keyword::True)) => Ok(Expression::Literal(LiteralExpression {
+                value: LiteralKind::Bool(true),
                 token: expect!(self, TokenType::Keyword(Keyword::True))?,
                 id: self.id_generator.next_node_id(),
             })),
-            Some(TokenType::Keyword(Keyword::False)) => Ok(Expression::Bool(BoolExpression {
-                value: false,
-                token: expect!(self, TokenType::Keyword(Keyword::False))?,
-                id: self.id_generator.next_node_id(),
-            })),
+            Some(TokenType::Keyword(Keyword::False)) => {
+                Ok(Expression::Literal(LiteralExpression {
+                    value: LiteralKind::Bool(false),
+                    token: expect!(self, TokenType::Keyword(Keyword::False))?,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
             Some(TokenType::OpenBracket) => {
                 let open_bracket_token = expect!(self, TokenType::OpenBracket)?;
                 let mut elements = vec![];
@@ -1058,28 +1065,39 @@ impl<'errors> Parser<'errors> {
 
     pub fn parse_primary_type(&mut self) -> Result<Type> {
         match self.current_token_type() {
-            Some(TokenType::Keyword(Keyword::I8)) => Ok(Type::Int(IntType {
+            Some(TokenType::Keyword(Keyword::I8)) => Ok(Type::Simple(SimpleType {
                 token: expect!(self, TokenType::Keyword(Keyword::I8))?,
                 type_: RuntimeType::I8,
                 id: self.id_generator.next_node_id(),
             })),
-            Some(TokenType::Keyword(Keyword::I16)) => Ok(Type::Int(IntType {
+            Some(TokenType::Keyword(Keyword::I16)) => Ok(Type::Simple(SimpleType {
                 token: expect!(self, TokenType::Keyword(Keyword::I16))?,
                 type_: RuntimeType::I16,
                 id: self.id_generator.next_node_id(),
             })),
-            Some(TokenType::Keyword(Keyword::I32)) => Ok(Type::Int(IntType {
+            Some(TokenType::Keyword(Keyword::I32)) => Ok(Type::Simple(SimpleType {
                 token: expect!(self, TokenType::Keyword(Keyword::I32))?,
                 type_: RuntimeType::I32,
                 id: self.id_generator.next_node_id(),
             })),
-            Some(TokenType::Keyword(Keyword::I64)) => Ok(Type::Int(IntType {
+            Some(TokenType::Keyword(Keyword::I64)) => Ok(Type::Simple(SimpleType {
                 token: expect!(self, TokenType::Keyword(Keyword::I64))?,
                 type_: RuntimeType::I64,
                 id: self.id_generator.next_node_id(),
             })),
-            Some(TokenType::Keyword(Keyword::Bool)) => Ok(Type::Bool(BoolType {
+            Some(TokenType::Keyword(Keyword::F32)) => Ok(Type::Simple(SimpleType {
+                token: expect!(self, TokenType::Keyword(Keyword::F32))?,
+                type_: RuntimeType::F32,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::Keyword(Keyword::F64)) => Ok(Type::Simple(SimpleType {
+                token: expect!(self, TokenType::Keyword(Keyword::F64))?,
+                type_: RuntimeType::F64,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::Keyword(Keyword::Bool)) => Ok(Type::Simple(SimpleType {
                 token: expect!(self, TokenType::Keyword(Keyword::Bool))?,
+                type_: RuntimeType::Boolean,
                 id: self.id_generator.next_node_id(),
             })),
             Some(TokenType::Keyword(Keyword::Idk)) => Ok(Type::Idk(IdkType {

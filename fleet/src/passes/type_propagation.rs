@@ -12,11 +12,11 @@ use itertools::{EitherOrBoth, Itertools};
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
-        BinaryExpression, BinaryOperation, BlockStatement, BoolExpression, BoolType,
-        BreakStatement, CastExpression, Expression, ExpressionStatement, ExternFunctionBody,
-        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor,
-        GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, IntType, NumberExpression,
-        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
+        Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+        GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
+        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
         SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
         UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
@@ -135,11 +135,15 @@ impl<T> UnionFindSet<T> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeType {
+    Number,
     I8,
     I16,
     I32,
     I64,
-    UnsizedInt,
+    UnsizedInteger,
+    F32,
+    F64,
+    UnsizedFloat,
     Boolean,
     Unit,
     Unknown,
@@ -153,11 +157,15 @@ pub enum RuntimeType {
 impl RuntimeType {
     pub fn stringify(&self, types: &UnionFindSet<RuntimeType>) -> String {
         match *self {
+            RuntimeType::Number => "{number}".to_string(),
             RuntimeType::I8 => "i8".to_string(),
             RuntimeType::I16 => "i16".to_string(),
             RuntimeType::I32 => "i32".to_string(),
             RuntimeType::I64 => "i64".to_string(),
-            RuntimeType::UnsizedInt => "{unsized int}".to_string(),
+            RuntimeType::UnsizedInteger => "{unsized integer}".to_string(),
+            RuntimeType::F32 => "f32".to_string(),
+            RuntimeType::F64 => "f64".to_string(),
+            RuntimeType::UnsizedFloat => "{unsized float}".to_string(),
             RuntimeType::Unit => "()".to_string(),
             RuntimeType::Boolean => "bool".to_string(),
             RuntimeType::Unknown => "{unknown}".to_string(),
@@ -172,13 +180,59 @@ impl RuntimeType {
             } => format!("{}[{}]", types.get(subtype).stringify(types), size),
         }
     }
-    pub fn is_numeric(&self) -> bool {
+    pub fn is_float(&self) -> bool {
         match self {
+            RuntimeType::Number => true,
+            RuntimeType::I8 => false,
+            RuntimeType::I16 => false,
+            RuntimeType::I32 => false,
+            RuntimeType::I64 => false,
+            RuntimeType::UnsizedInteger => false,
+            RuntimeType::F32 => true,
+            RuntimeType::F64 => true,
+            RuntimeType::UnsizedFloat => false,
+            RuntimeType::Unit => false,
+            RuntimeType::Boolean => false,
+            RuntimeType::Unknown => false,
+            RuntimeType::Error => false,
+            RuntimeType::ArrayOf {
+                subtype: _,
+                size: _,
+            } => false,
+        }
+    }
+    pub fn is_integer(&self) -> bool {
+        match self {
+            RuntimeType::Number => true,
             RuntimeType::I8 => true,
             RuntimeType::I16 => true,
             RuntimeType::I32 => true,
             RuntimeType::I64 => true,
-            RuntimeType::UnsizedInt => true,
+            RuntimeType::UnsizedInteger => true,
+            RuntimeType::F32 => false,
+            RuntimeType::F64 => false,
+            RuntimeType::UnsizedFloat => false,
+            RuntimeType::Unit => false,
+            RuntimeType::Boolean => false,
+            RuntimeType::Unknown => false,
+            RuntimeType::Error => false,
+            RuntimeType::ArrayOf {
+                subtype: _,
+                size: _,
+            } => false,
+        }
+    }
+    pub fn is_numeric(&self) -> bool {
+        match self {
+            RuntimeType::Number => true,
+            RuntimeType::I8 => true,
+            RuntimeType::I16 => true,
+            RuntimeType::I32 => true,
+            RuntimeType::I64 => true,
+            RuntimeType::UnsizedInteger => true,
+            RuntimeType::F32 => true,
+            RuntimeType::F64 => true,
+            RuntimeType::UnsizedFloat => true,
             RuntimeType::Unit => false,
             RuntimeType::Boolean => false,
             RuntimeType::Unknown => false,
@@ -191,11 +245,15 @@ impl RuntimeType {
     }
     pub fn is_boolean(&self) -> bool {
         match self {
+            RuntimeType::Number => false,
             RuntimeType::I8 => false,
             RuntimeType::I16 => false,
             RuntimeType::I32 => false,
             RuntimeType::I64 => false,
-            RuntimeType::UnsizedInt => false,
+            RuntimeType::UnsizedInteger => false,
+            RuntimeType::F32 => false,
+            RuntimeType::F64 => false,
+            RuntimeType::UnsizedFloat => false,
             RuntimeType::Boolean => true,
             RuntimeType::Unit => false,
             RuntimeType::Unknown => false,
@@ -209,12 +267,14 @@ impl RuntimeType {
 
     /// true means the specialization succeeded
     pub fn specialize_int_size(&mut self) -> bool {
-        if *self == RuntimeType::UnsizedInt {
-            *self = RuntimeType::I32;
-            true
-        } else {
-            false
+        match *self {
+            RuntimeType::Number => *self = RuntimeType::I32,
+            RuntimeType::UnsizedInteger => *self = RuntimeType::I32,
+            RuntimeType::UnsizedFloat => *self = RuntimeType::F32,
+            _ => return false,
         }
+
+        true
     }
 
     #[must_use = "Failed merges usually indicate a compile error"]
@@ -229,49 +289,55 @@ impl RuntimeType {
                 return Merged(a);
             }
             match a {
-                RuntimeType::I8 => {
-                    if b == RuntimeType::I8 {
-                        Merged(b)
-                    } else if b == RuntimeType::UnsizedInt {
-                        return Merged(a);
-                    } else {
-                        NotMerged { a, b }
-                    }
-                }
-                RuntimeType::I16 => {
-                    if b == RuntimeType::I16 {
-                        Merged(b)
-                    } else if b == RuntimeType::UnsizedInt {
-                        return Merged(a);
-                    } else {
-                        NotMerged { a, b }
-                    }
-                }
-                RuntimeType::I32 => {
-                    if b == RuntimeType::I32 {
-                        Merged(b)
-                    } else if b == RuntimeType::UnsizedInt {
-                        return Merged(a);
-                    } else {
-                        NotMerged { a, b }
-                    }
-                }
-                RuntimeType::I64 => {
-                    if b == RuntimeType::I64 {
-                        Merged(b)
-                    } else if b == RuntimeType::UnsizedInt {
-                        return Merged(a);
-                    } else {
-                        NotMerged { a, b }
-                    }
-                }
-                RuntimeType::UnsizedInt => {
+                _ if a == b => Merged(a),
+
+                RuntimeType::Number => {
                     if b.is_numeric() {
                         Merged(b)
                     } else {
                         NotMerged { a, b }
                     }
                 }
+                RuntimeType::UnsizedInteger => {
+                    if b.is_integer() {
+                        if b == RuntimeType::Number {
+                            Merged(a)
+                        } else {
+                            Merged(b)
+                        }
+                    } else {
+                        NotMerged { a, b }
+                    }
+                }
+
+                RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64
+                    if b == RuntimeType::Number || b == RuntimeType::UnsizedInteger =>
+                {
+                    Merged(a)
+                }
+                RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64 => {
+                    NotMerged { a, b }
+                }
+
+                RuntimeType::UnsizedFloat => {
+                    if b.is_float() {
+                        if b == RuntimeType::Number {
+                            Merged(a)
+                        } else {
+                            Merged(b)
+                        }
+                    } else {
+                        NotMerged { a, b }
+                    }
+                }
+
+                RuntimeType::F32 | RuntimeType::F64
+                    if b == RuntimeType::Number || b == RuntimeType::UnsizedFloat =>
+                {
+                    Merged(a)
+                }
+                RuntimeType::F32 | RuntimeType::F64 => NotMerged { a, b },
+
                 RuntimeType::Boolean => {
                     if b.is_boolean() {
                         Merged(b)
@@ -743,7 +809,6 @@ impl AstVisitor for TypePropagator<'_> {
         }: &mut ExpressionStatement,
     ) -> Self::StatementOutput {
         let type_ = self.visit_expression(expression);
-        self.type_sets.get_mut(type_).specialize_int_size();
 
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
@@ -835,7 +900,6 @@ impl AstVisitor for TypePropagator<'_> {
             ));
         }
 
-        self.type_sets.get_mut(this_type).specialize_int_size();
         self.node_types.insert(*id, this_type);
 
         self.contained_scope
@@ -1108,31 +1172,20 @@ impl AstVisitor for TypePropagator<'_> {
             .insert(*id, self.variable_scopes.current.clone());
     }
 
-    fn visit_number_expression(
+    fn visit_literal_expression(
         &mut self,
-        expression: &mut NumberExpression,
+        expression: &mut LiteralExpression,
     ) -> Self::ExpressionOutput {
-        let NumberExpression {
-            value: _,
+        let LiteralExpression {
+            value,
             token: _,
             id,
         } = expression;
-        let type_ = self.type_sets.insert_set(RuntimeType::UnsizedInt);
-        self.node_types.insert(*id, type_);
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
-        type_
-    }
-
-    fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput {
-        let BoolExpression {
-            value: _,
-            token: _,
-            id,
-        } = expression;
-        let type_ = self.type_sets.insert_set(RuntimeType::Boolean);
+        let type_ = self.type_sets.insert_set(match value {
+            LiteralKind::Number(_) => RuntimeType::Number,
+            LiteralKind::Float(_) => RuntimeType::UnsizedFloat,
+            LiteralKind::Bool(_) => RuntimeType::Boolean,
+        });
         self.node_types.insert(*id, type_);
 
         self.contained_scope
@@ -1169,7 +1222,6 @@ impl AstVisitor for TypePropagator<'_> {
                 ));
             }
         }
-        self.type_sets.get_mut(element_type).specialize_int_size();
 
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
@@ -1295,9 +1347,11 @@ impl AstVisitor for TypePropagator<'_> {
             return err_type;
         };
 
-        self.type_sets.get_mut(index_type).specialize_int_size();
-
-        if !self.type_sets.get(index_type).is_numeric() {
+        if !RuntimeType::merge_types(
+            index_type,
+            self.type_sets.insert_set(RuntimeType::UnsizedInteger),
+            &mut self.type_sets,
+        ) {
             self.errors.push(FleetError::from_node(
                 &**index,
                 format!(
@@ -1372,28 +1426,29 @@ impl AstVisitor for TypePropagator<'_> {
         } = expression;
 
         let type_ = self.visit_expression(operand);
-        let this_type = match operation {
-            UnaryOperation::BitwiseNot => type_,
-            UnaryOperation::LogicalNot => {
-                self.type_sets.get_mut(type_).specialize_int_size();
-                self.type_sets.insert_set(RuntimeType::Boolean)
-            }
-            UnaryOperation::Negate => type_,
-        };
 
         let is_ok = match operation {
-            UnaryOperation::BitwiseNot => {
-                let type_ = self.type_sets.get(type_);
-                type_.is_numeric() || *type_ == RuntimeType::Unknown
-            }
+            UnaryOperation::BitwiseNot => RuntimeType::merge_types(
+                type_,
+                self.type_sets.insert_set(RuntimeType::UnsizedInteger),
+                &mut self.type_sets,
+            ),
             UnaryOperation::LogicalNot => {
-                let type_ = self.type_sets.get(type_);
-                type_.is_numeric() || type_.is_boolean() || *type_ == RuntimeType::Unknown
+                RuntimeType::merge_types(
+                    type_,
+                    self.type_sets.insert_set(RuntimeType::Number),
+                    &mut self.type_sets,
+                ) || RuntimeType::merge_types(
+                    type_,
+                    self.type_sets.insert_set(RuntimeType::Boolean),
+                    &mut self.type_sets,
+                )
             }
-            UnaryOperation::Negate => {
-                let type_ = self.type_sets.get(type_);
-                type_.is_numeric() || *type_ == RuntimeType::Unknown
-            }
+            UnaryOperation::Negate => RuntimeType::merge_types(
+                type_,
+                self.type_sets.insert_set(RuntimeType::Number),
+                &mut self.type_sets,
+            ),
         };
 
         if !is_ok {
@@ -1411,6 +1466,11 @@ impl AstVisitor for TypePropagator<'_> {
                 ErrorSeverity::Error,
             ));
         }
+        let this_type = match operation {
+            UnaryOperation::BitwiseNot => type_,
+            UnaryOperation::LogicalNot => self.type_sets.insert_set(RuntimeType::Boolean),
+            UnaryOperation::Negate => type_,
+        };
 
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
@@ -1455,6 +1515,8 @@ impl AstVisitor for TypePropagator<'_> {
                 | (I16, I16)
                 | (I32, I32)
                 | (I64, I64)
+                | (F32, F32)
+                | (F64, F64)
                 | (Boolean, Boolean)
                 | (Unit, Unit) => {
                     self_errors.push(FleetError::from_node(
@@ -1464,16 +1526,22 @@ impl AstVisitor for TypePropagator<'_> {
                     ));
                     CastResult::Redundant
                 }
-                (I8 | I16 | I32 | I64 | UnsizedInt, I8 | I16 | I32 | I64 | UnsizedInt) => {
+                (
+                    Number | I8 | I16 | I32 | I64 | UnsizedInteger | F32 | F64 | UnsizedFloat,
+                    Number | I8 | I16 | I32 | I64 | UnsizedInteger | F32 | F64 | UnsizedFloat,
+                ) => {
                     let _ = RuntimeType::merge_types(from_ptr, to_ptr, types);
                     CastResult::Possible
                 }
 
-                (I8 | I16 | I32 | I64 | UnsizedInt, Boolean) => {
-                    types.get_mut(from_ptr).specialize_int_size();
-                    CastResult::Possible
-                }
-                (Boolean, I8 | I16 | I32 | I64 | UnsizedInt) => CastResult::Possible,
+                (
+                    Number | I8 | I16 | I32 | I64 | UnsizedInteger | F32 | F64 | UnsizedFloat,
+                    Boolean,
+                ) => CastResult::Possible,
+                (
+                    Boolean,
+                    Number | I8 | I16 | I32 | I64 | UnsizedInteger | F32 | F64 | UnsizedFloat,
+                ) => CastResult::Possible,
 
                 (_, Unit) | (Unit, _) => {
                     self_errors.push(FleetError::from_node(
@@ -1677,13 +1745,13 @@ impl AstVisitor for TypePropagator<'_> {
             | BinaryOperation::LessThan
             | BinaryOperation::LessThanOrEqual => RuntimeType::merge_types(
                 left_type,
-                self.type_sets.insert_set(RuntimeType::UnsizedInt),
+                self.type_sets.insert_set(RuntimeType::Number),
                 &mut self.type_sets,
             ),
             BinaryOperation::Equal | BinaryOperation::NotEqual => {
                 RuntimeType::merge_types(
                     left_type,
-                    self.type_sets.insert_set(RuntimeType::UnsizedInt),
+                    self.type_sets.insert_set(RuntimeType::Number),
                     &mut self.type_sets,
                 ) || RuntimeType::merge_types(
                     left_type,
@@ -1699,8 +1767,6 @@ impl AstVisitor for TypePropagator<'_> {
             ),
         };
 
-        self.type_sets.get_mut(left_type).specialize_int_size();
-
         let is_right_ok = match operation {
             BinaryOperation::Add
             | BinaryOperation::Subtract
@@ -1712,13 +1778,13 @@ impl AstVisitor for TypePropagator<'_> {
             | BinaryOperation::LessThan
             | BinaryOperation::LessThanOrEqual => RuntimeType::merge_types(
                 right_type,
-                self.type_sets.insert_set(RuntimeType::UnsizedInt),
+                self.type_sets.insert_set(RuntimeType::Number),
                 &mut self.type_sets,
             ),
             BinaryOperation::Equal | BinaryOperation::NotEqual => {
                 RuntimeType::merge_types(
                     right_type,
-                    self.type_sets.insert_set(RuntimeType::UnsizedInt),
+                    self.type_sets.insert_set(RuntimeType::Number),
                     &mut self.type_sets,
                 ) || RuntimeType::merge_types(
                     right_type,
@@ -1733,7 +1799,6 @@ impl AstVisitor for TypePropagator<'_> {
                 &mut self.type_sets,
             ),
         };
-        self.type_sets.get_mut(right_type).specialize_int_size();
 
         if !RuntimeType::merge_types(left_type, right_type, &mut self.type_sets)
             || !is_left_ok
@@ -1906,7 +1971,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         if !RuntimeType::merge_types(
             index_type,
-            self.type_sets.insert_set(RuntimeType::UnsizedInt),
+            self.type_sets.insert_set(RuntimeType::UnsizedInteger),
             &mut self.type_sets,
         ) {
             self.errors.push(FleetError::from_node(
@@ -1918,8 +1983,6 @@ impl AstVisitor for TypePropagator<'_> {
                 ErrorSeverity::Error,
             ));
         }
-
-        self.type_sets.get_mut(index_type).specialize_int_size();
 
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
@@ -1943,13 +2006,13 @@ impl AstVisitor for TypePropagator<'_> {
         subtype
     }
 
-    fn visit_int_type(
+    fn visit_simple_type(
         &mut self,
-        IntType {
+        SimpleType {
             token: _,
             type_,
             id,
-        }: &mut IntType,
+        }: &mut SimpleType,
     ) -> Self::TypeOutput {
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
@@ -1979,19 +2042,6 @@ impl AstVisitor for TypePropagator<'_> {
             return *type_;
         }
         let t = self.type_sets.insert_set(RuntimeType::Unit);
-        self.node_types.insert(*id, t);
-        t
-    }
-
-    fn visit_bool_type(&mut self, BoolType { token: _, id }: &mut BoolType) -> Self::TypeOutput {
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
-        // make sure function registration gets the same type as the full eval
-        if let Some(type_) = self.node_types.get(id) {
-            return *type_;
-        }
-        let t = self.type_sets.insert_set(RuntimeType::Boolean);
         self.node_types.insert(*id, t);
         t
     }
@@ -2034,8 +2084,8 @@ impl AstVisitor for TypePropagator<'_> {
             ));
         }
         let size = match size.as_ref().map(|boxed_x| &**boxed_x) {
-            Some(Expression::Number(NumberExpression {
-                value,
+            Some(Expression::Literal(LiteralExpression {
+                value: LiteralKind::Number(value),
                 token: _,
                 id: _,
             })) => Some(*value as usize),
@@ -2043,7 +2093,7 @@ impl AstVisitor for TypePropagator<'_> {
                 // TODO: once we have consteval, relax this restriction
                 self.errors.push(FleetError::from_node(
                     &**subtype,
-                    "Arrays can only have number literals as a size for now".to_string(),
+                    "Arrays can only have integer literals as a size for now".to_string(),
                     ErrorSeverity::Error,
                 ));
                 None

@@ -1,10 +1,10 @@
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
-        BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
+        BinaryExpression, BlockStatement,  BreakStatement, CastExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-        IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+        SimpleType, LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
         SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
         UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
@@ -175,12 +175,7 @@ where
             type_,
             id: _,
         }) => (find_node_bounds(&**operand).0, find_node_bounds(type_).1),
-        AstNode::NumberExpression(NumberExpression {
-            value: _,
-            token,
-            id: _,
-        }) => (token.start, token.end),
-        AstNode::BoolExpression(BoolExpression {
+        AstNode::LiteralExpression(LiteralExpression {
             value: _,
             token,
             id: _,
@@ -249,7 +244,7 @@ where
             close_paren_token,
             id: _,
         }) => (open_paren_token.start, close_paren_token.end),
-        AstNode::IntType(IntType {
+        AstNode::SimpleType(SimpleType {
             token,
             type_: _,
             id: _,
@@ -259,7 +254,6 @@ where
             close_paren_token,
             id: _,
         }) => (open_paren_token.start, close_paren_token.end),
-        AstNode::BoolType(BoolType { token, id: _ }) => (token.start, token.end),
         AstNode::IdkType(IdkType { token, id: _ }) => (token.start, token.end),
         AstNode::ArrayType(ArrayType {
             subtype,

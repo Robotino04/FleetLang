@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use crate::infra::{ErrorSeverity, FleetError};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Token {
     pub type_: TokenType,
     /// inclusive
@@ -32,7 +32,7 @@ pub struct Trivia {
     pub end: SourceLocation,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TokenType {
     Keyword(Keyword),
     Identifier(String),
@@ -51,7 +51,8 @@ pub enum TokenType {
     EqualSign,
     SingleRightArrow,
 
-    Number(u64),
+    Integer(u64, String),
+    Float(f64, String),
     StringLiteral(String),
 
     ExclamationMark,
@@ -85,6 +86,8 @@ pub enum Keyword {
     I16,
     I32,
     I64,
+    F32,
+    F64,
     Bool,
     Idk,
     As,
@@ -495,6 +498,8 @@ impl<'errors> Tokenizer<'errors> {
                             "i16" => TokenType::Keyword(Keyword::I16),
                             "i32" => TokenType::Keyword(Keyword::I32),
                             "i64" => TokenType::Keyword(Keyword::I64),
+                            "f32" => TokenType::Keyword(Keyword::F32),
+                            "f64" => TokenType::Keyword(Keyword::F64),
                             "bool" => TokenType::Keyword(Keyword::Bool),
                             "idk" => TokenType::Keyword(Keyword::Idk),
                             "as" => TokenType::Keyword(Keyword::As),
@@ -511,6 +516,8 @@ impl<'errors> Tokenizer<'errors> {
                 }
 
                 '0'..='9' => {
+                    let mut is_float = false;
+
                     let start_location = self.current_location;
 
                     while let '0'..='9' = self.chars[self.current_location.index] {
@@ -518,6 +525,17 @@ impl<'errors> Tokenizer<'errors> {
 
                         if self.current_location.index >= self.chars.len() {
                             break;
+                        }
+                    }
+                    if '.' == self.chars[self.current_location.index] {
+                        is_float = true;
+                        self.advance();
+                        while let '0'..='9' = self.chars[self.current_location.index] {
+                            self.advance();
+
+                            if self.current_location.index >= self.chars.len() {
+                                break;
+                            }
                         }
                     }
 
@@ -528,10 +546,33 @@ impl<'errors> Tokenizer<'errors> {
                     self.tokens.push(Token {
                         start: start_location,
                         end: self.current_location,
-                        type_: TokenType::Number(lexeme.parse().unwrap_or_else(|_| {
-                            eprintln!("Unable to parse {:?} as a number", lexeme);
-                            0
-                        })),
+                        type_: if is_float {
+                            TokenType::Float(
+                                lexeme.parse().unwrap_or_else(|_| {
+                                    self.errors.push(FleetError {
+                                        start: start_location,
+                                        end: self.current_location,
+                                        message: format!("Unable to parse {:?} as a float", lexeme),
+                                        severity: ErrorSeverity::Error,
+                                    });
+                                    0.0
+                                }),
+                                lexeme.clone(),
+                            )
+                        } else {
+                            TokenType::Integer(
+                                lexeme.parse().unwrap_or_else(|_| {
+                                    self.errors.push(FleetError {
+                                        start: start_location,
+                                        end: self.current_location,
+                                        message: format!("Unable to parse {:?} as a float", lexeme),
+                                        severity: ErrorSeverity::Error,
+                                    });
+                                    0
+                                }),
+                                lexeme.clone(),
+                            )
+                        },
 
                         leading_trivia: self.trivia_accumulator.clone(),
                         trailing_trivia: vec![],

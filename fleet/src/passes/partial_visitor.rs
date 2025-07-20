@@ -1,13 +1,12 @@
 use crate::ast::{
     ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-    BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
-    Executor, ExecutorHost, Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-    FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-    GroupingLValue, IdkType, IfStatement, IntType, LValue, NumberExpression, OnStatement, Program,
-    ReturnStatement, SelfExecutorHost, SimpleBinding, SkipStatement, Statement,
-    StatementFunctionBody, ThreadExecutor, Type, UnaryExpression, UnitType,
-    VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-    VariableLValue, WhileLoopStatement,
+    BinaryExpression, BlockStatement, BreakStatement, CastExpression, Executor, ExecutorHost,
+    Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
+    FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue,
+    IdkType, IfStatement, LValue, LiteralExpression, OnStatement, Program, ReturnStatement,
+    SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement, StatementFunctionBody,
+    ThreadExecutor, Type, UnaryExpression, UnitType, VariableAccessExpression,
+    VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
 };
 
 pub trait PartialAstVisitor {
@@ -330,11 +329,8 @@ pub trait PartialAstVisitor {
     // expressions
     fn partial_visit_expression(&mut self, expression: &mut Expression) {
         match expression {
-            Expression::Number(number_expression) => {
-                self.partial_visit_number_expression(number_expression)
-            }
-            Expression::Bool(bool_expression) => {
-                self.partial_visit_bool_expression(bool_expression)
+            Expression::Literal(literal_expression) => {
+                self.partial_visit_literal_expression(literal_expression)
             }
             Expression::Array(array_expression) => {
                 self.partial_visit_array_expression(array_expression)
@@ -365,22 +361,13 @@ pub trait PartialAstVisitor {
             }
         }
     }
-    fn partial_visit_number_expression(
+    fn partial_visit_literal_expression(
         &mut self,
-        NumberExpression {
+        LiteralExpression {
             value: _,
             token: _,
             id: _,
-        }: &mut NumberExpression,
-    ) {
-    }
-    fn partial_visit_bool_expression(
-        &mut self,
-        BoolExpression {
-            value: _,
-            token: _,
-            id: _,
-        }: &mut BoolExpression,
+        }: &mut LiteralExpression,
     ) {
     }
     fn partial_visit_array_expression(
@@ -542,20 +529,19 @@ pub trait PartialAstVisitor {
 
     fn partial_visit_type(&mut self, type_: &mut Type) {
         match type_ {
-            Type::Int(int_type) => self.partial_visit_int_type(int_type),
+            Type::Simple(int_type) => self.partial_visit_int_type(int_type),
             Type::Unit(unit_type) => self.partial_visit_unit_type(unit_type),
-            Type::Bool(bool_type) => self.partial_visit_bool_type(bool_type),
             Type::Idk(idk_type) => self.partial_visit_idk_type(idk_type),
             Type::Array(array_type) => self.partial_visit_array_type(array_type),
         }
     }
     fn partial_visit_int_type(
         &mut self,
-        IntType {
+        SimpleType {
             token: _,
             type_: _,
             id: _,
-        }: &mut IntType,
+        }: &mut SimpleType,
     ) {
     }
     fn partial_visit_unit_type(
@@ -567,7 +553,6 @@ pub trait PartialAstVisitor {
         }: &mut UnitType,
     ) {
     }
-    fn partial_visit_bool_type(&mut self, BoolType { token: _, id: _ }: &mut BoolType) {}
     fn partial_visit_idk_type(&mut self, IdkType { token: _, id: _ }: &mut IdkType) {}
     fn partial_visit_array_type(
         &mut self,
@@ -708,16 +693,13 @@ where
         self.partial_visit_expression(expression);
     }
 
-    fn visit_number_expression(
+    fn visit_literal_expression(
         &mut self,
-        expression: &mut NumberExpression,
+        expression: &mut LiteralExpression,
     ) -> Self::ExpressionOutput {
-        self.partial_visit_number_expression(expression);
+        self.partial_visit_literal_expression(expression);
     }
 
-    fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput {
-        self.partial_visit_bool_expression(expression);
-    }
     fn visit_array_expression(
         &mut self,
         expression: &mut ArrayExpression,
@@ -752,13 +734,13 @@ where
     ) -> Self::ExpressionOutput {
         self.partial_visit_variable_access_expression(expression);
     }
-
     fn visit_unary_expression(
         &mut self,
         expression: &mut UnaryExpression,
     ) -> Self::ExpressionOutput {
         self.partial_visit_unary_expression(expression);
     }
+
     fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
         self.partial_visit_cast_expression(expression);
     }
@@ -798,16 +780,12 @@ where
         self.partial_visit_type(type_);
     }
 
-    fn visit_int_type(&mut self, int_type: &mut IntType) -> Self::TypeOutput {
+    fn visit_simple_type(&mut self, int_type: &mut SimpleType) -> Self::TypeOutput {
         self.partial_visit_int_type(int_type);
     }
 
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
         self.partial_visit_unit_type(unit_type);
-    }
-
-    fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
-        self.partial_visit_bool_type(bool_type);
     }
 
     fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {

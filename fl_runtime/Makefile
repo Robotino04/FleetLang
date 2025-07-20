@@ -3,7 +3,7 @@ CXXFLAGS = $(CFLAGS) -std=c++2a
 LDFLAGS = -lvulkan
 
 
-all: example fl_runtime_declarations.bc fl_runtime.so
+all: example fl_runtime_declarations.bc fl_runtime.so testhook.so
 
 fl_runtime.o: fl_runtime.cpp Makefile
 	clang++ -c $(CXXFLAGS) -o fl_runtime.o fl_runtime.cpp
@@ -25,11 +25,13 @@ example.o: example.cpp Makefile
 compute.comp.spv: compute.comp Makefile
 	glslc compute.comp -o compute.comp.spv
 
+testhook.so: testhook.c
+	clang -fPIC -shared -o testhook.so testhook.c -ldl
+
 .PHONY: clean run all
 
-
 clean:
-	rm -f example example.o compute.comp.spv fl_runtime.o fl_runtime_declarations.bc fl_runtime.so
+	rm -f example example.o compute.comp.spv fl_runtime.o fl_runtime_declarations.bc fl_runtime.so testhook.so
 
 run: example
 	./example

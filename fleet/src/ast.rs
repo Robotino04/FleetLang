@@ -31,8 +31,7 @@ pub enum AstNode {
     ThreadExecutor(ThreadExecutor),
     GPUExecutor(GPUExecutor),
 
-    NumberExpression(NumberExpression),
-    BoolExpression(BoolExpression),
+    LiteralExpression(LiteralExpression),
     ArrayExpression(ArrayExpression),
     FunctionCallExpression(FunctionCallExpression),
     ArrayIndexExpression(ArrayIndexExpression),
@@ -47,9 +46,8 @@ pub enum AstNode {
     ArrayIndexLValue(ArrayIndexLValue),
     GroupingLValue(GroupingLValue),
 
-    IntType(IntType),
+    SimpleType(SimpleType),
     UnitType(UnitType),
-    BoolType(BoolType),
     IdkType(IdkType),
     ArrayType(ArrayType),
 }
@@ -89,8 +87,7 @@ impl HasID for AstNode {
             AstNode::BreakStatement(break_statement) => break_statement.get_id(),
             AstNode::SkipStatement(skip_statement) => skip_statement.get_id(),
 
-            AstNode::NumberExpression(number_expression) => number_expression.get_id(),
-            AstNode::BoolExpression(bool_expression) => bool_expression.get_id(),
+            AstNode::LiteralExpression(literal_expression) => literal_expression.get_id(),
             AstNode::ArrayExpression(array_expression) => array_expression.get_id(),
             AstNode::FunctionCallExpression(function_call_expression) => {
                 function_call_expression.get_id()
@@ -113,9 +110,8 @@ impl HasID for AstNode {
             AstNode::ArrayIndexLValue(array_lvalue) => array_lvalue.get_id(),
             AstNode::GroupingLValue(grouping_lvalue) => grouping_lvalue.get_id(),
 
-            AstNode::IntType(int_type) => int_type.get_id(),
+            AstNode::SimpleType(simple_type) => simple_type.get_id(),
             AstNode::UnitType(unit_type) => unit_type.get_id(),
-            AstNode::BoolType(bool_type) => bool_type.get_id(),
             AstNode::IdkType(idk_type) => idk_type.get_id(),
             AstNode::ArrayType(array_type) => array_type.get_id(),
         }
@@ -270,10 +266,9 @@ pub trait AstVisitor {
     // expressions
     fn visit_expression(&mut self, expression: &mut Expression) -> Self::ExpressionOutput {
         match expression {
-            Expression::Number(number_expression) => {
-                self.visit_number_expression(number_expression)
+            Expression::Literal(literal_expression) => {
+                self.visit_literal_expression(literal_expression)
             }
-            Expression::Bool(bool_expression) => self.visit_bool_expression(bool_expression),
             Expression::Array(array_expression) => self.visit_array_expression(array_expression),
             Expression::FunctionCall(function_call_expression) => {
                 self.visit_function_call_expression(function_call_expression)
@@ -297,11 +292,10 @@ pub trait AstVisitor {
             }
         }
     }
-    fn visit_number_expression(
+    fn visit_literal_expression(
         &mut self,
-        expression: &mut NumberExpression,
+        expression: &mut LiteralExpression,
     ) -> Self::ExpressionOutput;
-    fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput;
     fn visit_array_expression(
         &mut self,
         expression: &mut ArrayExpression,
@@ -352,17 +346,15 @@ pub trait AstVisitor {
     // types
     fn visit_type(&mut self, type_: &mut Type) -> Self::TypeOutput {
         match type_ {
-            Type::Int(int_type) => self.visit_int_type(int_type),
+            Type::Simple(simple_type) => self.visit_simple_type(simple_type),
             Type::Unit(unit_type) => self.visit_unit_type(unit_type),
-            Type::Bool(bool_type) => self.visit_bool_type(bool_type),
             Type::Idk(idk_type) => self.visit_idk_type(idk_type),
             Type::Array(array_type) => self.visit_array_type(array_type),
         }
     }
 
-    fn visit_int_type(&mut self, int_type: &mut IntType) -> Self::TypeOutput;
+    fn visit_simple_type(&mut self, simple_type: &mut SimpleType) -> Self::TypeOutput;
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput;
-    fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput;
     fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput;
     fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput;
 }
@@ -444,13 +436,13 @@ impl HasID for FunctionBody {
 }
 
 #[derive(Clone, Debug)]
-pub struct IntType {
+pub struct SimpleType {
     pub token: Token,
     pub type_: RuntimeType,
     pub id: NodeID,
 }
 
-generate_ast_requirements!(IntType, unwrap_int_type);
+generate_ast_requirements!(SimpleType, unwrap_simple_type);
 
 #[derive(Clone, Debug)]
 pub struct UnitType {
@@ -460,14 +452,6 @@ pub struct UnitType {
 }
 
 generate_ast_requirements!(UnitType, unwrap_unit_type);
-
-#[derive(Clone, Debug)]
-pub struct BoolType {
-    pub token: Token,
-    pub id: NodeID,
-}
-
-generate_ast_requirements!(BoolType, unwrap_bool_type);
 
 #[derive(Clone, Debug)]
 pub struct IdkType {
@@ -490,9 +474,8 @@ generate_ast_requirements!(ArrayType, unwrap_array_type);
 
 #[derive(Clone, Debug)]
 pub enum Type {
-    Int(IntType),
+    Simple(SimpleType),
     Unit(UnitType),
-    Bool(BoolType),
     Idk(IdkType),
     Array(ArrayType),
 }
@@ -500,9 +483,8 @@ pub enum Type {
 impl From<Type> for AstNode {
     fn from(value: Type) -> Self {
         match value {
-            Type::Int(int_type) => int_type.into(),
+            Type::Simple(simple_type) => simple_type.into(),
             Type::Unit(unit_type) => unit_type.into(),
-            Type::Bool(bool_type) => bool_type.into(),
             Type::Idk(idk_type) => idk_type.into(),
             Type::Array(array_type) => array_type.into(),
         }
@@ -512,9 +494,8 @@ impl From<Type> for AstNode {
 impl HasID for Type {
     fn get_id(&self) -> NodeID {
         match self {
-            Type::Int(int_type) => int_type.get_id(),
+            Type::Simple(simple_type) => simple_type.get_id(),
             Type::Unit(unit_type) => unit_type.get_id(),
-            Type::Bool(bool_type) => bool_type.get_id(),
             Type::Idk(idk_type) => idk_type.get_id(),
             Type::Array(array_type) => array_type.get_id(),
         }
@@ -785,21 +766,20 @@ pub enum Associativity {
     Right,
     Both,
 }
-#[derive(Clone, Debug)]
-pub struct NumberExpression {
-    pub value: u64,
-    pub token: Token,
-    pub id: NodeID,
-}
-generate_ast_requirements!(NumberExpression, unwrap_number_expression);
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LiteralKind {
+    Number(u64),
+    Float(f64),
+    Bool(bool),
+}
 #[derive(Clone, Debug)]
-pub struct BoolExpression {
-    pub value: bool,
+pub struct LiteralExpression {
+    pub value: LiteralKind,
     pub token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(BoolExpression, unwrap_bool_expression);
+generate_ast_requirements!(LiteralExpression, unwrap_literal_expression);
 
 #[derive(Clone, Debug)]
 pub struct ArrayExpression {
@@ -897,8 +877,7 @@ generate_ast_requirements!(
 
 #[derive(Clone, Debug)]
 pub enum Expression {
-    Number(NumberExpression),
-    Bool(BoolExpression),
+    Literal(LiteralExpression),
     Array(ArrayExpression),
     FunctionCall(FunctionCallExpression),
     ArrayIndex(ArrayIndexExpression),
@@ -915,8 +894,7 @@ impl Expression {
     pub fn get_precedence(&self) -> usize {
         use BinaryOperation::*;
         match self {
-            Expression::Number { .. } => 0,
-            Expression::Bool { .. } => 0,
+            Expression::Literal { .. } => 0,
             Expression::Array { .. } => 0,
             Expression::ArrayIndex { .. } => 0,
             Expression::FunctionCall { .. } => 0,
@@ -956,8 +934,7 @@ impl Expression {
     pub fn get_associativity(&self) -> Associativity {
         use BinaryOperation::*;
         match self {
-            Expression::Number { .. } => Associativity::Both,
-            Expression::Bool { .. } => Associativity::Both,
+            Expression::Literal { .. } => Associativity::Both,
             Expression::Array { .. } => Associativity::Both,
             Expression::ArrayIndex { .. } => Associativity::Left,
             Expression::FunctionCall { .. } => Associativity::Both,
@@ -985,8 +962,7 @@ impl Expression {
 impl HasID for Expression {
     fn get_id(&self) -> NodeID {
         match self {
-            Expression::Number(expr) => expr.get_id(),
-            Expression::Bool(expr) => expr.get_id(),
+            Expression::Literal(expr) => expr.get_id(),
             Expression::Array(expr) => expr.get_id(),
             Expression::FunctionCall(expr) => expr.get_id(),
             Expression::ArrayIndex(expr) => expr.get_id(),
@@ -1003,8 +979,7 @@ impl HasID for Expression {
 impl From<Expression> for AstNode {
     fn from(value: Expression) -> Self {
         match value {
-            Expression::Number(number_expression) => number_expression.into(),
-            Expression::Bool(bool_expression) => bool_expression.into(),
+            Expression::Literal(literal_expression) => literal_expression.into(),
             Expression::Array(array_expression) => array_expression.into(),
             Expression::FunctionCall(function_call_expression) => function_call_expression.into(),
             Expression::ArrayIndex(array_index_expression) => array_index_expression.into(),

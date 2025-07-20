@@ -36,6 +36,9 @@
 - `let x = () -> @extern "asd";` panics
 - real mutability/constant system
 - array-to-array assignments in glsl (maybe c as well)
+- test bigger-than-float float literals with c and glsl backend
+- remove "test.fl" as fallback in fleetc
+- remove lvalues maybe?
 
 
 ## Building
@@ -68,7 +71,7 @@ This should compile FleetC (the compiler) to `target/debug/fleetc` and FleetLS (
 ### Tests
 Tests can only be run on Linux for now as they rely on loading `libvulkan` and `libstdc++` at runtime.
 If you aren't using using nix, you need to ensure those libraries are installed and can be found by dlopen.
-Make sure to also compile `fl_runtime.so` in case you aren't using the Makefile.
+Make sure to also compile `fl_runtime.so` and `testhook.so` in case you aren't using the Makefile.
 
 
 ## Setup (FleetLS)

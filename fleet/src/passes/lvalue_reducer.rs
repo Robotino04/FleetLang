@@ -3,8 +3,8 @@ use std::{cell::RefCell, mem::swap, rc::Rc};
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, AstVisitor, BinaryExpression,
-        BoolExpression, CastExpression, Expression, FunctionCallExpression, GroupingLValue, HasID,
-        LValue, NumberExpression, OnStatement, PerNodeData, Type, UnaryExpression,
+        CastExpression, Expression, FunctionCallExpression, GroupingLValue, HasID, LValue,
+        LiteralExpression, OnStatement, PerNodeData, Type, UnaryExpression,
         VariableAccessExpression, VariableAssignmentExpression, VariableLValue,
     },
     infra::{ErrorSeverity, FleetError},
@@ -12,7 +12,6 @@ use crate::{
         partial_visitor::PartialAstVisitor,
         type_propagation::{
             Function, RuntimeType, TypeAnalysisData, UnionFindSet, UnionFindSetPtr, Variable,
-            VariableID,
         },
     },
 };
@@ -78,8 +77,7 @@ impl<'errors, 'inputs> LValueReducer<'errors, 'inputs> {
 
     fn is_expression_equal(&self, a: &Expression, b: &Expression) -> Option<bool> {
         match a {
-            Expression::Number(a) => self.is_number_expression_equal(a, b),
-            Expression::Bool(a) => self.is_bool_expression_equal(a, b),
+            Expression::Literal(a) => self.is_literal_expression_equal(a, b),
             Expression::Array(a) => self.is_array_expression_equal(a, b),
             Expression::FunctionCall(a) => self.is_function_call_expression_equal(a, b),
             Expression::ArrayIndex(a) => self.is_array_index_expression_equal(a, b),
@@ -92,21 +90,14 @@ impl<'errors, 'inputs> LValueReducer<'errors, 'inputs> {
         }
     }
 
-    fn is_number_expression_equal(&self, a: &NumberExpression, b: &Expression) -> Option<bool> {
+    fn is_literal_expression_equal(&self, a: &LiteralExpression, b: &Expression) -> Option<bool> {
         Some(match b {
-            Expression::Number(b) => {
+            Expression::Literal(b) => {
                 a.value == b.value
                     && self.type_sets.get(*self.type_data.get(&a.id)?)
                         == self.type_sets.get(*self.type_data.get(&b.id)?)
             }
-            Expression::Grouping(b) => self.is_number_expression_equal(a, &b.subexpression)?,
-            _ => false,
-        })
-    }
-    fn is_bool_expression_equal(&self, a: &BoolExpression, b: &Expression) -> Option<bool> {
-        Some(match b {
-            Expression::Bool(b) => a.value == b.value,
-            Expression::Grouping(b) => self.is_bool_expression_equal(a, &b.subexpression)?,
+            Expression::Grouping(b) => self.is_literal_expression_equal(a, &b.subexpression)?,
             _ => false,
         })
     }

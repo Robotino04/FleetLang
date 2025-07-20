@@ -1,6 +1,8 @@
 mod arrays;
 mod binary_op;
+mod binary_op_float;
 mod boolean_op;
+mod boolean_op_float;
 mod comments;
 mod conditional_statements;
 mod function;
@@ -9,4 +11,5 @@ mod on_gpu;
 mod sized_integers;
 mod type_inference;
 mod unary_op;
+mod unary_op_float;
 mod variables;

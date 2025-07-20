@@ -2,9 +2,11 @@
 use std::fmt::Debug;
 use std::{
     ffi::{CStr, CString, c_char, c_void},
+    fs::File,
+    io::Read,
     mem::MaybeUninit,
     path::PathBuf,
-    process::Command,
+    process::{Command, Stdio},
 };
 
 use inkwell::{
@@ -20,50 +22,67 @@ use fleet::{
     },
     tokenizer::SourceLocation,
 };
-use libc::{RTLD_DI_LINKMAP, RTLD_LAZY, dlclose, dlinfo, dlopen};
+use libc::{RTLD_DI_LINKMAP, RTLD_LAZY, dlclose, dlinfo, dlopen, mkfifo};
 use tempfile::{TempDir, tempdir};
 
 pub trait SubprocessTestableReturnType {
-    fn into_return_value(self) -> i8;
+    fn expected_bytes(self) -> Vec<u8>;
+    fn type_signifier(&self) -> String;
 }
 impl SubprocessTestableReturnType for i64 {
-    fn into_return_value(self) -> i8 {
-        assert_eq!(
-            self as i8 as i64, self,
-            "{} (i64) would be truncated and can't be tested against",
-            self
-        );
-        self as i8
+    fn expected_bytes(self) -> Vec<u8> {
+        self.to_ne_bytes().to_vec()
+    }
+    fn type_signifier(&self) -> String {
+        "i64".to_string()
     }
 }
 impl SubprocessTestableReturnType for i32 {
-    fn into_return_value(self) -> i8 {
-        assert_eq!(
-            self as i8 as i32, self,
-            "{} (i32) would be truncated and can't be tested against",
-            self
-        );
-        self as i8
+    fn expected_bytes(self) -> Vec<u8> {
+        self.to_ne_bytes().to_vec()
+    }
+    fn type_signifier(&self) -> String {
+        "i32".to_string()
     }
 }
 impl SubprocessTestableReturnType for i16 {
-    fn into_return_value(self) -> i8 {
-        assert_eq!(
-            self as i8 as i16, self,
-            "{} (i16) would be truncated and can't be tested against",
-            self
-        );
-        self as i8
+    fn expected_bytes(self) -> Vec<u8> {
+        self.to_ne_bytes().to_vec()
+    }
+    fn type_signifier(&self) -> String {
+        "i16".to_string()
     }
 }
 impl SubprocessTestableReturnType for i8 {
-    fn into_return_value(self) -> i8 {
-        self
+    fn expected_bytes(self) -> Vec<u8> {
+        self.to_ne_bytes().to_vec()
+    }
+    fn type_signifier(&self) -> String {
+        "i8".to_string()
     }
 }
 impl SubprocessTestableReturnType for bool {
-    fn into_return_value(self) -> i8 {
-        self as i8
+    fn expected_bytes(self) -> Vec<u8> {
+        if self { vec![0x01] } else { vec![0x00] }
+    }
+    fn type_signifier(&self) -> String {
+        "bool".to_string()
+    }
+}
+impl SubprocessTestableReturnType for f32 {
+    fn expected_bytes(self) -> Vec<u8> {
+        self.to_ne_bytes().to_vec()
+    }
+    fn type_signifier(&self) -> String {
+        "f32".to_string()
+    }
+}
+impl SubprocessTestableReturnType for f64 {
+    fn expected_bytes(self) -> Vec<u8> {
+        self.to_ne_bytes().to_vec()
+    }
+    fn type_signifier(&self) -> String {
+        "f64".to_string()
     }
 }
 
@@ -167,6 +186,10 @@ pub fn assert_compile_and_return_value<ReturnType>(
 ) where
     ReturnType: Debug + PartialEq + SubprocessTestableReturnType + Clone,
 {
+    assert_eq!(
+        function_name, "main",
+        "Only the main function can be tested in a subprocess"
+    );
     assert_is_formatted(src.trim());
     println!("Source is formatted");
     assert_compile_and_return_value_unformatted::<ReturnType>(
@@ -175,7 +198,7 @@ pub fn assert_compile_and_return_value<ReturnType>(
         expected_return_value.clone(),
     );
     println!("LLVM execution succeeded");
-    assert_compile_and_output_subprocess(src, expected_return_value.into_return_value(), "", "");
+    assert_compile_and_output_subprocess(src, expected_return_value, "", "");
     println!("Subprocess execution succeeded");
 }
 
@@ -196,6 +219,9 @@ pub fn assert_compile_and_return_value_unformatted<ReturnType>(
         .expect("No stats available for function to test")
         .uses_runtime
         .at_least_maybe();
+
+    assert_eq!(function_name, "main");
+    let function_name = "fleet_main";
 
     let actual_return_value =
         execute_function::<ReturnType>(&llvmcompilation_output, function_name, needs_runtime);
@@ -371,13 +397,29 @@ fn execute_function<ReturnType>(
         .module
         .create_jit_execution_engine(OptimizationLevel::None)
         .unwrap();
+
+    let initialize_fleet = unsafe {
+        execution_engine
+            .get_function::<unsafe extern "C" fn() -> ()>("initialize_fleet")
+            .unwrap()
+    };
+    let deinitialize_fleet = unsafe {
+        execution_engine
+            .get_function::<unsafe extern "C" fn() -> ()>("deinitialize_fleet")
+            .unwrap()
+    };
     let main_function = unsafe {
         execution_engine
             .get_function::<unsafe extern "C" fn() -> ReturnType>(function_name)
             .unwrap()
     };
 
-    unsafe { main_function.call() }
+    unsafe {
+        initialize_fleet.call();
+        let retvalue = main_function.call();
+        deinitialize_fleet.call();
+        retvalue
+    }
 }
 
 fn assert_is_formatted(src: &str) {
@@ -397,7 +439,7 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
     let needs_runtime = fixup_output
         .stats
         .get(&fixup_output.program.id)
-        .expect("No stats available for function to test")
+        .expect("No stats-rdynamic available for function to test")
         .uses_runtime
         .at_least_maybe();
 
@@ -433,6 +475,7 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
 
     let mut clang_cmd = Command::new("clang++");
     clang_cmd.arg("-fdiagnostics-color=always");
+    clang_cmd.arg("-rdynamic");
     clang_cmd.arg(object_file.to_str().unwrap());
     clang_cmd.args(["-o", binary_file.to_str().unwrap()]);
 
@@ -500,6 +543,7 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
 
     let mut clang_link = Command::new("clang++");
     clang_link.arg("-fdiagnostics-color=always");
+    clang_link.arg("-rdynamic");
     clang_link.arg(obj_file.to_str().unwrap());
     clang_link.args(["-o", binary_file.to_str().unwrap()]);
 
@@ -554,15 +598,71 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
 
 fn run_and_check_output(
     binary: String,
-    expected_exit_code: impl SubprocessTestableReturnType,
+    expected_result: impl SubprocessTestableReturnType,
     expected_stdout: impl AsRef<str>,
     expected_stderr: impl AsRef<str>,
+    dir: &TempDir,
 ) {
-    let output = Command::new(binary).output().unwrap();
+    let testhook_lib = dir.path().join("testhook.so");
+    std::fs::write(
+        &testhook_lib,
+        include_bytes!("../../../fl_runtime/testhook.so"),
+    )
+    .unwrap();
+
+    let child_pipe_path = dir.path().join("child_pipe");
+
+    if unsafe {
+        mkfifo(
+            CString::new(child_pipe_path.to_str().unwrap())
+                .unwrap()
+                .as_c_str()
+                .as_ptr(),
+            0o666,
+        )
+    } != 0
+    {
+        panic!("Failed to create named pipe");
+    };
+
+    println!("Starting testee");
+    let cmd = Command::new(binary)
+        .env("FLEETC_TEST_PIPE", &child_pipe_path)
+        .env("FLEETC_TEST_TYPE", expected_result.type_signifier())
+        .env("LD_PRELOAD", &testhook_lib)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    println!("opening file");
+    let mut child_pipe = File::open(child_pipe_path).unwrap();
+    println!("opened file");
+
+    let expected = expected_result.expected_bytes();
+
+    let result = {
+        let mut result = vec![0u8; expected.len()];
+        child_pipe.read_exact(&mut result).map(|_| result)
+    };
+
+    let output = cmd.wait_with_output().unwrap();
+
+    println!("Testee finished");
+
+    println!(
+        "stdout:\n{}",
+        String::from_utf8(output.stdout.clone()).unwrap()
+    );
+    println!(
+        "stderr:\n{}",
+        String::from_utf8(output.stderr.clone()).unwrap()
+    );
+
+    let result = result.unwrap();
 
     assert_eq!(
-        output.status.code().unwrap() as i8,
-        expected_exit_code.into_return_value(),
+        result, expected,
         "exit code doesn't match (left should be right)"
     );
     assert_eq!(
@@ -594,6 +694,7 @@ pub fn assert_compile_and_output_subprocess(
             expected_exit_code.clone(),
             expected_stdout.clone(),
             expected_stderr.clone(),
+            &llvm_tmpdir,
         );
         println!("LLVM subprocess execution succeeded");
     }
@@ -606,6 +707,7 @@ pub fn assert_compile_and_output_subprocess(
             expected_exit_code.clone(),
             expected_stdout.clone(),
             expected_stderr.clone(),
+            &c_tmpdir,
         );
         println!("C subprocess execution succeeded");
     }

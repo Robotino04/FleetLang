@@ -11,11 +11,11 @@ fn _2d_array_in_expression_statement() {
             }
             let main = () -> i32 {
                 foo();
-                return 0;
+                return 1024;
             }
         "##},
         "main",
-        0,
+        1024,
     );
 }
 

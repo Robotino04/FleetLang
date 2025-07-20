@@ -1,10 +1,10 @@
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
+        BinaryExpression, BlockStatement,  BreakStatement, CastExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-        IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
+        SimpleType, LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
         SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
         UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
@@ -169,11 +169,7 @@ impl AstVisitor for AddTrailingTriviaPass {
         self.visit_token(&mut executor.close_bracket_token_2);
     }
 
-    fn visit_number_expression(&mut self, expression: &mut NumberExpression) {
-        self.visit_token(&mut expression.token);
-    }
-
-    fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput {
+    fn visit_literal_expression(&mut self, expression: &mut LiteralExpression) {
         self.visit_token(&mut expression.token);
     }
 
@@ -234,16 +230,12 @@ impl AstVisitor for AddTrailingTriviaPass {
         self.visit_token(&mut lvalue.close_paren_token);
     }
 
-    fn visit_int_type(&mut self, int_type: &mut IntType) {
+    fn visit_simple_type(&mut self, int_type: &mut SimpleType) {
         self.visit_token(&mut int_type.token);
     }
 
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
         self.visit_token(&mut unit_type.close_paren_token);
-    }
-
-    fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
-        self.visit_token(&mut bool_type.token);
     }
 
     fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {

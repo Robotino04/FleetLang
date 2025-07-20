@@ -1,13 +1,13 @@
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
-        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-        IntType, NumberExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        BinaryExpression, BlockStatement, BreakStatement, CastExpression, ExpressionStatement,
+        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
+        GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression,
+        OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
+        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     document_model::DocumentElement,
     tokenizer::{Keyword, Token, TokenType, Trivia, TriviaKind},
@@ -85,6 +85,8 @@ impl AstToDocumentModelConverter {
             Keyword::I16 => "i16",
             Keyword::I32 => "i32",
             Keyword::I64 => "i64",
+            Keyword::F32 => "f32",
+            Keyword::F64 => "f64",
             Keyword::Bool => "bool",
             Keyword::Idk => "idk",
             Keyword::As => "as",
@@ -109,7 +111,8 @@ impl AstToDocumentModelConverter {
             TokenType::Keyword(keyword) => &self.keyword_string(keyword),
             TokenType::Identifier(ref id) => id.as_str(),
 
-            TokenType::Number(n) => &n.to_string(),
+            TokenType::Integer(_, ref str) => str,
+            TokenType::Float(_, ref str) => str,
             TokenType::StringLiteral(ref str) => &('"'.to_string() + str + "\""),
 
             TokenType::UnknownCharacters(ref chars) => chars,
@@ -661,14 +664,10 @@ impl AstVisitor for AstToDocumentModelConverter {
         ])
     }
 
-    fn visit_number_expression(
+    fn visit_literal_expression(
         &mut self,
-        expression: &mut NumberExpression,
+        expression: &mut LiteralExpression,
     ) -> Self::ExpressionOutput {
-        self.token_to_element(&expression.token)
-    }
-
-    fn visit_bool_expression(&mut self, expression: &mut BoolExpression) -> Self::ExpressionOutput {
         self.token_to_element(&expression.token)
     }
 
@@ -908,7 +907,7 @@ impl AstVisitor for AstToDocumentModelConverter {
         ])
     }
 
-    fn visit_int_type(&mut self, type_: &mut IntType) -> Self::TypeOutput {
+    fn visit_simple_type(&mut self, type_: &mut SimpleType) -> Self::TypeOutput {
         self.token_to_element(&type_.token)
     }
 
@@ -917,10 +916,6 @@ impl AstVisitor for AstToDocumentModelConverter {
             self.token_to_element(&unit_type.open_paren_token),
             self.token_to_element(&unit_type.close_paren_token),
         ])
-    }
-
-    fn visit_bool_type(&mut self, bool_type: &mut BoolType) -> Self::TypeOutput {
-        self.token_to_element(&bool_type.token)
     }
 
     fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {

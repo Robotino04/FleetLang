@@ -3,12 +3,12 @@ use std::{cell::RefCell, collections::HashSet, rc::Rc, vec::Vec};
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BlockStatement, BoolExpression, BoolType, BreakStatement, CastExpression,
-        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-        IntType, NumberExpression, OnStatement, PerNodeData, Program, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor,
-        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        BinaryExpression, BlockStatement, BreakStatement, CastExpression, ExpressionStatement,
+        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
+        GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression,
+        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
@@ -618,26 +618,13 @@ impl AstVisitor for StatTracker<'_, '_> {
         stat
     }
 
-    fn visit_number_expression(
+    fn visit_literal_expression(
         &mut self,
-        NumberExpression {
+        LiteralExpression {
             value: _,
             token: _,
             id,
-        }: &mut NumberExpression,
-    ) -> Self::ExpressionOutput {
-        let stat = NodeStats::nothing();
-        self.stats.insert(*id, stat.clone());
-        stat
-    }
-
-    fn visit_bool_expression(
-        &mut self,
-        BoolExpression {
-            value: _,
-            token: _,
-            id,
-        }: &mut BoolExpression,
+        }: &mut LiteralExpression,
     ) -> Self::ExpressionOutput {
         let stat = NodeStats::nothing();
         self.stats.insert(*id, stat.clone());
@@ -862,13 +849,13 @@ impl AstVisitor for StatTracker<'_, '_> {
         stat
     }
 
-    fn visit_int_type(
+    fn visit_simple_type(
         &mut self,
-        IntType {
+        SimpleType {
             token: _,
             type_: _,
             id,
-        }: &mut IntType,
+        }: &mut SimpleType,
     ) -> Self::TypeOutput {
         let stat = NodeStats::nothing();
         self.stats.insert(*id, stat.clone());
@@ -883,12 +870,6 @@ impl AstVisitor for StatTracker<'_, '_> {
             id,
         }: &mut UnitType,
     ) -> Self::TypeOutput {
-        let stat = NodeStats::nothing();
-        self.stats.insert(*id, stat.clone());
-        stat
-    }
-
-    fn visit_bool_type(&mut self, BoolType { token: _, id }: &mut BoolType) -> Self::TypeOutput {
         let stat = NodeStats::nothing();
         self.stats.insert(*id, stat.clone());
         stat

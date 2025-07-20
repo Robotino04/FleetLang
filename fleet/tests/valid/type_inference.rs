@@ -41,9 +41,7 @@ fn missing_variable_type() {
                 return a;
             }
         "##},
-        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
-        // limited to main returning an i32. Tests should whenever possible call real main
-        "fleet_main",
+        "main",
         true,
     );
 }
@@ -92,5 +90,18 @@ fn chained_as_idk_casts() {
             line: 2,
             column: 11,
         },
+    );
+}
+
+#[test]
+fn as_bool_dont_truncate() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                return 2 as bool as i32;
+            }
+        "##},
+        "main",
+        1,
     );
 }

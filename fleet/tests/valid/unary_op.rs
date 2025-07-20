@@ -49,9 +49,7 @@ fn not_false() {
                 return !false;
             }
         "##},
-        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
-        // limited to main returning an i32. Tests should whenever possible call real main
-        "fleet_main",
+        "main",
         true,
     );
 }
@@ -64,9 +62,7 @@ fn not_true() {
                 return !true;
             }
         "##},
-        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
-        // limited to main returning an i32. Tests should whenever possible call real main
-        "fleet_main",
+        "main",
         false,
     );
 }
@@ -79,9 +75,7 @@ fn nested_1() {
                 return !-3;
             }
         "##},
-        // HACK: this doesn't initialize the FL runtime and is only done so we aren't
-        // limited to main returning an i32. Tests should whenever possible call real main
-        "fleet_main",
+        "main",
         false,
     );
 }

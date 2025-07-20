@@ -103,15 +103,14 @@ fn main() {
     }
 
     let context = Context::create();
-    let Some(llvm_output) =
-        fixup_output.compile_llvm(&mut errors, &context, &analysis_output)
+    let Some(llvm_output) = fixup_output.compile_llvm(&mut errors, &context, &analysis_output)
     else {
         print_all_errors_and_message("LLVM compilation failed completely", &errors);
         exit(1);
     };
 
     println!("{}", generate_header("LLVM IR (unoptimized)", 50));
-    println!("{:#?}", llvm_output.module.to_string());
+    println!("{}", llvm_output.module.to_string());
 
     if errors
         .iter()
@@ -120,8 +119,7 @@ fn main() {
         print_all_errors_and_message("LLVM compilation failed partially", &errors);
     }
 
-    let Some(c_code) = fixup_output.compile_c(&mut errors, &analysis_output)
-    else {
+    let Some(c_code) = fixup_output.compile_c(&mut errors, &analysis_output) else {
         print_all_errors_and_message("C generation failed completely", &errors);
         exit(1);
     };
@@ -172,7 +170,7 @@ fn main() {
         .run_default_optimization_passes(&target_machine)
         .unwrap();
 
-    println!("{}", llvm_output.module.print_to_string().to_str().unwrap());
+    println!("{}", llvm_output.module.to_string());
 
     let output_path = Path::new("output.o");
     target_machine
