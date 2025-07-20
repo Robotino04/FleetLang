@@ -5,6 +5,7 @@ mod boolean_op;
 mod boolean_op_float;
 mod comments;
 mod conditional_statements;
+mod floats;
 mod function;
 mod loops;
 mod on_gpu;

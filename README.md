@@ -24,7 +24,6 @@
 - tuple types
 - structs
 - sum types
-- f32, f64
 - strings
 - comptime evaluation
 - comptime type eval for generics (similar to zig/hblang)
@@ -33,7 +32,6 @@
 - add way to get length of array
 - consistent error language style
 - add tests for on-statement bindings that modify state. make sure order is correct in llvm backend specifically
-- `let x = () -> @extern "asd";` panics
 - real mutability/constant system
 - array-to-array assignments in glsl (maybe c as well)
 - test bigger-than-float float literals with c and glsl backend
