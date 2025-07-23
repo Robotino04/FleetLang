@@ -11,7 +11,7 @@ use crate::{
     passes::{
         partial_visitor::PartialAstVisitor,
         type_propagation::{
-            Function, RuntimeType, TypeAnalysisData, UnionFindSet, UnionFindSetPtr, Variable,
+            RuntimeType, UnionFindSet, UnionFindSetPtr, Variable, VariableScope, VariableScopeStack,
         },
     },
 };
@@ -21,24 +21,32 @@ pub struct LValueReducer<'errors, 'inputs> {
     valid_lvalues: Option<Vec<LValue>>,
 
     variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
-    _function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
     type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
     type_sets: &'inputs UnionFindSet<RuntimeType>,
+    scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
+
+    is_top_level_lvalue: bool,
+    previous_lvalue_valid: bool,
 }
 
 impl<'errors, 'inputs> LValueReducer<'errors, 'inputs> {
     pub fn new(
         errors: &'errors mut Vec<FleetError>,
         valid_lvalues: Option<Vec<LValue>>,
-        analysis_data: &'inputs TypeAnalysisData,
+        type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
+        type_sets: &'inputs UnionFindSet<RuntimeType>,
+        variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
+        scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
     ) -> Self {
         Self {
             errors,
             valid_lvalues,
-            type_data: &analysis_data.type_data,
-            type_sets: &analysis_data.type_sets,
-            variable_data: &analysis_data.variable_data,
-            _function_data: &analysis_data.function_data,
+            type_data,
+            type_sets,
+            variable_data,
+            scope_data,
+            is_top_level_lvalue: true,
+            previous_lvalue_valid: true,
         }
     }
 
@@ -213,34 +221,70 @@ impl<'errors, 'inputs> PartialAstVisitor for LValueReducer<'errors, 'inputs> {
     fn partial_visit_variable_lvalue(&mut self, a: &mut VariableLValue) {
         let Some(valid_lvalues) = &self.valid_lvalues else {
             // everything is valid
+            self.previous_lvalue_valid = true;
             return;
         };
 
+        let is_defined_here = self
+            .scope_data
+            .get(&a.id)
+            .map(|scope| {
+                VariableScopeStack::from_scope(scope.clone())
+                    .get_write_noref(&a.name)
+                    .is_some()
+            })
+            .unwrap_or(false);
         if !valid_lvalues
             .iter()
             .any(|b| self.is_variable_lvalue_equal(a, b).unwrap_or(false))
+            && !is_defined_here
         {
-            self.errors.push(FleetError::from_node(
-                a,
-                "This lvalue isn't available here",
-                ErrorSeverity::Error,
-            ));
+            if self.is_top_level_lvalue {
+                self.errors.push(FleetError::from_node(
+                    a,
+                    "This lvalue isn't available here",
+                    ErrorSeverity::Error,
+                ));
+            }
+            self.previous_lvalue_valid = false
+        } else {
+            self.previous_lvalue_valid = true;
         }
     }
     fn partial_visit_array_index_lvalue(&mut self, a: &mut ArrayIndexLValue) {
+        let was_top_level = self.is_top_level_lvalue;
+
+        self.is_top_level_lvalue = true;
+        self.partial_visit_expression(&mut a.index);
+
+        self.is_top_level_lvalue = false;
+        self.partial_visit_lvalue(&mut a.array);
+
+        self.is_top_level_lvalue = was_top_level;
+
         let Some(valid_lvalues) = &self.valid_lvalues else {
             // everything is valid
+            self.is_top_level_lvalue = true;
             return;
         };
-        if !valid_lvalues
-            .iter()
-            .any(|b| self.is_array_index_lvalue_equal(a, b).unwrap_or(false))
+
+        if self.previous_lvalue_valid
+            || valid_lvalues
+                .iter()
+                .any(|b| self.is_array_index_lvalue_equal(a, b).unwrap_or(false))
         {
-            self.errors.push(FleetError::from_node(
-                a,
-                "This lvalue isn't available here",
-                ErrorSeverity::Error,
-            ));
+            // we either have full access or this index is allowed
+            self.previous_lvalue_valid = true;
+        } else {
+            // invalid because the child failed too
+            if self.is_top_level_lvalue {
+                self.errors.push(FleetError::from_node(
+                    a,
+                    "This lvalue isn't available here",
+                    ErrorSeverity::Error,
+                ));
+            }
+            self.previous_lvalue_valid = false;
         }
     }
     fn partial_visit_on_statement(

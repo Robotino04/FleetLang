@@ -92,7 +92,7 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
             .get(&main_body.get_id())
             .expect("scope data should exist before calling generate_glsl")
             .borrow()
-            .variable_map
+            .vars_and_refs()
             .iter()
             .filter(|(_name, variable)| !iterator_ids.contains(&variable.borrow().id))
             .filter(|(_name, variable)| {
@@ -115,8 +115,18 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
             })
             .collect_vec();
 
+        let mut rw_uniqueness_set = HashSet::new();
         let rw_buffer_definitions = bindings
             .into_iter()
+            .filter(|variable| {
+                rw_uniqueness_set.insert(
+                    variable_data
+                        .get(&variable.id)
+                        .expect("variable data should exist before calling generate_glsl")
+                        .borrow()
+                        .id,
+                )
+            })
             .filter(|variable| {
                 !iterator_ids.contains(
                     &variable_data
@@ -608,11 +618,9 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
 
         if let RuntimeType::ArrayOf {
             subtype: _,
-            size: _,
+            size: Some(size),
         } = *type_
         {
-            let num_bytes = self.runtime_type_to_byte_size(*type_);
-
             let lvalue_gen = self.visit_simple_binding(binding);
             let lvalue_temporary = self.mangle_variable(&ref_var.borrow().name);
 
@@ -626,7 +634,15 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
             let rvalue_gen =
                 format!("{rvalue_type} {rvalue_temporary}{rvalue_postfix} = {rvalue_out_value}");
 
-            let memcpy = format!("memcpy(&{lvalue_temporary}, {rvalue_temporary}, {num_bytes})");
+            let iterator = self.unique_temporary("i");
+
+            let memcpy = formatdoc! {
+                "
+                for (int {iterator} = 0; {iterator} < {size}; {iterator}++) {{
+                    {lvalue_temporary}[{iterator}] = {rvalue_temporary}[{iterator}];
+                }}
+                "
+            };
 
             Ok(formatdoc!(
                 "
@@ -1145,11 +1161,9 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
         );
         if let RuntimeType::ArrayOf {
             subtype: _,
-            size: _,
+            size: Some(size),
         } = *type_
         {
-            let num_bytes = self.runtime_type_to_byte_size(*type_);
-
             let lvalue_temporary = self.unique_temporary("lvalue");
             let PreStatementValue {
                 pre_statements: lvalue_pre_statements,
@@ -1171,7 +1185,15 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
             let rvalue_pre = format!("{rvalue_type} {rvalue_temporary}{rvalue_postfix};\n");
             let rvalue_gen = format!("{rvalue_temporary} = {rvalue_out_value}");
 
-            let memcpy = format!("memcpy({lvalue_temporary}, {rvalue_temporary}, {num_bytes})");
+            let iterator = self.unique_temporary("i");
+
+            let memcpy = formatdoc! {
+                "
+                for (int {iterator} = 0; {iterator} < {size}; {iterator}++) {{
+                    {lvalue_temporary}[{iterator}] = {rvalue_temporary}[{iterator}];
+                }}
+                "
+            };
 
             PreStatementValue {
                 pre_statements: lvalue_pre_statements + &rvalue_pre + &rvalue_pre_statements,

@@ -216,7 +216,15 @@ impl TypeAnalysisOutput {
         let mut id_generator = self.id_generator.clone();
         let mut program = self.program.clone();
 
-        LValueReducer::new(errors, None, &self.type_analysis_data).visit_program(&mut program);
+        LValueReducer::new(
+            errors,
+            None,
+            &self.type_analysis_data.type_data,
+            &self.type_analysis_data.type_sets,
+            &self.type_analysis_data.variable_data,
+            &self.type_analysis_data.scope_data,
+        )
+        .visit_program(&mut program);
         let stats = StatTracker::new(errors, &self.type_analysis_data).visit_program(&mut program);
 
         run_fix_passes(errors, &mut program, &mut id_generator);

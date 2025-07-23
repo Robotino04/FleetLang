@@ -414,10 +414,19 @@ pub struct Function {
 #[derive(Clone, Default, Debug)]
 pub struct VariableScope {
     pub variable_map: HashMap<String, Rc<RefCell<Variable>>>,
+    pub parent_references: HashMap<String, Rc<RefCell<Variable>>>,
     pub copy_from_parent: bool,
     pub is_read_guard: bool,
     pub is_write_guard: bool,
     pub parent: Option<Rc<RefCell<VariableScope>>>,
+}
+
+impl VariableScope {
+    pub fn vars_and_refs(&self) -> HashMap<String, Rc<RefCell<Variable>>> {
+        let mut map = self.variable_map.clone();
+        map.extend(self.parent_references.clone().drain());
+        map
+    }
 }
 
 #[derive(Default)]
@@ -426,7 +435,11 @@ pub struct VariableScopeStack {
 }
 
 impl VariableScopeStack {
-    pub fn get_read(&self, name: &str) -> Option<Rc<RefCell<Variable>>> {
+    pub fn from_scope(current: Rc<RefCell<VariableScope>>) -> Self {
+        Self { current }
+    }
+
+    pub fn get_read_noref(&self, name: &str) -> Option<Rc<RefCell<Variable>>> {
         let mut copy_from_parent_scopes = vec![];
 
         let mut current = Some(self.current.clone());
@@ -451,14 +464,14 @@ impl VariableScopeStack {
             for scope in copy_from_parent_scopes {
                 scope
                     .borrow_mut()
-                    .variable_map
+                    .parent_references
                     .insert(name.to_string(), res.clone());
             }
         }
 
         res
     }
-    pub fn get_write(&self, name: &str) -> Option<Rc<RefCell<Variable>>> {
+    pub fn get_write_noref(&self, name: &str) -> Option<Rc<RefCell<Variable>>> {
         let mut copy_from_parent_scopes = vec![];
 
         let mut current = Some(self.current.clone());
@@ -483,7 +496,80 @@ impl VariableScopeStack {
             for scope in copy_from_parent_scopes {
                 scope
                     .borrow_mut()
-                    .variable_map
+                    .parent_references
+                    .insert(name.to_string(), res.clone());
+            }
+        }
+
+        res
+    }
+
+    pub fn get_read(&self, name: &str) -> Option<Rc<RefCell<Variable>>> {
+        let mut copy_from_parent_scopes = vec![];
+
+        let mut current = Some(self.current.clone());
+
+        let mut res = None;
+        while let Some(scope) = current {
+            if let Some(value) = scope.borrow().variable_map.get(name) {
+                res = Some(value.clone());
+                break;
+            }
+            if let Some(value) = scope.borrow().parent_references.get(name) {
+                res = Some(value.clone());
+                break;
+            }
+            if scope.borrow().copy_from_parent {
+                copy_from_parent_scopes.push(scope.clone());
+            }
+            if scope.borrow().is_read_guard {
+                break;
+            }
+
+            current = scope.borrow().parent.clone();
+        }
+
+        if let Some(res) = res.clone() {
+            for scope in copy_from_parent_scopes {
+                scope
+                    .borrow_mut()
+                    .parent_references
+                    .insert(name.to_string(), res.clone());
+            }
+        }
+
+        res
+    }
+    pub fn get_write(&self, name: &str) -> Option<Rc<RefCell<Variable>>> {
+        let mut copy_from_parent_scopes = vec![];
+
+        let mut current = Some(self.current.clone());
+
+        let mut res = None;
+        while let Some(scope) = current {
+            if let Some(value) = scope.borrow().variable_map.get(name) {
+                res = Some(value.clone());
+                break;
+            }
+            if let Some(value) = scope.borrow().parent_references.get(name) {
+                res = Some(value.clone());
+                break;
+            }
+            if scope.borrow().copy_from_parent {
+                copy_from_parent_scopes.push(scope.clone());
+            }
+            if scope.borrow().is_write_guard {
+                break;
+            }
+
+            current = scope.borrow().parent.clone();
+        }
+
+        if let Some(res) = res.clone() {
+            for scope in copy_from_parent_scopes {
+                scope
+                    .borrow_mut()
+                    .parent_references
                     .insert(name.to_string(), res.clone());
             }
         }
@@ -808,7 +894,7 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         }: &mut ExpressionStatement,
     ) -> Self::StatementOutput {
-        let type_ = self.visit_expression(expression);
+        let _type = self.visit_expression(expression);
 
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
