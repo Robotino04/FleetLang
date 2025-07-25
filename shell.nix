@@ -22,6 +22,8 @@ in
       pkgs.vulkan-headers
       pkgs.vulkan-loader
       pkgs.vulkan-validation-layers
+
+      pkgs.vim.xxd
     ];
 
     env = {
