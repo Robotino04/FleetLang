@@ -1,13 +1,15 @@
+use itertools::Itertools;
+
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, ExpressionStatement,
         ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
         GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression,
-        OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor,
+        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     document_model::DocumentElement,
     tokenizer::{Keyword, Token, TokenType, Trivia, TriviaKind},
@@ -355,6 +357,7 @@ impl AstVisitor for AstToDocumentModelConverter {
         OnStatement {
             on_token,
             executor,
+            iterators,
             open_paren_token,
             bindings,
             close_paren_token,
@@ -366,7 +369,33 @@ impl AstVisitor for AstToDocumentModelConverter {
             DocumentElement::CollapsableSpace,
             vec![
                 self.token_to_element(on_token),
-                self.visit_executor(executor),
+                DocumentElement::Concatenation(vec![
+                    self.visit_executor(executor),
+                    DocumentElement::Concatenation(
+                        iterators
+                            .iter_mut()
+                            .map(
+                                |OnStatementIterator {
+                                     open_bracket_token,
+                                     binding,
+                                     equal_token,
+                                     max_value,
+                                     close_bracket_token,
+                                 }| {
+                                    vec![
+                                        self.token_to_element(open_bracket_token),
+                                        self.visit_simple_binding(binding),
+                                        DocumentElement::CollapsableSpace,
+                                        self.token_to_element(equal_token),
+                                        DocumentElement::CollapsableSpace,
+                                        self.visit_expression(max_value),
+                                        self.token_to_element(close_bracket_token),
+                                    ]
+                                },
+                            )
+                            .concat(),
+                    ),
+                ]),
                 DocumentElement::Concatenation(vec![
                     self.token_to_element(open_paren_token),
                     DocumentElement::spaced_concatentation(
@@ -636,14 +665,9 @@ impl AstVisitor for AstToDocumentModelConverter {
             host,
             dot_token,
             gpus_token,
-            open_bracket_token_1,
+            open_bracket_token: open_bracket_token_1,
             gpu_index,
-            close_bracket_token_1,
-            open_bracket_token_2,
-            iterator,
-            equal_token,
-            max_value,
-            close_bracket_token_2,
+            close_bracket_token: close_bracket_token_1,
             id: _,
         }: &mut GPUExecutor,
     ) -> Self::ExecutorOutput {
@@ -654,13 +678,6 @@ impl AstVisitor for AstToDocumentModelConverter {
             self.token_to_element(open_bracket_token_1),
             self.visit_expression(gpu_index),
             self.token_to_element(close_bracket_token_1),
-            self.token_to_element(open_bracket_token_2),
-            self.visit_simple_binding(iterator),
-            DocumentElement::CollapsableSpace,
-            self.token_to_element(equal_token),
-            DocumentElement::CollapsableSpace,
-            self.visit_expression(max_value),
-            self.token_to_element(close_bracket_token_2),
         ])
     }
 

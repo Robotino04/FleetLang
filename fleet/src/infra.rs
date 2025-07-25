@@ -260,13 +260,14 @@ impl FixupOutput {
         {
             return None;
         }
-        let ir_generator = IrGenerator::new(
+        match IrGenerator::new(
             context,
             errors,
             &self.stats,
-            &type_analysis_output.type_analysis_data,
-        );
-        match ir_generator.visit_program(&mut self.program.clone()) {
+            &mut type_analysis_output.type_analysis_data.clone(),
+        )
+        .visit_program(&mut self.program.clone())
+        {
             Ok(module) => Some(LLVMCompilationOutput { module }),
             Err(error) => {
                 errors.push(FleetError {
@@ -314,7 +315,7 @@ impl FixupOutput {
                 variable_data,
                 function_data,
                 type_data,
-                type_sets,
+                &mut type_sets.clone(),
                 scope_data,
                 &self.stats,
             )

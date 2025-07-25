@@ -1,10 +1,10 @@
 use crate::ast::{
     ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
-    BinaryExpression, BlockStatement,  BreakStatement, CastExpression,
-    ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-    FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-    SimpleType, LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-    SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
+    BinaryExpression, BlockStatement, BreakStatement, CastExpression, ExpressionStatement,
+    ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor,
+    GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression, OnStatement,
+    OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
+    SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
     VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
     VariableLValue, WhileLoopStatement,
 };
@@ -202,6 +202,20 @@ impl AstVisitor for FindContainingNodePass {
         let left_bound = self.visit_token(&on_stmt.on_token)?.0;
         self.visit_token(&on_stmt.open_paren_token)?;
         self.visit_executor(&mut on_stmt.executor)?;
+        for OnStatementIterator {
+            open_bracket_token,
+            binding,
+            equal_token,
+            max_value,
+            close_bracket_token,
+        } in &mut on_stmt.iterators
+        {
+            self.visit_token(open_bracket_token)?;
+            self.visit_simple_binding(binding)?;
+            self.visit_token(equal_token)?;
+            self.visit_expression(max_value)?;
+            self.visit_token(close_bracket_token)?;
+        }
         self.visit_token(&on_stmt.close_paren_token)?;
         let right_bound = self.visit_statement(&mut on_stmt.body)?.1;
 
@@ -419,28 +433,18 @@ impl AstVisitor for FindContainingNodePass {
             host,
             dot_token,
             gpus_token,
-            open_bracket_token_1,
+            open_bracket_token,
             gpu_index,
-            close_bracket_token_1,
-            open_bracket_token_2,
-            iterator,
-            equal_token,
-            max_value,
-            close_bracket_token_2,
+            close_bracket_token,
             id: _,
         } = executor;
 
         let left_bound = self.visit_executor_host(host)?.0;
         self.visit_token(dot_token)?;
         self.visit_token(gpus_token)?;
-        self.visit_token(open_bracket_token_1)?;
+        self.visit_token(open_bracket_token)?;
         self.visit_expression(gpu_index)?;
-        self.visit_token(close_bracket_token_1)?;
-        self.visit_token(open_bracket_token_2)?;
-        self.visit_simple_binding(iterator)?;
-        self.visit_token(equal_token)?;
-        self.visit_expression(max_value)?;
-        let right_bound = self.visit_token(close_bracket_token_2)?.1;
+        let right_bound = self.visit_token(close_bracket_token)?.1;
 
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());

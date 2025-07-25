@@ -4,7 +4,7 @@ use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, AstVisitor, BinaryExpression,
         CastExpression, Expression, FunctionCallExpression, GroupingLValue, HasID, LValue,
-        LiteralExpression, OnStatement, PerNodeData, Type, UnaryExpression,
+        LiteralExpression, OnStatement, OnStatementIterator, PerNodeData, Type, UnaryExpression,
         VariableAccessExpression, VariableAssignmentExpression, VariableLValue,
     },
     infra::{ErrorSeverity, FleetError},
@@ -154,7 +154,7 @@ impl<'errors, 'inputs> LValueReducer<'errors, 'inputs> {
                 let a_data = self.variable_data.get(&a.id)?.borrow();
                 let b_data = self.variable_data.get(&b.id)?.borrow();
 
-                a_data.id == b_data.id && a_data.is_constant && b_data.is_constant // technically redundant, but lets be extra sure
+                a_data.id == b_data.id && a_data.is_constant && b_data.is_constant // "is-constant" is technically redundant, but lets be extra sure
             }
             Expression::Grouping(b) => {
                 self.is_variable_access_expression_equal(a, &b.subexpression)?
@@ -264,7 +264,7 @@ impl<'errors, 'inputs> PartialAstVisitor for LValueReducer<'errors, 'inputs> {
 
         let Some(valid_lvalues) = &self.valid_lvalues else {
             // everything is valid
-            self.is_top_level_lvalue = true;
+            self.previous_lvalue_valid = true;
             return;
         };
 
@@ -292,6 +292,7 @@ impl<'errors, 'inputs> PartialAstVisitor for LValueReducer<'errors, 'inputs> {
         OnStatement {
             on_token: _,
             executor,
+            iterators,
             open_paren_token: _,
             bindings,
             close_paren_token: _,
@@ -300,6 +301,18 @@ impl<'errors, 'inputs> PartialAstVisitor for LValueReducer<'errors, 'inputs> {
         }: &mut OnStatement,
     ) {
         self.visit_executor(executor);
+
+        for OnStatementIterator {
+            open_bracket_token: _,
+            binding,
+            equal_token: _,
+            max_value,
+            close_bracket_token: _,
+        } in iterators
+        {
+            self.partial_visit_simple_binding(binding);
+            self.partial_visit_expression(max_value);
+        }
 
         let mut prev_lvalues = Some(
             bindings

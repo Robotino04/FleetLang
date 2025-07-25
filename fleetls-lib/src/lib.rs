@@ -196,6 +196,7 @@ impl Backend {
             AstNode::OnStatement(OnStatement {
                 on_token: _,
                 executor,
+                iterators,
                 open_paren_token: _,
                 bindings,
                 close_paren_token: _,
@@ -203,8 +204,18 @@ impl Backend {
                 id: _,
             }) => (
                 format!(
-                    "on {} ({})",
+                    "on {}{} ({})",
                     self.generate_node_hover(executor, analysis_data).0,
+                    iterators
+                        .iter()
+                        .map(|it| format!(
+                            "[{} = {}]",
+                            self.generate_node_hover(it.binding.clone(), analysis_data)
+                                .0,
+                            self.generate_node_hover(it.max_value.clone(), analysis_data)
+                                .0,
+                        ))
+                        .collect::<String>(),
                     bindings
                         .iter()
                         .map(|(binding, _comma)| {
@@ -295,22 +306,15 @@ impl Backend {
                 host,
                 dot_token: _,
                 gpus_token: _,
-                open_bracket_token_1: _,
+                open_bracket_token: _,
                 gpu_index,
-                close_bracket_token_1: _,
-                open_bracket_token_2: _,
-                iterator,
-                equal_token: _,
-                max_value,
-                close_bracket_token_2: _,
+                close_bracket_token: _,
                 id: _,
             }) => (
                 format!(
-                    "{}.gpus[{}][{} = {}]",
+                    "{}.gpus[{}]",
                     self.generate_node_hover(host, analysis_data).0,
                     self.generate_node_hover(gpu_index, analysis_data).0,
-                    self.generate_node_hover(iterator, analysis_data).0,
-                    self.generate_node_hover(max_value, analysis_data).0,
                 ),
                 "gpu executor".to_string(),
             ),

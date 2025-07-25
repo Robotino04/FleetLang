@@ -16,10 +16,11 @@ use crate::{
         Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
-        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        OnStatementIterator, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -622,6 +623,7 @@ pub struct TypePropagator<'a> {
     id_generator: &'a mut IdGenerator,
     current_function: Option<Rc<RefCell<Function>>>,
     contained_scope: PerNodeData<Rc<RefCell<VariableScope>>>,
+    require_constant: bool,
 }
 
 impl<'a> TypePropagator<'a> {
@@ -637,6 +639,7 @@ impl<'a> TypePropagator<'a> {
             id_generator,
             current_function: None,
             contained_scope: PerNodeData::default(),
+            require_constant: false,
         }
     }
 
@@ -905,6 +908,7 @@ impl AstVisitor for TypePropagator<'_> {
         OnStatement {
             on_token: _,
             executor,
+            iterators,
             open_paren_token: _,
             bindings,
             close_paren_token: _,
@@ -917,9 +921,55 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.visit_executor(executor);
 
+        for OnStatementIterator {
+            open_bracket_token: _,
+            binding,
+            equal_token: _,
+            max_value,
+            close_bracket_token: _,
+        } in iterators
+        {
+            let iterator_type = self.visit_simple_binding(binding);
+            let max_value_type = self.visit_expression(max_value);
+            if !RuntimeType::merge_types(iterator_type, max_value_type, &mut self.type_sets) {
+                self.errors.push(FleetError::from_node(
+                    binding,
+                    format!(
+                        "Iterator is defined as type {}, but has max value of type {}",
+                        self.stringify_type_ptr(iterator_type),
+                        self.stringify_type_ptr(max_value_type),
+                    ),
+                    ErrorSeverity::Error,
+                ));
+            }
+
+            // TODO: HACK: remove when we have proper constness and mutability
+            self.referenced_variable
+                .get(&binding.id)
+                .expect("variable data should exist by now")
+                .borrow_mut()
+                .is_constant = true;
+
+            let is_iterator_const = self
+                .referenced_variable
+                .get(&binding.id)
+                .expect("variable data should exist by now")
+                .borrow()
+                .is_constant;
+            if !is_iterator_const {
+                self.errors.push(FleetError::from_node(
+                    binding,
+                    "The iterator of an on-statement cannot be mutable",
+                    ErrorSeverity::Error,
+                ));
+            }
+        }
+
+        self.require_constant = true;
         for (binding, _comma) in bindings {
             self.visit_lvalue(binding);
         }
+        self.require_constant = false;
 
         // cannot write to the outside anymore
         self.variable_scopes.top_mut().is_write_guard = true;
@@ -1197,14 +1247,9 @@ impl AstVisitor for TypePropagator<'_> {
             host,
             dot_token: _,
             gpus_token: _,
-            open_bracket_token_1: _,
+            open_bracket_token: _,
             gpu_index,
-            close_bracket_token_1: _,
-            open_bracket_token_2: _,
-            iterator,
-            equal_token: _,
-            max_value,
-            close_bracket_token_2: _,
+            close_bracket_token: _,
             id,
         }: &mut GPUExecutor,
     ) -> Self::ExecutorOutput {
@@ -1218,41 +1263,6 @@ impl AstVisitor for TypePropagator<'_> {
             "numeric",
             *self.type_sets.get(index_type),
         );
-
-        let iterator_type = self.visit_simple_binding(iterator);
-        let max_value_type = self.visit_expression(max_value);
-        if !RuntimeType::merge_types(iterator_type, max_value_type, &mut self.type_sets) {
-            self.errors.push(FleetError::from_node(
-                iterator,
-                format!(
-                    "Iterator is defined as type {}, but has max value of type {}",
-                    self.stringify_type_ptr(iterator_type),
-                    self.stringify_type_ptr(max_value_type),
-                ),
-                ErrorSeverity::Error,
-            ));
-        }
-
-        // TODO: HACK: remive when we have proper constness and mutability
-        self.referenced_variable
-            .get(&iterator.id)
-            .expect("variable data should exist by now")
-            .borrow_mut()
-            .is_constant = true;
-
-        let is_iterator_const = self
-            .referenced_variable
-            .get(&iterator.id)
-            .expect("variable data should exist by now")
-            .borrow()
-            .is_constant;
-        if !is_iterator_const {
-            self.errors.push(FleetError::from_node(
-                iterator,
-                "The iterator of an on-statement cannot be mutable",
-                ErrorSeverity::Error,
-            ));
-        }
 
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
@@ -1490,6 +1500,13 @@ impl AstVisitor for TypePropagator<'_> {
             ));
             return self.type_sets.insert_set(RuntimeType::Unknown);
         };
+        if self.require_constant && !ref_variable.borrow().is_constant {
+            self.errors.push(FleetError::from_node(
+                &expression_clone,
+                "Only constant variables can be used here. This one isn't.",
+                ErrorSeverity::Error,
+            ));
+        }
         self.referenced_variable.insert(*id, ref_variable.clone());
 
         self.contained_scope

@@ -37,6 +37,8 @@
 - test bigger-than-float float literals with c and glsl backend
 - remove "test.fl" as fallback in fleetc
 - remove lvalues maybe?
+- special-case small 2D and 3D GPU dispatches that fit in the size limits
+- arrays have use-after-scope bug in c
 
 
 ## Building

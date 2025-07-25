@@ -13,11 +13,11 @@ use crate::{
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
-        IfStatement, LiteralExpression, LiteralKind, OnStatement, PerNodeData, Program,
-        ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement,
-        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        IfStatement, LiteralExpression, LiteralKind, OnStatement, OnStatementIterator, PerNodeData,
+        Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
+        Statement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::type_propagation::{
@@ -159,22 +159,20 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
         &mut self,
         bindings: &OnStatementBindings,
         main_body: &mut Statement,
+        iterators: &mut [OnStatementIterator],
         gpu_executor: &mut GPUExecutor,
     ) -> Result<String> {
         let GPUExecutor {
             host: _,
             dot_token: _,
             gpus_token: _,
-            open_bracket_token_1: _,
+            open_bracket_token: _,
             gpu_index: _,
-            close_bracket_token_1: _,
-            open_bracket_token_2: _,
-            iterator,
-            equal_token: _,
-            max_value: _,
-            close_bracket_token_2: _,
+            close_bracket_token: _,
             id: _,
         } = gpu_executor;
+
+        let iterator_sizes_str = "iterator_sizes";
 
         let body_str = match self.visit_statement(main_body) {
             Ok(body_str) => body_str,
@@ -188,14 +186,42 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
             }
         };
 
-        let glsl_iterator_type = self.runtime_type_to_glsl(
-            *self.type_sets.get(
-                *self
-                    .type_data
-                    .get(&iterator.id)
-                    .expect("type data must exist before calling glsl_generator"),
-            ),
-        );
+        let num_iterators = iterators.len();
+        let glsl_iterators = iterators
+            .iter_mut()
+            .enumerate()
+            .map(|(n, it)| {
+                let type_ = self.runtime_type_to_glsl(
+                    *self.type_sets.get(
+                        *self
+                            .type_data
+                            .get(&it.binding.id)
+                            .expect("type data must exist before calling glsl_generator"),
+                    ),
+                );
+                format!(
+                    "{} = {}(((gl_GlobalInvocationID.x) {}) {});",
+                    self.visit_simple_binding(&mut it.binding),
+                    type_.0 + &type_.1,
+                    if n == 0 {
+                        "".to_string()
+                    } else {
+                        format!(
+                            "/ ({})",
+                            (0..n)
+                                .map(|i| format!("{iterator_sizes_str}[{i}]"))
+                                .reduce(|a, b| format!("(({a}) * ({b}))"))
+                                .unwrap_or("1".to_string())
+                        )
+                    },
+                    if n == num_iterators - 1 {
+                        "".to_string()
+                    } else {
+                        format!("% {iterator_sizes_str}[{n}]")
+                    }
+                )
+            })
+            .join("\n");
 
         let mut buffer_count = 0;
 
@@ -219,6 +245,8 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
             })
             .join("\n");
 
+        let num_iterators = iterators.len();
+
         let unescaped_glsl = formatdoc! {
             "
             #version 430
@@ -232,6 +260,11 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
             // Read only buffers
             {ro_buffer_definitions}
 
+            // iterator size buffer
+            layout(std430, binding = {buffer_count}) buffer Input{buffer_count} {{
+                readonly uint32_t {iterator_sizes_str}[{num_iterators}];
+            }};
+
             layout(push_constant) uniform PushConstants {{
                 uint dispatch_size;
             }};
@@ -240,12 +273,11 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
                 if (gl_GlobalInvocationID.x >= dispatch_size) {{
                     return;
                 }}
-                {} = {}(gl_GlobalInvocationID.x);
+                {}
                 {}
             }}
             ",
-            self.visit_simple_binding(iterator),
-            glsl_iterator_type.0 + &glsl_iterator_type.1,
+            indent_by(4, glsl_iterators),
             indent_by(4, body_str),
         };
 

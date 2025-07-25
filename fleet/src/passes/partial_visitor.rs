@@ -3,10 +3,11 @@ use crate::ast::{
     BinaryExpression, BlockStatement, BreakStatement, CastExpression, Executor, ExecutorHost,
     Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
     FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue,
-    IdkType, IfStatement, LValue, LiteralExpression, OnStatement, Program, ReturnStatement,
-    SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement, StatementFunctionBody,
-    ThreadExecutor, Type, UnaryExpression, UnitType, VariableAccessExpression,
-    VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+    IdkType, IfStatement, LValue, LiteralExpression, OnStatement, OnStatementIterator, Program,
+    ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement,
+    StatementFunctionBody, ThreadExecutor, Type, UnaryExpression, UnitType,
+    VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+    VariableLValue, WhileLoopStatement,
 };
 
 pub trait PartialAstVisitor {
@@ -131,6 +132,7 @@ pub trait PartialAstVisitor {
         OnStatement {
             on_token: _,
             executor,
+            iterators,
             open_paren_token: _,
             bindings,
             close_paren_token: _,
@@ -139,6 +141,19 @@ pub trait PartialAstVisitor {
         }: &mut OnStatement,
     ) {
         self.partial_visit_executor(executor);
+
+        for OnStatementIterator {
+            open_bracket_token: _,
+            binding,
+            equal_token: _,
+            max_value,
+            close_bracket_token: _,
+        } in iterators
+        {
+            self.partial_visit_simple_binding(binding);
+            self.partial_visit_expression(max_value);
+        }
+
         for (binding, _comma) in bindings {
             self.partial_visit_lvalue(binding);
         }
@@ -309,21 +324,14 @@ pub trait PartialAstVisitor {
             host,
             dot_token: _,
             gpus_token: _,
-            open_bracket_token_1: _,
+            open_bracket_token: _,
             gpu_index,
-            close_bracket_token_1: _,
-            open_bracket_token_2: _,
-            iterator,
-            equal_token: _,
-            max_value,
-            close_bracket_token_2: _,
+            close_bracket_token: _,
             id: _,
         }: &mut GPUExecutor,
     ) {
         self.partial_visit_executor_host(host);
         self.partial_visit_expression(gpu_index);
-        self.partial_visit_simple_binding(iterator);
-        self.partial_visit_expression(max_value);
     }
 
     // expressions

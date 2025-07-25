@@ -9,10 +9,11 @@ use crate::{
         Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression, LiteralKind, NodeID,
-        OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, Type, UnaryExpression,
-        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SimpleType, SkipStatement, Statement, StatementFunctionBody, ThreadExecutor,
+        Type, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::type_propagation::{FunctionID, RuntimeType, VariableID},
@@ -350,6 +351,18 @@ impl<'errors> Parser<'errors> {
             Some(TokenType::Keyword(Keyword::On)) => {
                 let on_token = expect!(self, TokenType::Keyword(Keyword::On))?;
                 let executor = self.parse_executor()?;
+
+                let mut iterators = vec![];
+                while self.current_token_type() == Some(TokenType::OpenBracket) {
+                    iterators.push(OnStatementIterator {
+                        open_bracket_token: expect!(self, TokenType::OpenBracket)?,
+                        binding: self.parse_simple_binding()?,
+                        equal_token: expect!(self, TokenType::EqualSign)?,
+                        max_value: self.parse_expression()?,
+                        close_bracket_token: expect!(self, TokenType::CloseBracket)?,
+                    });
+                }
+
                 let open_paren_token = expect!(self, TokenType::OpenParen)?;
 
                 let mut bindings = vec![];
@@ -373,6 +386,7 @@ impl<'errors> Parser<'errors> {
                 Ok(Statement::On(OnStatement {
                     on_token,
                     executor,
+                    iterators,
                     open_paren_token,
                     bindings,
                     close_paren_token,
@@ -1020,14 +1034,9 @@ impl<'errors> Parser<'errors> {
                 host,
                 dot_token,
                 gpus_token: expect!(self, = TokenType::Identifier("gpus".to_string()))?,
-                open_bracket_token_1: expect!(self, TokenType::OpenBracket)?,
+                open_bracket_token: expect!(self, TokenType::OpenBracket)?,
                 gpu_index: self.parse_expression()?,
-                close_bracket_token_1: expect!(self, TokenType::CloseBracket)?,
-                open_bracket_token_2: expect!(self, TokenType::OpenBracket)?,
-                iterator: self.parse_simple_binding()?,
-                equal_token: expect!(self, TokenType::EqualSign)?,
-                max_value: self.parse_expression()?,
-                close_bracket_token_2: expect!(self, TokenType::CloseBracket)?,
+                close_bracket_token: expect!(self, TokenType::CloseBracket)?,
                 id: self.id_generator.next_node_id(),
             })),
             _ => unable_to_parse!(self, "executor"),

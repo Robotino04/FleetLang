@@ -511,9 +511,19 @@ pub struct ExpressionStatement {
 generate_ast_requirements!(ExpressionStatement, unwrap_expression_statement);
 
 #[derive(Clone, Debug)]
+pub struct OnStatementIterator {
+    pub open_bracket_token: Token,
+    pub binding: SimpleBinding,
+    pub equal_token: Token,
+    pub max_value: Expression,
+    pub close_bracket_token: Token,
+}
+
+#[derive(Clone, Debug)]
 pub struct OnStatement {
     pub on_token: Token,
     pub executor: Executor,
+    pub iterators: Vec<OnStatementIterator>,
     pub open_paren_token: Token,
     pub bindings: Vec<(LValue, Option<Token>)>,
     pub close_paren_token: Token,
@@ -697,14 +707,9 @@ pub struct GPUExecutor {
     pub host: ExecutorHost,
     pub dot_token: Token,
     pub gpus_token: Token,
-    pub open_bracket_token_1: Token,
+    pub open_bracket_token: Token,
     pub gpu_index: Expression,
-    pub close_bracket_token_1: Token,
-    pub open_bracket_token_2: Token,
-    pub iterator: SimpleBinding,
-    pub equal_token: Token,
-    pub max_value: Expression,
-    pub close_bracket_token_2: Token,
+    pub close_bracket_token: Token,
     pub id: NodeID,
 }
 generate_ast_requirements!(GPUExecutor, unwrap_gpu_executor);

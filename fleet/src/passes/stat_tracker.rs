@@ -6,9 +6,9 @@ use crate::{
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, ExpressionStatement,
         ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
         GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression,
-        OnStatement, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        OnStatement, OnStatementIterator, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor,
+        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
@@ -347,6 +347,7 @@ impl AstVisitor for StatTracker<'_, '_> {
         OnStatement {
             on_token: _,
             executor,
+            iterators,
             open_paren_token: _,
             bindings,
             close_paren_token: _,
@@ -355,6 +356,22 @@ impl AstVisitor for StatTracker<'_, '_> {
         }: &mut OnStatement,
     ) -> Self::StatementOutput {
         let exec_stats = self.visit_executor(executor);
+
+        let mut it_stats = NodeStats::nothing();
+
+        for OnStatementIterator {
+            open_bracket_token: _,
+            binding,
+            equal_token: _,
+            max_value,
+            close_bracket_token: _,
+        } in iterators
+        {
+            it_stats = it_stats
+                .serial(self.visit_simple_binding(binding))
+                .serial(self.visit_expression(max_value));
+        }
+
         let mut binding_stats = NodeStats::nothing();
         for (binding, _comma) in bindings {
             binding_stats = binding_stats.serial(self.visit_lvalue(binding));
@@ -371,7 +388,10 @@ impl AstVisitor for StatTracker<'_, '_> {
         }
         let body_stats = self.visit_statement(body);
 
-        let stats = exec_stats.serial(binding_stats).serial(body_stats);
+        let stats = exec_stats
+            .serial(it_stats)
+            .serial(binding_stats)
+            .serial(body_stats);
 
         self.stats.insert(*id, stats.clone());
         stats
@@ -594,14 +614,9 @@ impl AstVisitor for StatTracker<'_, '_> {
             host,
             dot_token: _,
             gpus_token: _,
-            open_bracket_token_1: _,
+            open_bracket_token: _,
             gpu_index,
-            close_bracket_token_1: _,
-            open_bracket_token_2: _,
-            iterator,
-            equal_token: _,
-            max_value,
-            close_bracket_token_2: _,
+            close_bracket_token: _,
             id,
         }: &mut GPUExecutor,
     ) -> Self::ExecutorOutput {
@@ -611,9 +626,7 @@ impl AstVisitor for StatTracker<'_, '_> {
             accessed_items: AccessRecord::default(),
         }
         .serial(self.visit_executor_host(host))
-        .serial(self.visit_expression(gpu_index))
-        .serial(self.visit_simple_binding(iterator))
-        .serial(self.visit_expression(max_value));
+        .serial(self.visit_expression(gpu_index));
         self.stats.insert(*id, stat.clone());
         stat
     }

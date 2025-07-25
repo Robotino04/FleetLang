@@ -93,7 +93,7 @@ pub struct IrGenerator<'a, 'errors, 'inputs> {
     variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
     function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
     type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
-    type_sets: &'inputs UnionFindSet<RuntimeType>,
+    type_sets: &'inputs mut UnionFindSet<RuntimeType>,
     scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
 
     break_block: Option<BasicBlock<'a>>,
@@ -104,7 +104,7 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
         context: &'a Context,
         errors: &'errors mut Vec<FleetError>,
         stats: &'inputs PerNodeData<NodeStats>,
-        analysis_data: &'inputs TypeAnalysisData,
+        analysis_data: &'inputs mut TypeAnalysisData,
     ) -> Self {
         let module = context.create_module("module");
         let builder = context.create_builder();
@@ -115,7 +115,7 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
             variable_data,
             function_data,
             scope_data,
-        } = &analysis_data;
+        } = analysis_data;
 
         IrGenerator {
             context,
@@ -742,9 +742,11 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
     }
 
     fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
+        let on_stmt_clone = on_stmt.clone();
         let OnStatement {
             on_token: _,
             executor,
+            iterators,
             open_paren_token: _,
             bindings,
             close_paren_token: _,
@@ -761,16 +763,12 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             host: _,
             dot_token: _,
             gpus_token: _,
-            open_bracket_token_1: _,
+            open_bracket_token: _,
             gpu_index: _,
-            close_bracket_token_1: _,
-            open_bracket_token_2: _,
-            iterator,
-            equal_token: _,
-            max_value: iterator_end_value,
-            close_bracket_token_2: _,
+            close_bracket_token: _,
             id: _,
         } = gpu_executor;
+
         let bindings = bindings
             .iter_mut()
             .map(|binding| {
@@ -805,9 +803,15 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             .insert_basic_block_after(rw_deallocations_block, "on-statement deallocations");
 
         self.builder.position_at_end(bindings_block);
-        let iterator_end_value_ir = self
-            .visit_expression(iterator_end_value)?
-            .expect("iterator cannot have Unit type");
+
+        let iterator_end_values_ir = iterators
+            .iter_mut()
+            .map(|it| {
+                Ok(self
+                    .visit_expression(&mut it.max_value)?
+                    .expect("iterator cannot have Unit type"))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let mut buffers = vec![];
 
@@ -817,12 +821,16 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             self.type_sets,
             self.type_data,
             bindings,
-            vec![
-                self.variable_data
-                    .get(&iterator.id)
-                    .expect("Variable data should exist before calling c_generator")
-                    .clone(),
-            ],
+            iterators
+                .iter()
+                .map(|it| {
+                    Ok(self
+                        .variable_data
+                        .get(&it.binding.id)
+                        .expect("Variable data should exist before calling c_generator")
+                        .clone())
+                })
+                .collect::<Result<Vec<_>>>()?,
             body,
         );
         let fl_runtime_allocate_gpu_backing = self
@@ -877,14 +885,53 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             )?;
         }
 
-        for (_name, type_, top_level_binding) in &mut bindings.ro {
-            self.builder.position_at_end(bindings_block);
-            let binding_ir = self
-                .variable_storage
-                .get(&top_level_binding.borrow().id)
-                .expect("variable used in on-statement must already have storage")
-                .0;
+        let iterator_size_subtype = RuntimeType::I32;
+        let iterator_size_subtype_ir = self
+            .runtime_type_to_llvm(iterator_size_subtype, &on_stmt_clone.clone())?
+            .into_int_type();
+        let iterator_size_type = RuntimeType::ArrayOf {
+            subtype: self.type_sets.insert_set(iterator_size_subtype),
+            size: Some(iterator_end_values_ir.len()),
+        };
 
+        for (type_, binding_ir) in bindings
+            .ro
+            .iter()
+            .map(|(_name, type_, top_level_binding)| {
+                self.builder.position_at_end(bindings_block);
+                let binding_ir = self
+                    .variable_storage
+                    .get(&top_level_binding.borrow().id)
+                    .expect("variable used in on-statement must already have storage")
+                    .0;
+                (type_, binding_ir)
+            })
+            .collect_vec()
+            .into_iter()
+            .chain({
+                self.builder.position_at_end(bindings_block);
+                let ptr = self.builder.build_array_alloca(
+                    iterator_size_subtype_ir,
+                    self.context
+                        .i32_type()
+                        .const_int(iterator_end_values_ir.len() as u64, false),
+                    "iterator_size_buffer",
+                )?;
+                let mut array = self
+                    .runtime_type_to_llvm(iterator_size_type, &on_stmt_clone.clone())?
+                    .into_array_type()
+                    .const_zero();
+                for (n, it) in iterator_end_values_ir.iter().enumerate() {
+                    array = self
+                        .builder
+                        .build_insert_value(array, *it, n as u32, "iterator_size_buffer")?
+                        .into_array_value();
+                }
+                self.builder.build_store(ptr, array)?;
+                Some((&iterator_size_type, ptr))
+            })
+            .collect_vec()
+        {
             let size = self
                 .runtime_type_to_llvm(*type_, &**body)?
                 .size_of()
@@ -930,6 +977,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         let glsl_source = glsl_generator.generate_on_statement_shader(
             &bindings,
             body,
+            iterators,
             &mut gpu_executor_clone,
         )?;
 
@@ -987,16 +1035,23 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                 ],
                 "fl_runtime_bind_buffers",
             )?;
+
+            let dispatch_size = iterator_end_values_ir
+                .iter()
+                .map(|it| {
+                    self.builder.build_int_z_extend_or_bit_cast(
+                        it.into_int_value(),
+                        self.context.i64_type(),
+                        "iterator upcast",
+                    )
+                })
+                .reduce(|a, b| self.builder.build_int_mul(a?, b?, "dispatch_size"))
+                .expect("An on-statement must have at least one iterator")?;
+
             self.builder.build_call(
                 fl_runtime_dispatch_shader,
                 &[
-                    self.builder
-                        .build_int_z_extend_or_bit_cast(
-                            iterator_end_value_ir.into_int_value(),
-                            self.context.i64_type(),
-                            "iterator upcast",
-                        )?
-                        .into(),
+                    dispatch_size.into(),
                     global_shader_code.as_pointer_value().into(),
                     self.context
                         .i64_type()

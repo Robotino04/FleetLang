@@ -3,6 +3,34 @@ use indoc::indoc;
 use crate::common::{assert_compile_and_output_subprocess, assert_compile_and_return_value};
 
 #[test]
+fn _15d_array() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = [[[[[[[[[[[[[[[15]]]]]]]]]]]]]]];
+                return a[0][0][0][0][0][0][0][0][0][0][0][0][0][0][0];
+            }
+        "##},
+        "main",
+        15,
+    );
+}
+
+#[test]
+fn _3d_array() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = [[[15]]];
+                return a[0][0][0];
+            }
+        "##},
+        "main",
+        15,
+    );
+}
+
+#[test]
 fn _2d_array_in_expression_statement() {
     assert_compile_and_return_value(
         indoc! {r##"

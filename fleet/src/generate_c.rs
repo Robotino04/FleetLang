@@ -35,7 +35,7 @@ pub struct CCodeGenerator<'inputs, 'errors> {
     variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
     function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
     type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
-    type_sets: &'inputs UnionFindSet<RuntimeType>,
+    type_sets: &'inputs mut UnionFindSet<RuntimeType>,
     scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
 
     temporary_counter: u64,
@@ -46,7 +46,7 @@ impl<'inputs, 'errors> CCodeGenerator<'inputs, 'errors> {
         variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
         function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
         type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
-        type_sets: &'inputs UnionFindSet<RuntimeType>,
+        type_sets: &'inputs mut UnionFindSet<RuntimeType>,
         scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
         stats: &'inputs PerNodeData<NodeStats>,
     ) -> Self {
@@ -175,7 +175,7 @@ impl<'inputs, 'errors> CCodeGenerator<'inputs, 'errors> {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct PreStatementValue {
     pub pre_statements: String,
     pub out_value: String,
@@ -372,6 +372,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         let OnStatement {
             on_token: _,
             executor,
+            iterators,
             open_paren_token: _,
             bindings,
             close_paren_token: _,
@@ -388,18 +389,18 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             host: _,
             dot_token: _,
             gpus_token: _,
-            open_bracket_token_1: _,
+            open_bracket_token: _,
             gpu_index: _,
-            close_bracket_token_1: _,
-            open_bracket_token_2: _,
-            iterator,
-            equal_token: _,
-            max_value: iterator_end_value,
-            close_bracket_token_2: _,
+            close_bracket_token: _,
             id: _,
         } = gpu_executor;
 
         let mut buffers = vec![];
+
+        let iterator_end_values = iterators
+            .iter_mut()
+            .map(|it| self.visit_expression(&mut it.max_value))
+            .collect_vec();
 
         let bindings = bindings
             .iter_mut()
@@ -416,12 +417,15 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             self.type_sets,
             self.type_data,
             bindings,
-            vec![
-                self.variable_data
-                    .get(&iterator.id)
-                    .expect("Variable data should exist before calling c_generator")
-                    .clone(),
-            ],
+            iterators
+                .iter()
+                .map(|it| {
+                    self.variable_data
+                        .get(&it.binding.id)
+                        .expect("Variable data should exist before calling c_generator")
+                        .clone()
+                })
+                .collect_vec(),
             body,
         );
 
@@ -456,17 +460,40 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         let rw_allocations = rw_allocations.concat();
         let rw_deallocations = rw_deallocations.concat();
 
+        let iterator_size_buffer = self.unique_temporary("iterator_sizes");
+        let iterator_size_buffer_pre = format!(
+            "uint32_t {iterator_size_buffer}[] = {{ {} }};",
+            iterator_end_values
+                .iter()
+                .map(
+                    |PreStatementValue {
+                         pre_statements: _,
+                         out_value,
+                     }| format!("({out_value})")
+                )
+                .join(", ")
+        );
+
+        let iterator_size_buffer_subtype = self.type_sets.insert_set(RuntimeType::I32);
         let (ro_allocations, ro_deallocations): (Vec<_>, Vec<_>) = bindings
             .ro
             .iter_mut()
-            .map(|(name, type_, _variable)| {
+            .map(|(name, type_, _variable)| (self.mangle_variable(name), type_))
+            .chain(Some((
+                iterator_size_buffer,
+                &mut RuntimeType::ArrayOf {
+                    subtype: iterator_size_buffer_subtype,
+                    size: Some(iterator_end_values.len()),
+                },
+            )))
+            .collect_vec()
+            .into_iter()
+            .map(|(name, type_)| {
                 let size = self.runtime_type_to_byte_size(*type_);
 
                 let temporary = self.unique_temporary("lvalue_binding");
 
                 buffers.push(temporary.clone());
-
-                let name = self.mangle_variable(name);
 
                 (
                     formatdoc! {"
@@ -480,6 +507,29 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                 )
             })
             .unzip();
+
+        let PreStatementValue {
+            pre_statements: dispatch_pre,
+            out_value: dispatch_value,
+        } = iterator_end_values
+            .iter()
+            .cloned()
+            .reduce(
+                |PreStatementValue {
+                     pre_statements: pre1,
+                     out_value: v1,
+                 },
+                 PreStatementValue {
+                     pre_statements: pre2,
+                     out_value: v2,
+                 }| {
+                    PreStatementValue {
+                        pre_statements: pre1 + &pre2,
+                        out_value: format!("(({v1}) * ({v2}))"),
+                    }
+                },
+            )
+            .expect("An on-statement must have at least one iterator");
 
         let ro_allocations = ro_allocations.concat();
         let ro_deallocations = ro_deallocations.concat();
@@ -496,9 +546,12 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             self.type_sets,
         );
 
-        let Ok(glsl_source) =
-            glsl_generator.generate_on_statement_shader(&bindings, body, &mut gpu_executor_clone)
-        else {
+        let Ok(glsl_source) = glsl_generator.generate_on_statement_shader(
+            &bindings,
+            body,
+            iterators,
+            &mut gpu_executor_clone,
+        ) else {
             return "#error glsl generation failed completely\n".to_string();
         };
 
@@ -534,17 +587,14 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
 
         let spirv_temporary = self.unique_temporary("spirv");
 
-        let PreStatementValue {
-            pre_statements: iterator_pre,
-            out_value: iterator_value,
-        } = self.visit_expression(iterator_end_value);
-
         formatdoc! {"
             // Read + Write allocations
             {rw_allocations}
             // Read only allocations
+            {iterator_size_buffer_pre}
             {ro_allocations}
             {buffers_str}
+
             fl_runtime_bind_buffers(&{buffers_name}, {buffers_len});
 
             /*
@@ -552,7 +602,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             */
 
             const uint32_t {spirv_temporary}[] = {{ {bytes_str} }};
-            {iterator_pre}fl_runtime_dispatch_shader({iterator_value}, {spirv_temporary}, {spirv_size});
+            {dispatch_pre}fl_runtime_dispatch_shader({dispatch_value}, {spirv_temporary}, {spirv_size});
 
             // Read + Write deallocations
             {rw_deallocations}
@@ -621,14 +671,14 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             .expect("var data must exist before calling c_generator")
             .clone();
 
-        let type_ = self.type_sets.get(ref_var.borrow().type_);
+        let type_ = *self.type_sets.get(ref_var.borrow().type_);
 
         if let RuntimeType::ArrayOf {
             subtype: _,
             size: _,
-        } = *type_
+        } = type_
         {
-            let num_bytes = self.runtime_type_to_byte_size(*type_);
+            let num_bytes = self.runtime_type_to_byte_size(type_);
 
             let lvalue_gen = self.visit_simple_binding(binding);
             let lvalue_temporary = self.mangle_variable(&ref_var.borrow().name);
@@ -638,7 +688,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                 pre_statements: rvalue_pre_statements,
                 out_value: rvalue_out_value,
             } = self.visit_expression(&mut *value);
-            let (rvalue_type, rvalue_postfix) = self.runtime_type_to_c(*type_);
+            let (rvalue_type, rvalue_postfix) = self.runtime_type_to_c(type_);
 
             let rvalue_gen =
                 format!("{rvalue_type} (*{rvalue_temporary}){rvalue_postfix} = {rvalue_out_value}");
@@ -905,9 +955,9 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         };
 
         if let RuntimeType::ArrayOf { subtype: _, size } = self.type_sets.get(subtype) {
-            let subtype = *self.type_sets.get(subtype);
+            let mut subtype = *self.type_sets.get(subtype);
             let size = size.expect("arrays must have their size set before calling c_generator");
-            let (pre_statements, definitions, temporaries): (Vec<_>, Vec<_>, Vec<_>) = elements
+            let (pre_statements, definitions, mut temporaries): (Vec<_>, Vec<_>, Vec<_>) = elements
                 .iter_mut()
                 .map(|(element, _comma)| {
                     let rvalue_temporary = self.unique_temporary("element");
@@ -925,12 +975,30 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                 })
                 .multiunzip();
 
+            while let RuntimeType::ArrayOf {
+                subtype: next_subtype,
+                size,
+            } = subtype
+            {
+                subtype = *self.type_sets.get(next_subtype);
+                let size =
+                    size.expect("arrays must have their size set before calling c_generator");
+                temporaries = temporaries
+                    .iter()
+                    .flat_map(|tmp| {
+                        (0..size)
+                            .map(|i| format!("(&((*({tmp}))[{i}]))"))
+                            .collect_vec()
+                    })
+                    .collect_vec();
+            }
+
             let out_temporary = self.unique_temporary("out");
 
             PreStatementValue {
                 pre_statements: format!(
                     "{pre_statements}{type_} (*{out_temporary}){after_id};\n",
-                    pre_statements = indent::indent_by(4, pre_statements.concat()),
+                    pre_statements = pre_statements.concat(),
                 ),
                 out_value: formatdoc!(
                     "
@@ -945,11 +1013,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                         4,
                         temporaries
                             .iter()
-                            .flat_map(|tmp| {
-                                (0..size)
-                                    .map(|i| format!("((*({tmp}))[{i}])"))
-                                    .collect_vec()
-                            })
+                            .map(|tmp| format!("(*({tmp}))"))
                             .join(", ")
                     ),
                 ),
@@ -967,7 +1031,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                 .unzip();
             PreStatementValue {
                 pre_statements: pre_statements.concat(),
-                out_value: format!("(&(({}{}){{ {} }}))", type_, after_id, elements.join(", ")),
+                out_value: format!("(&(({type_}{after_id}){{ {} }}))", elements.join(", ")),
             }
         }
     }
@@ -1239,7 +1303,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             id,
         }: &mut VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
-        let type_ = self.type_sets.get(
+        let type_ = *self.type_sets.get(
             *self
                 .type_data
                 .get(id)
@@ -1248,9 +1312,9 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         if let RuntimeType::ArrayOf {
             subtype: _,
             size: _,
-        } = *type_
+        } = type_
         {
-            let num_bytes = self.runtime_type_to_byte_size(*type_);
+            let num_bytes = self.runtime_type_to_byte_size(type_);
 
             let lvalue_temporary = self.unique_temporary("lvalue");
             let PreStatementValue {
@@ -1258,7 +1322,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                 out_value: lvalue,
             } = self.visit_lvalue(lvalue);
             let lvalue = format!("(&({lvalue}))");
-            let (lvalue_type, lvalue_postfix) = self.runtime_type_to_c(*type_);
+            let (lvalue_type, lvalue_postfix) = self.runtime_type_to_c(type_);
 
             let lvalue_gen =
                 format!("{lvalue_type} (*{lvalue_temporary}){lvalue_postfix} = {lvalue}");
@@ -1268,7 +1332,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                 pre_statements: rvalue_pre_statements,
                 out_value: rvalue_out_value,
             } = self.visit_expression(&mut *right);
-            let (rvalue_type, rvalue_postfix) = self.runtime_type_to_c(*type_);
+            let (rvalue_type, rvalue_postfix) = self.runtime_type_to_c(type_);
 
             let rvalue_pre = format!("{rvalue_type} (*{rvalue_temporary}){rvalue_postfix};\n");
             let rvalue_gen = format!("{rvalue_temporary} = {rvalue_out_value}");

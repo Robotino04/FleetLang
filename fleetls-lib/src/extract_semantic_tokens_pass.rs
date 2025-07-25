@@ -4,9 +4,9 @@ use fleet::{
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, ExpressionStatement,
         ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
         GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression,
-        LiteralKind, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor,
+        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     tokenizer::{SourceLocation, Token, Trivia, TriviaKind},
@@ -236,12 +236,46 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
         self.build_comment_tokens_only(semicolon_token);
     }
 
-    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
-        self.build_semantic_token(&on_stmt.on_token, SemanticTokenType::KEYWORD, vec![]);
-        self.build_comment_tokens_only(&on_stmt.open_paren_token);
-        self.visit_executor(&mut on_stmt.executor);
-        self.build_comment_tokens_only(&on_stmt.close_paren_token);
-        self.visit_statement(&mut on_stmt.body);
+    fn visit_on_statement(
+        &mut self,
+        OnStatement {
+            on_token,
+            executor,
+            iterators,
+            open_paren_token,
+            bindings,
+            close_paren_token,
+            body,
+            id: _,
+        }: &mut OnStatement,
+    ) -> Self::StatementOutput {
+        self.build_semantic_token(on_token, SemanticTokenType::KEYWORD, vec![]);
+        self.visit_executor(executor);
+
+        for OnStatementIterator {
+            open_bracket_token,
+            binding,
+            equal_token,
+            max_value,
+            close_bracket_token,
+        } in iterators
+        {
+            self.build_comment_tokens_only(open_bracket_token);
+            self.visit_simple_binding(binding);
+            self.build_comment_tokens_only(equal_token);
+            self.visit_expression(max_value);
+            self.build_comment_tokens_only(close_bracket_token);
+        }
+
+        self.build_comment_tokens_only(open_paren_token);
+        for (lvalue, comma) in bindings {
+            self.visit_lvalue(lvalue);
+            if let Some(comma) = comma {
+                self.build_comment_tokens_only(comma);
+            }
+        }
+        self.build_comment_tokens_only(close_paren_token);
+        self.visit_statement(body);
     }
 
     fn visit_block_statement(&mut self, block: &mut BlockStatement) -> Self::StatementOutput {
@@ -389,14 +423,9 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             host,
             dot_token,
             gpus_token,
-            open_bracket_token_1,
+            open_bracket_token: open_bracket_token_1,
             gpu_index,
-            close_bracket_token_1,
-            open_bracket_token_2,
-            iterator,
-            equal_token,
-            max_value,
-            close_bracket_token_2,
+            close_bracket_token: close_bracket_token_1,
             id: _,
         }: &mut GPUExecutor,
     ) -> Self::ExecutorOutput {
@@ -406,11 +435,6 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
         self.build_comment_tokens_only(open_bracket_token_1);
         self.visit_expression(gpu_index);
         self.build_comment_tokens_only(close_bracket_token_1);
-        self.build_comment_tokens_only(open_bracket_token_2);
-        self.visit_simple_binding(iterator);
-        self.build_comment_tokens_only(equal_token);
-        self.visit_expression(max_value);
-        self.build_comment_tokens_only(close_bracket_token_2);
     }
 
     fn visit_literal_expression(

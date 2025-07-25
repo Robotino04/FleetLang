@@ -166,7 +166,7 @@ impl AstVisitor for AddTrailingTriviaPass {
     }
 
     fn visit_gpu_executor(&mut self, executor: &mut GPUExecutor) -> Self::ExecutorOutput {
-        self.visit_token(&mut executor.close_bracket_token_2);
+        self.visit_token(&mut executor.close_bracket_token);
     }
 
     fn visit_literal_expression(&mut self, expression: &mut LiteralExpression) {
