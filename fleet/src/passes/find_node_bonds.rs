@@ -1,13 +1,13 @@
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
-        BinaryExpression, BlockStatement, BreakStatement, CastExpression, ExpressionStatement,
-        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
-        GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression,
-        OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
+        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
+        LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     tokenizer::SourceLocation,
 };
@@ -204,6 +204,15 @@ where
             close_paren_token,
             id: _,
         }) => (name_token.start, close_paren_token.end),
+        AstNode::CompilerExpression(CompilerExpression {
+            at_token,
+            name: _,
+            name_token: _,
+            open_paren_token: _,
+            arguments: _,
+            close_paren_token,
+            id: _,
+        }) => (at_token.start, close_paren_token.end),
         AstNode::ArrayIndexExpression(ArrayIndexExpression {
             array,
             open_bracket_token: _,

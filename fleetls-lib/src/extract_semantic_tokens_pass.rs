@@ -1,13 +1,14 @@
 use fleet::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BlockStatement, BreakStatement, CastExpression, ExpressionStatement,
-        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
-        GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression,
-        LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor,
-        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
+        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
+        LiteralExpression, LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement,
+        SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
+        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     tokenizer::{SourceLocation, Token, Trivia, TriviaKind},
 };
@@ -487,6 +488,35 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
         }: &mut FunctionCallExpression,
     ) -> Self::ExpressionOutput {
         self.build_semantic_token(name_token, SemanticTokenType::FUNCTION, vec![]);
+        self.build_comment_tokens_only(open_paren_token);
+        for (arg, comma) in arguments {
+            self.visit_expression(arg);
+            if let Some(comma) = comma {
+                self.build_comment_tokens_only(comma);
+            }
+        }
+        self.build_comment_tokens_only(close_paren_token);
+    }
+
+    fn visit_compiler_expression(
+        &mut self,
+        CompilerExpression {
+            at_token,
+            name: _,
+            name_token,
+            open_paren_token,
+            arguments,
+            close_paren_token,
+            id: _,
+        }: &mut CompilerExpression,
+    ) -> Self::ExpressionOutput {
+        self.build_semantic_token(at_token, SemanticTokenType::OPERATOR, vec![]);
+        self.build_comment_tokens_only(open_paren_token);
+        self.build_semantic_token(
+            name_token,
+            SemanticTokenType::FUNCTION,
+            vec![SemanticTokenModifier::DEFAULT_LIBRARY],
+        );
         self.build_comment_tokens_only(open_paren_token);
         for (arg, comma) in arguments {
             self.visit_expression(arg);

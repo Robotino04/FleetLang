@@ -5,15 +5,15 @@ use either::Either;
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, BinaryExpression,
-        BinaryOperation, BlockStatement, BreakStatement, CastExpression, Executor, ExecutorHost,
-        Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
-        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression, LiteralKind, NodeID,
-        OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SimpleType, SkipStatement, Statement, StatementFunctionBody, ThreadExecutor,
-        Type, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        BinaryOperation, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
+        Executor, ExecutorHost, Expression, ExpressionStatement, ExternFunctionBody,
+        ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor,
+        GroupingExpression, GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression,
+        LiteralKind, NodeID, OnStatement, OnStatementIterator, Program, ReturnStatement,
+        SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement,
+        StatementFunctionBody, ThreadExecutor, Type, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::type_propagation::{FunctionID, RuntimeType, VariableID},
@@ -596,6 +596,37 @@ impl<'errors> Parser<'errors> {
                     open_bracket_token,
                     elements,
                     close_bracket_token,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
+            Some(TokenType::At) => {
+                let at_token = expect!(self, TokenType::At)?;
+
+                let (name_token, name) = expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
+
+                let open_paren_token = expect!(self, TokenType::OpenParen)?;
+                let mut arguments = vec![];
+                while self.current_token_type() != Some(TokenType::CloseParen) {
+                    let arg = self.parse_expression()?;
+
+                    match self.current_token_type() {
+                        Some(TokenType::Comma) => {
+                            arguments.push((arg, Some(expect!(self, TokenType::Comma)?)))
+                        }
+                        _ => {
+                            arguments.push((arg, None));
+                            break;
+                        }
+                    }
+                }
+                let close_paren_token = expect!(self, TokenType::CloseParen)?;
+                Ok(Expression::CompilerExpression(CompilerExpression {
+                    at_token,
+                    name,
+                    name_token,
+                    arguments,
+                    open_paren_token,
+                    close_paren_token,
                     id: self.id_generator.next_node_id(),
                 }))
             }

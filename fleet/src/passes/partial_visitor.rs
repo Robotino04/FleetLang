@@ -1,12 +1,12 @@
 use crate::ast::{
     ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-    BinaryExpression, BlockStatement, BreakStatement, CastExpression, Executor, ExecutorHost,
-    Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
-    FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue,
-    IdkType, IfStatement, LValue, LiteralExpression, OnStatement, OnStatementIterator, Program,
-    ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement,
-    StatementFunctionBody, ThreadExecutor, Type, UnaryExpression, UnitType,
-    VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+    BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression, Executor,
+    ExecutorHost, Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+    FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+    GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression, OnStatement,
+    OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
+    SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, Type, UnaryExpression,
+    UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
     VariableLValue, WhileLoopStatement,
 };
 
@@ -346,6 +346,9 @@ pub trait PartialAstVisitor {
             Expression::FunctionCall(function_call_expression) => {
                 self.partial_visit_function_call_expression(function_call_expression)
             }
+            Expression::CompilerExpression(compiler_expression) => {
+                self.partial_visit_compiler_expression(compiler_expression)
+            }
             Expression::ArrayIndex(array_index_expression) => {
                 self.partial_visit_array_index_expression(array_index_expression)
             }
@@ -401,6 +404,22 @@ pub trait PartialAstVisitor {
             close_paren_token: _,
             id: _,
         }: &mut FunctionCallExpression,
+    ) {
+        for (arg, _comma) in arguments {
+            self.partial_visit_expression(arg);
+        }
+    }
+    fn partial_visit_compiler_expression(
+        &mut self,
+        CompilerExpression {
+            at_token: _,
+            name: _,
+            name_token: _,
+            open_paren_token: _,
+            arguments,
+            close_paren_token: _,
+            id: _,
+        }: &mut CompilerExpression,
     ) {
         for (arg, _comma) in arguments {
             self.partial_visit_expression(arg);
@@ -722,6 +741,13 @@ where
         self.partial_visit_function_call_expression(expression);
     }
 
+    fn visit_compiler_expression(
+        &mut self,
+        expression: &mut CompilerExpression,
+    ) -> Self::ExpressionOutput {
+        self.partial_visit_compiler_expression(expression);
+    }
+
     fn visit_array_index_expression(
         &mut self,
         expression: &mut ArrayIndexExpression,
@@ -735,13 +761,13 @@ where
     ) -> Self::ExpressionOutput {
         self.partial_visit_grouping_expression(expression);
     }
-
     fn visit_variable_access_expression(
         &mut self,
         expression: &mut VariableAccessExpression,
     ) -> Self::ExpressionOutput {
         self.partial_visit_variable_access_expression(expression);
     }
+
     fn visit_unary_expression(
         &mut self,
         expression: &mut UnaryExpression,

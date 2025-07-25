@@ -1,11 +1,11 @@
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BlockStatement,  BreakStatement, CastExpression,
+        BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-        SimpleType, LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
         UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
@@ -181,6 +181,13 @@ impl AstVisitor for AddTrailingTriviaPass {
     }
 
     fn visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
+        self.visit_token(&mut expression.close_paren_token);
+    }
+
+    fn visit_compiler_expression(
+        &mut self,
+        expression: &mut CompilerExpression,
+    ) -> Self::ExpressionOutput {
         self.visit_token(&mut expression.close_paren_token);
     }
 

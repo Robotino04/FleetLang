@@ -1,12 +1,12 @@
 use crate::ast::{
     ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
-    BinaryExpression, BlockStatement, BreakStatement, CastExpression, ExpressionStatement,
-    ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor,
-    GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression, OnStatement,
-    OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-    SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
-    VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-    VariableLValue, WhileLoopStatement,
+    BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
+    ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+    FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
+    LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
+    SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
+    ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+    VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
 };
 use crate::tokenizer::{SourceLocation, Token};
 
@@ -502,6 +502,31 @@ impl AstVisitor for FindContainingNodePass {
         self.node_hierarchy.push(expression.clone().into());
 
         let left_bound = self.visit_token(&expression.name_token)?.0;
+        self.visit_token(&expression.open_paren_token)?;
+        for (arg, comma) in &mut expression.arguments {
+            self.visit_expression(arg)?;
+            if let Some(comma) = comma {
+                self.visit_token(comma)?;
+            }
+        }
+        let right_bound = self.visit_token(&expression.close_paren_token)?.1;
+
+        if left_bound <= self.search_position && self.search_position <= right_bound {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        Ok((left_bound, right_bound))
+    }
+
+    fn visit_compiler_expression(
+        &mut self,
+        expression: &mut CompilerExpression,
+    ) -> Self::ExpressionOutput {
+        self.node_hierarchy.push(expression.clone().into());
+
+        let left_bound = self.visit_token(&expression.at_token)?.0;
+        self.visit_token(&expression.name_token)?;
         self.visit_token(&expression.open_paren_token)?;
         for (arg, comma) in &mut expression.arguments {
             self.visit_expression(arg)?;

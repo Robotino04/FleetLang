@@ -3,9 +3,9 @@ use std::{cell::RefCell, mem::swap, rc::Rc};
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, AstVisitor, BinaryExpression,
-        CastExpression, Expression, FunctionCallExpression, GroupingLValue, HasID, LValue,
-        LiteralExpression, OnStatement, OnStatementIterator, PerNodeData, Type, UnaryExpression,
-        VariableAccessExpression, VariableAssignmentExpression, VariableLValue,
+        CastExpression, CompilerExpression, Expression, FunctionCallExpression, GroupingLValue,
+        HasID, LValue, LiteralExpression, OnStatement, OnStatementIterator, PerNodeData, Type,
+        UnaryExpression, VariableAccessExpression, VariableAssignmentExpression, VariableLValue,
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
@@ -88,6 +88,7 @@ impl<'errors, 'inputs> LValueReducer<'errors, 'inputs> {
             Expression::Literal(a) => self.is_literal_expression_equal(a, b),
             Expression::Array(a) => self.is_array_expression_equal(a, b),
             Expression::FunctionCall(a) => self.is_function_call_expression_equal(a, b),
+            Expression::CompilerExpression(a) => self.is_compiler_expression_equal(a, b),
             Expression::ArrayIndex(a) => self.is_array_index_expression_equal(a, b),
             Expression::Grouping(a) => self.is_expression_equal(&a.subexpression, b),
             Expression::VariableAccess(a) => self.is_variable_access_expression_equal(a, b),
@@ -128,6 +129,13 @@ impl<'errors, 'inputs> LValueReducer<'errors, 'inputs> {
         _b: &Expression,
     ) -> Option<bool> {
         // TODO: handle pure functions
+        Some(false)
+    }
+    fn is_compiler_expression_equal(
+        &self,
+        _a: &CompilerExpression,
+        _b: &Expression,
+    ) -> Option<bool> {
         Some(false)
     }
     fn is_array_index_expression_equal(

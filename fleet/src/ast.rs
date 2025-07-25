@@ -34,6 +34,7 @@ pub enum AstNode {
     LiteralExpression(LiteralExpression),
     ArrayExpression(ArrayExpression),
     FunctionCallExpression(FunctionCallExpression),
+    CompilerExpression(CompilerExpression),
     ArrayIndexExpression(ArrayIndexExpression),
     GroupingExpression(GroupingExpression),
     VariableAccessExpression(VariableAccessExpression),
@@ -92,6 +93,7 @@ impl HasID for AstNode {
             AstNode::FunctionCallExpression(function_call_expression) => {
                 function_call_expression.get_id()
             }
+            AstNode::CompilerExpression(compiler_expression) => compiler_expression.get_id(),
             AstNode::ArrayIndexExpression(array_index_expression) => {
                 array_index_expression.get_id()
             }
@@ -273,6 +275,9 @@ pub trait AstVisitor {
             Expression::FunctionCall(function_call_expression) => {
                 self.visit_function_call_expression(function_call_expression)
             }
+            Expression::CompilerExpression(compiler_expression) => {
+                self.visit_compiler_expression(compiler_expression)
+            }
             Expression::ArrayIndex(array_index_expression) => {
                 self.visit_array_index_expression(array_index_expression)
             }
@@ -303,6 +308,10 @@ pub trait AstVisitor {
     fn visit_function_call_expression(
         &mut self,
         expression: &mut FunctionCallExpression,
+    ) -> Self::ExpressionOutput;
+    fn visit_compiler_expression(
+        &mut self,
+        expression: &mut CompilerExpression,
     ) -> Self::ExpressionOutput;
     fn visit_array_index_expression(
         &mut self,
@@ -808,6 +817,19 @@ pub struct FunctionCallExpression {
 generate_ast_requirements!(FunctionCallExpression, unwrap_function_call_expression);
 
 #[derive(Clone, Debug)]
+pub struct CompilerExpression {
+    pub at_token: Token,
+    pub name: String,
+    pub name_token: Token,
+    pub open_paren_token: Token,
+    pub arguments: Vec<(Expression, Option<Token>)>,
+    pub close_paren_token: Token,
+    pub id: NodeID,
+}
+
+generate_ast_requirements!(CompilerExpression, unwrap_compiler_expression);
+
+#[derive(Clone, Debug)]
 pub struct ArrayIndexExpression {
     pub array: Box<Expression>,
     pub open_bracket_token: Token,
@@ -885,6 +907,7 @@ pub enum Expression {
     Literal(LiteralExpression),
     Array(ArrayExpression),
     FunctionCall(FunctionCallExpression),
+    CompilerExpression(CompilerExpression),
     ArrayIndex(ArrayIndexExpression),
     Grouping(GroupingExpression),
     VariableAccess(VariableAccessExpression),
@@ -903,6 +926,7 @@ impl Expression {
             Expression::Array { .. } => 0,
             Expression::ArrayIndex { .. } => 0,
             Expression::FunctionCall { .. } => 0,
+            Expression::CompilerExpression { .. } => 0,
             Expression::Grouping { .. } => 0,
             Expression::VariableAccess { .. } => 0,
 
@@ -943,6 +967,7 @@ impl Expression {
             Expression::Array { .. } => Associativity::Both,
             Expression::ArrayIndex { .. } => Associativity::Left,
             Expression::FunctionCall { .. } => Associativity::Both,
+            Expression::CompilerExpression { .. } => Associativity::Both,
             Expression::Grouping { .. } => Associativity::Both,
             Expression::VariableAccess { .. } => Associativity::Both,
 
@@ -970,6 +995,7 @@ impl HasID for Expression {
             Expression::Literal(expr) => expr.get_id(),
             Expression::Array(expr) => expr.get_id(),
             Expression::FunctionCall(expr) => expr.get_id(),
+            Expression::CompilerExpression(expr) => expr.get_id(),
             Expression::ArrayIndex(expr) => expr.get_id(),
             Expression::Grouping(expr) => expr.get_id(),
             Expression::VariableAccess(expr) => expr.get_id(),
@@ -987,6 +1013,7 @@ impl From<Expression> for AstNode {
             Expression::Literal(literal_expression) => literal_expression.into(),
             Expression::Array(array_expression) => array_expression.into(),
             Expression::FunctionCall(function_call_expression) => function_call_expression.into(),
+            Expression::CompilerExpression(compiler_expression) => compiler_expression.into(),
             Expression::ArrayIndex(array_index_expression) => array_index_expression.into(),
             Expression::Grouping(grouping_expression) => grouping_expression.into(),
             Expression::VariableAccess(variable_access_expression) => {

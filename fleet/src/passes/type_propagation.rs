@@ -13,7 +13,7 @@ use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
-        Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        CompilerExpression, Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         OnStatementIterator, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
@@ -1395,11 +1395,11 @@ impl AstVisitor for TypePropagator<'_> {
                         ErrorSeverity::Error,
                     ));
                 }
-                EitherOrBoth::Right((param_type, name)) => {
+                EitherOrBoth::Right((param_type, param_name)) => {
                     self.errors.push(FleetError::from_token(
                         close_paren_token,
                         format!(
-                            "{name:?} is missing parameter {name:?} (Nr. {}) of type {}",
+                            "{name:?} is missing parameter {param_name:?} (Nr. {}) of type {}",
                             i + 1,
                             self.stringify_type_ptr(*param_type)
                         ),
@@ -1417,6 +1417,99 @@ impl AstVisitor for TypePropagator<'_> {
         self.node_types.insert(*id, detached_return_type);
 
         detached_return_type
+    }
+
+    fn visit_compiler_expression(
+        &mut self,
+        expression: &mut CompilerExpression,
+    ) -> Self::ExpressionOutput {
+        let expression_clone = expression.clone();
+        let CompilerExpression {
+            at_token: _,
+            name,
+            name_token: _,
+            open_paren_token: _,
+            arguments: _,
+            close_paren_token,
+            id,
+        } = expression;
+        let (parameter_types, return_type): (
+            Vec<(UnionFindSetPtr<RuntimeType>, String)>,
+            UnionFindSetPtr<RuntimeType>,
+        ) = match name.as_str() {
+            "zero" => (vec![], self.type_sets.insert_set(RuntimeType::Unknown)),
+            _ => {
+                self.errors.push(FleetError::from_node(
+                    &expression_clone,
+                    format!("No compiler function named {name:?} exists"),
+                    ErrorSeverity::Error,
+                ));
+
+                // still typecheck args, even though the function doesn't exist
+                for (arg, _comma) in &mut expression.arguments {
+                    self.visit_expression(arg);
+                }
+
+                return self.type_sets.insert_set(RuntimeType::Error);
+            }
+        };
+
+        let num_expected_arguments = parameter_types.len();
+
+        for (i, types) in expression
+            .arguments
+            .iter_mut()
+            .map(|(arg, _comma)| (self.visit_expression(arg), arg))
+            .collect_vec()
+            .into_iter()
+            .zip_longest(parameter_types.iter())
+            .enumerate()
+        {
+            match types {
+                EitherOrBoth::Both((arg_type, arg), (param_type, param_name)) => {
+                    // function arguments shouldn't get specialized by calling the function
+                    let param_type = self.type_sets.detach(*param_type);
+
+                    if !RuntimeType::merge_types(arg_type, param_type, &mut self.type_sets) {
+                        self.errors.push(FleetError::from_node(
+                            arg,
+                            format!(
+                                "{name:?} expects a value of type {} as argument {param_name:?} (Nr. {}). Got {}",
+                                self.stringify_type_ptr(param_type),
+                                i + 1,
+                                self.stringify_type_ptr(arg_type),
+                            ),
+                            ErrorSeverity::Error,
+                        ));
+                    }
+                }
+                EitherOrBoth::Left((_arg_type, arg)) => {
+                    self.errors.push(FleetError::from_node(
+                        arg,
+                        format!("{name:?} only has {num_expected_arguments} parameters"),
+                        ErrorSeverity::Error,
+                    ));
+                }
+                EitherOrBoth::Right((param_type, param_name)) => {
+                    self.errors.push(FleetError::from_token(
+                        close_paren_token,
+                        format!(
+                            "{name:?} is missing parameter {param_name:?} (Nr. {}) of type {}",
+                            i + 1,
+                            self.stringify_type_ptr(*param_type)
+                        ),
+                        ErrorSeverity::Error,
+                    ));
+                }
+            }
+        }
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
+        self.node_types.insert(*id, return_type);
+
+        return_type
     }
 
     fn visit_array_index_expression(
@@ -1984,7 +2077,6 @@ impl AstVisitor for TypePropagator<'_> {
         self.node_types.insert(*id, this_type);
         this_type
     }
-
     fn visit_variable_assignment_expression(
         &mut self,
         expression: &mut VariableAssignmentExpression,
@@ -2017,6 +2109,7 @@ impl AstVisitor for TypePropagator<'_> {
         self.node_types.insert(*id, left_type);
         left_type
     }
+
     fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
         let lvalue_clone = lvalue.clone();
         let VariableLValue {

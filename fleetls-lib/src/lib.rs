@@ -1,14 +1,6 @@
 use fleet::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
-        BinaryExpression, BinaryOperation, BlockStatement, CastExpression, ExpressionStatement,
-        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
-        GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement,
-        LiteralExpression, LiteralKind, NodeID, OnStatement, PerNodeData, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody, ThreadExecutor,
-        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, CastExpression, CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, NodeID, OnStatement, PerNodeData, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement
     },
     infra::{ErrorSeverity, FleetError, TokenizerOutput},
     passes::{
@@ -466,6 +458,57 @@ impl Backend {
                 (
                     format!("let {name} = ({parameters}) -> {return_type}"),
                     "function call".to_string(),
+                )
+            }
+            AstNode::CompilerExpression(CompilerExpression{
+                at_token:_,
+                name,
+                name_token: _,
+                open_paren_token: _,
+                arguments: _,
+                close_paren_token: _,
+                id,
+            }) => {
+                let (parameters, return_type) = (|| {
+                    let Some(analysis_data) = analysis_data else {
+                        return (
+                            "/* No type data available */".to_string(),
+                            "/* No type data available */".to_string(),
+                        );
+                    };
+                    let Some(ref_func) = analysis_data.function_data.get(&id) else {
+                        return (
+                            "/* Compiler function doesn't exist */".to_string(),
+                            "/* Compiler function doesn't exist */".to_string(),
+                        );
+                    };
+                    let return_type = analysis_data
+                        .type_sets
+                        .get(ref_func.borrow().return_type)
+                        .stringify(&analysis_data.type_sets);
+                    let parameters = Itertools::intersperse(
+                        ref_func
+                            .borrow()
+                            .parameter_types
+                            .iter()
+                            .map(|(param, name)| {
+                                name.clone()
+                                    + ": "
+                                    + &analysis_data
+                                        .type_sets
+                                        .get(*param)
+                                        .stringify(&analysis_data.type_sets)
+                            }),
+                        ", ".to_string(),
+                    )
+                    .collect::<String>();
+
+                    (parameters, return_type)
+                })();
+
+                (
+                    format!("@{name}({parameters}) -> {return_type}"),
+                    "compiler expression".to_string(),
                 )
             }
             AstNode::ArrayIndexExpression(ArrayIndexExpression {

@@ -3,13 +3,14 @@ use std::{cell::RefCell, collections::HashSet, rc::Rc, vec::Vec};
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BlockStatement, BreakStatement, CastExpression, ExpressionStatement,
-        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
-        GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression,
-        OnStatement, OnStatementIterator, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor,
-        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
+        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
+        LiteralExpression, OnStatement, OnStatementIterator, PerNodeData, Program, ReturnStatement,
+        SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
+        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::type_propagation::{
@@ -684,6 +685,26 @@ impl AstVisitor for StatTracker<'_, '_> {
                 used_variables: vec![],
             },
         };
+        for (arg, _comma) in arguments {
+            stat = stat.serial(self.visit_expression(arg));
+        }
+        self.stats.insert(*id, stat.clone());
+        stat
+    }
+
+    fn visit_compiler_expression(
+        &mut self,
+        CompilerExpression {
+            at_token: _,
+            name: _,
+            name_token: _,
+            open_paren_token: _,
+            arguments,
+            close_paren_token: _,
+            id,
+        }: &mut CompilerExpression,
+    ) -> Self::ExpressionOutput {
+        let mut stat = NodeStats::nothing();
         for (arg, _comma) in arguments {
             stat = stat.serial(self.visit_expression(arg));
         }

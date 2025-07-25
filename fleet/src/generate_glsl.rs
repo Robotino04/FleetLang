@@ -11,13 +11,14 @@ use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
-        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
-        IfStatement, LiteralExpression, LiteralKind, OnStatement, OnStatementIterator, PerNodeData,
-        Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
-        Statement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+        GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
+        OnStatementIterator, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SimpleType, SkipStatement, Statement, StatementFunctionBody, ThreadExecutor,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::type_propagation::{
@@ -1000,6 +1001,79 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
         }
     }
 
+    fn visit_compiler_expression(
+        &mut self,
+        expr: &mut CompilerExpression,
+    ) -> Self::ExpressionOutput {
+        let expr_clone = expr.clone();
+        let CompilerExpression {
+            at_token: _,
+            name,
+            name_token: _,
+            open_paren_token: _,
+            arguments,
+            close_paren_token: _,
+            id,
+        } = expr;
+
+        let (pre_statements, args): (Vec<_>, Vec<_>) = arguments
+            .iter_mut()
+            .map(|(arg, _comma)| self.visit_expression(arg))
+            .map(
+                |PreStatementValue {
+                     pre_statements,
+                     out_value,
+                 }| (pre_statements, out_value),
+            )
+            .unzip();
+
+        match name.as_str() {
+            "zero" => {
+                let expected_type = self.type_sets.get(
+                    *self
+                        .type_data
+                        .get(id)
+                        .expect("type data must exist before calling glsl_generator"),
+                );
+                let (type_, after_id) = self.runtime_type_to_glsl(*expected_type);
+
+                if expected_type.is_numeric() {
+                    PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: format!("({type_}{after_id}(0))"),
+                    }
+                } else {
+                    self.errors.push(FleetError::from_node(
+                        &expr_clone,
+                        format!(
+                            "@zero isn't implemented for type {} in glsl backend",
+                            expected_type.stringify(self.type_sets)
+                        ),
+                        ErrorSeverity::Error,
+                    ));
+                    PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: "\n#error unimplemented type for @zero\n".to_string(),
+                    }
+                }
+            }
+            _ => {
+                self.errors.push(FleetError::from_node(
+                    &expr_clone,
+                    format!(
+                        "No compiler function named {name:?} is implemented for the GLSL backend"
+                    ),
+                    ErrorSeverity::Error,
+                ));
+
+                PreStatementValue {
+                    pre_statements: "".to_string(),
+                    out_value: "\n#error unimplemented compiler function\n".to_string(),
+                }
+            }
+        }
+    }
+
     fn visit_array_index_expression(
         &mut self,
         ArrayIndexExpression {
@@ -1130,7 +1204,7 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
 
         PreStatementValue {
             pre_statements,
-            out_value: format!("(({type_}{after_id})({out_value}))"),
+            out_value: format!("({type_}{after_id}({out_value}))"),
         }
     }
 

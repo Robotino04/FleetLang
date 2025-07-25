@@ -8,7 +8,7 @@ use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
-        Executor, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        CompilerExpression, Executor, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
@@ -17,7 +17,7 @@ use crate::{
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     generate_glsl::GLSLCodeGenerator,
-    infra::FleetError,
+    infra::{ErrorSeverity, FleetError},
     passes::{
         stat_tracker::NodeStats,
         top_level_binding_finder::TopLevelBindingFinder,
@@ -1064,6 +1064,94 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                 self.mangle_function(name),
                 args.iter().map(|arg| format!("({arg})")).join(",")
             ),
+        }
+    }
+
+    fn visit_compiler_expression(
+        &mut self,
+        expr: &mut CompilerExpression,
+    ) -> Self::ExpressionOutput {
+        let expr_clone = expr.clone();
+        let CompilerExpression {
+            at_token: _,
+            name,
+            name_token: _,
+            open_paren_token: _,
+            arguments,
+            close_paren_token: _,
+            id,
+        } = expr;
+
+        let (pre_statements, args): (Vec<_>, Vec<_>) = arguments
+            .iter_mut()
+            .map(|(arg, _comma)| self.visit_expression(arg))
+            .map(
+                |PreStatementValue {
+                     pre_statements,
+                     out_value,
+                 }| (pre_statements, out_value),
+            )
+            .unzip();
+
+        match name.as_str() {
+            "zero" => {
+                let expected_type = *self.type_sets.get(
+                    *self
+                        .type_data
+                        .get(id)
+                        .expect("type data must exist before calling c_generator"),
+                );
+                let (type_, after_id) = self.runtime_type_to_c(expected_type);
+
+                if expected_type.is_numeric() {
+                    PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: format!("(({type_}{after_id})(0))"),
+                    }
+                } else if expected_type.is_boolean() {
+                    PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: "false".to_string(),
+                    }
+                } else if let RuntimeType::ArrayOf { .. } = expected_type {
+                    let tmp = self.unique_temporary("zero");
+                    let size = self.runtime_type_to_byte_size(expected_type);
+                    PreStatementValue {
+                        pre_statements: formatdoc!(
+                            "
+                            {type_} {tmp}{after_id};
+                            memset(&{tmp}, 0, {size});
+                            "
+                        ),
+                        out_value: format!("(&{tmp})"),
+                    }
+                } else {
+                    self.errors.push(FleetError::from_node(
+                        &expr_clone,
+                        format!(
+                            "@zero isn't implemented for type {} in c backend",
+                            expected_type.stringify(self.type_sets)
+                        ),
+                        ErrorSeverity::Error,
+                    ));
+                    PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: "\n#error unimplemented type for @zero\n".to_string(),
+                    }
+                }
+            }
+            _ => {
+                self.errors.push(FleetError::from_node(
+                    &expr_clone,
+                    format!("No compiler function named {name:?} is implemented for the C backend"),
+                    ErrorSeverity::Error,
+                ));
+
+                PreStatementValue {
+                    pre_statements: "".to_string(),
+                    out_value: "\n#error unimplemented compiler function\n".to_string(),
+                }
+            }
         }
     }
 

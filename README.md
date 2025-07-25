@@ -38,7 +38,10 @@
 - remove "test.fl" as fallback in fleetc
 - remove lvalues maybe?
 - special-case small 2D and 3D GPU dispatches that fit in the size limits
-- arrays have use-after-scope bug in c
+- 3+D arrays are broken in c (and glsl too probably)
+- heap allocations
+- warnings for unused functions/variables
+- glsl functions
 
 
 ## Building

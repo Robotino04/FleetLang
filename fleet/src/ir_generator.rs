@@ -22,8 +22,8 @@ use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
-        Executor, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionBody,
-        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+        CompilerExpression, Executor, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
         SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
@@ -1564,6 +1564,65 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             .map(|l| l.as_basic_value_enum()))
     }
 
+    fn visit_compiler_expression(
+        &mut self,
+        expr: &mut CompilerExpression,
+    ) -> Self::ExpressionOutput {
+        let expr_clone = expr.clone();
+        let CompilerExpression {
+            at_token: _,
+            name,
+            name_token,
+            open_paren_token: _,
+            arguments,
+            close_paren_token: _,
+            id,
+        } = expr;
+
+        let mut args: Vec<BasicMetadataValueEnum> = vec![];
+        for (arg, _comma) in arguments {
+            args.push(
+                self.visit_expression(arg)?
+                    .ok_or(format!(
+                        "Somehow passed a Unit value as a compiler function parameter near {:#?}",
+                        name_token
+                    ))?
+                    .into(),
+            );
+        }
+
+        match name.as_str() {
+            "zero" => {
+                let expected_type = *self.type_sets.get(
+                    *self
+                        .type_data
+                        .get(id)
+                        .expect("type data must exist before calling ir_generator"),
+                );
+                let type_ = self.runtime_type_to_llvm(expected_type, &expr_clone)?;
+
+                match type_ {
+                    AnyTypeEnum::FloatType(type_) => Ok(Some(type_.const_zero().into())),
+                    AnyTypeEnum::IntType(type_) => Ok(Some(type_.const_zero().into())),
+                    AnyTypeEnum::ArrayType(type_) => Ok(Some(type_.const_zero().into())),
+                    _ => self.report_error(FleetError::from_node(
+                        &expr_clone,
+                        format!(
+                            "@zero isn't implemented for type {} in LLVM backend",
+                            expected_type.stringify(self.type_sets)
+                        ),
+                        ErrorSeverity::Error,
+                    )),
+                }
+            }
+            _ => self.report_error(FleetError::from_node(
+                &expr_clone,
+                format!("No compiler function named {name:?} is implemented for the LLVM backend"),
+                ErrorSeverity::Error,
+            )),
+        }
+    }
+
     fn visit_array_index_expression(
         &mut self,
         ArrayIndexExpression {
@@ -1752,6 +1811,8 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             .get(id)
             .expect("type data should exist before calling ir_generator");
 
+        let target_type_str = self.type_sets.get(value_type).stringify(self.type_sets);
+
         match (
             *self.type_sets.get(value_type),
             *self.type_sets.get(target_type),
@@ -1775,7 +1836,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                             .build_int_truncate_or_bit_cast(
                                 value,
                                 expected_type,
-                                &format!("as_{target_type:?}"),
+                                &format!("as_{target_type_str}"),
                             )?
                             .into(),
                     ))
@@ -1785,7 +1846,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                             .build_int_z_extend(
                                 value,
                                 expected_type,
-                                &format!("as_{target_type:?}"),
+                                &format!("as_{target_type_str}"),
                             )?
                             .into(),
                     ))
@@ -1795,7 +1856,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                             .build_int_s_extend(
                                 value,
                                 expected_type,
-                                &format!("as_{target_type:?}"),
+                                &format!("as_{target_type_str}"),
                             )?
                             .into(),
                     ))
@@ -1820,7 +1881,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                             .build_unsigned_int_to_float(
                                 value,
                                 expected_type,
-                                &format!("as_{target_type:?}"),
+                                &format!("as_{target_type_str}"),
                             )?
                             .into(),
                     ))
@@ -1830,7 +1891,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                             .build_signed_int_to_float(
                                 value,
                                 expected_type,
-                                &format!("as_{target_type:?}"),
+                                &format!("as_{target_type_str}"),
                             )?
                             .into(),
                     ))
@@ -1850,7 +1911,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                         .build_float_to_signed_int(
                             value,
                             expected_type,
-                            &format!("as_{target_type:?}"),
+                            &format!("as_{target_type_str}"),
                         )?
                         .into(),
                 ))
@@ -1863,7 +1924,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
 
                 Ok(Some(
                     self.builder
-                        .build_float_ext(value, expected_type, &format!("as_{target_type:?}"))?
+                        .build_float_ext(value, expected_type, &format!("as_{target_type_str}"))?
                         .into(),
                 ))
             }
@@ -1875,7 +1936,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
 
                 Ok(Some(
                     self.builder
-                        .build_float_trunc(value, expected_type, &format!("as_{target_type:?}"))?
+                        .build_float_trunc(value, expected_type, &format!("as_{target_type_str}"))?
                         .into(),
                 ))
             }

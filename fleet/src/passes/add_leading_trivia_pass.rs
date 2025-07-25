@@ -1,13 +1,13 @@
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BlockStatement, BreakStatement, CastExpression, ExpressionStatement,
-        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
-        GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression,
-        OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
+        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
+        LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
 };
@@ -155,6 +155,13 @@ impl AstVisitor for AddLeadingTriviaPass {
 
     fn visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
         self.visit_token(&mut expression.name_token);
+    }
+
+    fn visit_compiler_expression(
+        &mut self,
+        expression: &mut CompilerExpression,
+    ) -> Self::ExpressionOutput {
+        self.visit_token(&mut expression.at_token);
     }
 
     fn visit_array_index_expression(

@@ -3,13 +3,14 @@ use itertools::Itertools;
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BlockStatement, BreakStatement, CastExpression, ExpressionStatement,
-        ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition,
-        GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression,
-        OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor,
-        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
+        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
+        LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
+        SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
+        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     document_model::DocumentElement,
     tokenizer::{Keyword, Token, TokenType, Trivia, TriviaKind},
@@ -728,6 +729,41 @@ impl AstVisitor for AstToDocumentModelConverter {
         }: &mut FunctionCallExpression,
     ) -> Self::ExpressionOutput {
         DocumentElement::Concatenation(vec![
+            self.token_to_element(name_token),
+            DocumentElement::Concatenation(vec![
+                self.token_to_element(open_paren_token),
+                DocumentElement::spaced_concatentation(
+                    DocumentElement::CollapsableSpace,
+                    arguments
+                        .iter_mut()
+                        .map(|(arg, comma)| match comma {
+                            Some(comma) => DocumentElement::Concatenation(vec![
+                                self.visit_expression(arg),
+                                self.token_to_element(comma),
+                            ]),
+                            None => self.visit_expression(arg),
+                        })
+                        .collect(),
+                ),
+                self.token_to_element(close_paren_token),
+            ]),
+        ])
+    }
+
+    fn visit_compiler_expression(
+        &mut self,
+        CompilerExpression {
+            at_token,
+            name: _,
+            name_token,
+            open_paren_token,
+            arguments,
+            close_paren_token,
+            id: _,
+        }: &mut CompilerExpression,
+    ) -> Self::ExpressionOutput {
+        DocumentElement::Concatenation(vec![
+            self.token_to_element(at_token),
             self.token_to_element(name_token),
             DocumentElement::Concatenation(vec![
                 self.token_to_element(open_paren_token),
