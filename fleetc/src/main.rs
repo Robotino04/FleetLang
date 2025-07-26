@@ -112,6 +112,8 @@ fn main() {
     println!("{}", generate_header("LLVM IR (unoptimized)", 50));
     println!("{}", llvm_output.module.to_string());
 
+    std::fs::write("./out_unopt.ll", llvm_output.module.to_string());
+
     if errors
         .iter()
         .any(|err| err.severity == ErrorSeverity::Error)
@@ -164,13 +166,14 @@ fn main() {
         )
         .unwrap();
 
-    println!("{}", generate_header("LLVM IR (optimized)", 50));
-
     llvm_output
         .run_default_optimization_passes(&target_machine)
         .unwrap();
 
+    println!("{}", generate_header("LLVM IR (optimized)", 50));
     println!("{}", llvm_output.module.to_string());
+
+    std::fs::write("./out_opt.ll", llvm_output.module.to_string());
 
     let output_path = Path::new("output.o");
     target_machine
