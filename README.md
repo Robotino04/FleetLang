@@ -42,6 +42,7 @@
 - heap allocations
 - warnings for unused functions/variables
 - glsl functions
+- disallow returning arrays
 
 
 ## Building

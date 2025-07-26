@@ -156,6 +156,14 @@ pub enum RuntimeType {
 }
 
 impl RuntimeType {
+    pub fn unwrap_arrayof(self, types: &UnionFindSet<RuntimeType>) -> (RuntimeType, Option<usize>) {
+        if let Self::ArrayOf { subtype, size } = self {
+            (*types.get(subtype), size)
+        } else {
+            panic!("Expected RuntimeType::ArrayOf, but got {self:?}");
+        }
+    }
+
     pub fn stringify(&self, types: &UnionFindSet<RuntimeType>) -> String {
         match *self {
             RuntimeType::Number => "{number}".to_string(),

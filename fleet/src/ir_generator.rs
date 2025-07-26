@@ -14,7 +14,10 @@ use inkwell::{
     memory_buffer::MemoryBuffer,
     module::{Linkage, Module},
     types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, FunctionType},
-    values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue},
+    values::{
+        BasicMetadataValueEnum, BasicValue, BasicValueEnum, FloatValue, FunctionValue, IntValue,
+        PointerValue,
+    },
 };
 use itertools::Itertools;
 
@@ -78,6 +81,97 @@ macro_rules! match_any_type_enum_as_basic_type {
             AnyTypeEnum::VoidType($unit_id) => $unit,
         }
     };
+}
+
+fn any_type_to_basic_type<'a>(any: AnyTypeEnum<'a>) -> Option<BasicTypeEnum<'a>> {
+    match_any_type_enum_as_basic_type!(
+        any,
+        type_ => { Some(type_.into()) },
+        function(_) => { None },
+        unit(_) => { None }
+    )
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RuntimeValueIR<'a> {
+    Bool(IntValue<'a>),
+    Int(IntValue<'a>),
+    Float(FloatValue<'a>),
+    Array(PointerValue<'a>, RuntimeType),
+    Unit,
+}
+
+impl<'a> RuntimeValueIR<'a> {
+    pub fn as_basic_value(&'a self) -> Option<&'a dyn BasicValue<'a>> {
+        match self {
+            RuntimeValueIR::Bool(int_value) => Some(int_value),
+            RuntimeValueIR::Int(int_value) => Some(int_value),
+            RuntimeValueIR::Float(float_value) => Some(float_value),
+            RuntimeValueIR::Array(pointer_value, _) => Some(pointer_value),
+            RuntimeValueIR::Unit => None,
+        }
+    }
+    pub fn as_basic_value_enum(self) -> Option<BasicValueEnum<'a>> {
+        match self {
+            RuntimeValueIR::Bool(int_value) => Some(int_value.as_basic_value_enum()),
+            RuntimeValueIR::Int(int_value) => Some(int_value.as_basic_value_enum()),
+            RuntimeValueIR::Float(float_value) => Some(float_value.as_basic_value_enum()),
+            RuntimeValueIR::Array(pointer_value, _) => Some(pointer_value.as_basic_value_enum()),
+            RuntimeValueIR::Unit => None,
+        }
+    }
+    pub fn as_basic_value_no_unit(self) -> BasicValueEnum<'a> {
+        match self {
+            RuntimeValueIR::Bool(int_value) => int_value.as_basic_value_enum(),
+            RuntimeValueIR::Int(int_value) => int_value.as_basic_value_enum(),
+            RuntimeValueIR::Float(float_value) => float_value.as_basic_value_enum(),
+            RuntimeValueIR::Array(pointer_value, _) => pointer_value.as_basic_value_enum(),
+            RuntimeValueIR::Unit => panic!("Expected this to not be a RuntimeValueIR::Unit"),
+        }
+    }
+
+    pub fn unwrap_bool(self) -> IntValue<'a> {
+        if let RuntimeValueIR::Bool(x) = self {
+            x
+        } else {
+            panic!("Expected RuntimeValueIR::Bool, got {self:#?}")
+        }
+    }
+    pub fn unwrap_int(self) -> IntValue<'a> {
+        if let RuntimeValueIR::Int(x) = self {
+            x
+        } else {
+            panic!("Expected RuntimeValueIR::Int, got {self:#?}")
+        }
+    }
+    pub fn unwrap_float(self) -> FloatValue<'a> {
+        if let RuntimeValueIR::Float(x) = self {
+            x
+        } else {
+            panic!("Expected RuntimeValueIR::Float, got {self:#?}")
+        }
+    }
+    pub fn unwrap_array(self) -> (PointerValue<'a>, RuntimeType) {
+        if let RuntimeValueIR::Array(x, y) = self {
+            (x, y)
+        } else {
+            panic!("Expected RuntimeValueIR::Array, got {self:#?}")
+        }
+    }
+    pub fn unwrap_unit(self) {
+        if let RuntimeValueIR::Unit = self {
+        } else {
+            panic!("Expected RuntimeValueIR::Unit, got {self:#?}")
+        }
+    }
+
+    pub fn unwrap_int_or_bool(self) -> IntValue<'a> {
+        if let RuntimeValueIR::Bool(x) | RuntimeValueIR::Int(x) = self {
+            x
+        } else {
+            panic!("Expected RuntimeValueIR::Int or RuntimeValueIR::Bool, got {self:#?}")
+        }
+    }
 }
 
 pub struct IrGenerator<'a, 'errors, 'inputs> {
@@ -158,6 +252,43 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
                 Ok(void_type.fn_type(param_types, is_var_args))
             }
         )
+    }
+
+    fn package_llvm_in_runtime_value<I: Into<AstNode> + Clone>(
+        &mut self,
+        value: Option<BasicValueEnum<'a>>,
+        expected_type: RuntimeType,
+        error_node: &I,
+    ) -> Result<RuntimeValueIR<'a>> {
+        Ok(match expected_type {
+            RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64 => {
+                RuntimeValueIR::Int(value.unwrap().into_int_value())
+            }
+            RuntimeType::F32 | RuntimeType::F64 => {
+                RuntimeValueIR::Float(value.unwrap().into_float_value())
+            }
+            RuntimeType::Boolean => RuntimeValueIR::Bool(value.unwrap().into_int_value()),
+            RuntimeType::Unit => {
+                assert!(value.is_none());
+                RuntimeValueIR::Unit
+            }
+
+            type_ @ RuntimeType::ArrayOf { .. } => {
+                RuntimeValueIR::Array(value.unwrap().into_pointer_value(), type_)
+            }
+            RuntimeType::Number
+            | RuntimeType::UnsizedInteger
+            | RuntimeType::UnsizedFloat
+            | RuntimeType::Unknown
+            | RuntimeType::Error => self.report_error(FleetError::from_node(
+                error_node,
+                format!(
+                    "this has unknown or error type: {}",
+                    expected_type.stringify(self.type_sets)
+                ),
+                ErrorSeverity::Error,
+            ))?,
+        })
     }
 
     fn runtime_type_to_llvm<I: Into<AstNode> + Clone>(
@@ -254,7 +385,7 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
     }
 
     fn register_function(&mut self, function: &mut FunctionDefinition) -> Result<()> {
-        let return_type_ir = function
+        let return_type = function
             .return_type
             .as_mut()
             .map(|t| self.visit_type(t))
@@ -265,8 +396,9 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
                     .expect("Function data should exist before calling ir_generator")
                     .borrow()
                     .return_type;
-                self.runtime_type_to_llvm(*self.type_sets.get(inferred_type), function)
+                Ok(*self.type_sets.get(inferred_type))
             })?;
+        let return_type_ir = self.runtime_type_to_llvm(return_type, function)?;
 
         let name = match &function.body {
             FunctionBody::Extern(ExternFunctionBody {
@@ -345,9 +477,9 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
     type StatementOutput = Result<()>;
     type ExecutorHostOutput = Result<()>;
     type ExecutorOutput = Result<()>;
-    type ExpressionOutput = Result<Option<BasicValueEnum<'a>>>;
+    type ExpressionOutput = Result<RuntimeValueIR<'a>>;
     type LValueOutput = Result<PointerValue<'a>>;
-    type TypeOutput = Result<AnyTypeEnum<'a>>;
+    type TypeOutput = Result<RuntimeType>;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         let needs_runtime = self
@@ -529,7 +661,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         &mut self,
         function: &mut FunctionDefinition,
     ) -> Self::FunctionDefinitionOutput {
-        let return_type_ir = function
+        let return_type = function
             .return_type
             .as_mut()
             .map(|t| self.visit_type(t))
@@ -540,8 +672,9 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                     .expect("Function data should exist before calling ir_generator")
                     .borrow()
                     .return_type;
-                self.runtime_type_to_llvm(*self.type_sets.get(inferred_type), function)
+                Ok(*self.type_sets.get(inferred_type))
             })?;
+        let return_type_ir = self.runtime_type_to_llvm(return_type, function)?;
         let ir_function = self
             .function_locations
             .get(
@@ -681,8 +814,10 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                     .expect("variable data should exist before calling ir_generator")
                     .borrow()
                     .type_;
-                self.runtime_type_to_llvm(*self.type_sets.get(inferred_type), simple_binding)
+                Ok(*self.type_sets.get(inferred_type))
             })?;
+
+        let type_ = self.runtime_type_to_llvm(type_, simple_binding)?;
 
         let ptr = match_any_type_enum_as_basic_type!(
             type_,
@@ -806,11 +941,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
 
         let iterator_end_values_ir = iterators
             .iter_mut()
-            .map(|it| {
-                Ok(self
-                    .visit_expression(&mut it.max_value)?
-                    .expect("iterator cannot have Unit type"))
-            })
+            .map(|it| self.visit_expression(&mut it.max_value))
             .collect::<Result<Vec<_>>>()?;
 
         let mut buffers = vec![];
@@ -922,9 +1053,18 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                     .into_array_type()
                     .const_zero();
                 for (n, it) in iterator_end_values_ir.iter().enumerate() {
+                    assert_eq!(
+                        n as u32 as usize, n,
+                        "Iterator end value would overflow u32"
+                    );
                     array = self
                         .builder
-                        .build_insert_value(array, *it, n as u32, "iterator_size_buffer")?
+                        .build_insert_value(
+                            array,
+                            it.unwrap_int(),
+                            n as u32,
+                            "iterator_size_buffer",
+                        )?
                         .into_array_value();
                 }
                 self.builder.build_store(ptr, array)?;
@@ -1040,7 +1180,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                 .iter()
                 .map(|it| {
                     self.builder.build_int_z_extend_or_bit_cast(
-                        it.into_int_value(),
+                        it.unwrap_int(),
                         self.context.i64_type(),
                         "iterator upcast",
                     )
@@ -1105,15 +1245,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         if let Some(retvalue) = &mut return_stmt.value {
             let ir_value = self.visit_expression(retvalue)?;
 
-            self.builder.build_return(match &ir_value {
-                Some(BasicValueEnum::ArrayValue(array_value)) => Some(array_value),
-                Some(BasicValueEnum::IntValue(int_value)) => Some(int_value),
-                Some(BasicValueEnum::FloatValue(float_value)) => Some(float_value),
-                Some(BasicValueEnum::PointerValue(pointer_value)) => Some(pointer_value),
-                Some(BasicValueEnum::StructValue(struct_value)) => Some(struct_value),
-                Some(BasicValueEnum::VectorValue(vector_value)) => Some(vector_value),
-                None => return Err("Unit functions should not return an expression".into()),
-            })?;
+            self.builder.build_return(ir_value.as_basic_value())?;
         } else {
             self.builder.build_return(None)?;
         }
@@ -1131,12 +1263,27 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
     ) -> Self::StatementOutput {
-        let eval_value = self
-            .visit_expression(&mut vardef_stmt.value)?
-            .ok_or("Somehow passed using a void value as a variable initializer".to_string())?;
+        let eval_value = self.visit_expression(&mut vardef_stmt.value)?;
 
         let ptr = self.visit_simple_binding(&mut vardef_stmt.binding)?;
-        self.builder.build_store(ptr, eval_value)?;
+
+        if let RuntimeValueIR::Array(right_value, right_type) = eval_value {
+            let size = self
+                .runtime_type_to_llvm(right_type, &vardef_stmt.value)?
+                .size_of()
+                .unwrap();
+            self.builder.build_memcpy(
+                ptr,
+                1, // alignment gets read from the pointer itself in LLVM 7 and above
+                right_value,
+                1, // alignment gets read from the pointer itself in LLVM 7 and above
+                size,
+            )?;
+            return Ok(());
+        } else {
+            self.builder
+                .build_store(ptr, eval_value.as_basic_value_no_unit())?;
+        }
 
         Ok(())
     }
@@ -1156,10 +1303,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         let end_block = self.context.insert_basic_block_after(next_block, "if_end");
 
         self.builder.position_at_end(current_block);
-        let condition_value = self
-            .visit_expression(&mut if_stmt.condition)?
-            .expect("Somehow passed a Unit value to an if condition");
-        let condition_value = condition_value.into_int_value();
+        let condition_value = self.visit_expression(&mut if_stmt.condition)?.unwrap_bool();
 
         self.builder
             .build_conditional_branch(condition_value, body_block, next_block)?;
@@ -1183,10 +1327,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             next_block.set_name("elif_condition");
             self.builder.position_at_end(next_block);
 
-            let condition_value = self
-                .visit_expression(condition)?
-                .expect("Somehow passed a Unit value to an elif condition");
-            let condition_value = condition_value.into_int_value();
+            let condition_value = self.visit_expression(condition)?.unwrap_bool();
 
             let body_block = self
                 .context
@@ -1265,15 +1406,10 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         self.builder.build_unconditional_branch(condition_block)?;
         self.builder.position_at_end(condition_block);
 
-        let cond_value = self
-            .visit_expression(condition)?
-            .expect("Somehow passed a Unit value as a while condition");
+        let cond_value = self.visit_expression(condition)?.unwrap_bool();
 
-        self.builder.build_conditional_branch(
-            cond_value.into_int_value(),
-            body_block,
-            end_block,
-        )?;
+        self.builder
+            .build_conditional_branch(cond_value, body_block, end_block)?;
 
         self.builder.position_at_end(body_block);
         {
@@ -1334,19 +1470,13 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         let cond_value = condition
             .as_mut()
             .map(|cond| self.visit_expression(cond))
-            .unwrap_or(Ok(Some(
-                self.context
-                    .i32_type()
-                    .const_int(1, false)
-                    .as_basic_value_enum(),
+            .unwrap_or(Ok(RuntimeValueIR::Int(
+                self.context.i32_type().const_int(1, false),
             )))?
-            .expect("Somehow passed a Unit value as a while condition");
+            .unwrap_bool();
 
-        self.builder.build_conditional_branch(
-            cond_value.into_int_value(),
-            body_block,
-            end_block,
-        )?;
+        self.builder
+            .build_conditional_branch(cond_value, body_block, end_block)?;
 
         self.builder.position_at_end(body_block);
 
@@ -1445,35 +1575,35 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             .get(id)
             .expect("type data should exist before running ir_generator");
 
-        Ok(Some(match value {
+        Ok(match value {
             LiteralKind::Number(value) => {
                 match self.runtime_type_to_llvm(*self.type_sets.get(type_), &literal_clone)? {
                     AnyTypeEnum::FloatType(type_) => {
-                        type_.const_float(*value as f64).as_basic_value_enum()
+                        RuntimeValueIR::Float(type_.const_float(*value as f64))
                     }
 
                     AnyTypeEnum::IntType(type_) => {
-                        type_.const_int(*value, false).as_basic_value_enum()
+                        RuntimeValueIR::Int(type_.const_int(*value, false))
                     }
 
                     _ => self.report_error(FleetError::from_node(
                         literal,
-                        "This was neither a float or int in llvm backend",
+                        "This was neither a float nor int in the llvm backend",
                         ErrorSeverity::Error,
                     ))?,
                 }
             }
-            LiteralKind::Float(value) => self
-                .runtime_type_to_llvm(*self.type_sets.get(type_), &literal_clone)?
-                .into_float_type()
-                .const_float(*value)
-                .as_basic_value_enum(),
-            LiteralKind::Bool(value) => self
-                .context
-                .bool_type()
-                .const_int(if *value { 1 } else { 0 }, false)
-                .as_basic_value_enum(),
-        }))
+            LiteralKind::Float(value) => RuntimeValueIR::Float(
+                self.runtime_type_to_llvm(*self.type_sets.get(type_), &literal_clone)?
+                    .into_float_type()
+                    .const_float(*value),
+            ),
+            LiteralKind::Bool(value) => RuntimeValueIR::Bool(
+                self.context
+                    .bool_type()
+                    .const_int(if *value { 1 } else { 0 }, false),
+            ),
+        })
     }
 
     fn visit_array_expression(
@@ -1488,7 +1618,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             id,
         } = expression;
 
-        let type_ @ RuntimeType::ArrayOf { .. } = self.type_sets.get(
+        let type_ @ RuntimeType::ArrayOf { .. } = *self.type_sets.get(
             *self
                 .type_data
                 .get(id)
@@ -1502,44 +1632,60 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         };
 
         let mut array_ir = self
-            .runtime_type_to_llvm(*type_, &expression_clone)?
+            .runtime_type_to_llvm(type_, &expression_clone)?
             .into_array_type()
             .get_undef();
 
         for (i, (item, _comma)) in elements.iter_mut().enumerate() {
-            let item_ir = self
-                .visit_expression(item)?
-                .expect("Cannot have array of Unit");
-            array_ir = self
-                .builder
-                .build_insert_value(array_ir, item_ir, i as u32, "init_array")?
-                .into_array_value();
+            let item_ir = self.visit_expression(item)?;
+            if let RuntimeValueIR::Array(item_ir, item_type) = item_ir {
+                let item_type =
+                    any_type_to_basic_type(self.runtime_type_to_llvm(item_type, item)?).unwrap();
+                let item = self
+                    .builder
+                    .build_load(item_type, item_ir, "load_subarray")?;
+                array_ir = self
+                    .builder
+                    .build_insert_value(array_ir, item, i as u32, "init_array")?
+                    .into_array_value();
+            } else {
+                array_ir = self
+                    .builder
+                    .build_insert_value(
+                        array_ir,
+                        item_ir.as_basic_value_no_unit(),
+                        i as u32,
+                        "init_array",
+                    )?
+                    .into_array_value();
+            }
         }
 
-        Ok(Some(array_ir.into()))
+        let ptr = self
+            .builder
+            .build_alloca(array_ir.get_type(), "array_expression")?;
+        self.builder.build_store(ptr, array_ir)?;
+
+        Ok(RuntimeValueIR::Array(ptr, type_))
     }
 
     fn visit_function_call_expression(
         &mut self,
-        FunctionCallExpression {
+        expr: &mut FunctionCallExpression,
+    ) -> Self::ExpressionOutput {
+        let expr_clone = expr.clone();
+        let FunctionCallExpression {
             name,
-            name_token,
+            name_token: _,
             open_paren_token: _,
             arguments,
             close_paren_token: _,
             id,
-        }: &mut FunctionCallExpression,
-    ) -> Self::ExpressionOutput {
+        } = expr;
+
         let mut args: Vec<BasicMetadataValueEnum> = vec![];
         for (arg, _comma) in arguments {
-            args.push(
-                self.visit_expression(arg)?
-                    .ok_or(format!(
-                        "Somehow passed a Unit value as a function parameter near {:#?}",
-                        name_token
-                    ))?
-                    .into(),
-            );
+            args.push(self.visit_expression(arg)?.as_basic_value_no_unit().into());
         }
 
         let ir_function = self
@@ -1556,12 +1702,21 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             .clone()
             .0;
 
-        Ok(self
-            .builder
-            .build_call(ir_function, &args[..], name)?
-            .try_as_basic_value()
-            .left()
-            .map(|l| l.as_basic_value_enum()))
+        let return_type = *self.type_sets.get(
+            *self
+                .type_data
+                .get(id)
+                .expect("type data must exist before calling ir_generator"),
+        );
+
+        self.package_llvm_in_runtime_value(
+            self.builder
+                .build_call(ir_function, &args[..], name)?
+                .try_as_basic_value()
+                .left(),
+            return_type,
+            &expr_clone,
+        )
     }
 
     fn visit_compiler_expression(
@@ -1572,23 +1727,16 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
         let CompilerExpression {
             at_token: _,
             name,
-            name_token,
+            name_token: _,
             open_paren_token: _,
             arguments,
             close_paren_token: _,
             id,
         } = expr;
 
-        let mut args: Vec<BasicMetadataValueEnum> = vec![];
+        let mut args = vec![];
         for (arg, _comma) in arguments {
-            args.push(
-                self.visit_expression(arg)?
-                    .ok_or(format!(
-                        "Somehow passed a Unit value as a compiler function parameter near {:#?}",
-                        name_token
-                    ))?
-                    .into(),
-            );
+            args.push(self.visit_expression(arg)?);
         }
 
         match name.as_str() {
@@ -1599,21 +1747,51 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                         .get(id)
                         .expect("type data must exist before calling ir_generator"),
                 );
-                let type_ = self.runtime_type_to_llvm(expected_type, &expr_clone)?;
+                let expected_type_ir = self.runtime_type_to_llvm(expected_type, &expr_clone)?;
 
-                match type_ {
-                    AnyTypeEnum::FloatType(type_) => Ok(Some(type_.const_zero().into())),
-                    AnyTypeEnum::IntType(type_) => Ok(Some(type_.const_zero().into())),
-                    AnyTypeEnum::ArrayType(type_) => Ok(Some(type_.const_zero().into())),
-                    _ => self.report_error(FleetError::from_node(
+                Ok(match expected_type {
+                    RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64 => {
+                        RuntimeValueIR::Int(expected_type_ir.into_int_type().const_zero())
+                    }
+                    RuntimeType::F32 | RuntimeType::F64 => {
+                        RuntimeValueIR::Float(expected_type_ir.into_float_type().const_zero())
+                    }
+                    RuntimeType::Boolean => {
+                        RuntimeValueIR::Bool(expected_type_ir.into_int_type().const_zero())
+                    }
+                    RuntimeType::Unit => self.report_error(FleetError::from_node(
+                        &expr_clone,
+                        "@zero cannot have Unit type",
+                        ErrorSeverity::Error,
+                    ))?,
+
+                    RuntimeType::ArrayOf { .. } => {
+                        let ptr = self
+                            .builder
+                            .build_alloca(expected_type_ir.into_array_type(), "zero_temporary")?;
+
+                        self.builder.build_memset(
+                            ptr,
+                            1, // alignment gets read from the pointer itself in LLVM 7 and above
+                            self.context.i8_type().const_zero(),
+                            expected_type_ir.into_array_type().size_of().unwrap(),
+                        )?;
+
+                        RuntimeValueIR::Array(ptr, expected_type)
+                    }
+                    RuntimeType::Number
+                    | RuntimeType::UnsizedInteger
+                    | RuntimeType::UnsizedFloat
+                    | RuntimeType::Unknown
+                    | RuntimeType::Error => self.report_error(FleetError::from_node(
                         &expr_clone,
                         format!(
-                            "@zero isn't implemented for type {} in LLVM backend",
+                            "@zero compiler function has unknown or error type: {}",
                             expected_type.stringify(self.type_sets)
                         ),
                         ErrorSeverity::Error,
-                    )),
-                }
+                    ))?,
+                })
             }
             _ => self.report_error(FleetError::from_node(
                 &expr_clone,
@@ -1625,43 +1803,43 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
 
     fn visit_array_index_expression(
         &mut self,
-        ArrayIndexExpression {
+        expr: &mut ArrayIndexExpression,
+    ) -> Self::ExpressionOutput {
+        let ArrayIndexExpression {
             array,
             open_bracket_token: _,
             index,
             close_bracket_token: _,
             id: _,
-        }: &mut ArrayIndexExpression,
-    ) -> Self::ExpressionOutput {
-        let array_ir = self
-            .visit_expression(array)?
-            .expect("Cannot index into unit")
-            .into_array_value();
-        let index_ir = self
-            .visit_expression(index)?
-            .expect("Cannot index with unit")
-            .into_int_value();
+        } = expr;
+        let (array_ptr, array_type) = self.visit_expression(array)?.unwrap_array();
+        let index_ir = self.visit_expression(index)?.unwrap_int();
 
-        let array_ptr = self
-            .builder
-            .build_alloca(array_ir.get_type(), "array_alloca")?;
-
-        self.builder.build_store(array_ptr, array_ir)?;
+        let array_type_ir = self.runtime_type_to_llvm(array_type, &**array)?;
 
         let index_ptr = unsafe {
             self.builder.build_gep(
-                array_ir.get_type().get_element_type(),
+                array_type_ir.into_array_type().get_element_type(),
                 array_ptr,
                 &[index_ir],
                 "array_index",
-            )
-        }?;
+            )?
+        };
 
-        Ok(Some(self.builder.build_load(
-            array_ir.get_type().get_element_type(),
-            index_ptr,
-            "load_from_array",
-        )?))
+        let result_type = array_type.unwrap_arrayof(self.type_sets).0;
+
+        let result =
+            if let RuntimeType::ArrayOf { .. } = array_type.unwrap_arrayof(self.type_sets).0 {
+                index_ptr.into()
+            } else {
+                self.builder.build_load(
+                    array_type_ir.into_array_type().get_element_type(),
+                    index_ptr,
+                    "load_from_array",
+                )?
+            };
+
+        self.package_llvm_in_runtime_value(Some(result), result_type, expr)
     }
 
     fn visit_grouping_expression(
@@ -1706,26 +1884,21 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             ));
         };
         let storage = storage.clone();
-        return match_any_type_enum_as_basic_type!(
-            self.runtime_type_to_llvm(*self.type_sets.get(var.borrow().type_), &expr_clone)?,
-            type_ => {
-                Ok(Some(self.builder.build_load(type_, storage.0, name)?))
-            },
-            function(_) => {
-                return self.report_error(FleetError::from_node(
-                    &expr_clone,
-                    "Cannot load function",
-                    ErrorSeverity::Error,
-                ));
-            },
-            unit(_) => {
-                return self.report_error(FleetError::from_node(
-                    &expr_clone,
-                    "Cannot load Unit value",
-                    ErrorSeverity::Error,
-                ));
-            }
-        );
+
+        let result_type = *self.type_sets.get(var.borrow().type_);
+        let result_type_ir = self.runtime_type_to_llvm(result_type, &expr_clone)?;
+
+        let result = if let RuntimeType::ArrayOf { .. } = result_type {
+            Some(storage.0.into())
+        } else {
+            Some(self.builder.build_load(
+                any_type_to_basic_type(result_type_ir).unwrap(),
+                storage.0,
+                name,
+            )?)
+        };
+
+        self.package_llvm_in_runtime_value(result, result_type, &expr_clone)
     }
 
     fn visit_unary_expression(&mut self, expr: &mut UnaryExpression) -> Self::ExpressionOutput {
@@ -1736,70 +1909,62 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             id: _,
         } = expr;
 
-        let value = self.visit_expression(operand)?.ok_or(format!(
-            "Somehow passed a Unit value as an operand to {:?}",
-            operation
-        ))?;
+        let value = self.visit_expression(operand)?;
 
-        match operation {
-            UnaryOperation::BitwiseNot => Ok(Some(
-                self.builder
-                    .build_not(value.into_int_value(), "bitwise_not")?
-                    .into(),
-            )),
-            UnaryOperation::LogicalNot => Ok(Some(match value {
-                BasicValueEnum::IntValue(value) => self
-                    .builder
-                    .build_int_compare(
+        let result = match operation {
+            UnaryOperation::BitwiseNot => {
+                RuntimeValueIR::Int(self.builder.build_not(value.unwrap_int(), "bitwise_not")?)
+            }
+
+            UnaryOperation::LogicalNot => RuntimeValueIR::Bool(match value {
+                RuntimeValueIR::Bool(value) | RuntimeValueIR::Int(value) => {
+                    self.builder.build_int_compare(
                         IntPredicate::EQ,
                         value,
                         value.get_type().const_zero(),
                         "logical_not",
                     )?
-                    .into(),
-
-                BasicValueEnum::FloatValue(value) => self
-                    .builder
-                    .build_float_compare(
-                        FloatPredicate::OEQ, // OEQ because NaN is truthy
-                        value,
-                        value.get_type().const_zero(),
-                        "logical_not",
-                    )?
-                    .into(),
-
+                }
+                RuntimeValueIR::Float(value) => self.builder.build_float_compare(
+                    FloatPredicate::OEQ, // OEQ because NaN is truthy
+                    value,
+                    value.get_type().const_zero(),
+                    "logical_not",
+                )?,
                 _ => self.report_error(FleetError::from_node(
                     expr,
                     "This was neither a float or int in llvm backend",
                     ErrorSeverity::Error,
                 ))?,
-            })),
-            UnaryOperation::Negate => Ok(Some(match value {
-                BasicValueEnum::IntValue(value) => {
-                    self.builder.build_int_neg(value, "negate")?.into()
+            }),
+            UnaryOperation::Negate => match value {
+                RuntimeValueIR::Int(value) => {
+                    RuntimeValueIR::Int(self.builder.build_int_neg(value, "negate")?)
                 }
-                BasicValueEnum::FloatValue(value) => {
-                    self.builder.build_float_neg(value, "negate")?.into()
+                RuntimeValueIR::Float(value) => {
+                    RuntimeValueIR::Float(self.builder.build_float_neg(value, "negate")?)
                 }
 
                 _ => self.report_error(FleetError::from_node(
                     expr,
-                    "This was neither a float or int in llvm backend",
+                    "This was neither a float nor int in llvm backend",
                     ErrorSeverity::Error,
                 ))?,
-            })),
-        }
+            },
+        };
+
+        Ok(result)
     }
 
-    fn visit_cast_expression(
-        &mut self,
-        CastExpression {
+    fn visit_cast_expression(&mut self, expr: &mut CastExpression) -> Self::ExpressionOutput {
+        let expr_clone = expr.clone();
+        let CastExpression {
             operand,
             as_token: _,
             type_,
             id,
-        }: &mut CastExpression,
-    ) -> Self::ExpressionOutput {
+        } = expr;
+
         let value = self.visit_expression(&mut *operand)?;
         let value_type = *self
             .type_data
@@ -1825,42 +1990,37 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                 | RuntimeType::Boolean,
                 RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64,
             ) => {
-                let expected_type = self.visit_type(type_)?.into_int_type();
-                let value = value
-                    .expect("Somehow tried to cast Unit to integer")
-                    .into_int_value();
+                let expected_type = self.visit_type(type_)?;
+                let expected_type = self
+                    .runtime_type_to_llvm(expected_type, &expr_clone)?
+                    .into_int_type();
 
-                if expected_type.get_bit_width() <= value.get_type().get_bit_width() {
-                    Ok(Some(
-                        self.builder
-                            .build_int_truncate_or_bit_cast(
-                                value,
-                                expected_type,
-                                &format!("as_{target_type_str}"),
-                            )?
-                            .into(),
-                    ))
-                } else if self.type_sets.get(value_type).is_boolean() {
-                    Ok(Some(
-                        self.builder
-                            .build_int_z_extend(
-                                value,
-                                expected_type,
-                                &format!("as_{target_type_str}"),
-                            )?
-                            .into(),
-                    ))
-                } else {
-                    Ok(Some(
-                        self.builder
-                            .build_int_s_extend(
-                                value,
-                                expected_type,
-                                &format!("as_{target_type_str}"),
-                            )?
-                            .into(),
-                    ))
-                }
+                Ok(RuntimeValueIR::Int(match value {
+                    RuntimeValueIR::Bool(value) | RuntimeValueIR::Int(value)
+                        if expected_type.get_bit_width() <= value.get_type().get_bit_width() =>
+                    {
+                        self.builder.build_int_truncate_or_bit_cast(
+                            value,
+                            expected_type,
+                            &format!("as_{target_type_str}"),
+                        )?
+                    }
+                    RuntimeValueIR::Bool(value) => self.builder.build_int_z_extend(
+                        value,
+                        expected_type,
+                        &format!("as_{target_type_str}"),
+                    )?,
+                    RuntimeValueIR::Int(value) => self.builder.build_int_s_extend(
+                        value,
+                        expected_type,
+                        &format!("as_{target_type_str}"),
+                    )?,
+                    _ => self.report_error(FleetError::from_node(
+                        &**operand,
+                        "Expected this to be an integer or bool",
+                        ErrorSeverity::Error,
+                    ))?,
+                }))
             }
             (
                 RuntimeType::I8
@@ -1870,75 +2030,69 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                 | RuntimeType::Boolean,
                 RuntimeType::F32 | RuntimeType::F64,
             ) => {
-                let expected_type = self.visit_type(type_)?.into_float_type();
-                let value = value
-                    .expect("Somehow tried to cast Unit to float")
-                    .into_int_value();
+                let expected_type = self.visit_type(type_)?;
+                let expected_type = self
+                    .runtime_type_to_llvm(expected_type, &expr_clone)?
+                    .into_float_type();
 
-                if self.type_sets.get(value_type).is_boolean() {
-                    Ok(Some(
-                        self.builder
-                            .build_unsigned_int_to_float(
-                                value,
-                                expected_type,
-                                &format!("as_{target_type_str}"),
-                            )?
-                            .into(),
-                    ))
-                } else {
-                    Ok(Some(
-                        self.builder
-                            .build_signed_int_to_float(
-                                value,
-                                expected_type,
-                                &format!("as_{target_type_str}"),
-                            )?
-                            .into(),
-                    ))
-                }
+                Ok(RuntimeValueIR::Float(match value {
+                    RuntimeValueIR::Bool(value) => self.builder.build_unsigned_int_to_float(
+                        value,
+                        expected_type,
+                        &format!("as_{target_type_str}"),
+                    )?,
+                    RuntimeValueIR::Int(value) => self.builder.build_signed_int_to_float(
+                        value,
+                        expected_type,
+                        &format!("as_{target_type_str}"),
+                    )?,
+                    _ => self.report_error(FleetError::from_node(
+                        &**operand,
+                        "Expected this to be an integer or bool",
+                        ErrorSeverity::Error,
+                    ))?,
+                }))
             }
             (
                 RuntimeType::F32 | RuntimeType::F64,
                 RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64,
             ) => {
-                let expected_type = self.visit_type(type_)?.into_int_type();
-                let value = value
-                    .expect("Somehow tried to cast Unit to int")
-                    .into_float_value();
+                let expected_type = self.visit_type(type_)?;
+                let expected_type = self
+                    .runtime_type_to_llvm(expected_type, expr)?
+                    .into_int_type();
 
-                Ok(Some(
-                    self.builder
-                        .build_float_to_signed_int(
-                            value,
-                            expected_type,
-                            &format!("as_{target_type_str}"),
-                        )?
-                        .into(),
+                Ok(RuntimeValueIR::Int(
+                    self.builder.build_float_to_signed_int(
+                        value.unwrap_float(),
+                        expected_type,
+                        &format!("as_{target_type_str}"),
+                    )?,
                 ))
             }
             (RuntimeType::F32 | RuntimeType::F64, RuntimeType::F64) => {
-                let expected_type = self.visit_type(type_)?.into_float_type();
-                let value = value
-                    .expect("Somehow tried to cast Unit to float")
-                    .into_float_value();
+                let expected_type = self.visit_type(type_)?;
+                let expected_type = self
+                    .runtime_type_to_llvm(expected_type, expr)?
+                    .into_float_type();
 
-                Ok(Some(
-                    self.builder
-                        .build_float_ext(value, expected_type, &format!("as_{target_type_str}"))?
-                        .into(),
-                ))
+                Ok(RuntimeValueIR::Float(self.builder.build_float_ext(
+                    value.unwrap_float(),
+                    expected_type,
+                    &format!("as_{target_type_str}"),
+                )?))
             }
             (RuntimeType::F32 | RuntimeType::F64, RuntimeType::F32) => {
-                let expected_type = self.visit_type(type_)?.into_float_type();
-                let value = value
-                    .expect("Somehow tried to cast Unit to float")
-                    .into_float_value();
+                let expected_type = self.visit_type(type_)?;
+                let expected_type = self
+                    .runtime_type_to_llvm(expected_type, expr)?
+                    .into_float_type();
 
-                Ok(Some(
-                    self.builder
-                        .build_float_trunc(value, expected_type, &format!("as_{target_type_str}"))?
-                        .into(),
-                ))
+                Ok(RuntimeValueIR::Float(self.builder.build_float_trunc(
+                    value.unwrap_float(),
+                    expected_type,
+                    &format!("as_{target_type_str}"),
+                )?))
             }
             (
                 _,
@@ -1966,38 +2120,32 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                 | RuntimeType::Boolean,
                 RuntimeType::Boolean,
             ) => {
-                let value = value
-                    .expect("Somehow tried to cast Unit to bool")
-                    .into_int_value();
-
-                Ok(Some(
-                    self.builder
-                        .build_int_compare(
-                            IntPredicate::NE,
-                            value,
-                            value.get_type().const_zero(),
-                            "as_bool",
-                        )?
-                        .into(),
-                ))
+                if let RuntimeValueIR::Bool(value) | RuntimeValueIR::Int(value) = value {
+                    Ok(RuntimeValueIR::Bool(self.builder.build_int_compare(
+                        IntPredicate::NE,
+                        value,
+                        value.get_type().const_zero(),
+                        "as_bool",
+                    )?))
+                } else {
+                    self.report_error(FleetError::from_node(
+                        type_,
+                        format!("trying to cast {value:?} to boolean"),
+                        ErrorSeverity::Error,
+                    ))
+                }
             }
             (RuntimeType::F32 | RuntimeType::F64, RuntimeType::Boolean) => {
-                let value = value
-                    .expect("Somehow tried to cast Unit to bool")
-                    .into_float_value();
+                let value = value.unwrap_float();
 
-                Ok(Some(
-                    self.builder
-                        .build_float_compare(
-                            FloatPredicate::UNE,
-                            value,
-                            value.get_type().const_zero(),
-                            "as_bool",
-                        )?
-                        .into(),
-                ))
+                Ok(RuntimeValueIR::Bool(self.builder.build_float_compare(
+                    FloatPredicate::UNE,
+                    value,
+                    value.get_type().const_zero(),
+                    "as_bool",
+                )?))
             }
-            (_, RuntimeType::Unit) => Ok(None),
+            (_, RuntimeType::Unit) => Ok(RuntimeValueIR::Unit),
             (RuntimeType::Unit, _) => self.report_error(FleetError::from_node(
                 type_,
                 "cannot cast from Unit to anything",
@@ -2051,288 +2199,290 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             id: _,
         }: &mut BinaryExpression,
     ) -> Self::ExpressionOutput {
-        let left_value = self.visit_expression(left)?.ok_or(format!(
-            "Somehow passed a Unit value as an operand to {:?}",
-            operation
-        ))?;
-        let mut right_value_gen = |self_: &mut Self| -> Result<BasicValueEnum<'a>> {
-            Ok(self_.visit_expression(right)?.ok_or(format!(
-                "Somehow passed a Unit value as an operand to {:?}",
-                operation
-            ))?)
-        };
+        let left_value = self.visit_expression(left)?;
+        let mut right_value_gen =
+            |self_: &mut Self| -> Result<RuntimeValueIR<'a>> { self_.visit_expression(right) };
 
         match operation {
             BinaryOperation::Add => {
                 let right_value = right_value_gen(self)?;
-                Ok(Some(match right_value {
-                    BasicValueEnum::IntValue(right_value) => self
-                        .builder
-                        .build_int_add(left_value.into_int_value(), right_value, "add")?
-                        .into(),
-                    BasicValueEnum::FloatValue(right_value) => self
-                        .builder
-                        .build_float_add(left_value.into_float_value(), right_value, "add")?
-                        .into(),
+                Ok(match right_value {
+                    RuntimeValueIR::Int(right_value) => RuntimeValueIR::Int(
+                        self.builder
+                            .build_int_add(left_value.unwrap_int(), right_value, "add")?,
+                    ),
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Float(self.builder.build_float_add(
+                            left_value.unwrap_float(),
+                            right_value,
+                            "add",
+                        )?)
+                    }
 
                     _ => self.report_error(FleetError::from_node(
                         &**right,
                         "This was neither a float or int in llvm backend",
                         ErrorSeverity::Error,
                     ))?,
-                }))
+                })
             }
             BinaryOperation::Subtract => {
                 let right_value = right_value_gen(self)?;
-                Ok(Some(match right_value {
-                    BasicValueEnum::IntValue(right_value) => self
-                        .builder
-                        .build_int_sub(left_value.into_int_value(), right_value, "sub")?
-                        .into(),
-                    BasicValueEnum::FloatValue(right_value) => self
-                        .builder
-                        .build_float_sub(left_value.into_float_value(), right_value, "sub")?
-                        .into(),
+                Ok(match right_value {
+                    RuntimeValueIR::Int(right_value) => RuntimeValueIR::Int(
+                        self.builder
+                            .build_int_sub(left_value.unwrap_int(), right_value, "sub")?,
+                    ),
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Float(self.builder.build_float_sub(
+                            left_value.unwrap_float(),
+                            right_value,
+                            "sub",
+                        )?)
+                    }
 
                     _ => self.report_error(FleetError::from_node(
                         &**right,
                         "This was neither a float or int in llvm backend",
                         ErrorSeverity::Error,
                     ))?,
-                }))
+                })
             }
 
             BinaryOperation::Multiply => {
                 let right_value = right_value_gen(self)?;
-                Ok(Some(match right_value {
-                    BasicValueEnum::IntValue(right_value) => self
-                        .builder
-                        .build_int_mul(left_value.into_int_value(), right_value, "mul")?
-                        .into(),
-                    BasicValueEnum::FloatValue(right_value) => self
-                        .builder
-                        .build_float_mul(left_value.into_float_value(), right_value, "mul")?
-                        .into(),
+                Ok(match right_value {
+                    RuntimeValueIR::Int(right_value) => RuntimeValueIR::Int(
+                        self.builder
+                            .build_int_mul(left_value.unwrap_int(), right_value, "mul")?,
+                    ),
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Float(self.builder.build_float_mul(
+                            left_value.unwrap_float(),
+                            right_value,
+                            "mul",
+                        )?)
+                    }
 
                     _ => self.report_error(FleetError::from_node(
                         &**right,
                         "This was neither a float or int in llvm backend",
                         ErrorSeverity::Error,
                     ))?,
-                }))
+                })
             }
             BinaryOperation::Divide => {
                 let right_value = right_value_gen(self)?;
-                Ok(Some(match right_value {
-                    BasicValueEnum::IntValue(right_value) => self
-                        .builder
-                        .build_int_signed_div(left_value.into_int_value(), right_value, "div")?
-                        .into(),
-                    BasicValueEnum::FloatValue(right_value) => self
-                        .builder
-                        .build_float_div(left_value.into_float_value(), right_value, "div")?
-                        .into(),
+                Ok(match right_value {
+                    RuntimeValueIR::Int(right_value) => {
+                        RuntimeValueIR::Int(self.builder.build_int_signed_div(
+                            left_value.unwrap_int(),
+                            right_value,
+                            "div",
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Float(self.builder.build_float_div(
+                            left_value.unwrap_float(),
+                            right_value,
+                            "div",
+                        )?)
+                    }
 
                     _ => self.report_error(FleetError::from_node(
                         &**right,
                         "This was neither a float or int in llvm backend",
                         ErrorSeverity::Error,
                     ))?,
-                }))
+                })
             }
             BinaryOperation::Modulo => {
                 let right_value = right_value_gen(self)?;
-                Ok(Some(match right_value {
-                    BasicValueEnum::IntValue(right_value) => self
-                        .builder
-                        .build_int_signed_rem(left_value.into_int_value(), right_value, "mod")?
-                        .into(),
-                    BasicValueEnum::FloatValue(right_value) => self
-                        .builder
-                        .build_float_rem(left_value.into_float_value(), right_value, "mod")?
-                        .into(),
+                Ok(match right_value {
+                    RuntimeValueIR::Int(right_value) => {
+                        RuntimeValueIR::Int(self.builder.build_int_signed_rem(
+                            left_value.unwrap_int(),
+                            right_value,
+                            "mod",
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Float(self.builder.build_float_rem(
+                            left_value.unwrap_float(),
+                            right_value,
+                            "mod",
+                        )?)
+                    }
 
                     _ => self.report_error(FleetError::from_node(
                         &**right,
                         "This was neither a float or int in llvm backend",
                         ErrorSeverity::Error,
                     ))?,
-                }))
+                })
             }
 
             BinaryOperation::LessThan => {
                 let right_value = right_value_gen(self)?;
-                Ok(Some(match right_value {
-                    BasicValueEnum::IntValue(right_value) => self
-                        .builder
-                        .build_int_compare(
+                Ok(match right_value {
+                    RuntimeValueIR::Int(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
                             IntPredicate::SLT,
-                            left_value.into_int_value(),
+                            left_value.unwrap_int(),
                             right_value,
                             "less_than",
-                        )?
-                        .into(),
-                    BasicValueEnum::FloatValue(right_value) => self
-                        .builder
-                        .build_float_compare(
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_float_compare(
                             FloatPredicate::OLT,
-                            left_value.into_float_value(),
+                            left_value.unwrap_float(),
                             right_value,
                             "less_than",
-                        )?
-                        .into(),
+                        )?)
+                    }
 
                     _ => self.report_error(FleetError::from_node(
                         &**right,
                         "This was neither a float or int in llvm backend",
                         ErrorSeverity::Error,
                     ))?,
-                }))
+                })
             }
             BinaryOperation::LessThanOrEqual => {
                 let right_value = right_value_gen(self)?;
-                Ok(Some(match right_value {
-                    BasicValueEnum::IntValue(right_value) => self
-                        .builder
-                        .build_int_compare(
+                Ok(match right_value {
+                    RuntimeValueIR::Int(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
                             IntPredicate::SLE,
-                            left_value.into_int_value(),
+                            left_value.unwrap_int(),
                             right_value,
                             "less_than_or_equal",
-                        )?
-                        .into(),
-                    BasicValueEnum::FloatValue(right_value) => self
-                        .builder
-                        .build_float_compare(
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_float_compare(
                             FloatPredicate::OLE,
-                            left_value.into_float_value(),
+                            left_value.unwrap_float(),
                             right_value,
                             "less_than_or_equal",
-                        )?
-                        .into(),
+                        )?)
+                    }
 
                     _ => self.report_error(FleetError::from_node(
                         &**right,
-                        "This was neither a float or int in llvm backend",
+                        "This was neither a float or int in llvm backen",
                         ErrorSeverity::Error,
                     ))?,
-                }))
+                })
             }
             BinaryOperation::GreaterThan => {
                 let right_value = right_value_gen(self)?;
-                Ok(Some(match right_value {
-                    BasicValueEnum::IntValue(right_value) => self
-                        .builder
-                        .build_int_compare(
+                Ok(match right_value {
+                    RuntimeValueIR::Int(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
                             IntPredicate::SGT,
-                            left_value.into_int_value(),
+                            left_value.unwrap_int(),
                             right_value,
                             "greater_than",
-                        )?
-                        .into(),
-                    BasicValueEnum::FloatValue(right_value) => self
-                        .builder
-                        .build_float_compare(
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_float_compare(
                             FloatPredicate::OGT,
-                            left_value.into_float_value(),
+                            left_value.unwrap_float(),
                             right_value,
                             "greater_than",
-                        )?
-                        .into(),
+                        )?)
+                    }
 
                     _ => self.report_error(FleetError::from_node(
                         &**right,
                         "This was neither a float or int in llvm backend",
                         ErrorSeverity::Error,
                     ))?,
-                }))
+                })
             }
             BinaryOperation::GreaterThanOrEqual => {
                 let right_value = right_value_gen(self)?;
-                Ok(Some(match right_value {
-                    BasicValueEnum::IntValue(right_value) => self
-                        .builder
-                        .build_int_compare(
+                Ok(match right_value {
+                    RuntimeValueIR::Int(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
                             IntPredicate::SGE,
-                            left_value.into_int_value(),
+                            left_value.unwrap_int(),
                             right_value,
                             "greater_than_or_equal",
-                        )?
-                        .into(),
-                    BasicValueEnum::FloatValue(right_value) => self
-                        .builder
-                        .build_float_compare(
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_float_compare(
                             FloatPredicate::OGE,
-                            left_value.into_float_value(),
+                            left_value.unwrap_float(),
                             right_value,
                             "greater_than_or_equal",
-                        )?
-                        .into(),
+                        )?)
+                    }
 
                     _ => self.report_error(FleetError::from_node(
                         &**right,
                         "This was neither a float or int in llvm backend",
                         ErrorSeverity::Error,
                     ))?,
-                }))
+                })
             }
             BinaryOperation::Equal => {
                 let right_value = right_value_gen(self)?;
-                Ok(Some(match right_value {
-                    BasicValueEnum::IntValue(right_value) => self
-                        .builder
-                        .build_int_compare(
+                Ok(match right_value {
+                    RuntimeValueIR::Bool(right_value) | RuntimeValueIR::Int(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
                             IntPredicate::EQ,
-                            left_value.into_int_value(),
+                            left_value.unwrap_int_or_bool(),
                             right_value,
                             "equal",
-                        )?
-                        .into(),
-                    BasicValueEnum::FloatValue(right_value) => self
-                        .builder
-                        .build_float_compare(
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_float_compare(
                             FloatPredicate::OEQ,
-                            left_value.into_float_value(),
+                            left_value.unwrap_float(),
                             right_value,
                             "equal",
-                        )?
-                        .into(),
+                        )?)
+                    }
 
                     _ => self.report_error(FleetError::from_node(
                         &**right,
                         "This was neither a float or int in llvm backend",
                         ErrorSeverity::Error,
                     ))?,
-                }))
+                })
             }
             BinaryOperation::NotEqual => {
                 let right_value = right_value_gen(self)?;
-                Ok(Some(match right_value {
-                    BasicValueEnum::IntValue(right_value) => self
-                        .builder
-                        .build_int_compare(
+                Ok(match right_value {
+                    RuntimeValueIR::Bool(right_value) | RuntimeValueIR::Int(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
                             IntPredicate::NE,
-                            left_value.into_int_value(),
+                            left_value.unwrap_int_or_bool(),
                             right_value,
                             "not_equal",
-                        )?
-                        .into(),
-                    BasicValueEnum::FloatValue(right_value) => self
-                        .builder
-                        .build_float_compare(
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_float_compare(
                             FloatPredicate::UNE,
-                            left_value.into_float_value(),
+                            left_value.unwrap_float(),
                             right_value,
                             "not_equal",
-                        )?
-                        .into(),
+                        )?)
+                    }
 
                     _ => self.report_error(FleetError::from_node(
                         &**right,
                         "This was neither a float or int in llvm backend",
                         ErrorSeverity::Error,
                     ))?,
-                }))
+                })
             }
 
             BinaryOperation::LogicalAnd => {
@@ -2349,14 +2499,14 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
 
                 self.builder.position_at_end(current_block);
                 self.builder.build_conditional_branch(
-                    left_value.into_int_value(),
+                    left_value.unwrap_bool(),
                     right_block,
                     end_block,
                 )?;
 
                 self.builder.position_at_end(right_block);
-                let right_value = right_value_gen(self)?;
-                let bool_right_value = right_value.into_int_value();
+                let right_value = right_value_gen(self)?.unwrap_bool();
+                let left_value = left_value.unwrap_bool();
                 self.builder.build_unconditional_branch(end_block)?;
                 // needed because right_value may have generated new basic blocks and
                 // right_block isn't the branch source anymore
@@ -2368,17 +2518,16 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                 self.builder.position_at_end(end_block);
                 let result = self
                     .builder
-                    .build_phi(left_value.get_type().into_int_type(), "logical_and_result")?;
+                    .build_phi(left_value.get_type(), "logical_and_result")?;
 
                 result.add_incoming(&[
-                    (
-                        &left_value.get_type().into_int_type().const_zero(),
-                        current_block,
-                    ),
-                    (&bool_right_value, last_right_block),
+                    (&left_value.get_type().const_zero(), current_block),
+                    (&right_value, last_right_block),
                 ]);
 
-                Ok(Some(result.as_basic_value()))
+                Ok(RuntimeValueIR::Bool(
+                    result.as_basic_value().into_int_value(),
+                ))
             }
             BinaryOperation::LogicalOr => {
                 let current_block = self
@@ -2394,14 +2543,14 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
 
                 self.builder.position_at_end(current_block);
                 self.builder.build_conditional_branch(
-                    left_value.into_int_value(),
+                    left_value.unwrap_bool(),
                     end_block,
                     right_block,
                 )?;
 
                 self.builder.position_at_end(right_block);
-                let right_value = right_value_gen(self)?;
-                let bool_right_value = right_value.into_int_value();
+                let right_value = right_value_gen(self)?.unwrap_bool();
+                let left_value = left_value.unwrap_bool();
                 self.builder.build_unconditional_branch(end_block)?;
                 // needed because right_value may have generated new basic blocks and
                 // right_block isn't the branch source anymore
@@ -2413,37 +2562,52 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
                 self.builder.position_at_end(end_block);
                 let result = self
                     .builder
-                    .build_phi(left_value.get_type().into_int_type(), "logical_or_result")?;
+                    .build_phi(left_value.get_type(), "logical_or_result")?;
 
                 result.add_incoming(&[
-                    (
-                        &left_value.get_type().into_int_type().const_int(1, false),
-                        current_block,
-                    ),
-                    (&bool_right_value, last_right_block),
+                    (&left_value.get_type().const_int(1, false), current_block),
+                    (&right_value, last_right_block),
                 ]);
 
-                Ok(Some(result.as_basic_value()))
+                Ok(RuntimeValueIR::Bool(
+                    result.as_basic_value().into_int_value(),
+                ))
             }
         }
     }
 
     fn visit_variable_assignment_expression(
         &mut self,
-        VariableAssignmentExpression {
+        expr: &mut VariableAssignmentExpression,
+    ) -> Self::ExpressionOutput {
+        let VariableAssignmentExpression {
             lvalue,
             equal_token: _,
             right,
             id: _,
-        }: &mut VariableAssignmentExpression,
-    ) -> Self::ExpressionOutput {
-        let storage = self.visit_lvalue(lvalue)?;
-        let right_value = self
-            .visit_expression(right)?
-            .ok_or("Somehow tried assigning a Unit value to an lvalue")?;
+        } = expr;
 
-        self.builder.build_store(storage, right_value)?;
-        Ok(Some(right_value))
+        let storage = self.visit_lvalue(lvalue)?;
+        let right_value = self.visit_expression(right)?;
+
+        if let RuntimeValueIR::Array(right_value, right_type) = right_value {
+            let size = self
+                .runtime_type_to_llvm(right_type, &**right)?
+                .size_of()
+                .unwrap();
+            self.builder.build_memcpy(
+                storage,
+                1, // alignment gets read from the pointer itself in LLVM 7 and above
+                right_value,
+                1, // alignment gets read from the pointer itself in LLVM 7 and above
+                size,
+            )?;
+        } else {
+            self.builder
+                .build_store(storage, right_value.as_basic_value_no_unit())?;
+        }
+
+        Ok(right_value)
     }
 
     fn visit_variable_lvalue(
@@ -2472,45 +2636,25 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             open_bracket_token: _,
             index,
             close_bracket_token: _,
-            id,
+            id: _,
         }: &mut ArrayIndexLValue,
     ) -> Self::LValueOutput {
-        let array_ir = self.visit_lvalue(array)?;
-        let index_ir = self
-            .visit_expression(index)?
-            .expect("Cannot index with unit")
-            .into_int_value();
+        let array_ptr = self.visit_lvalue(array)?;
+        let index_ir = self.visit_expression(index)?.unwrap_int();
 
-        let infered_type = *self
-            .type_data
-            .get(id)
-            .expect("type data should exist before calling ir_generator");
+        let array_type = *self
+            .type_sets
+            .get(*self.type_data.get(&array.get_id()).unwrap());
+        let array_type_ir = self.runtime_type_to_llvm(array_type, &**array)?;
 
-        let element_type =
-            self.runtime_type_to_llvm(*self.type_sets.get(infered_type), &**array)?;
-
-        let index_ptr = match_any_type_enum_as_basic_type!(
-            element_type,
-            type_ => {
-                unsafe {
-                    self.builder.build_gep(type_, array_ir, &[index_ir], "array_index_lvalue")
-                }?
-            },
-            function(_) => {
-                return self.report_error(FleetError::from_node(
-                    &**array,
-                    "Cannot have array of functions",
-                    ErrorSeverity::Error,
-                ));
-            },
-            unit(_) => {
-                return self.report_error(FleetError::from_node(
-                    &**array,
-                    "Cannot have array of Unit",
-                    ErrorSeverity::Error,
-                ));
-            }
-        );
+        let index_ptr = unsafe {
+            self.builder.build_gep(
+                array_type_ir.into_array_type().get_element_type(),
+                array_ptr,
+                &[index_ir],
+                "array_index",
+            )?
+        };
 
         Ok(index_ptr)
     }
@@ -2543,7 +2687,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             *self.type_sets.get(*infered_type),
             "Inferred type (right) of SimpleType doesn't match its actual type (left)"
         );
-        self.runtime_type_to_llvm(*runtime_type, type_)
+        Ok(*runtime_type)
     }
 
     fn visit_unit_type(
@@ -2564,7 +2708,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             *self.type_sets.get(*infered_type),
             "Inferred type (right) of UnitType doesn't match its actual type (left)"
         );
-        Ok(self.context.void_type().into())
+        Ok(RuntimeType::Unit)
     }
 
     fn visit_idk_type(&mut self, type_: &mut IdkType) -> Self::TypeOutput {
@@ -2574,7 +2718,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             .get(id)
             .expect("type data should exist before calling ir_generator");
 
-        self.runtime_type_to_llvm(*self.type_sets.get(infered_type), type_)
+        Ok(*self.type_sets.get(infered_type))
     }
 
     fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
@@ -2591,6 +2735,6 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             .get(id)
             .expect("type data should exist before calling ir_generator");
 
-        self.runtime_type_to_llvm(*self.type_sets.get(infered_type), array_type)
+        Ok(*self.type_sets.get(infered_type))
     }
 }

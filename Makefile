@@ -6,7 +6,12 @@ CFLAGS= \
 	-fsanitize=address \
 	-fstack-protector-all \
 	-fsanitize-address-use-after-return=always \
-	-fno-omit-frame-pointer
+	-fno-omit-frame-pointer \
+	-g
+
+LDFLAGS= \
+	-rdynamic \
+	-lvulkan
 
 all: out_llvm out_c
 
@@ -14,13 +19,13 @@ clean:
 	rm -f out_llvm out_c.o out_c c_out.log llvm_out.log out_c2
 
 out_llvm: output.o fl_runtime/fl_runtime.o
-	clang++ $(CFLAGS) output.o fl_runtime/fl_runtime.o -lvulkan -o out_llvm -rdynamic
+	clang++ $(LDFLAGS) $(CFLAGS) output.o fl_runtime/fl_runtime.o -o out_llvm
 
 out_c.o: out.c fl_runtime/fl_runtime.h
 	clang $(CFLAGS) -c out.c -o out_c.o -Ifl_runtime/
 
 out_c: out_c.o fl_runtime/fl_runtime.o
-	clang++ $(CFLAGS) out_c.o fl_runtime/fl_runtime.o -lvulkan -o out_c -rdynamic
+	clang++ $(LDFLAGS) $(CFLAGS) out_c.o fl_runtime/fl_runtime.o -o out_c
 
 hook_llvm: out_llvm fl_runtime/testhook.so
 	set -e; \
