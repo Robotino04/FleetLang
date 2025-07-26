@@ -338,8 +338,13 @@ impl LLVMCompilationOutput<'_> {
     ) -> Result<(), Box<dyn Error>> {
         use inkwell::passes::PassBuilderOptions;
 
-        self.module
-            .run_passes("default<O1>", target_machine, PassBuilderOptions::create())?;
+        // tsan conflicts with asan
+        // msan is annoying to link
+        self.module.run_passes(
+            "default<O1>,asan",
+            target_machine,
+            PassBuilderOptions::create(),
+        )?;
 
         Ok(())
     }

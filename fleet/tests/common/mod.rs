@@ -474,10 +474,19 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
         .unwrap();
 
     let mut clang_cmd = Command::new("clang++");
-    clang_cmd.arg("-fdiagnostics-color=always");
-    clang_cmd.arg("-rdynamic");
-    clang_cmd.arg(object_file.to_str().unwrap());
-    clang_cmd.args(["-o", binary_file.to_str().unwrap()]);
+    clang_cmd
+        .arg("-fdiagnostics-color=always")
+        .arg("-rdynamic")
+        .args([
+            "-Wreturn-stack-address",
+            "-fsanitize=undefined",
+            "-fsanitize=address",
+            "-fstack-protector-all",
+            "-fsanitize-address-use-after-return=always",
+            "-fno-omit-frame-pointer",
+        ])
+        .arg(object_file.to_str().unwrap())
+        .args(["-o", binary_file.to_str().unwrap()]);
 
     if needs_runtime {
         let fl_runtime_obj = dir.path().join("fl_runtime.o");
@@ -535,17 +544,35 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     std::fs::write(&c_file, c_code).unwrap();
 
     let mut clang_compile = Command::new("clang++");
-    clang_compile.arg("-fdiagnostics-color=always");
-    clang_compile.arg("-c");
-    clang_compile.args(["-x", "c"]); // important for compound literals to have the correct semantics
-    clang_compile.arg(c_file.to_str().unwrap());
-    clang_compile.args(["-o", obj_file.to_str().unwrap()]);
+    clang_compile
+        .arg("-fdiagnostics-color=always")
+        .args([
+            "-Wreturn-stack-address",
+            "-fsanitize=undefined",
+            "-fsanitize=address",
+            "-fstack-protector-all",
+            "-fsanitize-address-use-after-return=always",
+            "-fno-omit-frame-pointer",
+        ])
+        .arg("-c")
+        .args(["-x", "c"]) // important for compound literals to have the correct semantics
+        .arg(c_file.to_str().unwrap())
+        .args(["-o", obj_file.to_str().unwrap()]);
 
     let mut clang_link = Command::new("clang++");
-    clang_link.arg("-fdiagnostics-color=always");
-    clang_link.arg("-rdynamic");
-    clang_link.arg(obj_file.to_str().unwrap());
-    clang_link.args(["-o", binary_file.to_str().unwrap()]);
+    clang_link
+        .arg("-fdiagnostics-color=always")
+        .arg("-rdynamic")
+        .args([
+            "-Wreturn-stack-address",
+            "-fsanitize=undefined",
+            "-fsanitize=address",
+            "-fstack-protector-all",
+            "-fsanitize-address-use-after-return=always",
+            "-fno-omit-frame-pointer",
+        ])
+        .arg(obj_file.to_str().unwrap())
+        .args(["-o", binary_file.to_str().unwrap()]);
 
     if needs_runtime {
         let fl_runtime_header = dir.path().join("fl_runtime.h");
