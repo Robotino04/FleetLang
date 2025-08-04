@@ -60,7 +60,7 @@ Compiling parts of the fl runtime is required for building fleet. Assuming you a
 cd fl_runtime/ && make -j
 ```
 
-Without nix, you need to have the vulkan headers (or the whole SDK) installed. You can then either try if the Makefile works or adjust it to the point where you can compile and run the example. FleetC also needs the `fl_runtime_declarationc.bc` file so make sure to also build that.
+Without nix, you need to have the vulkan headers (or the whole SDK) installed. You can then either try if the Makefile works or adjust it to the point where you can compile and run the example. FleetC also needs the `fl_runtime_declarations.bc` file so make sure to also build that.
 
 
 ### FleetC and FleetLS

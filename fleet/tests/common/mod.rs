@@ -484,6 +484,7 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
             "-fstack-protector-all",
             "-fsanitize-address-use-after-return=always",
             "-fno-omit-frame-pointer",
+            "-g",
         ])
         .arg(object_file.to_str().unwrap())
         .args(["-o", binary_file.to_str().unwrap()]);
@@ -553,6 +554,7 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
             "-fstack-protector-all",
             "-fsanitize-address-use-after-return=always",
             "-fno-omit-frame-pointer",
+            "-g",
         ])
         .arg("-c")
         .args(["-x", "c"]) // important for compound literals to have the correct semantics
@@ -570,6 +572,7 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
             "-fstack-protector-all",
             "-fsanitize-address-use-after-return=always",
             "-fno-omit-frame-pointer",
+            "-g",
         ])
         .arg(obj_file.to_str().unwrap())
         .args(["-o", binary_file.to_str().unwrap()]);
@@ -608,7 +611,7 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     );
     assert!(clang_compile_out.status.success());
 
-    println!("Calling clang to link {obj_file:?}  to {binary_file:?}");
+    println!("Calling clang to link {obj_file:?} to {binary_file:?}");
     let clang_link_out = clang_link.output().unwrap();
     print!(
         "Clang stdout:\n{}",

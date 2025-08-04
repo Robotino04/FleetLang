@@ -33,7 +33,7 @@ hook_llvm: out_llvm fl_runtime/testhook.so
 	mkfifo $$PIPE; \
 	export FLEETC_TEST_PIPE=$$PIPE; \
 	export FLEETC_TEST_TYPE=i64; \
-	cat $$PIPE | xxd -R always> llvm_out.log & \
+	cat $$PIPE | xxd -R always > llvm_out.log & \
 	LD_PRELOAD=./fl_runtime/testhook.so ./out_llvm; \
 	rm -f $$PIPE; \
 	cat llvm_out.log | cat

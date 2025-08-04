@@ -1,32 +1,42 @@
-CFLAGS = -O3 -fno-use-cxa-atexit
-CXXFLAGS = $(CFLAGS) -std=c++2a
-LDFLAGS = -lvulkan
+CFLAGS = \
+	-O3 \
+	-Wreturn-stack-address \
+	-fstack-protector-all \
+	-fno-omit-frame-pointer \
+	-g
+
+CXXFLAGS = \
+	$(CFLAGS) \
+	-std=c++2a
+
+LDFLAGS =
+LDFLAGS_RUNTIME = $(LDFLAGS) -lvulkan
 
 
 all: example fl_runtime_declarations.bc fl_runtime.so testhook.so
 
-fl_runtime.o: fl_runtime.cpp Makefile
+fl_runtime.o: fl_runtime.cpp
 	clang++ -c $(CXXFLAGS) -o fl_runtime.o fl_runtime.cpp
 
 # for testing only
-fl_runtime.so: fl_runtime.o Makefile
-	clang++ -shared -o fl_runtime.so fl_runtime.o
+fl_runtime.so: fl_runtime.o
+	clang++ $(LDFLAGS) $(CXXFLAGS) -shared -o fl_runtime.so fl_runtime.o
 
-fl_runtime_declarations.bc: fl_runtime.h Makefile
+fl_runtime_declarations.bc: fl_runtime.h
 	clang++ -c $(CFLAGS) -emit-llvm -o fl_runtime_declarations.bc -x c++ fl_runtime.h -DFL_RUNTIME_DECLARATION_AS_BITCODE
 
 
-example: example.o fl_runtime.o compute.comp.spv Makefile
-	clang++ $(LDFLAGS) -o example example.o fl_runtime.o
+example: example.o fl_runtime.o compute.comp.spv
+	clang++ $(LDFLAGS_RUNTIME) $(CXXFLAGS) -o example example.o fl_runtime.o
 
-example.o: example.cpp Makefile
+example.o: example.cpp
 	clang++ -c $(CXXFLAGS) -o example.o example.cpp
 
-compute.comp.spv: compute.comp Makefile
+compute.comp.spv: compute.comp
 	glslc compute.comp -o compute.comp.spv
 
 testhook.so: testhook.c
-	clang -fPIC -shared -o testhook.so testhook.c -ldl
+	clang $(LDFLAGS) $(CFLAGS) -fPIC -shared -o testhook.so testhook.c -ldl
 
 .PHONY: clean run all
 

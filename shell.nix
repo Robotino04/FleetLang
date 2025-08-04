@@ -33,21 +33,8 @@ in
       SHADERC_LIB_DIR = "${pkgs.shaderc.static}/lib/";
 
       LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath packages}";
-      /*
-      LLVM_SYS_180_PREFIX = "${(
-        pkgs.buildEnv {
-          name = "libllvm-all";
-          paths = pkgs.llvmPackages_18.libllvm.all;
-        }
-      )}";
-      LIBCLANG_PATH = "${
-        ((pkgs.libclang.override (prev: {
-            }))
-          .overrideAttrs (prev: {
-            cmakeFlags = prev.cmakeFlags ++ [(pkgs.lib.cmakeBool "LIBCLANG_BUILD_STATIC" true)];
-          }))
-        .lib
-      }/lib";
-      */
+
+      # nvidia drivers don't clean up on shutdown and thus ASan/LSan will detect the leaks and exit the program early
+      LSAN_OPTIONS = "suppressions=${./lsan.supp}";
     };
   }

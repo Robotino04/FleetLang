@@ -18,8 +18,7 @@ typedef int (*libc_start_main_fn)(
     main_fn main, int argc, char** ubp_av, void (*init)(void), void (*fini)(void), void (*rtld_fini)(void), void* stack_end
 );
 
-// Custom main to intercept and extract test result
-int my_main(int argc, char** argv, char** envp) {
+__attribute__((constructor)) static void fleetc_test_entry(void) {
     const char* pipe_path = getenv("FLEETC_TEST_PIPE");
     if (!pipe_path) {
         fprintf(stderr, "FLEETC_TEST_PIPE not set\n");
@@ -45,13 +44,13 @@ int my_main(int argc, char** argv, char** envp) {
         exit(4);
     }
     void (*initialize_fleet)(void) = dlsym(RTLD_DEFAULT, "initialize_fleet");
-    if (!fleet_main) {
+    if (!initialize_fleet) {
         fprintf(stderr, "initialize_fleet not found\n");
         close(fd);
         exit(5);
     }
     void (*deinitialize_fleet)(void) = dlsym(RTLD_DEFAULT, "deinitialize_fleet");
-    if (!fleet_main) {
+    if (!deinitialize_fleet) {
         fprintf(stderr, "deinitialize_fleet not found\n");
         close(fd);
         exit(6);
@@ -107,23 +106,9 @@ int my_main(int argc, char** argv, char** envp) {
         exit(8);
     }
 
-
     close(fd);
-    exit(0);
-}
-
-// Hook into __libc_start_main to override main()
-int __libc_start_main(main_fn main, int argc, char** ubp_av, void (*init)(void), void (*fini)(void), void (*rtld_fini)(void), void* stack_end) {
-    static libc_start_main_fn real_libc_start_main = NULL;
-
-    if (!real_libc_start_main) {
-        real_libc_start_main = (libc_start_main_fn)dlsym(RTLD_NEXT, "__libc_start_main");
-        if (!real_libc_start_main) {
-            fprintf(stderr, "Error locating __libc_start_main\n");
-            exit(1);
-        }
-    }
-
-    // Replace the program's main with our test main
-    return real_libc_start_main(my_main, argc, ubp_av, init, fini, rtld_fini, stack_end);
+    
+    fflush(stdout);
+    fflush(stderr);
+    _exit(0); // Ensure the real main() never runs
 }
