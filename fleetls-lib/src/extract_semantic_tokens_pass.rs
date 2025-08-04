@@ -308,7 +308,11 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
     ) -> Self::StatementOutput {
         self.build_semantic_token(&vardef_stmt.let_token, SemanticTokenType::KEYWORD, vec![]);
         self.visit_simple_binding(&mut vardef_stmt.binding);
-        self.build_comment_tokens_only(&vardef_stmt.equals_token);
+        self.build_semantic_token(
+            &vardef_stmt.equals_token,
+            SemanticTokenType::OPERATOR,
+            vec![],
+        );
         self.visit_expression(&mut vardef_stmt.value);
         self.build_comment_tokens_only(&vardef_stmt.semicolon_token);
     }
@@ -620,7 +624,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
         }: &mut VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
         self.visit_lvalue(lvalue);
-        self.build_comment_tokens_only(equal_token);
+        self.build_semantic_token(equal_token, SemanticTokenType::OPERATOR, vec![]);
         self.visit_expression(right);
     }
 
