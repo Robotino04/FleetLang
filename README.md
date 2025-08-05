@@ -19,7 +19,6 @@
 - allow single manual newlines. Maybe add newline eaters after {\n and before \n} and print trivia newlines as long as they are inside a statement
 - add quick fix system for e.g. non-block as if body
 - notes for removable parens
-- run analysis even on errored parse
 - maybe make non-block-statement fixes a code action instead of formatting. Replace `assert_compile_error_no_formatting` after
 - tuple types
 - structs
@@ -31,17 +30,15 @@
 - simplify `get_precedence` and `get_associativity` using impl or a trait
 - add way to get length of array
 - consistent error language style
-- add tests for on-statement bindings that modify state. make sure order is correct in llvm backend specifically
+- add tests for on-statement bindings that modify state. make sure order is correct in llvm backend specifically (also make sure assignment operator is disallowed)
 - real mutability/constant system
 - array-to-array assignments in glsl (maybe c as well)
 - test bigger-than-float float literals with c and glsl backend
 - remove "test.fl" as fallback in fleetc
 - remove lvalues maybe?
 - special-case small 2D and 3D GPU dispatches that fit in the size limits
-- 3+D arrays are broken in c (and glsl too probably)
 - heap allocations
 - warnings for unused functions/variables
-- glsl functions
 - disallow returning arrays
 
 

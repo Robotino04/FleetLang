@@ -189,6 +189,7 @@ pub struct IrGenerator<'a, 'errors, 'inputs> {
     type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
     type_sets: &'inputs mut UnionFindSet<RuntimeType>,
     scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
+    glsl_functions: &'inputs HashMap<FunctionID, (String, String)>,
 
     break_block: Option<BasicBlock<'a>>,
     skip_block: Option<BasicBlock<'a>>,
@@ -199,6 +200,7 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
         errors: &'errors mut Vec<FleetError>,
         stats: &'inputs PerNodeData<NodeStats>,
         analysis_data: &'inputs mut TypeAnalysisData,
+        glsl_functions: &'inputs HashMap<FunctionID, (String, String)>,
     ) -> Self {
         let module = context.create_module("module");
         let builder = context.create_builder();
@@ -215,15 +217,20 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
             context,
             module,
             builder,
+
             errors,
             node_stats: stats,
+
             variable_data,
             variable_storage: HashMap::new(),
             function_data,
             function_locations: HashMap::new(),
+
             type_data,
             type_sets,
             scope_data,
+            glsl_functions,
+
             break_block: None,
             skip_block: None,
         }
@@ -469,7 +476,7 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
     }
 }
 
-impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
+impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
     type ProgramOutput = Result<Module<'a>>;
     type FunctionDefinitionOutput = Result<FunctionValue<'a>>;
     type FunctionBodyOutput = Result<()>;
@@ -486,7 +493,7 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             .node_stats
             .get(&program.id)
             .expect("Program must have stats")
-            .uses_runtime
+            .uses_gpu
             .at_least_maybe();
 
         if needs_runtime {
@@ -1113,12 +1120,14 @@ impl<'a> AstVisitor for IrGenerator<'a, '_, '_> {
             self.function_data,
             self.type_data,
             self.type_sets,
+            self.node_stats,
         );
         let glsl_source = glsl_generator.generate_on_statement_shader(
             &bindings,
             body,
             iterators,
             &mut gpu_executor_clone,
+            self.glsl_functions,
         )?;
 
         #[cfg(feature = "gpu_backend")]

@@ -102,8 +102,14 @@ fn main() {
         print_all_errors_and_message("Program analysis found some errors", &errors);
     }
 
+    let Some(glsl_output) = fixup_output.pre_compile_glsl(&mut errors, &analysis_output) else {
+        print_all_errors_and_message("GLSL precompilation failed completely", &errors);
+        exit(1);
+    };
+
     let context = Context::create();
-    let Some(llvm_output) = fixup_output.compile_llvm(&mut errors, &context, &analysis_output)
+    let Some(llvm_output) =
+        glsl_output.compile_llvm(&mut errors, &context, &analysis_output, &fixup_output)
     else {
         print_all_errors_and_message("LLVM compilation failed completely", &errors);
         exit(1);

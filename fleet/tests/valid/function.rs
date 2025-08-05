@@ -625,3 +625,22 @@ fn two_parameters_with_same_name() {
         3,
     );
 }
+
+#[test]
+fn explicit_return_no_unreachable_warning() {
+    // This makes sure that calling functions whose body terminates explicitly don't trigger an
+    // unreachable code warning when called
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let foo = () -> () {
+                return;
+            }
+            let main = () -> i32 {
+                foo();
+                return 2;
+            }
+        "##},
+        "main",
+        2,
+    );
+}

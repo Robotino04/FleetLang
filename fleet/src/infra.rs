@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 #[cfg(feature = "llvm_backend")]
 use std::error::Error;
 
@@ -10,6 +11,7 @@ use crate::{
     ast_to_dm::AstToDocumentModelConverter,
     document_model::{fully_flatten_document, stringify_document},
     generate_c::CCodeGenerator,
+    generate_glsl::GLSLCodeGenerator,
     parser::{IdGenerator, Parser, ParserError},
     passes::{
         err_missing_type_in_parameter::ErrMissingTypeInParam,
@@ -18,8 +20,8 @@ use crate::{
         fix_trailing_comma::FixTrailingComma,
         lvalue_reducer::LValueReducer,
         remove_parens::RemoveParensPass,
-        stat_tracker::{NodeStats, StatTracker},
-        type_propagation::{TypeAnalysisData, TypePropagator},
+        stat_tracker::{NodeStats, StatTracker, YesNoMaybe},
+        type_propagation::{FunctionID, TypeAnalysisData, TypePropagator},
     },
     tokenizer::{SourceLocation, Token, Tokenizer},
 };
@@ -245,12 +247,65 @@ pub struct FixupOutput {
 }
 
 impl FixupOutput {
+    pub fn pre_compile_glsl(
+        &self,
+        errors: &mut Vec<FleetError>,
+        type_analysis_output: &TypeAnalysisOutput,
+    ) -> Option<GLSLOutput> {
+        if errors
+            .iter()
+            .any(|err| err.severity == ErrorSeverity::Error)
+        {
+            return None;
+        }
+
+        let mut program = self.program.clone();
+
+        if self
+            .stats
+            .get(&self.program.id)
+            .expect("No stats available for program")
+            .uses_gpu
+            == YesNoMaybe::No
+        {
+            eprintln!("Skipping glsl pregen because nothing uses the gpu");
+
+            return Some(GLSLOutput {
+                program,
+                glsl_functions: HashMap::default(),
+            });
+        }
+
+        Some(GLSLOutput {
+            glsl_functions: GLSLCodeGenerator::new(
+                errors,
+                &type_analysis_output.type_analysis_data.variable_data,
+                &type_analysis_output.type_analysis_data.function_data,
+                &type_analysis_output.type_analysis_data.type_data,
+                &type_analysis_output.type_analysis_data.type_sets,
+                &self.stats,
+            )
+            .visit_program(&mut program)
+            .ok()?,
+            program,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct GLSLOutput {
+    pub program: Program,
+    pub glsl_functions: HashMap<FunctionID, (String, String)>,
+}
+
+impl GLSLOutput {
     #[cfg(feature = "llvm_backend")]
     pub fn compile_llvm<'a>(
         &self,
         errors: &mut Vec<FleetError>,
         context: &'a Context,
         type_analysis_output: &TypeAnalysisOutput,
+        fixup_output: &FixupOutput,
     ) -> Option<LLVMCompilationOutput<'a>> {
         use crate::ir_generator::IrGenerator;
 
@@ -263,8 +318,9 @@ impl FixupOutput {
         match IrGenerator::new(
             context,
             errors,
-            &self.stats,
+            &fixup_output.stats,
             &mut type_analysis_output.type_analysis_data.clone(),
+            &self.glsl_functions,
         )
         .visit_program(&mut self.program.clone())
         {
@@ -293,6 +349,7 @@ impl FixupOutput {
         &self,
         errors: &mut Vec<FleetError>,
         type_analysis_output: &TypeAnalysisOutput,
+        fixup_output: &FixupOutput,
     ) -> Option<String> {
         if errors
             .iter()
@@ -317,7 +374,8 @@ impl FixupOutput {
                 type_data,
                 &mut type_sets.clone(),
                 scope_data,
-                &self.stats,
+                &fixup_output.stats,
+                &self.glsl_functions,
             )
             .visit_program(&mut self.program.clone()),
         )

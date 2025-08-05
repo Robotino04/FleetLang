@@ -1,6 +1,14 @@
 use fleet::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, CastExpression, CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, NodeID, OnStatement, PerNodeData, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
+        BinaryExpression, BinaryOperation, BlockStatement, CastExpression, CompilerExpression,
+        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
+        IfStatement, LiteralExpression, LiteralKind, NodeID, OnStatement, PerNodeData,
+        ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody,
+        ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError, TokenizerOutput},
     passes::{
@@ -460,8 +468,8 @@ impl Backend {
                     "function call".to_string(),
                 )
             }
-            AstNode::CompilerExpression(CompilerExpression{
-                at_token:_,
+            AstNode::CompilerExpression(CompilerExpression {
+                at_token: _,
                 name,
                 name_token: _,
                 open_paren_token: _,
@@ -785,16 +793,25 @@ impl LanguageServer for Backend {
             let Some(fixup_output) = analysis_output.fixup(&mut errors) else {
                 return errors;
             };
+            let Some(glsl_output) = fixup_output.pre_compile_glsl(&mut errors, &analysis_output)
+            else {
+                return errors;
+            };
 
             #[cfg(feature = "llvm_backend")]
             {
                 use fleet::inkwell::context::Context;
 
                 let context = Context::create();
-                let _ = fixup_output.compile_llvm(&mut errors, &context, &analysis_output);
+                let _ = glsl_output.compile_llvm(
+                    &mut errors,
+                    &context,
+                    &analysis_output,
+                    &fixup_output,
+                );
             }
 
-            let _ = fixup_output.compile_c(&mut errors, &analysis_output);
+            let _ = glsl_output.compile_c(&mut errors, &analysis_output, &fixup_output);
 
             errors
         }
@@ -916,6 +933,9 @@ impl LanguageServer for Backend {
         let fixup_output = analysis_output
             .as_ref()
             .and_then(|ao| ao.fixup(&mut errors));
+        let _glsl_output = fixup_output
+            .as_ref()
+            .and_then(|ao| ao.pre_compile_glsl(&mut errors, analysis_output.as_ref().unwrap()));
 
         let cpos = params.text_document_position_params.position;
         let find_pass = FindContainingNodePass::new(SourceLocation {

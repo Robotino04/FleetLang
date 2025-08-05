@@ -17,7 +17,7 @@ use inkwell::{
 
 use fleet::{
     infra::{
-        ErrorSeverity, FixupOutput, FleetError, LLVMCompilationOutput, ParserOutput,
+        ErrorSeverity, FixupOutput, FleetError, GLSLOutput, LLVMCompilationOutput, ParserOutput,
         TokenizerOutput, TypeAnalysisOutput,
     },
     tokenizer::SourceLocation,
@@ -147,7 +147,16 @@ pub fn assert_compile_error_no_formatting(src: &str, error_start: SourceLocation
     let Some(fixup_output) = analysis_output.fixup(&mut errors) else {
         panic!("Fixup failed completely");
     };
-    fixup_output.compile_llvm(&mut errors, &Context::create(), &analysis_output);
+    let Some(glsl_output) = fixup_output.pre_compile_glsl(&mut errors, &analysis_output) else {
+        assert_error_at_position(&errors, error_start);
+        return;
+    };
+    glsl_output.compile_llvm(
+        &mut errors,
+        &Context::create(),
+        &analysis_output,
+        &fixup_output,
+    );
 
     assert_error_at_position(&errors, error_start);
 }
@@ -170,7 +179,12 @@ pub fn assert_compile_and_warning(src: &str, warning_start: SourceLocation) {
         panic!("Fixup failed completely");
     };
     assert_no_fatal_errors(&errors);
-    let Some(_llvm_output) = fixup_output.compile_llvm(&mut errors, &context, &analysis_output)
+    let Some(glsl_output) = fixup_output.pre_compile_glsl(&mut errors, &analysis_output) else {
+        panic!("GLSL precompilation failed completely");
+    };
+    assert_no_fatal_errors(&errors);
+    let Some(_llvm_output) =
+        glsl_output.compile_llvm(&mut errors, &context, &analysis_output, &fixup_output)
     else {
         panic!("LLVM compilation failed completely");
     };
@@ -210,14 +224,20 @@ pub fn assert_compile_and_return_value_unformatted<ReturnType>(
     ReturnType: Debug + PartialEq,
 {
     let context = Context::create();
-    let (_tokenizer_output, _parser_output, _analysis_output, fixup_output, llvmcompilation_output) =
-        compile_or_panic(&context, src);
+    let (
+        _tokenizer_output,
+        _parser_output,
+        _analysis_output,
+        fixup_output,
+        _glsl_output,
+        llvmcompilation_output,
+    ) = compile_or_panic(&context, src);
 
     let needs_runtime = fixup_output
         .stats
         .get(&fixup_output.program.id)
         .expect("No stats available for function to test")
-        .uses_runtime
+        .uses_gpu
         .at_least_maybe();
 
     assert_eq!(function_name, "main");
@@ -248,6 +268,9 @@ pub fn assert_formatting_and_same_behaviour<ReturnType>(
 ) where
     ReturnType: Debug + PartialEq,
 {
+    assert_eq!(function_name, "main");
+    let function_name = "fleet_main";
+
     let formatted_src = assert_formatting(src, expected_fmt);
 
     let unformatted_retvalue = execute_or_panic::<ReturnType>(src, function_name);
@@ -267,6 +290,7 @@ fn compile_or_panic<'a>(
     ParserOutput,
     TypeAnalysisOutput,
     FixupOutput,
+    GLSLOutput,
     LLVMCompilationOutput<'a>,
 ) {
     let mut errors = vec![];
@@ -286,7 +310,12 @@ fn compile_or_panic<'a>(
         panic!("Fixup failed completely");
     };
     assert_no_fatal_errors(&errors);
-    let Some(llvm_output) = fixup_output.compile_llvm(&mut errors, context, &analysis_output)
+    let Some(glsl_output) = fixup_output.pre_compile_glsl(&mut errors, &analysis_output) else {
+        panic!("GLSL precompilation failed completely");
+    };
+    assert_no_fatal_errors(&errors);
+    let Some(llvm_output) =
+        glsl_output.compile_llvm(&mut errors, context, &analysis_output, &fixup_output)
     else {
         panic!("LLVM compilation failed completely");
     };
@@ -301,6 +330,7 @@ fn compile_or_panic<'a>(
         parser_output,
         analysis_output,
         fixup_output,
+        glsl_output,
         llvm_output,
     )
 }
@@ -321,14 +351,20 @@ fn format_or_panic(src: &str) -> String {
 
 fn execute_or_panic<ReturnType>(src: &str, function_name: &str) -> ReturnType {
     let context = Context::create();
-    let (_tokenizer_output, _parser_output, _analysis_output, fixup_output, llvmcompilation_output) =
-        compile_or_panic(&context, src);
+    let (
+        _tokenizer_output,
+        _parser_output,
+        _analysis_output,
+        fixup_output,
+        _glsl_output,
+        llvmcompilation_output,
+    ) = compile_or_panic(&context, src);
 
     let needs_runtime = fixup_output
         .stats
         .get(&fixup_output.program.id)
         .expect("No stats available for function to test")
-        .uses_runtime
+        .uses_gpu
         .at_least_maybe();
 
     execute_function::<ReturnType>(&llvmcompilation_output, function_name, needs_runtime)
@@ -379,6 +415,7 @@ fn execute_function<ReturnType>(
     }
 
     if needs_runtime {
+        eprintln!("Linking in vulkan and runtime");
         let dir = TempDir::new().unwrap();
 
         let fl_runtime_so = dir.path().join("fl_runtime.so");
@@ -416,8 +453,11 @@ fn execute_function<ReturnType>(
 
     unsafe {
         initialize_fleet.call();
+        eprintln!("initialized");
         let retvalue = main_function.call();
+        eprintln!("executed");
         deinitialize_fleet.call();
+        eprintln!("deinitialized");
         retvalue
     }
 }
@@ -433,14 +473,20 @@ fn assert_is_formatted(src: &str) {
 
 fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
     let context = Context::create();
-    let (_tokenizer_output, _parser_output, _analysis_output, fixup_output, llvmcompilation_output) =
-        compile_or_panic(&context, src);
+    let (
+        _tokenizer_output,
+        _parser_output,
+        _analysis_output,
+        fixup_output,
+        _glsl_output,
+        llvmcompilation_output,
+    ) = compile_or_panic(&context, src);
 
     let needs_runtime = fixup_output
         .stats
         .get(&fixup_output.program.id)
         .expect("No stats-rdynamic available for function to test")
-        .uses_runtime
+        .uses_gpu
         .at_least_maybe();
 
     Target::initialize_all(&inkwell::targets::InitializationConfig::default());
@@ -521,19 +567,25 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
 }
 fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     let context = Context::create();
-    let (_tokenizer_output, _parser_output, analysis_output, fixup_output, _llvmcompilation_output) =
-        compile_or_panic(&context, src);
+    let (
+        _tokenizer_output,
+        _parser_output,
+        analysis_output,
+        fixup_output,
+        glsl_output,
+        _llvmcompilation_output,
+    ) = compile_or_panic(&context, src);
 
     let needs_runtime = fixup_output
         .stats
         .get(&fixup_output.program.id)
         .expect("No stats available for function to test")
-        .uses_runtime
+        .uses_gpu
         .at_least_maybe();
 
     let mut errors = vec![];
-    let c_code = fixup_output
-        .compile_c(&mut errors, &analysis_output)
+    let c_code = glsl_output
+        .compile_c(&mut errors, &analysis_output, &fixup_output)
         .expect("C generation failed completely");
     assert_no_fatal_errors(&errors);
 
@@ -578,6 +630,7 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
         .args(["-o", binary_file.to_str().unwrap()]);
 
     if needs_runtime {
+        eprintln!("Linking in vulkan and runtime");
         let fl_runtime_header = dir.path().join("fl_runtime.h");
         std::fs::write(
             &fl_runtime_header,

@@ -1,4 +1,9 @@
-use std::{cell::RefCell, collections::HashSet, rc::Rc, vec::Vec};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+    vec::Vec,
+};
 
 use crate::{
     ast::{
@@ -14,7 +19,8 @@ use crate::{
     },
     infra::{ErrorSeverity, FleetError},
     passes::type_propagation::{
-        Function, RuntimeType, TypeAnalysisData, UnionFindSet, UnionFindSetPtr, Variable,
+        Function, FunctionID, RuntimeType, TypeAnalysisData, UnionFindSet, UnionFindSetPtr,
+        Variable,
     },
     tokenizer::SourceLocation,
 };
@@ -77,9 +83,35 @@ impl From<bool> for YesNoMaybe {
 
 #[derive(Clone, Debug, Default)]
 pub struct AccessRecord {
-    functions: Vec<Rc<RefCell<Function>>>,
-    used_variables: Vec<Rc<RefCell<Variable>>>,
+    pub functions: Vec<Rc<RefCell<Function>>>,
+    pub used_variables: Vec<Rc<RefCell<Variable>>>,
 }
+
+impl PartialEq for AccessRecord {
+    fn eq(&self, other: &Self) -> bool {
+        let mut self_functions = HashSet::new();
+        self.functions.iter().for_each(|el| {
+            self_functions.insert(el.borrow().id);
+        });
+        let mut other_functions = HashSet::new();
+        other.functions.iter().for_each(|el| {
+            other_functions.insert(el.borrow().id);
+        });
+
+        let mut self_variables = HashSet::new();
+        self.used_variables.iter().for_each(|el| {
+            self_variables.insert(el.borrow().id);
+        });
+        let mut other_variables = HashSet::new();
+        other.used_variables.iter().for_each(|el| {
+            other_variables.insert(el.borrow().id);
+        });
+
+        self_functions == other_functions && self_variables == other_variables
+    }
+}
+
+impl Eq for AccessRecord {}
 
 impl MergableStat for AccessRecord {
     fn serial(mut self, mut other: Self) -> Self {
@@ -101,10 +133,10 @@ impl MergableStat for AccessRecord {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NodeStats {
     pub terminates_function: YesNoMaybe,
-    pub uses_runtime: YesNoMaybe,
+    pub uses_gpu: YesNoMaybe,
     pub accessed_items: AccessRecord,
 }
 
@@ -112,7 +144,7 @@ impl NodeStats {
     pub fn nothing() -> Self {
         Self {
             terminates_function: YesNoMaybe::No,
-            uses_runtime: YesNoMaybe::No,
+            uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord::default(),
         }
     }
@@ -122,14 +154,14 @@ impl MergableStat for NodeStats {
     fn serial(self, other: Self) -> Self {
         Self {
             terminates_function: self.terminates_function.serial(other.terminates_function),
-            uses_runtime: self.uses_runtime.serial(other.uses_runtime),
+            uses_gpu: self.uses_gpu.serial(other.uses_gpu),
             accessed_items: self.accessed_items.serial(other.accessed_items),
         }
     }
     fn parallel(self, other: Self) -> Self {
         Self {
             terminates_function: self.terminates_function.parallel(other.terminates_function),
-            uses_runtime: self.uses_runtime.parallel(other.uses_runtime),
+            uses_gpu: self.uses_gpu.parallel(other.uses_gpu),
             accessed_items: self.accessed_items.parallel(other.accessed_items),
         }
     }
@@ -137,6 +169,7 @@ impl MergableStat for NodeStats {
 
 pub struct StatTracker<'errors, 'inputs> {
     stats: PerNodeData<NodeStats>,
+    function_stats: HashMap<FunctionID, NodeStats>,
     errors: &'errors mut Vec<FleetError>,
 
     _type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
@@ -155,6 +188,7 @@ impl<'errors, 'inputs> StatTracker<'errors, 'inputs> {
     ) -> Self {
         Self {
             stats: PerNodeData::default(),
+            function_stats: HashMap::default(),
             errors: error_output,
 
             _type_data: &analysis_data.type_data,
@@ -182,17 +216,27 @@ impl AstVisitor for StatTracker<'_, '_> {
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         let mut stats = NodeStats::nothing();
-        for f in &mut program.functions {
-            let NodeStats {
-                terminates_function,
-                uses_runtime,
-                accessed_items: _,
-            } = self.visit_function_definition(f);
+        let mut prev_stats = self.stats.clone();
 
-            if f.name == "main" {
-                stats.terminates_function = terminates_function;
+        loop {
+            for f in &mut program.functions {
+                let NodeStats {
+                    terminates_function,
+                    uses_gpu,
+                    accessed_items: _,
+                } = self.visit_function_definition(f);
+
+                if f.name == "main" {
+                    stats.terminates_function = terminates_function;
+                }
+                stats.uses_gpu = stats.uses_gpu.serial(uses_gpu);
             }
-            stats.uses_runtime = stats.uses_runtime.serial(uses_runtime);
+            if *prev_stats == *self.stats {
+                break;
+            } else {
+                prev_stats = self.stats.clone();
+                eprintln!("Stats aren't stable yet")
+            }
         }
 
         if let Some(main_function) = program.functions.iter().find(|f| f.name == "main") {
@@ -232,12 +276,12 @@ impl AstVisitor for StatTracker<'_, '_> {
             id,
         }: &mut FunctionDefinition,
     ) -> Self::FunctionDefinitionOutput {
-        self.current_function = Some(
-            self.function_data
-                .get(id)
-                .expect("function data must exist before calling function_termination_analyzer")
-                .clone(),
-        );
+        let referenced_function = self
+            .function_data
+            .get(id)
+            .expect("function data must exist before calling function_termination_analyzer")
+            .clone();
+        self.current_function = Some(referenced_function.clone());
 
         for (param, _comma) in parameters {
             self.visit_simple_binding(param);
@@ -248,6 +292,8 @@ impl AstVisitor for StatTracker<'_, '_> {
         }
         let body_stat = self.visit_function_body(body);
         self.stats.insert(*id, body_stat.clone());
+        self.function_stats
+            .insert(referenced_function.borrow().id, body_stat.clone());
 
         self.current_function = None;
 
@@ -263,11 +309,10 @@ impl AstVisitor for StatTracker<'_, '_> {
         let stat = self.visit_statement(statement);
 
         if stat.terminates_function != YesNoMaybe::Yes {
-            let Some(current_function) = &self.current_function else {
-                unreachable!(
-                    "Function body analyzed for termination without a containing function"
-                );
-            };
+            let current_function = self
+                .current_function
+                .as_ref()
+                .expect("Function body analyzed for termination without a containing function");
 
             if *self.type_sets.get(current_function.borrow().return_type) != RuntimeType::Unit {
                 self.errors.push(FleetError::from_node(
@@ -297,7 +342,7 @@ impl AstVisitor for StatTracker<'_, '_> {
 
         let stat = NodeStats {
             terminates_function: YesNoMaybe::Maybe,
-            uses_runtime: YesNoMaybe::No,
+            uses_gpu: YesNoMaybe::Maybe,
             accessed_items: AccessRecord::default(),
         };
         self.stats.insert(*id, stat.clone());
@@ -320,7 +365,7 @@ impl AstVisitor for StatTracker<'_, '_> {
         }
         .serial(NodeStats {
             terminates_function: YesNoMaybe::No,
-            uses_runtime: YesNoMaybe::No,
+            uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord {
                 functions: vec![],
                 used_variables: vec![],
@@ -446,7 +491,7 @@ impl AstVisitor for StatTracker<'_, '_> {
         }
         .serial(NodeStats {
             terminates_function: YesNoMaybe::Yes,
-            uses_runtime: YesNoMaybe::No,
+            uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord::default(),
         });
         self.stats.insert(*id, stat.clone());
@@ -623,7 +668,7 @@ impl AstVisitor for StatTracker<'_, '_> {
     ) -> Self::ExecutorOutput {
         let stat = NodeStats {
             terminates_function: YesNoMaybe::No,
-            uses_runtime: YesNoMaybe::Yes,
+            uses_gpu: YesNoMaybe::Yes,
             accessed_items: AccessRecord::default(),
         }
         .serial(self.visit_executor_host(host))
@@ -676,7 +721,7 @@ impl AstVisitor for StatTracker<'_, '_> {
     ) -> Self::ExpressionOutput {
         let mut stat = NodeStats {
             terminates_function: YesNoMaybe::No,
-            uses_runtime: YesNoMaybe::No,
+            uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord {
                 functions: self
                     .function_data
@@ -685,6 +730,13 @@ impl AstVisitor for StatTracker<'_, '_> {
                 used_variables: vec![],
             },
         };
+        if let Some(ref_function) = self.function_data.get(id) {
+            if let Some(stat2) = self.function_stats.get(&ref_function.borrow().id) {
+                stat = stat.serial(stat2.clone());
+            }
+        }
+        stat.terminates_function = YesNoMaybe::No;
+
         for (arg, _comma) in arguments {
             stat = stat.serial(self.visit_expression(arg));
         }
@@ -753,7 +805,7 @@ impl AstVisitor for StatTracker<'_, '_> {
     ) -> Self::ExpressionOutput {
         let stat = NodeStats {
             terminates_function: YesNoMaybe::No,
-            uses_runtime: YesNoMaybe::No,
+            uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord {
                 functions: vec![],
                 used_variables: self
@@ -839,7 +891,7 @@ impl AstVisitor for StatTracker<'_, '_> {
     ) -> Self::LValueOutput {
         let stat = NodeStats {
             terminates_function: YesNoMaybe::No,
-            uses_runtime: YesNoMaybe::No,
+            uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord {
                 functions: vec![],
                 used_variables: self

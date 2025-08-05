@@ -2,7 +2,6 @@ use indoc::indoc;
 
 use crate::common::assert_compile_and_return_value;
 
-
 #[test]
 fn negative_5() {
     assert_compile_and_return_value(

@@ -1,4 +1,9 @@
-use std::{cell::RefCell, collections::HashSet, error::Error, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    error::Error,
+    rc::Rc,
+};
 
 use indent::indent_by;
 use indoc::formatdoc;
@@ -21,8 +26,12 @@ use crate::{
         WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
-    passes::type_propagation::{
-        Function, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable, VariableScope,
+    passes::{
+        stat_tracker::NodeStats,
+        type_propagation::{
+            Function, FunctionID, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable,
+            VariableScope,
+        },
     },
 };
 
@@ -34,6 +43,7 @@ pub struct GLSLCodeGenerator<'inputs, 'errors> {
     function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
     type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
     type_sets: &'inputs UnionFindSet<RuntimeType>,
+    stats: &'inputs PerNodeData<NodeStats>,
 
     temporary_counter: u64,
 }
@@ -50,6 +60,7 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
         function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
         type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
         type_sets: &'inputs UnionFindSet<RuntimeType>,
+        stats: &'inputs PerNodeData<NodeStats>,
     ) -> Self {
         Self {
             errors,
@@ -57,6 +68,8 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
             function_data,
             type_data,
             type_sets,
+            stats,
+
             temporary_counter: 0,
         }
     }
@@ -162,6 +175,8 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
         main_body: &mut Statement,
         iterators: &mut [OnStatementIterator],
         gpu_executor: &mut GPUExecutor,
+
+        glsl_functions: &HashMap<FunctionID, (String, String)>,
     ) -> Result<String> {
         let GPUExecutor {
             host: _,
@@ -248,6 +263,29 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
 
         let num_iterators = iterators.len();
 
+        let (function_declarations, function_definitions): (Vec<_>, Vec<_>) = self
+            .stats
+            .get(&main_body.get_id())
+            .unwrap()
+            .accessed_items
+            .functions
+            .iter()
+            .map(|f| {
+                let fid = f.borrow().id;
+                Ok(glsl_functions.get(&fid).cloned().ok_or_else(|| {
+                    format!(
+                        "Function {:?} is used but not available on the gpu",
+                        f.borrow().name
+                    )
+                })?)
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .unzip();
+
+        let function_declarations = function_declarations.join("\n");
+        let function_definitions = function_definitions.join("\n");
+
         let unescaped_glsl = formatdoc! {
             "
             #version 430
@@ -255,6 +293,11 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
 
             // https://github.com/Darkyenus/glsl4idea/issues/175
             #extension GL_EXT_shader_explicit_arithmetic_types         : enable
+
+            // declarations
+            {function_declarations}
+            // definitions
+            {function_definitions}
 
             // Read + Write buffers
             {rw_buffer_definitions}
@@ -445,8 +488,8 @@ pub struct PreStatementValue {
 }
 
 impl AstVisitor for GLSLCodeGenerator<'_, '_> {
-    type ProgramOutput = Result<String>;
-    type FunctionDefinitionOutput = Result<String>;
+    type ProgramOutput = Result<HashMap<FunctionID, (String, String)>>;
+    type FunctionDefinitionOutput = Result<Option<(String, String)>>;
     type FunctionBodyOutput = Result<String>;
     type SimpleBindingOutput = String;
     type StatementOutput = Result<String>;
@@ -457,45 +500,24 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
     type TypeOutput = String;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
-        let function_definitions = program
+        program
             .functions
             .iter_mut()
-            .map(|f| self.visit_function_definition(f))
-            .collect::<Result<Vec<_>>>()?
-            .join("\n");
-
-        let function_declarations = program
-            .functions
-            .iter()
             .map(|f| {
-                self.generate_function_declaration(
-                    &self
-                        .function_data
-                        .get(&f.get_id())
-                        .expect("Functions should be tracked before calling glsl_generator")
-                        .borrow()
-                        .clone(),
-                    f.name != "main",
-                ) + ";"
+                Ok((
+                    self.function_data.get(&f.id).unwrap().borrow().id,
+                    self.visit_function_definition(f)?,
+                ))
             })
-            .join("\n");
+            .filter_map(|res| {
+                let (fid, opt) = match res {
+                    Ok(ok) => ok,
+                    Err(err) => return Some(Err(err)),
+                };
 
-        Ok(formatdoc!(
-            r##"
-            #include <stdio.h>
-            #include <stdlib.h>
-            #include <stdint.h>
-            #include <stdbool.h>
-            #include <string.h>
-
-
-            // function declarations
-            {function_declarations}
-
-            // function definitions
-            {function_definitions}
-            "##,
-        ))
+                opt.map(|some| Ok((fid, some)))
+            })
+            .collect::<Result<HashMap<_, _>>>()
     }
 
     fn visit_function_definition(
@@ -519,10 +541,18 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
             .get(id)
             .expect("Functions should be tracked before calling glsl_generator");
 
-        Ok(
-            self.generate_function_declaration(&function.borrow().clone(), name != "main")
-                + self.visit_function_body(body)?.as_str(),
-        )
+        if self.stats.get(id).unwrap().uses_gpu.at_least_maybe() {
+            eprintln!("Not generating GLSL for function {name:?} because it may use the gpu.");
+            return Ok(None);
+        }
+
+        let declaration =
+            self.generate_function_declaration(&function.borrow().clone(), name != "main");
+
+        Ok(Some((
+            declaration.clone() + ";",
+            declaration + self.visit_function_body(body)?.as_str(),
+        )))
     }
 
     fn visit_statement_function_body(
@@ -972,15 +1002,19 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
 
     fn visit_function_call_expression(
         &mut self,
-        FunctionCallExpression {
+        expr: &mut FunctionCallExpression,
+    ) -> Self::ExpressionOutput {
+        let expr_clone = expr.clone();
+
+        let FunctionCallExpression {
             name,
             name_token: _,
             open_paren_token: _,
             arguments,
             close_paren_token: _,
-            id: _,
-        }: &mut FunctionCallExpression,
-    ) -> Self::ExpressionOutput {
+            id,
+        } = expr;
+
         let (pre_statements, args): (Vec<_>, Vec<_>) = arguments
             .iter_mut()
             .map(|(arg, _comma)| self.visit_expression(arg))
@@ -991,6 +1025,16 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
                  }| (pre_statements, out_value),
             )
             .unzip();
+
+        if self.stats.get(id).unwrap().uses_gpu.at_least_maybe() {
+            self.errors.push(FleetError::from_node(
+                &expr_clone,
+                "This function (possibly indirectly) uses the gpu and \
+                can therefore not itself be called from the gpu",
+                ErrorSeverity::Error,
+            ));
+        }
+
         PreStatementValue {
             pre_statements: pre_statements.concat(),
             out_value: format!(
@@ -1041,6 +1085,36 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
                     PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("({type_}{after_id}(0))"),
+                    }
+                } else if expected_type.is_boolean() {
+                    PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: "false".to_string(),
+                    }
+                } else if let RuntimeType::ArrayOf { subtype, size } = expected_type {
+                    let size = size.unwrap();
+                    if !self.type_sets.get(*subtype).is_numeric() {
+                        self.errors.push(FleetError::from_node(
+                            &expr_clone,
+                            format!(
+                                "@zero isn't implemented for array type {} in glsl backend (only 1D arrays with numbers are supported currently)",
+                                expected_type.stringify(self.type_sets)
+                            ),
+                            ErrorSeverity::Error,
+                        ));
+                    }
+
+                    let tmp = self.unique_temporary("zero");
+                    PreStatementValue {
+                        pre_statements: formatdoc!(
+                            "
+                            {type_} {tmp}{after_id};
+                            for (int i = 0; i < {size}; i++) {{
+                                {tmp}[i] = 0;
+                            }}
+                            "
+                        ),
+                        out_value: format!("(&{tmp})"),
                     }
                 } else {
                     self.errors.push(FleetError::from_node(

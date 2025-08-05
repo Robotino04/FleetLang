@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use indoc::formatdoc;
 
@@ -22,7 +22,8 @@ use crate::{
         stat_tracker::NodeStats,
         top_level_binding_finder::TopLevelBindingFinder,
         type_propagation::{
-            Function, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable, VariableScope,
+            Function, FunctionID, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable,
+            VariableScope,
         },
     },
 };
@@ -37,6 +38,7 @@ pub struct CCodeGenerator<'inputs, 'errors> {
     type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
     type_sets: &'inputs mut UnionFindSet<RuntimeType>,
     scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
+    glsl_functions: &'inputs HashMap<FunctionID, (String, String)>,
 
     temporary_counter: u64,
 }
@@ -49,6 +51,7 @@ impl<'inputs, 'errors> CCodeGenerator<'inputs, 'errors> {
         type_sets: &'inputs mut UnionFindSet<RuntimeType>,
         scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
         stats: &'inputs PerNodeData<NodeStats>,
+        glsl_functions: &'inputs HashMap<FunctionID, (String, String)>,
     ) -> Self {
         Self {
             errors,
@@ -58,6 +61,7 @@ impl<'inputs, 'errors> CCodeGenerator<'inputs, 'errors> {
             type_data,
             type_sets,
             scope_data,
+            glsl_functions,
             temporary_counter: 0,
         }
     }
@@ -220,7 +224,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             .node_stats
             .get(&program.id)
             .expect("Program must have stats")
-            .uses_runtime
+            .uses_gpu
             .at_least_maybe();
 
         let (runtime_include_str, runtime_init_str, runtime_deinit_str) = if needs_runtime {
@@ -544,6 +548,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             self.function_data,
             self.type_data,
             self.type_sets,
+            self.node_stats,
         );
 
         let Ok(glsl_source) = glsl_generator.generate_on_statement_shader(
@@ -551,6 +556,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             body,
             iterators,
             &mut gpu_executor_clone,
+            self.glsl_functions,
         ) else {
             return "#error glsl generation failed completely\n".to_string();
         };
