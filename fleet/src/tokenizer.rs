@@ -220,7 +220,7 @@ impl<'errors> Tokenizer<'errors> {
             self.unk_char_token.end = self.current_location;
             self.unk_char_accumulator = c.to_string();
         }
-        eprintln!("Unexpected character {:?}", c);
+        eprintln!("Unexpected character {c:?}");
     }
     fn single_char_token(&mut self, t: TokenType) -> Token {
         self.multi_char_token(1, t)
@@ -552,7 +552,7 @@ impl<'errors> Tokenizer<'errors> {
                                     self.errors.push(FleetError {
                                         start: start_location,
                                         end: self.current_location,
-                                        message: format!("Unable to parse {:?} as a float", lexeme),
+                                        message: format!("Unable to parse {lexeme:?} as a float"),
                                         severity: ErrorSeverity::Error,
                                     });
                                     0.0
@@ -565,7 +565,7 @@ impl<'errors> Tokenizer<'errors> {
                                     self.errors.push(FleetError {
                                         start: start_location,
                                         end: self.current_location,
-                                        message: format!("Unable to parse {:?} as a float", lexeme),
+                                        message: format!("Unable to parse {lexeme:?} as a float"),
                                         severity: ErrorSeverity::Error,
                                     });
                                     0
@@ -712,7 +712,7 @@ impl<'errors> Tokenizer<'errors> {
             if last_token.end.line == trivia.end.line
                 || (last_token.end.line + 1 == trivia.end.line && trivia.end.column == 0)
             {
-                eprintln!("Flushing {:?} to {:#?}", trivia, last_token);
+                eprintln!("Flushing {trivia:?} to {last_token:#?}");
                 last_token
                     .trailing_trivia
                     .extend(self.trivia_accumulator.clone());

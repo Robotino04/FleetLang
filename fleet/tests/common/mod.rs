@@ -103,8 +103,7 @@ fn assert_error_at_position(errors: &Vec<FleetError>, error_start: SourceLocatio
         errors
             .iter()
             .any(|err| err.start == error_start && err.severity == ErrorSeverity::Error),
-        "Expected an error at {error_start:?}. Got {:#?}",
-        errors
+        "Expected an error at {error_start:?}. Got {errors:#?}"
     );
 }
 
@@ -113,8 +112,7 @@ fn assert_warning_at_position(errors: &Vec<FleetError>, warning_start: SourceLoc
         errors
             .iter()
             .any(|err| err.start == warning_start && err.severity == ErrorSeverity::Warning),
-        "Expected a warning at {warning_start:?}. Got {:#?}",
-        errors
+        "Expected a warning at {warning_start:?}. Got {errors:#?}"
     );
 }
 
@@ -321,7 +319,7 @@ fn compile_or_panic<'a>(
     };
     assert_no_fatal_errors(&errors);
 
-    assert!(errors.is_empty(), "{:#?}", errors);
+    assert!(errors.is_empty(), "{errors:#?}");
 
     llvm_output.module.verify().unwrap();
 

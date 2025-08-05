@@ -45,7 +45,7 @@ fn main() {
                 print_error_message(&src, error);
             }
             let ansi_color = ansi_color_for_severity(worst_severity);
-            println!("\x1B[{}m{msg}\x1B[0m", ansi_color);
+            println!("\x1B[{ansi_color}m{msg}\x1B[0m");
         }
     };
 
@@ -118,7 +118,7 @@ fn main() {
     println!("{}", generate_header("LLVM IR (unoptimized)", 50));
     println!("{}", llvm_output.module.to_string());
 
-    std::fs::write("./out_unopt.ll", llvm_output.module.to_string());
+    std::fs::write("./out_unopt.ll", llvm_output.module.to_string()).unwrap();
 
     if errors
         .iter()
@@ -127,7 +127,7 @@ fn main() {
         print_all_errors_and_message("LLVM compilation failed partially", &errors);
     }
 
-    let Some(c_code) = fixup_output.compile_c(&mut errors, &analysis_output) else {
+    let Some(c_code) = glsl_output.compile_c(&mut errors, &analysis_output, &fixup_output) else {
         print_all_errors_and_message("C generation failed completely", &errors);
         exit(1);
     };
@@ -139,7 +139,7 @@ fn main() {
     }
 
     println!("{}", generate_header("C Code", 50));
-    println!("{}", c_code);
+    println!("{c_code}");
 
     std::fs::write("./out.c", c_code).expect("Writing to './out.c' failed");
 
@@ -179,14 +179,14 @@ fn main() {
     println!("{}", generate_header("LLVM IR (optimized)", 50));
     println!("{}", llvm_output.module.to_string());
 
-    std::fs::write("./out_opt.ll", llvm_output.module.to_string());
+    std::fs::write("./out_opt.ll", llvm_output.module.to_string()).unwrap();
 
     let output_path = Path::new("output.o");
     target_machine
         .write_to_file(&llvm_output.module, FileType::Object, output_path)
         .unwrap();
 
-    println!("Object file written to {:?}", output_path);
+    println!("Object file written to {output_path:?}");
 
     print_all_errors_and_message("There are warnings", &errors);
 }

@@ -606,7 +606,7 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
             pre_statements,
             out_value,
         } = self.visit_expression(expression);
-        Ok(format!("{}{};", pre_statements, out_value))
+        Ok(format!("{pre_statements}{out_value};"))
     }
 
     fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
@@ -657,7 +657,7 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
             .as_mut()
             .map(|expr| self.visit_expression(expr))
             .unwrap_or(PreStatementValue::default());
-        Ok(format!("{}return {};", pre_statements, out_value))
+        Ok(format!("{pre_statements}return {out_value};"))
     }
 
     fn visit_variable_definition_statement(
@@ -1060,7 +1060,7 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
             id,
         } = expr;
 
-        let (pre_statements, args): (Vec<_>, Vec<_>) = arguments
+        let (_pre_statements, _args): (Vec<_>, Vec<_>) = arguments
             .iter_mut()
             .map(|(arg, _comma)| self.visit_expression(arg))
             .map(

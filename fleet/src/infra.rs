@@ -88,9 +88,8 @@ pub fn print_error_message(source: &str, error: &FleetError) {
 
     let max_line_number_len = (error.end.line + num_after_error_lines).to_string().len();
 
-    let pad_with_line_number = |(line, text): (usize, &str)| {
-        format!("{line:<pad_size$}| {text}", pad_size = max_line_number_len)
-    };
+    let pad_with_line_number =
+        |(line, text): (usize, &str)| format!("{line:<max_line_number_len$}| {text}");
 
     let source_lines = source
         .split("\n")
@@ -147,9 +146,9 @@ pub fn print_error_message(source: &str, error: &FleetError) {
         },
         error.message
     );
-    println!("{}", before_err_trunc);
-    println!("{}", err);
-    println!("{}\n", after_err_trunc);
+    println!("{before_err_trunc}");
+    println!("{err}");
+    println!("{after_err_trunc}\n");
 }
 
 #[derive(Clone, Debug)]
@@ -334,7 +333,7 @@ impl GLSLOutput {
                         .first()
                         .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
                     message: match error.source() {
-                        Some(source) => format!("{} ({:?})", error, source),
+                        Some(source) => format!("{error} ({source:?})"),
                         None => error.to_string(),
                     },
                     severity: ErrorSeverity::Error,

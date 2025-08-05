@@ -369,7 +369,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             pre_statements,
             out_value,
         } = self.visit_expression(expression);
-        format!("{}{};", pre_statements, out_value)
+        format!("{pre_statements}{out_value};")
     }
 
     fn visit_on_statement(&mut self, stmt: &mut OnStatement) -> Self::StatementOutput {
@@ -572,7 +572,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             let bytes_str = shaderc_output
                 .as_binary()
                 .iter()
-                .map(|chunk| format!("0x{:08x}", chunk))
+                .map(|chunk| format!("0x{chunk:08x}"))
                 .join(", ");
 
             Some((bytes_str, shaderc_output.len()))
@@ -657,7 +657,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             .as_mut()
             .map(|expr| self.visit_expression(expr))
             .unwrap_or(PreStatementValue::default());
-        format!("{}return {};", pre_statements, out_value)
+        format!("{pre_statements}return {out_value};")
     }
 
     fn visit_variable_definition_statement(
@@ -960,9 +960,8 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             unreachable!("array expressions must have type ArrayOf(_)")
         };
 
-        if let RuntimeType::ArrayOf { subtype: _, size } = self.type_sets.get(subtype) {
+        if let RuntimeType::ArrayOf { .. } = self.type_sets.get(subtype) {
             let mut subtype = *self.type_sets.get(subtype);
-            let size = size.expect("arrays must have their size set before calling c_generator");
             let (pre_statements, definitions, mut temporaries): (Vec<_>, Vec<_>, Vec<_>) = elements
                 .iter_mut()
                 .map(|(element, _comma)| {
@@ -1088,7 +1087,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             id,
         } = expr;
 
-        let (pre_statements, args): (Vec<_>, Vec<_>) = arguments
+        let (_pre_statements, _args): (Vec<_>, Vec<_>) = arguments
             .iter_mut()
             .map(|(arg, _comma)| self.visit_expression(arg))
             .map(

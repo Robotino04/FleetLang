@@ -1371,7 +1371,7 @@ impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
             if self
                 .node_stats
                 .get(&else_body.get_id())
-                .unwrap_or_else(|| panic!("{:?} doesn't have stats", else_body))
+                .unwrap_or_else(|| panic!("{else_body:?} doesn't have stats"))
                 .terminates_function
                 != YesNoMaybe::Yes
             {
