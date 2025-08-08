@@ -1,31 +1,39 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
+
+<head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/firacode@6.2.0/distr/fira_code.css">
     <title>FleetLang Monaco Editor Demo</title>
     <style>
-      html, body {
-        height: 100%;
-        margin: 0;
-        padding: 0;
-      }
-      #container {
-        display: flex;
-        height: 100vh;
-        width: 100vw;
-      }
-      #editor, #output-editor {
-        width: 50vw;
-        height: 100vh;
-      }
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        #container {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        #editor,
+        #output-editor {
+            width: 50vw;
+            height: 100vh;
+        }
     </style>
-  </head>
-  <body>
+</head>
+
+<body>
     <div id="container">
-      <div id="editor"></div>
-      <div id="output-editor"></div>
+        <div id="editor"></div>
+        <div id="output-editor"></div>
     </div>
     <script type="module" src="/src/monaco-setup.ts"></script>
-  </body>
+</body>
+
 </html>

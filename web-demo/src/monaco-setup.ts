@@ -15,6 +15,10 @@ const defaultProperties: monaco.editor.IStandaloneEditorConstructionOptions = {
     enabled: true,
     cycle: true,
   },
+  emptySelectionClipboard: true,
+  fontFamily: "'Fira Code', monospace",
+  fontSize: 15,
+  fontLigatures: true,
 };
 
 // Create Monaco Editor instances
@@ -27,6 +31,12 @@ const editor = monaco.editor.create(document.getElementById("editor")!, {
 const outputEditor = monaco.editor.create(
   document.getElementById("output-editor")!,
   {
+    readOnly: true,
+    readOnlyMessage: {
+      value:
+        "This code is automatically compiled by FleetC and can't be modified. " +
+        "You can modify the Fleet code on the left however and see how this code changes!",
+    },
     value: "// Compiled C output will appear here",
     language: "c",
     ...defaultProperties,
