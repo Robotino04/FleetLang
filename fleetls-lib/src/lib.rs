@@ -14,7 +14,6 @@ use fleet::{
         self, ErrorSeverity, insert_c_passes, insert_compile_passes, insert_fix_passes,
         insert_minimal_pipeline,
     },
-    ir_generator::IrGenerator,
     passes::{
         find_containing_node::FindContainingNodePass,
         pass_manager::{
@@ -820,6 +819,8 @@ impl LanguageServer for Backend {
 
         #[cfg(feature = "llvm_backend")]
         {
+            use fleet::ir_generator::IrGenerator;
+
             pm.insert::<IrGenerator>();
             // don't optimize in the lsp
             //pm.insert::<LLVMOptimizerPass>();
