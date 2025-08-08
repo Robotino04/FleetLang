@@ -5,7 +5,12 @@ use std::{
 
 use fleetls_lib::{
     Backend, BackgroundThreadState,
-    fleet::infra::TokenizerOutput,
+    fleet::{
+        infra::{
+            insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
+        },
+        passes::pass_manager::{CCodeOutput, Errors, InputSource, PassManager},
+    },
     tower_lsp_server::{LspService, Server},
 };
 use futures::stream::TryStreamExt;
@@ -31,24 +36,19 @@ impl ServerConfig {
 
 #[wasm_bindgen]
 pub fn compile_to_c(src: String) -> Option<String> {
-    let mut errors = vec![];
-    let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
-        return None;
-    };
+    let mut pm = PassManager::default();
+    insert_minimal_pipeline(&mut pm);
+    insert_fix_passes(&mut pm);
+    insert_compile_passes(&mut pm);
+    insert_c_passes(&mut pm);
 
-    let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
-        return None;
-    };
+    pm.state.insert(InputSource(src));
+    pm.state.insert(Errors::default());
 
-    let Some(analysis_output) = parser_output.analyze(&mut errors) else {
-        return None;
-    };
-
-    let Some(c_code) = analysis_output.compile_c(&mut errors) else {
-        return None;
-    };
-
-    return Some(c_code);
+    match pm.run() {
+        Ok(()) => Some(pm.state.get::<CCodeOutput>()?.0.clone()),
+        Err(_) => None,
+    }
 }
 
 // NOTE: we don't use web_sys::ReadableStream for input here because on the
