@@ -1,9 +1,14 @@
-use crate::ast::{
-    ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, Associativity, AstVisitor,
-    BinaryExpression, CastExpression, Expression, ExpressionStatement, ForLoopStatement,
-    FunctionCallExpression, GroupingExpression, GroupingLValue, IfStatement, LValue,
-    ReturnStatement, ThreadExecutor, UnaryExpression, VariableAssignmentExpression,
-    VariableDefinitionStatement, WhileLoopStatement,
+use std::cell::RefMut;
+
+use crate::{
+    ast::{
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, Associativity, AstVisitor,
+        BinaryExpression, CastExpression, Expression, ExpressionStatement, ForLoopStatement,
+        FunctionCallExpression, GroupingExpression, GroupingLValue, IfStatement, LValue, Program,
+        ReturnStatement, ThreadExecutor, UnaryExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, WhileLoopStatement,
+    },
+    passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
 };
 
 use super::{
@@ -17,23 +22,40 @@ enum OperandSide {
     Right,
 }
 
-pub struct RemoveParensPass {
+pub struct RemoveParensPass<'state> {
+    program: Option<RefMut<'state, Program>>,
+
     parent_precedence: usize,
     parent_associativity: Associativity,
     current_side: OperandSide,
 }
 
-impl Default for RemoveParensPass {
-    fn default() -> Self {
-        Self {
+impl PassFactory for RemoveParensPass<'_> {
+    type Output<'state> = RemoveParensPass<'state>;
+    type Params = ();
+
+    fn try_new<'state>(
+        state: &'state mut GlobalState,
+        _params: Self::Params,
+    ) -> Result<Self::Output<'state>, String> {
+        Ok(Self::Output {
+            program: Some(state.get_mut_named::<Program>()?),
             parent_precedence: Expression::TOP_PRECEDENCE,
             parent_associativity: Associativity::Both,
             current_side: OperandSide::Left,
-        }
+        })
+    }
+}
+impl Pass for RemoveParensPass<'_> {
+    fn run<'state>(mut self: Box<Self>) -> PassResult {
+        let mut program = self.program.take().unwrap();
+        self.visit_program(&mut program);
+
+        Ok(())
     }
 }
 
-impl RemoveParensPass {
+impl RemoveParensPass<'_> {
     fn can_parens_be_removed(
         old_parent_precedence: usize,
         old_parent_associativity: Associativity,
@@ -65,7 +87,7 @@ impl RemoveParensPass {
     }
 }
 
-impl PartialAstVisitor for RemoveParensPass {
+impl PartialAstVisitor for RemoveParensPass<'_> {
     fn partial_visit_expression_statement(&mut self, expr_stmt: &mut ExpressionStatement) {
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;

@@ -1,3 +1,5 @@
+use std::cell::RefMut;
+
 use itertools::Itertools;
 
 use crate::{
@@ -13,13 +15,47 @@ use crate::{
         WhileLoopStatement,
     },
     document_model::DocumentElement,
+    passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
     tokenizer::{Keyword, Token, TokenType, Trivia, TriviaKind},
 };
 
-#[derive(Default)]
-pub struct AstToDocumentModelConverter {}
+pub struct AstToDocumentModelConverter<'state> {
+    program: Option<RefMut<'state, Program>>,
+    output_de: Option<RefMut<'state, DocumentElement>>,
+}
 
-impl AstToDocumentModelConverter {
+impl PassFactory for AstToDocumentModelConverter<'_> {
+    type Output<'state> = AstToDocumentModelConverter<'state>;
+    type Params = ();
+
+    fn try_new<'state>(
+        state: &'state mut GlobalState,
+        _params: Self::Params,
+    ) -> Result<Self::Output<'state>, String>
+    where
+        Self: Sized,
+    {
+        let program = state.check_named()?;
+
+        let output_de = state.insert(DocumentElement::empty());
+
+        Ok(Self::Output {
+            program: Some(program.get_mut(state)),
+            output_de: Some(output_de.get_mut(state)),
+        })
+    }
+}
+impl Pass for AstToDocumentModelConverter<'_> {
+    fn run<'state>(mut self: Box<Self>) -> PassResult {
+        let mut program = self.program.take().unwrap();
+        let mut output_de = self.output_de.take().unwrap();
+        *output_de = self.visit_program(&mut program);
+
+        Ok(())
+    }
+}
+
+impl AstToDocumentModelConverter<'_> {
     fn trivia_to_element(&self, trivia: &[Trivia]) -> DocumentElement {
         DocumentElement::spaced_concatentation(
             DocumentElement::CollapsableSpace,
@@ -198,7 +234,7 @@ impl AstToDocumentModelConverter {
     }
 }
 
-impl AstVisitor for AstToDocumentModelConverter {
+impl AstVisitor for AstToDocumentModelConverter<'_> {
     type ProgramOutput = DocumentElement;
     type FunctionDefinitionOutput = DocumentElement;
     type FunctionBodyOutput = DocumentElement;

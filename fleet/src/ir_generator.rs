@@ -1,9 +1,8 @@
 use std::{
-    cell::RefCell,
+    cell::{Ref, RefCell, RefMut},
     collections::HashMap,
     error::Error,
     ops::{Deref, DerefMut},
-    rc::Rc,
 };
 
 use inkwell::{
@@ -13,6 +12,8 @@ use inkwell::{
     context::Context,
     memory_buffer::MemoryBuffer,
     module::{Linkage, Module},
+    passes::PassBuilderOptions,
+    targets::TargetMachine,
     types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, FunctionType},
     values::{
         BasicMetadataValueEnum, BasicValue, BasicValueEnum, FloatValue, FunctionValue, IntValue,
@@ -28,21 +29,22 @@ use crate::{
         CompilerExpression, Executor, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
-        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
+        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     escape::unescape,
     generate_glsl::GLSLCodeGenerator,
     infra::{ErrorSeverity, FleetError},
     passes::{
-        stat_tracker::{NodeStats, YesNoMaybe},
-        top_level_binding_finder::TopLevelBindingFinder,
-        type_propagation::{
-            Function, FunctionID, RuntimeType, TypeAnalysisData, UnionFindSet, UnionFindSetPtr,
-            Variable, VariableID, VariableScope,
+        pass_manager::{
+            Errors, FunctionData, GlobalState, Pass, PassError, PassFactory, PassResult,
+            PrecompiledGlslFunctions, ScopeData, StatData, TypeData, TypeSets, VariableData,
         },
+        stat_tracker::YesNoMaybe,
+        top_level_binding_finder::TopLevelBindingFinder,
+        type_propagation::{FunctionID, RuntimeType, VariableID},
     },
     tokenizer::SourceLocation,
 };
@@ -174,68 +176,108 @@ impl<'a> RuntimeValueIR<'a> {
     }
 }
 
-pub struct IrGenerator<'a, 'errors, 'inputs> {
-    context: &'a Context,
-    module: Module<'a>,
-    builder: Builder<'a>,
-    errors: &'errors mut Vec<FleetError>,
-
-    node_stats: &'inputs PerNodeData<NodeStats>,
-    variable_storage: HashMap<VariableID, VariableStorage<'a>>,
-    function_locations: HashMap<FunctionID, FunctionLocation<'a>>,
-
-    variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
-    function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
-    type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
-    type_sets: &'inputs mut UnionFindSet<RuntimeType>,
-    scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
-    glsl_functions: &'inputs HashMap<FunctionID, (String, String)>,
-
-    break_block: Option<BasicBlock<'a>>,
-    skip_block: Option<BasicBlock<'a>>,
+thread_local! {
+    static THREAD_LLVM_CONTEXT: &'static Context = Box::leak(Box::new(Context::create()));
 }
-impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
-    pub fn new(
-        context: &'a Context,
-        errors: &'errors mut Vec<FleetError>,
-        stats: &'inputs PerNodeData<NodeStats>,
-        analysis_data: &'inputs mut TypeAnalysisData,
-        glsl_functions: &'inputs HashMap<FunctionID, (String, String)>,
-    ) -> Self {
-        let module = context.create_module("module");
-        let builder = context.create_builder();
 
-        let TypeAnalysisData {
-            type_data,
-            type_sets,
-            variable_data,
-            function_data,
-            scope_data,
-        } = analysis_data;
+pub struct IrGenerator<'state> {
+    errors: RefMut<'state, Errors>,
+    program: Option<RefMut<'state, Program>>,
 
-        IrGenerator {
-            context,
-            module,
-            builder,
+    context: &'static Context,
+    module: Ref<'state, Module<'static>>,
+    builder: Ref<'state, Builder<'static>>,
 
-            errors,
-            node_stats: stats,
+    node_stats: Ref<'state, StatData>,
+    variable_storage: HashMap<VariableID, VariableStorage<'state>>,
+    function_locations: HashMap<FunctionID, FunctionLocation<'state>>,
 
-            variable_data,
+    variable_data: Ref<'state, VariableData>,
+    function_data: Ref<'state, FunctionData>,
+    type_data: Ref<'state, TypeData>,
+    type_sets: Ref<'state, TypeSets>,
+    scope_data: Ref<'state, ScopeData>,
+    glsl_functions: Ref<'state, PrecompiledGlslFunctions>,
+
+    break_block: Option<BasicBlock<'state>>,
+    skip_block: Option<BasicBlock<'state>>,
+}
+
+impl PassFactory for IrGenerator<'_> {
+    type Output<'state> = IrGenerator<'state>;
+    type Params = ();
+
+    fn try_new<'state>(
+        state: &'state mut GlobalState,
+        _params: Self::Params,
+    ) -> ::core::result::Result<Self::Output<'state>, String>
+    where
+        Self: Sized,
+    {
+        let program = state.check_named()?;
+        let errors = state.check_named()?;
+        let node_stats = state.check_named()?;
+
+        let variable_data = state.check_named()?;
+        let function_data = state.check_named()?;
+        let type_data = state.check_named()?;
+        let type_sets = state.check_named()?;
+        let scope_data = state.check_named()?;
+        let glsl_functions = state.check_named()?;
+
+        let module = state.insert(THREAD_LLVM_CONTEXT.with(|ctx| ctx.create_module("module")));
+        let builder = state.insert(THREAD_LLVM_CONTEXT.with(|ctx| ctx.create_builder()));
+
+        Ok(Self::Output {
+            errors: errors.get_mut(state),
+            program: Some(program.get_mut(state)),
+
+            context: THREAD_LLVM_CONTEXT.with(|&ctx| ctx),
+            module: module.get(state),
+            builder: builder.get(state),
+
+            node_stats: node_stats.get(state),
+
+            variable_data: variable_data.get(state),
             variable_storage: HashMap::new(),
-            function_data,
+            function_data: function_data.get(state),
             function_locations: HashMap::new(),
 
-            type_data,
-            type_sets,
-            scope_data,
-            glsl_functions,
+            type_data: type_data.get(state),
+            type_sets: type_sets.get(state),
+            scope_data: scope_data.get(state),
+            glsl_functions: glsl_functions.get(state),
 
             break_block: None,
             skip_block: None,
-        }
+        })
     }
+}
+impl Pass for IrGenerator<'_> {
+    fn run<'state>(mut self: Box<Self>) -> PassResult {
+        if self
+            .errors
+            .iter()
+            .any(|err| err.severity == ErrorSeverity::Error)
+        {
+            return Err(PassError::InvalidInput {
+                producing_pass: Self::name(),
+                source: "Compilation has errors. Not continuing further.".into(),
+            });
+        }
 
+        let mut program = self.program.take().unwrap();
+        self.visit_program(&mut program)
+            .map_err(|err| PassError::CompilerError {
+                producing_pass: Self::name(),
+                source: err,
+            })?;
+
+        Ok(())
+    }
+}
+
+impl<'a> IrGenerator<'_> {
     fn report_error<T>(&mut self, error: FleetError) -> Result<T> {
         self.errors.push(error.clone());
         Err(error.message.into())
@@ -291,7 +333,7 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
                 error_node,
                 format!(
                     "this has unknown or error type: {}",
-                    expected_type.stringify(self.type_sets)
+                    expected_type.stringify(&self.type_sets)
                 ),
                 ErrorSeverity::Error,
             ))?,
@@ -476,16 +518,16 @@ impl<'a, 'errors, 'inputs> IrGenerator<'a, 'errors, 'inputs> {
     }
 }
 
-impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
-    type ProgramOutput = Result<Module<'a>>;
-    type FunctionDefinitionOutput = Result<FunctionValue<'a>>;
+impl<'state> AstVisitor for IrGenerator<'state> {
+    type ProgramOutput = Result<()>;
+    type FunctionDefinitionOutput = Result<FunctionValue<'state>>;
     type FunctionBodyOutput = Result<()>;
-    type SimpleBindingOutput = Result<PointerValue<'a>>;
+    type SimpleBindingOutput = Result<PointerValue<'state>>;
     type StatementOutput = Result<()>;
     type ExecutorHostOutput = Result<()>;
     type ExecutorOutput = Result<()>;
-    type ExpressionOutput = Result<RuntimeValueIR<'a>>;
-    type LValueOutput = Result<PointerValue<'a>>;
+    type ExpressionOutput = Result<RuntimeValueIR<'state>>;
+    type LValueOutput = Result<PointerValue<'state>>;
     type TypeOutput = Result<RuntimeType>;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
@@ -661,7 +703,7 @@ impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
             });
         }
 
-        Ok(self.module)
+        Ok(())
     }
 
     fn visit_function_definition(
@@ -884,7 +926,6 @@ impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
     }
 
     fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
-        let on_stmt_clone = on_stmt.clone();
         let OnStatement {
             on_token: _,
             executor,
@@ -954,10 +995,10 @@ impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
         let mut buffers = vec![];
 
         let mut bindings = GLSLCodeGenerator::get_on_statement_bindings(
-            self.variable_data,
-            self.scope_data,
-            self.type_sets,
-            self.type_data,
+            &self.variable_data,
+            &self.scope_data,
+            &self.type_sets,
+            &self.type_data,
             bindings,
             iterators
                 .iter()
@@ -1023,16 +1064,7 @@ impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
             )?;
         }
 
-        let iterator_size_subtype = RuntimeType::I32;
-        let iterator_size_subtype_ir = self
-            .runtime_type_to_llvm(iterator_size_subtype, &on_stmt_clone.clone())?
-            .into_int_type();
-        let iterator_size_type = RuntimeType::ArrayOf {
-            subtype: self.type_sets.insert_set(iterator_size_subtype),
-            size: Some(iterator_end_values_ir.len()),
-        };
-
-        for (type_, binding_ir) in bindings
+        let bindings_ir = bindings
             .ro
             .iter()
             .map(|(_name, type_, top_level_binding)| {
@@ -1042,22 +1074,29 @@ impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
                     .get(&top_level_binding.borrow().id)
                     .expect("variable used in on-statement must already have storage")
                     .0;
-                (type_, binding_ir)
+
+                let size = self
+                    .runtime_type_to_llvm(*type_, &**body)?
+                    .size_of()
+                    .expect("data passed to GPU must be sized");
+                Ok((size, binding_ir))
             })
             .collect_vec()
             .into_iter()
             .chain({
+                let iterator_size_subtype_ir = self.context.i32_type();
+                let num_iterators = iterator_end_values_ir.len();
+
                 self.builder.position_at_end(bindings_block);
                 let ptr = self.builder.build_array_alloca(
                     iterator_size_subtype_ir,
                     self.context
                         .i32_type()
-                        .const_int(iterator_end_values_ir.len() as u64, false),
+                        .const_int(num_iterators as u64, false),
                     "iterator_size_buffer",
                 )?;
-                let mut array = self
-                    .runtime_type_to_llvm(iterator_size_type, &on_stmt_clone.clone())?
-                    .into_array_type()
+                let mut array = iterator_size_subtype_ir
+                    .array_type(num_iterators as u32)
                     .const_zero();
                 for (n, it) in iterator_end_values_ir.iter().enumerate() {
                     assert_eq!(
@@ -1075,15 +1114,16 @@ impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
                         .into_array_value();
                 }
                 self.builder.build_store(ptr, array)?;
-                Some((&iterator_size_type, ptr))
-            })
-            .collect_vec()
-        {
-            let size = self
-                .runtime_type_to_llvm(*type_, &**body)?
-                .size_of()
-                .expect("data passed to GPU must be sized");
 
+                let size = array
+                    .get_type()
+                    .size_of()
+                    .expect("data passed to the GPU must be sized");
+                Some(Ok((size, ptr)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for (size, binding_ir) in bindings_ir {
             buffers.push(binding_ir);
 
             self.builder.position_at_end(ro_allocations_block);
@@ -1114,26 +1154,35 @@ impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
             ));
         }
 
+        let glsl_errors = RefCell::new(Errors::default());
+
         let mut glsl_generator = GLSLCodeGenerator::new(
-            self.errors,
-            self.variable_data,
-            self.function_data,
-            self.type_data,
-            self.type_sets,
-            self.node_stats,
+            glsl_errors.borrow_mut(),
+            Ref::clone(&self.variable_data),
+            Ref::clone(&self.function_data),
+            Ref::clone(&self.type_data),
+            Ref::clone(&self.type_sets),
+            Ref::clone(&self.node_stats),
         );
         let glsl_source = glsl_generator.generate_on_statement_shader(
             &bindings,
             body,
             iterators,
             &mut gpu_executor_clone,
-            self.glsl_functions,
+            &self.glsl_functions,
         )?;
 
+        #[cfg(not(feature = "gpu_backend"))]
+        {
+            drop(glsl_generator);
+            self.errors.append(&mut glsl_errors.borrow_mut());
+        }
         #[cfg(feature = "gpu_backend")]
         {
             let shaderc_output =
                 glsl_generator.compile_on_statement_shader(&glsl_source, &**body)?;
+
+            self.errors.append(&mut glsl_errors.borrow_mut());
 
             self.builder.position_at_end(exec_block);
 
@@ -1796,7 +1845,7 @@ impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
                         &expr_clone,
                         format!(
                             "@zero compiler function has unknown or error type: {}",
-                            expected_type.stringify(self.type_sets)
+                            expected_type.stringify(&self.type_sets)
                         ),
                         ErrorSeverity::Error,
                     ))?,
@@ -1835,10 +1884,10 @@ impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
             )?
         };
 
-        let result_type = array_type.unwrap_arrayof(self.type_sets).0;
+        let result_type = array_type.unwrap_arrayof(&self.type_sets).0;
 
         let result =
-            if let RuntimeType::ArrayOf { .. } = array_type.unwrap_arrayof(self.type_sets).0 {
+            if let RuntimeType::ArrayOf { .. } = array_type.unwrap_arrayof(&self.type_sets).0 {
                 index_ptr.into()
             } else {
                 self.builder.build_load(
@@ -1985,7 +2034,7 @@ impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
             .get(id)
             .expect("type data should exist before calling ir_generator");
 
-        let target_type_str = self.type_sets.get(value_type).stringify(self.type_sets);
+        let target_type_str = self.type_sets.get(value_type).stringify(&self.type_sets);
 
         match (
             *self.type_sets.get(value_type),
@@ -2210,7 +2259,7 @@ impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
     ) -> Self::ExpressionOutput {
         let left_value = self.visit_expression(left)?;
         let mut right_value_gen =
-            |self_: &mut Self| -> Result<RuntimeValueIR<'a>> { self_.visit_expression(right) };
+            |self_: &mut Self| -> Result<RuntimeValueIR<'state>> { self_.visit_expression(right) };
 
         match operation {
             BinaryOperation::Add => {
@@ -2745,5 +2794,44 @@ impl<'a, 'inputs> AstVisitor for IrGenerator<'a, '_, 'inputs> {
             .expect("type data should exist before calling ir_generator");
 
         Ok(*self.type_sets.get(infered_type))
+    }
+}
+
+pub struct LLVMOptimizerPass<'state> {
+    module: Ref<'state, Module<'static>>,
+    target_machine: Ref<'state, TargetMachine>,
+}
+
+impl PassFactory for LLVMOptimizerPass<'_> {
+    type Output<'state> = LLVMOptimizerPass<'state>;
+    type Params = ();
+
+    fn try_new<'state>(
+        state: &'state mut GlobalState,
+        _params: Self::Params,
+    ) -> ::core::result::Result<Self::Output<'state>, String>
+    where
+        Self: Sized,
+    {
+        Ok(Self::Output {
+            module: state.get_named()?,
+            target_machine: state.get_named()?,
+        })
+    }
+}
+impl Pass for LLVMOptimizerPass<'_> {
+    fn run<'state>(self: Box<Self>) -> PassResult {
+        self.module
+            .run_passes(
+                "default<O1>,asan",
+                &self.target_machine,
+                PassBuilderOptions::create(),
+            )
+            .map_err(|err| PassError::CompilerError {
+                producing_pass: Self::name(),
+                source: err.into(),
+            })?;
+
+        Ok(())
     }
 }

@@ -52,10 +52,11 @@ pub fn fully_flatten_document(mut element: DocumentElement) -> DocumentElement {
         element = new_element;
         i += 1;
         if !did_change {
-            eprintln!("Took {i} iterations to flatten document");
             break;
         }
     }
+
+    eprintln!("Took {i} iterations to flatten document");
 
     element
 }
@@ -196,12 +197,19 @@ fn flatten_document_elements_once(element: DocumentElement) -> (DocumentElement,
     }
 }
 
-pub fn stringify_document(element: &DocumentElement) -> String {
+pub fn stringify_document(element: DocumentElement) -> String {
+    let element = fully_flatten_document(element);
+
+    stringify_document_impl(element)
+}
+
+pub fn stringify_document_impl(element: DocumentElement) -> String {
     match element {
-        DocumentElement::Concatenation(document_elements) => {
-            document_elements.iter().map(stringify_document).collect()
-        }
-        DocumentElement::Indentation(child) => indent_all_by(4, stringify_document(child)),
+        DocumentElement::Concatenation(document_elements) => document_elements
+            .into_iter()
+            .map(stringify_document_impl)
+            .collect(),
+        DocumentElement::Indentation(child) => indent_all_by(4, stringify_document_impl(*child)),
         DocumentElement::ForcedSpace => " ".to_string(),
         DocumentElement::CollapsableSpace => " ".to_string(),
         DocumentElement::ForcedLineBreak => "\n".to_string(),

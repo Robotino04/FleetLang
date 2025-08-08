@@ -11,14 +11,20 @@ use std::{
 
 use inkwell::{
     OptimizationLevel,
-    context::Context,
-    targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetTriple},
+    module::Module,
+    targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetTriple},
 };
 
 use fleet::{
+    ast::Program,
     infra::{
-        ErrorSeverity, FixupOutput, FleetError, GLSLOutput, LLVMCompilationOutput, ParserOutput,
-        TokenizerOutput, TypeAnalysisOutput,
+        ErrorSeverity, FleetError, format, insert_c_passes, insert_compile_passes,
+        insert_fix_passes, insert_minimal_pipeline,
+    },
+    ir_generator::{IrGenerator, LLVMOptimizerPass},
+    passes::{
+        pass_manager::{Errors, InputSource, PassError, PassManager, StatData},
+        save_artifact_pass::{ArtifactType, SaveArtifactPass},
     },
     tokenizer::SourceLocation,
 };
@@ -87,15 +93,17 @@ impl SubprocessTestableReturnType for f64 {
 }
 
 pub fn assert_parser_or_tokenizer_error(src: &str, error_start: SourceLocation) {
-    let mut errors = vec![];
-    let Some(tokenizer_output) = TokenizerOutput::new(src, &mut errors) else {
-        panic!("Tokenizer failed completely");
-    };
-    let Ok(_parser_output) = tokenizer_output.parse(&mut errors) else {
-        panic!("Tokenizer failed completely");
-    };
+    let mut pm = PassManager::default();
+    let errors = pm.state.insert_default::<Errors>();
+    pm.state.insert(InputSource(src.to_string()));
 
-    assert_error_at_position(&errors, error_start);
+    insert_minimal_pipeline(&mut pm);
+
+    pm.run().unwrap();
+
+    let errors = errors.get(&pm.state);
+
+    assert_error_at_position(&errors.0, error_start);
 }
 
 fn assert_error_at_position(errors: &Vec<FleetError>, error_start: SourceLocation) {
@@ -130,64 +138,42 @@ pub fn assert_compile_error(src: &str, error_start: SourceLocation) {
     assert_compile_error_no_formatting(src, error_start);
 }
 pub fn assert_compile_error_no_formatting(src: &str, error_start: SourceLocation) {
-    let mut errors = vec![];
-    let Some(tokenizer_output) = TokenizerOutput::new(src, &mut errors) else {
-        panic!("Tokenizer failed completely");
-    };
-    assert_no_fatal_errors(&errors);
-    let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
-        panic!("Parser failed completely");
-    };
-    assert_no_fatal_errors(&errors);
-    let Some(analysis_output) = parser_output.analyze(&mut errors) else {
-        panic!("Analysis failed completely");
-    };
-    let Some(fixup_output) = analysis_output.fixup(&mut errors) else {
-        panic!("Fixup failed completely");
-    };
-    let Some(glsl_output) = fixup_output.pre_compile_glsl(&mut errors, &analysis_output) else {
-        assert_error_at_position(&errors, error_start);
-        return;
-    };
-    glsl_output.compile_llvm(
-        &mut errors,
-        &Context::create(),
-        &analysis_output,
-        &fixup_output,
-    );
+    let mut pm = PassManager::default();
+    let errors = pm.state.insert_default::<Errors>();
+    pm.state.insert(InputSource(src.to_string()));
 
-    assert_error_at_position(&errors, error_start);
+    insert_minimal_pipeline(&mut pm);
+    insert_fix_passes(&mut pm);
+    insert_compile_passes(&mut pm);
+    pm.insert::<IrGenerator>();
+
+    match pm.run() {
+        Err(PassError::InvalidInput { .. }) => {}
+        Err(err @ PassError::CompilerError { .. }) => {
+            panic!("Should have produced an InvalidInput error. Got: {err}")
+        }
+        Ok(()) => panic!("Should have produced an InvalidInput error. Got: Ok(())"),
+    }
+
+    let errors = errors.get(&pm.state);
+
+    assert_error_at_position(&errors.0, error_start);
 }
 pub fn assert_compile_and_warning(src: &str, warning_start: SourceLocation) {
-    let context = Context::create();
-    let mut errors = vec![];
-    let Some(tokenizer_output) = TokenizerOutput::new(src, &mut errors) else {
-        panic!("Tokenizer failed completely");
-    };
-    assert_no_fatal_errors(&errors);
-    let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
-        panic!("Parser failed completely");
-    };
-    assert_no_fatal_errors(&errors);
-    let Some(analysis_output) = parser_output.analyze(&mut errors) else {
-        panic!("Analysis failed completely");
-    };
-    assert_no_fatal_errors(&errors);
-    let Some(fixup_output) = analysis_output.fixup(&mut errors) else {
-        panic!("Fixup failed completely");
-    };
-    assert_no_fatal_errors(&errors);
-    let Some(glsl_output) = fixup_output.pre_compile_glsl(&mut errors, &analysis_output) else {
-        panic!("GLSL precompilation failed completely");
-    };
-    assert_no_fatal_errors(&errors);
-    let Some(_llvm_output) =
-        glsl_output.compile_llvm(&mut errors, &context, &analysis_output, &fixup_output)
-    else {
-        panic!("LLVM compilation failed completely");
-    };
-    assert_no_fatal_errors(&errors);
+    let mut pm = PassManager::default();
+    let errors = pm.state.insert_default::<Errors>();
+    pm.state.insert(InputSource(src.to_string()));
 
+    insert_minimal_pipeline(&mut pm);
+    insert_fix_passes(&mut pm);
+    insert_compile_passes(&mut pm);
+    pm.insert::<IrGenerator>();
+
+    pm.run().unwrap();
+
+    let errors = errors.get(&pm.state);
+
+    assert_no_fatal_errors(&errors.0);
     assert_warning_at_position(&errors, warning_start);
 }
 
@@ -221,19 +207,13 @@ pub fn assert_compile_and_return_value_unformatted<ReturnType>(
 ) where
     ReturnType: Debug + PartialEq,
 {
-    let context = Context::create();
-    let (
-        _tokenizer_output,
-        _parser_output,
-        _analysis_output,
-        fixup_output,
-        _glsl_output,
-        llvmcompilation_output,
-    ) = compile_or_panic(&context, src);
+    let pm = compile_or_panic(src);
 
-    let needs_runtime = fixup_output
-        .stats
-        .get(&fixup_output.program.id)
+    let needs_runtime = pm
+        .state
+        .get::<StatData>()
+        .expect("Compilation failed before inserting stats")
+        .get(&pm.state.get::<Program>().unwrap().id)
         .expect("No stats available for function to test")
         .uses_gpu
         .at_least_maybe();
@@ -241,8 +221,11 @@ pub fn assert_compile_and_return_value_unformatted<ReturnType>(
     assert_eq!(function_name, "main");
     let function_name = "fleet_main";
 
-    let actual_return_value =
-        execute_function::<ReturnType>(&llvmcompilation_output, function_name, needs_runtime);
+    let actual_return_value = execute_function::<ReturnType>(
+        &pm.state.get::<Module>().unwrap(),
+        function_name,
+        needs_runtime,
+    );
     assert_eq!(
         actual_return_value, expected_return_value,
         "expected {function_name:?} to return {expected_return_value:?} instead of {actual_return_value:?}"
@@ -280,96 +263,51 @@ pub fn assert_formatting_and_same_behaviour<ReturnType>(
     );
 }
 
-fn compile_or_panic<'a>(
-    context: &'a Context,
-    src: &str,
-) -> (
-    TokenizerOutput,
-    ParserOutput,
-    TypeAnalysisOutput,
-    FixupOutput,
-    GLSLOutput,
-    LLVMCompilationOutput<'a>,
-) {
-    let mut errors = vec![];
-    let Some(tokenizer_output) = TokenizerOutput::new(src, &mut errors) else {
-        panic!("Tokenizer failed completely");
-    };
-    assert_no_fatal_errors(&errors);
-    let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
-        panic!("Parser failed completely");
-    };
-    assert_no_fatal_errors(&errors);
-    let Some(analysis_output) = parser_output.analyze(&mut errors) else {
-        panic!("Analysis failed completely");
-    };
-    assert_no_fatal_errors(&errors);
-    let Some(fixup_output) = analysis_output.fixup(&mut errors) else {
-        panic!("Fixup failed completely");
-    };
-    assert_no_fatal_errors(&errors);
-    let Some(glsl_output) = fixup_output.pre_compile_glsl(&mut errors, &analysis_output) else {
-        panic!("GLSL precompilation failed completely");
-    };
-    assert_no_fatal_errors(&errors);
-    let Some(llvm_output) =
-        glsl_output.compile_llvm(&mut errors, context, &analysis_output, &fixup_output)
-    else {
-        panic!("LLVM compilation failed completely");
-    };
-    assert_no_fatal_errors(&errors);
+fn compile_or_panic(src: &str) -> PassManager {
+    let mut pm = PassManager::default();
+    let errors = pm.state.insert_default::<Errors>();
+    pm.state.insert(InputSource(src.to_string()));
 
-    assert!(errors.is_empty(), "{errors:#?}");
+    insert_minimal_pipeline(&mut pm);
+    insert_fix_passes(&mut pm);
+    insert_compile_passes(&mut pm);
 
-    llvm_output.module.verify().unwrap();
+    insert_c_passes(&mut pm);
+    pm.insert::<IrGenerator>();
 
-    (
-        tokenizer_output,
-        parser_output,
-        analysis_output,
-        fixup_output,
-        glsl_output,
-        llvm_output,
-    )
+    pm.run().unwrap();
+
+    assert_no_fatal_errors(&errors.get(&pm.state).0);
+    pm.state.get::<Module>().unwrap().verify().unwrap();
+
+    pm
 }
 
 fn format_or_panic(src: &str) -> String {
-    let mut errors = vec![];
-    let Some(tokenizer_output) = TokenizerOutput::new(src, &mut errors) else {
-        panic!("Tokenizer failed completely");
-    };
-    assert_no_fatal_errors(&errors);
-    let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
-        panic!("Parser failed completely");
-    };
-    assert_no_fatal_errors(&errors);
-
-    parser_output.format()
+    format(src.to_string()).unwrap()
 }
 
 fn execute_or_panic<ReturnType>(src: &str, function_name: &str) -> ReturnType {
-    let context = Context::create();
-    let (
-        _tokenizer_output,
-        _parser_output,
-        _analysis_output,
-        fixup_output,
-        _glsl_output,
-        llvmcompilation_output,
-    ) = compile_or_panic(&context, src);
+    let pm = compile_or_panic(src);
 
-    let needs_runtime = fixup_output
-        .stats
-        .get(&fixup_output.program.id)
+    let needs_runtime = pm
+        .state
+        .get::<StatData>()
+        .unwrap()
+        .get(&pm.state.get::<Program>().unwrap().id)
         .expect("No stats available for function to test")
         .uses_gpu
         .at_least_maybe();
 
-    execute_function::<ReturnType>(&llvmcompilation_output, function_name, needs_runtime)
+    execute_function::<ReturnType>(
+        &pm.state.get::<Module>().unwrap(),
+        function_name,
+        needs_runtime,
+    )
 }
 
 fn execute_function<ReturnType>(
-    compilation_output: &LLVMCompilationOutput<'_>,
+    module: &Module<'_>,
     function_name: &str,
     needs_runtime: bool,
 ) -> ReturnType {
@@ -428,8 +366,7 @@ fn execute_function<ReturnType>(
         inkwell::support::load_library_permanently(&find_library("libstdc++.so")).unwrap();
     }
 
-    let execution_engine = compilation_output
-        .module
+    let execution_engine = module
         .create_jit_execution_engine(OptimizationLevel::None)
         .unwrap();
 
@@ -470,22 +407,7 @@ fn assert_is_formatted(src: &str) {
 }
 
 fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
-    let context = Context::create();
-    let (
-        _tokenizer_output,
-        _parser_output,
-        _analysis_output,
-        fixup_output,
-        _glsl_output,
-        llvmcompilation_output,
-    ) = compile_or_panic(&context, src);
-
-    let needs_runtime = fixup_output
-        .stats
-        .get(&fixup_output.program.id)
-        .expect("No stats-rdynamic available for function to test")
-        .uses_gpu
-        .at_least_maybe();
+    let mut pm = compile_or_panic(src);
 
     Target::initialize_all(&inkwell::targets::InitializationConfig::default());
 
@@ -502,20 +424,25 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
         )
         .unwrap();
 
-    llvmcompilation_output
-        .run_default_optimization_passes(&target_machine)
-        .unwrap();
-
     let object_file = dir.path().join("test.o");
+    let object_file_clone = object_file.clone();
     let binary_file = dir.path().join("test");
 
-    target_machine
-        .write_to_file(
-            &llvmcompilation_output.module,
-            FileType::Object,
-            object_file.as_path(),
-        )
-        .unwrap();
+    let target_machine = pm.state.insert(target_machine);
+    pm.insert::<LLVMOptimizerPass>();
+    pm.insert_params::<SaveArtifactPass>(move || (object_file_clone.clone(), ArtifactType::Object));
+    pm.run().unwrap();
+
+    let _target_machine = target_machine.get(&pm.state);
+
+    let needs_runtime = pm
+        .state
+        .get::<StatData>()
+        .unwrap()
+        .get(&pm.state.get::<Program>().unwrap().id)
+        .expect("No stats-rdynamic available for function to test")
+        .uses_gpu
+        .at_least_maybe();
 
     let mut clang_cmd = Command::new("clang++");
     clang_cmd
@@ -564,35 +491,23 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
     binary_file.to_string_lossy().to_string()
 }
 fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
-    let context = Context::create();
-    let (
-        _tokenizer_output,
-        _parser_output,
-        analysis_output,
-        fixup_output,
-        glsl_output,
-        _llvmcompilation_output,
-    ) = compile_or_panic(&context, src);
-
-    let needs_runtime = fixup_output
-        .stats
-        .get(&fixup_output.program.id)
-        .expect("No stats available for function to test")
-        .uses_gpu
-        .at_least_maybe();
-
-    let mut errors = vec![];
-    let c_code = glsl_output
-        .compile_c(&mut errors, &analysis_output, &fixup_output)
-        .expect("C generation failed completely");
-    assert_no_fatal_errors(&errors);
-
     let c_file = dir.path().join("test.c");
+    let c_file_clone = c_file.clone();
     let obj_file = dir.path().join("test.o");
     let binary_file = dir.path().join("test");
 
-    println!("Writing C code to {c_file:?}");
-    std::fs::write(&c_file, c_code).unwrap();
+    let mut pm = compile_or_panic(src);
+    pm.insert_params::<SaveArtifactPass>(move || (c_file_clone.clone(), ArtifactType::CCode));
+    pm.run().unwrap();
+
+    let needs_runtime = pm
+        .state
+        .get::<StatData>()
+        .unwrap()
+        .get(&pm.state.get::<Program>().unwrap().id)
+        .expect("No stats available for function to test")
+        .uses_gpu
+        .at_least_maybe();
 
     let mut clang_compile = Command::new("clang++");
     clang_compile

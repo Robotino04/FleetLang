@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::cell::{Ref, RefCell, RefMut};
 
 use indoc::formatdoc;
 
@@ -11,61 +11,109 @@ use crate::{
         CompilerExpression, Executor, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
-        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
+        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     generate_glsl::GLSLCodeGenerator,
     infra::{ErrorSeverity, FleetError},
     passes::{
-        stat_tracker::NodeStats,
-        top_level_binding_finder::TopLevelBindingFinder,
-        type_propagation::{
-            Function, FunctionID, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable,
-            VariableScope,
+        pass_manager::{
+            CCodeOutput, Errors, FunctionData, GlobalState, Pass, PassError, PassFactory,
+            PassResult, PrecompiledGlslFunctions, ScopeData, StatData, TypeData, TypeSets,
+            VariableData,
         },
+        top_level_binding_finder::TopLevelBindingFinder,
+        type_propagation::{Function, RuntimeType},
     },
 };
 
-pub struct CCodeGenerator<'inputs, 'errors> {
-    errors: &'errors mut Vec<FleetError>,
+pub struct CCodeGenerator<'state> {
+    errors: RefMut<'state, Errors>,
+    program: Option<RefMut<'state, Program>>,
 
-    node_stats: &'inputs PerNodeData<NodeStats>,
+    output: Option<RefMut<'state, CCodeOutput>>,
 
-    variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
-    function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
-    type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
-    type_sets: &'inputs mut UnionFindSet<RuntimeType>,
-    scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
-    glsl_functions: &'inputs HashMap<FunctionID, (String, String)>,
+    node_stats: Ref<'state, StatData>,
+
+    variable_data: Ref<'state, VariableData>,
+    function_data: Ref<'state, FunctionData>,
+    type_data: Ref<'state, TypeData>,
+    type_sets: Ref<'state, TypeSets>,
+    scope_data: Ref<'state, ScopeData>,
+    glsl_functions: Ref<'state, PrecompiledGlslFunctions>,
 
     temporary_counter: u64,
 }
-impl<'inputs, 'errors> CCodeGenerator<'inputs, 'errors> {
-    pub fn new(
-        errors: &'errors mut Vec<FleetError>,
-        variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
-        function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
-        type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
-        type_sets: &'inputs mut UnionFindSet<RuntimeType>,
-        scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
-        stats: &'inputs PerNodeData<NodeStats>,
-        glsl_functions: &'inputs HashMap<FunctionID, (String, String)>,
-    ) -> Self {
-        Self {
-            errors,
-            node_stats: stats,
-            variable_data,
-            function_data,
-            type_data,
-            type_sets,
-            scope_data,
-            glsl_functions,
-            temporary_counter: 0,
-        }
-    }
 
+impl PassFactory for CCodeGenerator<'_> {
+    type Output<'state> = CCodeGenerator<'state>;
+    type Params = ();
+
+    fn try_new<'state>(
+        state: &'state mut GlobalState,
+        _params: Self::Params,
+    ) -> Result<Self::Output<'state>, String>
+    where
+        Self: Sized,
+    {
+        let program = state.check_named()?;
+        let errors = state.check_named()?;
+        let node_stats = state.check_named()?;
+
+        let variable_data = state.check_named()?;
+        let function_data = state.check_named()?;
+        let type_data = state.check_named()?;
+        let type_sets = state.check_named()?;
+        let scope_data = state.check_named()?;
+        let glsl_functions = state.check_named()?;
+
+        let output = state.insert_default();
+
+        Ok(Self::Output {
+            errors: errors.get_mut(state),
+            program: Some(program.get_mut(state)),
+
+            output: Some(output.get_mut(state)),
+
+            node_stats: node_stats.get(state),
+
+            variable_data: variable_data.get(state),
+            function_data: function_data.get(state),
+
+            type_data: type_data.get(state),
+            type_sets: type_sets.get(state),
+            scope_data: scope_data.get(state),
+            glsl_functions: glsl_functions.get(state),
+
+            temporary_counter: 0,
+        })
+    }
+}
+impl Pass for CCodeGenerator<'_> {
+    fn run<'state>(mut self: Box<Self>) -> PassResult {
+        if self
+            .errors
+            .iter()
+            .any(|err| err.severity == ErrorSeverity::Error)
+        {
+            return Err(PassError::InvalidInput {
+                producing_pass: Self::name(),
+                source: "Compilation has errors. Not continuing further.".into(),
+            });
+        }
+
+        let mut program = self.program.take().unwrap();
+        let mut output = self.output.take().unwrap();
+
+        *output = CCodeOutput(self.visit_program(&mut program));
+
+        Ok(())
+    }
+}
+
+impl CCodeGenerator<'_> {
     fn runtime_type_to_c(&self, type_: RuntimeType) -> (String, String) {
         match type_ {
             RuntimeType::I8 => ("int8_t".to_string(), "".to_string()),
@@ -185,7 +233,7 @@ pub struct PreStatementValue {
     pub out_value: String,
 }
 
-impl AstVisitor for CCodeGenerator<'_, '_> {
+impl AstVisitor for CCodeGenerator<'_> {
     type ProgramOutput = String;
     type FunctionDefinitionOutput = String;
     type FunctionBodyOutput = String;
@@ -293,8 +341,9 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             .get(id)
             .expect("Functions should be tracked before calling c_generator");
 
-        self.generate_function_declaration(&function.borrow().clone(), true)
-            + self.visit_function_body(body).as_str()
+        let decl = self.generate_function_declaration(&function.borrow().clone(), true);
+        let body = self.visit_function_body(body);
+        decl + &body
     }
 
     fn visit_statement_function_body(
@@ -416,10 +465,10 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             .collect_vec();
 
         let mut bindings = GLSLCodeGenerator::get_on_statement_bindings(
-            self.variable_data,
-            self.scope_data,
-            self.type_sets,
-            self.type_data,
+            &self.variable_data,
+            &self.scope_data,
+            &self.type_sets,
+            &self.type_data,
             bindings,
             iterators
                 .iter()
@@ -478,23 +527,22 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                 .join(", ")
         );
 
-        let iterator_size_buffer_subtype = self.type_sets.insert_set(RuntimeType::I32);
         let (ro_allocations, ro_deallocations): (Vec<_>, Vec<_>) = bindings
             .ro
             .iter_mut()
-            .map(|(name, type_, _variable)| (self.mangle_variable(name), type_))
+            .map(|(name, type_, _variable)| {
+                (
+                    self.mangle_variable(name),
+                    self.runtime_type_to_byte_size(*type_),
+                )
+            })
             .chain(Some((
                 iterator_size_buffer,
-                &mut RuntimeType::ArrayOf {
-                    subtype: iterator_size_buffer_subtype,
-                    size: Some(iterator_end_values.len()),
-                },
+                iterator_end_values.len() * self.runtime_type_to_byte_size(RuntimeType::I32),
             )))
             .collect_vec()
             .into_iter()
-            .map(|(name, type_)| {
-                let size = self.runtime_type_to_byte_size(*type_);
-
+            .map(|(name, size)| {
                 let temporary = self.unique_temporary("lvalue_binding");
 
                 buffers.push(temporary.clone());
@@ -542,13 +590,15 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         let buffers_str = format!("void* {buffers_name}[] = {{ {} }};", buffers.join(", "));
         let buffers_len = buffers.len();
 
+        let glsl_errors = RefCell::new(Errors::default());
+
         let mut glsl_generator = GLSLCodeGenerator::new(
-            self.errors,
-            self.variable_data,
-            self.function_data,
-            self.type_data,
-            self.type_sets,
-            self.node_stats,
+            glsl_errors.borrow_mut(),
+            Ref::clone(&self.variable_data),
+            Ref::clone(&self.function_data),
+            Ref::clone(&self.type_data),
+            Ref::clone(&self.type_sets),
+            Ref::clone(&self.node_stats),
         );
 
         let Ok(glsl_source) = glsl_generator.generate_on_statement_shader(
@@ -556,7 +606,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             body,
             iterators,
             &mut gpu_executor_clone,
-            self.glsl_functions,
+            &self.glsl_functions,
         ) else {
             return "#error glsl generation failed completely\n".to_string();
         };
@@ -579,6 +629,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
         };
         #[cfg(not(feature = "gpu_backend"))]
         let prepare_shader = || -> Option<(String, usize)> {
+            drop(glsl_generator);
             self.errors.push(FleetError::from_node(
                 &**body,
                 "The GPU backend is disabled for this build of Fleet",
@@ -587,7 +638,10 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
             Some(("/* GPU backend missing */".to_string(), 42))
         };
 
-        let Some((bytes_str, spirv_size)) = prepare_shader() else {
+        let prepare_output = prepare_shader();
+        self.errors.append(&mut glsl_errors.borrow_mut());
+
+        let Some((bytes_str, spirv_size)) = prepare_output else {
             return format!("#error malformed on-statement\n/*\n{glsl_source}\n*/\n");
         };
 
@@ -1135,7 +1189,7 @@ impl AstVisitor for CCodeGenerator<'_, '_> {
                         &expr_clone,
                         format!(
                             "@zero isn't implemented for type {} in c backend",
-                            expected_type.stringify(self.type_sets)
+                            expected_type.stringify(&self.type_sets)
                         ),
                         ErrorSeverity::Error,
                     ));

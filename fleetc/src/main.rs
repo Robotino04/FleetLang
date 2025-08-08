@@ -1,9 +1,24 @@
 use std::{env::args, fs::read_to_string, path::Path, process::exit};
 
-use fleet::infra::{ErrorSeverity, FleetError, TokenizerOutput, print_error_message};
-use fleet::inkwell::context::Context;
-use fleet::inkwell::targets::{CodeModel, FileType, RelocMode, Target, TargetTriple};
+use fleet::NewtypeDerefNoDefault;
+use fleet::ast::Program;
+use fleet::ast_to_dm::AstToDocumentModelConverter;
+use fleet::document_model::{DocumentElement, stringify_document};
+use fleet::infra::{
+    ErrorSeverity, FleetError, insert_c_passes, insert_compile_passes, insert_fix_passes,
+    insert_minimal_pipeline, print_error_message,
+};
+use fleet::inkwell::module::Module;
+use fleet::inkwell::targets::{CodeModel, RelocMode, Target, TargetTriple};
 use fleet::inkwell::{self, OptimizationLevel};
+use fleet::ir_generator::{IrGenerator, LLVMOptimizerPass};
+use fleet::passes::pass_manager::{
+    CCodeOutput, Errors, FunctionData, InputSource, PassError, PassManager, StatData, VariableData,
+};
+use fleet::passes::save_artifact_pass::{ArtifactType, SaveArtifactPass};
+use fleet::passes::store_pass::StorePass;
+use fleet::passes::swap_pass::SwapPass;
+use fleet::tokenizer::Token;
 
 fn generate_header(text: impl AsRef<str>, length: usize) -> String {
     format!("{:-^length$}", "|".to_string() + text.as_ref() + "|")
@@ -16,8 +31,14 @@ fn ansi_color_for_severity(severity: ErrorSeverity) -> &'static str {
     }
 }
 
+NewtypeDerefNoDefault!(pub RawProgram, Program);
+NewtypeDerefNoDefault!(pub FixedProgram, Program);
+NewtypeDerefNoDefault!(pub UnoptimizedModule, Module<'static>);
+
 fn main() {
     let input_path = args().nth(1).unwrap_or("test.fl".into());
+    let output_path = Path::new("output.o");
+
     let src = read_to_string(&input_path).unwrap_or_else(|_| {
         eprintln!("Input file {input_path:?} doesn't exist or isn't readable");
         exit(1);
@@ -49,114 +70,6 @@ fn main() {
         }
     };
 
-    let mut errors = vec![];
-    let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
-        print_all_errors_and_message("The tokenizer failed completely", &errors);
-        exit(1);
-    };
-    println!("{}", generate_header("Tokens", 50));
-    println!("{:#?}", tokenizer_output.tokens);
-
-    if errors
-        .iter()
-        .any(|err| err.severity == ErrorSeverity::Error)
-    {
-        print_all_errors_and_message("The tokenizer failed partially", &errors);
-    }
-
-    let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
-        print_all_errors_and_message("The parser failed completely", &errors);
-        exit(1);
-    };
-    println!("{}", generate_header("AST", 50));
-    println!("{:#?}", parser_output.program);
-
-    if errors
-        .iter()
-        .any(|err| err.severity == ErrorSeverity::Error)
-    {
-        print_all_errors_and_message("The parser failed partially", &errors);
-    }
-
-    let Some(analysis_output) = parser_output.analyze(&mut errors) else {
-        print_all_errors_and_message("Analysis failed completely", &errors);
-        exit(1);
-    };
-
-    println!("{}", generate_header("Referenced Variables", 50));
-    println!("{:#?}", analysis_output.type_analysis_data.variable_data);
-    println!("{}", generate_header("Referenced Functions", 50));
-    println!("{:#?}", analysis_output.type_analysis_data.function_data);
-
-    let Some(fixup_output) = analysis_output.fixup(&mut errors) else {
-        print_all_errors_and_message("Analysis failed completely", &errors);
-        exit(1);
-    };
-    println!("{}", generate_header("Node Stats", 50));
-    println!("{:#?}", fixup_output.stats);
-
-    if errors
-        .iter()
-        .any(|err| err.severity == ErrorSeverity::Error)
-    {
-        print_all_errors_and_message("Program analysis found some errors", &errors);
-    }
-
-    let Some(glsl_output) = fixup_output.pre_compile_glsl(&mut errors, &analysis_output) else {
-        print_all_errors_and_message("GLSL precompilation failed completely", &errors);
-        exit(1);
-    };
-
-    let context = Context::create();
-    let Some(llvm_output) =
-        glsl_output.compile_llvm(&mut errors, &context, &analysis_output, &fixup_output)
-    else {
-        print_all_errors_and_message("LLVM compilation failed completely", &errors);
-        exit(1);
-    };
-
-    println!("{}", generate_header("LLVM IR (unoptimized)", 50));
-    println!("{}", llvm_output.module.to_string());
-
-    std::fs::write("./out_unopt.ll", llvm_output.module.to_string()).unwrap();
-
-    if errors
-        .iter()
-        .any(|err| err.severity == ErrorSeverity::Error)
-    {
-        print_all_errors_and_message("LLVM compilation failed partially", &errors);
-    }
-
-    let Some(c_code) = glsl_output.compile_c(&mut errors, &analysis_output, &fixup_output) else {
-        print_all_errors_and_message("C generation failed completely", &errors);
-        exit(1);
-    };
-    if errors
-        .iter()
-        .any(|err| err.severity == ErrorSeverity::Error)
-    {
-        print_all_errors_and_message("C generation failed partially", &errors);
-    }
-
-    println!("{}", generate_header("C Code", 50));
-    println!("{c_code}");
-
-    std::fs::write("./out.c", c_code).expect("Writing to './out.c' failed");
-
-    /*
-    println!("{}", generate_header("Document Model", 50));
-    RemoveParensPass::new().visit_program(&mut program);
-    let document = convert_program_to_document_model(&program);
-    println!("{:#?}", document.clone());
-
-    println!("{}", generate_header("Flattened Document Model", 50));
-    let document = fully_flatten_document(document);
-    println!("{:#?}", document.clone());
-    */
-
-    println!("{}", generate_header("Pretty-Printed", 50));
-    println!("{}", parser_output.format());
-
     Target::initialize_all(&inkwell::targets::InitializationConfig::default());
 
     let triple = TargetTriple::create("x86_64-pc-linux-gnu");
@@ -172,19 +85,81 @@ fn main() {
         )
         .unwrap();
 
-    llvm_output
-        .run_default_optimization_passes(&target_machine)
-        .unwrap();
+    let mut pm = PassManager::default();
+    insert_minimal_pipeline(&mut pm);
+    pm.insert::<StorePass<Program, RawProgram>>();
+    insert_fix_passes(&mut pm);
+    pm.insert::<StorePass<Program, FixedProgram>>();
+    insert_compile_passes(&mut pm);
+    insert_c_passes(&mut pm);
+    pm.insert_params::<SaveArtifactPass>(|| ("./out.c".into(), ArtifactType::CCode));
+
+    pm.insert::<IrGenerator>();
+    pm.insert_params::<SaveArtifactPass>(|| ("./out_unopt.ll".into(), ArtifactType::LlvmIr));
+    pm.insert::<StorePass<Module, UnoptimizedModule>>();
+    pm.insert::<LLVMOptimizerPass>();
+    pm.insert_params::<SaveArtifactPass>(|| ("./out_opt.ll".into(), ArtifactType::LlvmIr));
+    pm.insert_params::<SaveArtifactPass>(|| (output_path.to_owned(), ArtifactType::Object));
+
+    pm.insert::<SwapPass<Program, FixedProgram>>();
+    pm.insert::<AstToDocumentModelConverter>();
+    pm.insert::<SwapPass<Program, FixedProgram>>();
+
+    let errors = pm.state.insert_default::<Errors>();
+    pm.state.insert(InputSource(src.to_string()));
+    let _target_machine = pm.state.insert(target_machine);
+
+    match pm.run() {
+        Err(err @ PassError::CompilerError { .. }) => {
+            let errors = errors.get(&pm.state).clone();
+            print_all_errors_and_message("Compilation failed internally", &errors);
+            println!("{err}");
+            exit(1);
+        }
+        Err(PassError::InvalidInput { .. }) => {
+            let errors = errors.get(&pm.state).clone();
+            print_all_errors_and_message("Program has errors", &errors);
+            exit(1);
+        }
+        Ok(()) => (),
+    };
+
+    let errors = errors.get(&pm.state).clone();
+    if errors
+        .iter()
+        .any(|err| err.severity == ErrorSeverity::Error)
+    {
+        print_all_errors_and_message("Compilation has errors", &errors);
+        panic!("these errors should have resulted in a PassError::InvalidInput");
+    }
+
+    println!("{}", generate_header("Tokens", 50));
+    println!("{:#?}", pm.state.get::<Vec<Token>>());
+
+    println!("{}", generate_header("AST", 50));
+    println!("{:#?}", pm.state.get::<RawProgram>());
+
+    println!("{}", generate_header("Referenced Variables", 50));
+    println!("{:#?}", pm.state.get::<VariableData>());
+    println!("{}", generate_header("Referenced Functions", 50));
+    println!("{:#?}", pm.state.get::<FunctionData>());
+
+    println!("{}", generate_header("Node Stats", 50));
+    println!("{:#?}", pm.state.get::<StatData>());
+
+    println!("{}", generate_header("LLVM IR (unoptimized)", 50));
+    println!("{}", pm.state.get::<Module>().unwrap().to_string());
+
+    println!("{}", generate_header("C Code", 50));
+    println!("{}", &pm.state.get::<CCodeOutput>().unwrap().0);
+
+    let dm = pm.state.get::<DocumentElement>().unwrap().clone();
+
+    println!("{}", generate_header("Pretty-Printed", 50));
+    println!("{}", stringify_document(dm));
 
     println!("{}", generate_header("LLVM IR (optimized)", 50));
-    println!("{}", llvm_output.module.to_string());
-
-    std::fs::write("./out_opt.ll", llvm_output.module.to_string()).unwrap();
-
-    let output_path = Path::new("output.o");
-    target_machine
-        .write_to_file(&llvm_output.module, FileType::Object, output_path)
-        .unwrap();
+    println!("{}", pm.state.get::<Module>().unwrap().to_string());
 
     println!("Object file written to {output_path:?}");
 

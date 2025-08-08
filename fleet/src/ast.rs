@@ -1103,7 +1103,7 @@ impl From<LValue> for AstNode {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PerNodeData<T> {
     map: HashMap<NodeID, T>,
 }

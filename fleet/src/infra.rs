@@ -1,27 +1,24 @@
-use std::collections::HashMap;
-#[cfg(feature = "llvm_backend")]
-use std::error::Error;
-
-#[cfg(feature = "llvm_backend")]
-use inkwell::{context::Context, module::Module, targets::TargetMachine};
 use itertools::Itertools;
 
 use crate::{
-    ast::{AstNode, AstVisitor, PerNodeData, Program},
+    NewtypeDeref,
+    ast::AstNode,
     ast_to_dm::AstToDocumentModelConverter,
-    document_model::{fully_flatten_document, stringify_document},
+    document_model::{DocumentElement, stringify_document},
     generate_c::CCodeGenerator,
     generate_glsl::GLSLCodeGenerator,
-    parser::{IdGenerator, Parser, ParserError},
+    parser::Parser,
     passes::{
         err_missing_type_in_parameter::ErrMissingTypeInParam,
         find_node_bonds::find_node_bounds,
         fix_non_block_statements::FixNonBlockStatements,
         fix_trailing_comma::FixTrailingComma,
         lvalue_reducer::LValueReducer,
+        pass_manager::{Errors, InputSource, PassError, PassManager},
         remove_parens::RemoveParensPass,
-        stat_tracker::{NodeStats, StatTracker, YesNoMaybe},
-        type_propagation::{FunctionID, TypeAnalysisData, TypePropagator},
+        stat_tracker::StatTracker,
+        store_pass::StorePass,
+        type_propagation::TypePropagator,
     },
     tokenizer::{SourceLocation, Token, Tokenizer},
 };
@@ -39,17 +36,6 @@ pub struct FleetError {
     pub end: SourceLocation,
     pub message: String,
     pub severity: ErrorSeverity,
-}
-
-fn run_fix_passes(
-    errors: &mut Vec<FleetError>,
-    program: &mut Program,
-    id_generator: &mut IdGenerator,
-) {
-    RemoveParensPass::default().visit_program(program);
-    FixNonBlockStatements::new(errors, id_generator).visit_program(program);
-    FixTrailingComma::new(errors, id_generator).visit_program(program);
-    ErrMissingTypeInParam::new(errors).visit_program(program);
 }
 
 impl FleetError {
@@ -151,258 +137,60 @@ pub fn print_error_message(source: &str, error: &FleetError) {
     println!("{after_err_trunc}\n");
 }
 
-#[derive(Clone, Debug)]
-pub struct TokenizerOutput {
-    pub tokens: Vec<Token>,
+pub fn insert_fix_passes(pm: &mut PassManager) {
+    pm.insert::<RemoveParensPass>();
+    pm.insert::<FixNonBlockStatements>();
+    pm.insert::<FixTrailingComma>();
+    pm.insert::<ErrMissingTypeInParam>();
 }
 
-impl TokenizerOutput {
-    pub fn new(src: &str, errors: &mut Vec<FleetError>) -> Option<Self> {
-        let tokens = Tokenizer::new(src.to_string(), errors).tokenize();
+pub fn insert_minimal_pipeline(pm: &mut PassManager) {
+    pm.insert::<Tokenizer>();
+    pm.insert::<Parser>();
+}
+pub fn insert_compile_passes(pm: &mut PassManager) {
+    pm.insert::<TypePropagator>();
+    pm.insert::<LValueReducer>();
+    pm.insert::<StatTracker>();
+    pm.insert::<GLSLCodeGenerator>();
+}
 
-        Some(Self { tokens })
+pub fn insert_c_passes(pm: &mut PassManager) {
+    pm.insert::<CCodeGenerator>();
+}
+
+NewtypeDeref!(ParseErrorsOnly, Errors);
+
+pub fn format(source: String) -> Result<String, PassError> {
+    let mut pm = PassManager::default();
+    insert_minimal_pipeline(&mut pm);
+    pm.insert::<StorePass<Errors, ParseErrorsOnly>>();
+    insert_fix_passes(&mut pm);
+    pm.insert::<AstToDocumentModelConverter>();
+
+    pm.state.insert(InputSource(source));
+    pm.state.insert_default::<Errors>();
+
+    pm.run()?;
+
+    let de = pm
+        .state
+        .get::<DocumentElement>()
+        .expect("Formatting passes failed")
+        .clone();
+
+    if pm
+        .state
+        .get::<ParseErrorsOnly>()
+        .unwrap()
+        .iter()
+        .any(|err| err.severity == ErrorSeverity::Error)
+    {
+        return Err(PassError::InvalidInput {
+            producing_pass: "Formatting function".to_string(),
+            source: "Not formatting malformed input".into(),
+        });
     }
 
-    pub fn parse(&self, errors: &mut Vec<FleetError>) -> Result<ParserOutput, ParserError> {
-        Parser::new(self.tokens.clone(), errors)
-            .parse_program()
-            .map(|(program, id_generator)| ParserOutput {
-                program,
-                id_generator,
-            })
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ParserOutput {
-    pub program: Program,
-    pub id_generator: IdGenerator,
-}
-
-impl ParserOutput {
-    pub fn analyze(&self, errors: &mut Vec<FleetError>) -> Option<TypeAnalysisOutput> {
-        let mut id_generator = self.id_generator.clone();
-        let mut program = self.program.clone();
-        let type_analysis_data =
-            TypePropagator::new(errors, &mut id_generator).visit_program(&mut program);
-
-        Some(TypeAnalysisOutput {
-            program,
-            id_generator,
-            type_analysis_data,
-        })
-    }
-
-    pub fn format(&self) -> String {
-        let mut errors = vec![];
-        let mut program = self.program.clone();
-        let mut id_generator = self.id_generator.clone();
-
-        run_fix_passes(&mut errors, &mut program, &mut id_generator);
-
-        let document = AstToDocumentModelConverter::default().visit_program(&mut program);
-        stringify_document(&fully_flatten_document(document))
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeAnalysisOutput {
-    pub program: Program,
-    pub id_generator: IdGenerator,
-    pub type_analysis_data: TypeAnalysisData,
-}
-
-impl TypeAnalysisOutput {
-    pub fn fixup(&self, errors: &mut Vec<FleetError>) -> Option<FixupOutput> {
-        let mut id_generator = self.id_generator.clone();
-        let mut program = self.program.clone();
-
-        LValueReducer::new(
-            errors,
-            None,
-            &self.type_analysis_data.type_data,
-            &self.type_analysis_data.type_sets,
-            &self.type_analysis_data.variable_data,
-            &self.type_analysis_data.scope_data,
-        )
-        .visit_program(&mut program);
-        let stats = StatTracker::new(errors, &self.type_analysis_data).visit_program(&mut program);
-
-        run_fix_passes(errors, &mut program, &mut id_generator);
-
-        Some(FixupOutput {
-            program,
-            id_generator,
-            stats,
-        })
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct FixupOutput {
-    pub program: Program,
-    pub id_generator: IdGenerator,
-    pub stats: PerNodeData<NodeStats>,
-}
-
-impl FixupOutput {
-    pub fn pre_compile_glsl(
-        &self,
-        errors: &mut Vec<FleetError>,
-        type_analysis_output: &TypeAnalysisOutput,
-    ) -> Option<GLSLOutput> {
-        if errors
-            .iter()
-            .any(|err| err.severity == ErrorSeverity::Error)
-        {
-            return None;
-        }
-
-        let mut program = self.program.clone();
-
-        if self
-            .stats
-            .get(&self.program.id)
-            .expect("No stats available for program")
-            .uses_gpu
-            == YesNoMaybe::No
-        {
-            eprintln!("Skipping glsl pregen because nothing uses the gpu");
-
-            return Some(GLSLOutput {
-                program,
-                glsl_functions: HashMap::default(),
-            });
-        }
-
-        Some(GLSLOutput {
-            glsl_functions: GLSLCodeGenerator::new(
-                errors,
-                &type_analysis_output.type_analysis_data.variable_data,
-                &type_analysis_output.type_analysis_data.function_data,
-                &type_analysis_output.type_analysis_data.type_data,
-                &type_analysis_output.type_analysis_data.type_sets,
-                &self.stats,
-            )
-            .visit_program(&mut program)
-            .ok()?,
-            program,
-        })
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct GLSLOutput {
-    pub program: Program,
-    pub glsl_functions: HashMap<FunctionID, (String, String)>,
-}
-
-impl GLSLOutput {
-    #[cfg(feature = "llvm_backend")]
-    pub fn compile_llvm<'a>(
-        &self,
-        errors: &mut Vec<FleetError>,
-        context: &'a Context,
-        type_analysis_output: &TypeAnalysisOutput,
-        fixup_output: &FixupOutput,
-    ) -> Option<LLVMCompilationOutput<'a>> {
-        use crate::ir_generator::IrGenerator;
-
-        if errors
-            .iter()
-            .any(|err| err.severity == ErrorSeverity::Error)
-        {
-            return None;
-        }
-        match IrGenerator::new(
-            context,
-            errors,
-            &fixup_output.stats,
-            &mut type_analysis_output.type_analysis_data.clone(),
-            &self.glsl_functions,
-        )
-        .visit_program(&mut self.program.clone())
-        {
-            Ok(module) => Some(LLVMCompilationOutput { module }),
-            Err(error) => {
-                errors.push(FleetError {
-                    start: SourceLocation::start(),
-                    end: self
-                        .program
-                        .functions
-                        .first()
-                        .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
-                    message: match error.source() {
-                        Some(source) => format!("{error} ({source:?})"),
-                        None => error.to_string(),
-                    },
-                    severity: ErrorSeverity::Error,
-                });
-
-                None
-            }
-        }
-    }
-
-    pub fn compile_c(
-        &self,
-        errors: &mut Vec<FleetError>,
-        type_analysis_output: &TypeAnalysisOutput,
-        fixup_output: &FixupOutput,
-    ) -> Option<String> {
-        if errors
-            .iter()
-            .any(|err| err.severity == ErrorSeverity::Error)
-        {
-            return None;
-        }
-
-        let TypeAnalysisData {
-            type_data,
-            type_sets,
-            variable_data,
-            function_data,
-            scope_data,
-        } = &type_analysis_output.type_analysis_data;
-
-        Some(
-            CCodeGenerator::new(
-                errors,
-                variable_data,
-                function_data,
-                type_data,
-                &mut type_sets.clone(),
-                scope_data,
-                &fixup_output.stats,
-                &self.glsl_functions,
-            )
-            .visit_program(&mut self.program.clone()),
-        )
-    }
-}
-
-#[cfg(feature = "llvm_backend")]
-#[derive(Clone, Debug)]
-pub struct LLVMCompilationOutput<'a> {
-    pub module: Module<'a>,
-}
-
-#[cfg(feature = "llvm_backend")]
-impl LLVMCompilationOutput<'_> {
-    pub fn run_default_optimization_passes(
-        &self,
-        target_machine: &TargetMachine,
-    ) -> Result<(), Box<dyn Error>> {
-        use inkwell::passes::PassBuilderOptions;
-
-        // tsan conflicts with asan
-        // msan is annoying to link
-        self.module.run_passes(
-            "default<O1>,asan",
-            target_machine,
-            PassBuilderOptions::create(),
-        )?;
-
-        Ok(())
-    }
+    Ok(stringify_document(de))
 }

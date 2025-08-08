@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{Ref, RefCell, RefMut},
     collections::{HashMap, HashSet},
     error::Error,
     rc::Rc,
@@ -19,33 +19,122 @@ use crate::{
         CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
-        OnStatementIterator, PerNodeData, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SimpleType, SkipStatement, Statement, StatementFunctionBody, ThreadExecutor,
-        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
+        SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
-        stat_tracker::NodeStats,
-        type_propagation::{
-            Function, FunctionID, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable,
-            VariableScope,
+        pass_manager::{
+            Errors, FunctionData, GlobalState, Pass, PassError, PassFactory, PassResult,
+            PrecompiledGlslFunctions, ScopeData, StatData, TypeData, TypeSets, VariableData,
         },
+        type_propagation::{Function, FunctionID, RuntimeType, Variable},
     },
 };
 
 type Result<T> = ::core::result::Result<T, Box<dyn Error>>;
 
-pub struct GLSLCodeGenerator<'inputs, 'errors> {
-    errors: &'errors mut Vec<FleetError>,
-    variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
-    function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
-    type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
-    type_sets: &'inputs UnionFindSet<RuntimeType>,
-    stats: &'inputs PerNodeData<NodeStats>,
+pub struct GLSLCodeGenerator<'state> {
+    errors: RefMut<'state, Errors>,
+    program: Option<RefMut<'state, Program>>,
+
+    output_functions: Option<RefMut<'state, PrecompiledGlslFunctions>>,
+
+    variable_data: Ref<'state, VariableData>,
+    function_data: Ref<'state, FunctionData>,
+    type_data: Ref<'state, TypeData>,
+    type_sets: Ref<'state, TypeSets>,
+
+    stats: Ref<'state, StatData>,
 
     temporary_counter: u64,
+}
+
+impl PassFactory for GLSLCodeGenerator<'_> {
+    type Output<'state> = GLSLCodeGenerator<'state>;
+    type Params = ();
+
+    fn try_new<'state>(
+        state: &'state mut GlobalState,
+        _params: Self::Params,
+    ) -> ::core::result::Result<Self::Output<'state>, String>
+    where
+        Self: Sized,
+    {
+        let program = state.check_named()?;
+        let errors = state.check_named()?;
+        let stats = state.check_named()?;
+
+        let variable_data = state.check_named()?;
+        let function_data = state.check_named()?;
+        let type_data = state.check_named()?;
+        let type_sets = state.check_named()?;
+
+        let output_functions = state.insert_default();
+
+        Ok(Self::Output {
+            errors: errors.get_mut(state),
+            program: Some(program.get_mut(state)),
+
+            stats: stats.get(state),
+
+            variable_data: variable_data.get(state),
+            function_data: function_data.get(state),
+
+            type_data: type_data.get(state),
+            type_sets: type_sets.get(state),
+
+            output_functions: Some(output_functions.get_mut(state)),
+
+            temporary_counter: 0,
+        })
+    }
+}
+impl Pass for GLSLCodeGenerator<'_> {
+    fn run<'state>(mut self: Box<Self>) -> PassResult {
+        if self
+            .errors
+            .iter()
+            .any(|err| err.severity == ErrorSeverity::Error)
+        {
+            return Err(PassError::InvalidInput {
+                producing_pass: Self::name(),
+                source: "Compilation has errors. Not continuing further.".into(),
+            });
+        }
+
+        let mut program = self
+            .program
+            .take()
+            .expect("This GLSLCodeGenerator was constructed using ::new. It cannot run as a pass");
+
+        let mut output_functions = self
+            .output_functions
+            .take()
+            .expect("This GLSLCodeGenerator was constructed using ::new. It cannot run as a pass");
+
+        if self
+            .stats
+            .get(&program.id)
+            .expect("No stats available for program")
+            .uses_gpu
+            .at_least_maybe()
+        {
+            *output_functions =
+                PrecompiledGlslFunctions(self.visit_program(&mut program).map_err(|err| {
+                    PassError::CompilerError {
+                        source: err,
+                        producing_pass: Self::name(),
+                    }
+                })?);
+        } else {
+            eprintln!("Skipping glsl pregen because nothing uses the gpu");
+        }
+
+        Ok(())
+    }
 }
 
 pub struct OnStatementBindings {
@@ -53,17 +142,19 @@ pub struct OnStatementBindings {
     pub ro: Vec<(String, RuntimeType, Rc<RefCell<Variable>>)>,
 }
 
-impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
+impl<'state> GLSLCodeGenerator<'state> {
     pub fn new(
-        errors: &'errors mut Vec<FleetError>,
-        variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
-        function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
-        type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
-        type_sets: &'inputs UnionFindSet<RuntimeType>,
-        stats: &'inputs PerNodeData<NodeStats>,
+        errors: RefMut<'state, Errors>,
+        variable_data: Ref<'state, VariableData>,
+        function_data: Ref<'state, FunctionData>,
+        type_data: Ref<'state, TypeData>,
+        type_sets: Ref<'state, TypeSets>,
+        stats: Ref<'state, StatData>,
     ) -> Self {
         Self {
             errors,
+            program: None,
+            output_functions: None,
             variable_data,
             function_data,
             type_data,
@@ -89,10 +180,10 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
     }
 
     pub fn get_on_statement_bindings(
-        variable_data: &PerNodeData<Rc<RefCell<Variable>>>,
-        scope_data: &PerNodeData<Rc<RefCell<VariableScope>>>,
-        type_sets: &UnionFindSet<RuntimeType>,
-        type_data: &PerNodeData<UnionFindSetPtr<RuntimeType>>,
+        variable_data: &VariableData,
+        scope_data: &ScopeData,
+        type_sets: &TypeSets,
+        type_data: &TypeData,
         bindings: Vec<VariableLValue>,
         iterators: Vec<Rc<RefCell<Variable>>>,
         main_body: &Statement,
@@ -330,7 +421,7 @@ impl<'inputs, 'errors> GLSLCodeGenerator<'inputs, 'errors> {
 
     #[cfg(feature = "gpu_backend")]
     pub fn compile_on_statement_shader<I: Into<AstNode> + Clone>(
-        self,
+        mut self,
         source: &str,
         error_node: &I,
     ) -> Result<shaderc::CompilationArtifact> {
@@ -487,7 +578,7 @@ pub struct PreStatementValue {
     pub out_value: String,
 }
 
-impl AstVisitor for GLSLCodeGenerator<'_, '_> {
+impl AstVisitor for GLSLCodeGenerator<'_> {
     type ProgramOutput = Result<HashMap<FunctionID, (String, String)>>;
     type FunctionDefinitionOutput = Result<Option<(String, String)>>;
     type FunctionBodyOutput = Result<String>;
@@ -504,10 +595,8 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
             .functions
             .iter_mut()
             .map(|f| {
-                Ok((
-                    self.function_data.get(&f.id).unwrap().borrow().id,
-                    self.visit_function_definition(f)?,
-                ))
+                let id = self.function_data.get(&f.id).unwrap().borrow().id;
+                Ok((id, self.visit_function_definition(f)?))
             })
             .filter_map(|res| {
                 let (fid, opt) = match res {
@@ -677,12 +766,12 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
             .expect("var data must exist before calling glsl_generator")
             .clone();
 
-        let type_ = self.type_sets.get(ref_var.borrow().type_);
+        let type_ = *self.type_sets.get(ref_var.borrow().type_);
 
         if let RuntimeType::ArrayOf {
             subtype: _,
             size: Some(size),
-        } = *type_
+        } = type_
         {
             let lvalue_gen = self.visit_simple_binding(binding);
             let lvalue_temporary = self.mangle_variable(&ref_var.borrow().name);
@@ -692,7 +781,7 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
                 pre_statements: rvalue_pre_statements,
                 out_value: rvalue_out_value,
             } = self.visit_expression(&mut *value);
-            let (rvalue_type, rvalue_postfix) = self.runtime_type_to_glsl(*type_);
+            let (rvalue_type, rvalue_postfix) = self.runtime_type_to_glsl(type_);
 
             let rvalue_gen =
                 format!("{rvalue_type} {rvalue_temporary}{rvalue_postfix} = {rvalue_out_value}");
@@ -1098,7 +1187,7 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
                             &expr_clone,
                             format!(
                                 "@zero isn't implemented for array type {} in glsl backend (only 1D arrays with numbers are supported currently)",
-                                expected_type.stringify(self.type_sets)
+                                expected_type.stringify(&self.type_sets)
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -1121,7 +1210,7 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
                         &expr_clone,
                         format!(
                             "@zero isn't implemented for type {} in glsl backend",
-                            expected_type.stringify(self.type_sets)
+                            expected_type.stringify(&self.type_sets)
                         ),
                         ErrorSeverity::Error,
                     ));
@@ -1333,7 +1422,7 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
             id,
         }: &mut VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
-        let type_ = self.type_sets.get(
+        let type_ = *self.type_sets.get(
             *self
                 .type_data
                 .get(id)
@@ -1342,7 +1431,7 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
         if let RuntimeType::ArrayOf {
             subtype: _,
             size: Some(size),
-        } = *type_
+        } = type_
         {
             let lvalue_temporary = self.unique_temporary("lvalue");
             let PreStatementValue {
@@ -1350,7 +1439,7 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
                 out_value: lvalue,
             } = self.visit_lvalue(lvalue);
             let lvalue = format!("({lvalue})");
-            let (lvalue_type, lvalue_postfix) = self.runtime_type_to_glsl(*type_);
+            let (lvalue_type, lvalue_postfix) = self.runtime_type_to_glsl(type_);
 
             let lvalue_gen =
                 format!("{lvalue_type} ({lvalue_temporary}){lvalue_postfix} = {lvalue}");
@@ -1360,7 +1449,7 @@ impl AstVisitor for GLSLCodeGenerator<'_, '_> {
                 pre_statements: rvalue_pre_statements,
                 out_value: rvalue_out_value,
             } = self.visit_expression(&mut *right);
-            let (rvalue_type, rvalue_postfix) = self.runtime_type_to_glsl(*type_);
+            let (rvalue_type, rvalue_postfix) = self.runtime_type_to_glsl(type_);
 
             let rvalue_pre = format!("{rvalue_type} {rvalue_temporary}{rvalue_postfix};\n");
             let rvalue_gen = format!("{rvalue_temporary} = {rvalue_out_value}");

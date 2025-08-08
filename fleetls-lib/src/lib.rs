@@ -4,16 +4,23 @@ use fleet::{
         BinaryExpression, BinaryOperation, BlockStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
-        IfStatement, LiteralExpression, LiteralKind, NodeID, OnStatement, PerNodeData,
-        ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody,
-        ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        IfStatement, LiteralExpression, LiteralKind, NodeID, OnStatement, ReturnStatement,
+        SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody, ThreadExecutor,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
-    infra::{ErrorSeverity, FleetError, TokenizerOutput},
+    infra::{
+        self, ErrorSeverity, insert_c_passes, insert_compile_passes, insert_fix_passes,
+        insert_minimal_pipeline,
+    },
+    ir_generator::IrGenerator,
     passes::{
-        find_containing_node::FindContainingNodePass, stat_tracker::NodeStats,
-        type_propagation::TypeAnalysisData,
+        find_containing_node::FindContainingNodePass,
+        pass_manager::{
+            Errors, FunctionData, InputSource, PassError, PassManager, ScopeData, StatData,
+            TypeData, TypeSets, VariableData,
+        },
     },
     tokenizer::{SourceLocation, Token},
 };
@@ -89,23 +96,36 @@ static SEMANTIC_TOKEN_MODIFIERS: LazyLock<Vec<SemanticTokenModifier>> =
         ]
     });
 
+#[derive(Copy, Clone, Debug)]
+struct AnalysisData<'a> {
+    type_data: &'a TypeData,
+    type_sets: &'a TypeSets,
+    function_data: &'a FunctionData,
+    variable_data: &'a VariableData,
+    scope_data: &'a ScopeData,
+}
+
 impl Backend {
-    fn get_type_as_hover(&self, id: NodeID, analysis_data: Option<&TypeAnalysisData>) -> String {
-        let Some(analysis_data) = analysis_data else {
+    fn get_type_as_hover(&self, id: NodeID, analysis_data: Option<AnalysisData>) -> String {
+        let Some(AnalysisData {
+            type_data,
+            type_sets,
+            function_data: _,
+            variable_data: _,
+            scope_data: _,
+        }) = analysis_data
+        else {
             return "/* No type data available */".to_string();
         };
-        let Some(type_) = analysis_data.type_data.get(&id) else {
+        let Some(type_) = type_data.get(&id) else {
             return "/* Node type missing */".to_string();
         };
-        analysis_data
-            .type_sets
-            .get(*type_)
-            .stringify(&analysis_data.type_sets)
+        type_sets.get(*type_).stringify(type_sets)
     }
     fn generate_node_hover(
         &self,
         node: impl Into<AstNode>,
-        analysis_data: Option<&TypeAnalysisData>,
+        analysis_data: Option<AnalysisData>,
     ) -> (String, String) {
         match node.into() {
             AstNode::Program(_) => ("".to_string(), "program".to_string()),
@@ -134,15 +154,21 @@ impl Backend {
                     return_type
                         .map(|t| self.generate_node_hover(t, analysis_data).0)
                         .unwrap_or_else(|| {
-                            let Some(analysis_data) = analysis_data else {
+                            let Some(AnalysisData {
+                                type_data: _,
+                                type_sets,
+                                function_data,
+                                variable_data: _,
+                                scope_data: _,
+                            }) = analysis_data
+                            else {
                                 return "/* No type data available */".to_string();
                             };
-                            let Some(ref_func) = analysis_data.function_data.get(&id) else {
+                            let Some(ref_func) = function_data.get(&id) else {
                                 return "/* Function doesn't exist */".to_string();
                             };
-                            let return_type =
-                                analysis_data.type_sets.get(ref_func.borrow().return_type);
-                            return_type.stringify(&analysis_data.type_sets)
+                            let return_type = type_sets.get(ref_func.borrow().return_type);
+                            return_type.stringify(type_sets)
                         })
                 ),
                 "function definition".to_string(),
@@ -173,14 +199,21 @@ impl Backend {
                     type_
                         .map(|(_colon, type_)| self.generate_node_hover(type_, analysis_data).0)
                         .unwrap_or_else(|| {
-                            let Some(analysis_data) = analysis_data else {
+                            let Some(AnalysisData {
+                                type_data: _,
+                                type_sets,
+                                function_data: _,
+                                variable_data,
+                                scope_data: _,
+                            }) = analysis_data
+                            else {
                                 return "/* No type data available */".to_string();
                             };
-                            let Some(ref_var) = analysis_data.variable_data.get(&id) else {
+                            let Some(ref_var) = variable_data.get(&id) else {
                                 return "/* Variable doesn't exist */".to_string();
                             };
-                            let type_ = analysis_data.type_sets.get(ref_var.borrow().type_);
-                            type_.stringify(&analysis_data.type_sets)
+                            let type_ = type_sets.get(ref_var.borrow().type_);
+                            type_.stringify(type_sets)
                         })
                 ),
                 "simple binding".to_string(),
@@ -427,34 +460,35 @@ impl Backend {
                 id,
             }) => {
                 let (parameters, return_type) = (|| {
-                    let Some(analysis_data) = analysis_data else {
+                    let Some(AnalysisData {
+                        type_data: _,
+                        type_sets,
+                        function_data,
+                        variable_data: _,
+                        scope_data: _,
+                    }) = analysis_data
+                    else {
                         return (
                             "/* No type data available */".to_string(),
                             "/* No type data available */".to_string(),
                         );
                     };
-                    let Some(ref_func) = analysis_data.function_data.get(&id) else {
+                    let Some(ref_func) = function_data.get(&id) else {
                         return (
                             "/* Function doesn't exist */".to_string(),
                             "/* Function doesn't exist */".to_string(),
                         );
                     };
-                    let return_type = analysis_data
-                        .type_sets
+                    let return_type = type_sets
                         .get(ref_func.borrow().return_type)
-                        .stringify(&analysis_data.type_sets);
+                        .stringify(type_sets);
                     let parameters = Itertools::intersperse(
                         ref_func
                             .borrow()
                             .parameter_types
                             .iter()
                             .map(|(param, name)| {
-                                name.clone()
-                                    + ": "
-                                    + &analysis_data
-                                        .type_sets
-                                        .get(*param)
-                                        .stringify(&analysis_data.type_sets)
+                                name.clone() + ": " + &type_sets.get(*param).stringify(type_sets)
                             }),
                         ", ".to_string(),
                     )
@@ -478,34 +512,35 @@ impl Backend {
                 id,
             }) => {
                 let (parameters, return_type) = (|| {
-                    let Some(analysis_data) = analysis_data else {
+                    let Some(AnalysisData {
+                        type_data: _,
+                        type_sets,
+                        function_data,
+                        variable_data: _,
+                        scope_data: _,
+                    }) = analysis_data
+                    else {
                         return (
                             "/* No type data available */".to_string(),
                             "/* No type data available */".to_string(),
                         );
                     };
-                    let Some(ref_func) = analysis_data.function_data.get(&id) else {
+                    let Some(ref_func) = function_data.get(&id) else {
                         return (
                             "/* Compiler function doesn't exist */".to_string(),
                             "/* Compiler function doesn't exist */".to_string(),
                         );
                     };
-                    let return_type = analysis_data
-                        .type_sets
+                    let return_type = type_sets
                         .get(ref_func.borrow().return_type)
-                        .stringify(&analysis_data.type_sets);
+                        .stringify(type_sets);
                     let parameters = Itertools::intersperse(
                         ref_func
                             .borrow()
                             .parameter_types
                             .iter()
                             .map(|(param, name)| {
-                                name.clone()
-                                    + ": "
-                                    + &analysis_data
-                                        .type_sets
-                                        .get(*param)
-                                        .stringify(&analysis_data.type_sets)
+                                name.clone() + ": " + &type_sets.get(*param).stringify(type_sets)
                             }),
                         ", ".to_string(),
                     )
@@ -605,7 +640,7 @@ impl Backend {
                 id: _,
             }) => (
                 analysis_data
-                    .map(|data| type_.stringify(&data.type_sets))
+                    .map(|data| type_.stringify(data.type_sets))
                     .unwrap_or("/* No type data available */".to_string()),
                 "type".to_string(),
             ),
@@ -634,8 +669,8 @@ impl Backend {
     fn full_hover_text(
         &self,
         node_hierarchy: &[AstNode],
-        stats: Option<&PerNodeData<NodeStats>>,
-        analysis_data: Option<&TypeAnalysisData>,
+        stats: Option<&StatData>,
+        analysis_data: Option<AnalysisData>,
         hovered_token: Option<&Token>,
     ) -> String {
         format!(
@@ -673,7 +708,7 @@ impl Backend {
                 )),
             analysis_data
                 .as_ref()
-                .and_then(|stat| stat
+                .and_then(|analysis| analysis
                     .scope_data
                     .get(&node_hierarchy.last()?.get_id())
                     .cloned())
@@ -776,47 +811,32 @@ impl LanguageServer for Backend {
             });
         };
 
-        fn run_all_main_phases(src: &str) -> Vec<FleetError> {
-            let mut errors = vec![];
+        let src: &str = &src;
+        let mut pm = PassManager::default();
+        insert_minimal_pipeline(&mut pm);
+        insert_fix_passes(&mut pm);
+        insert_compile_passes(&mut pm);
+        insert_c_passes(&mut pm);
 
-            let Some(tokenizer_output) = TokenizerOutput::new(src, &mut errors) else {
-                return errors;
-            };
+        #[cfg(feature = "llvm_backend")]
+        {
+            pm.insert::<IrGenerator>();
+            // don't optimize in the lsp
+            //pm.insert::<LLVMOptimizerPass>();
+        };
 
-            let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
-                return errors;
-            };
+        let errors = pm.state.insert_default::<Errors>();
+        pm.state.insert(InputSource(src.to_string()));
 
-            let Some(analysis_output) = parser_output.analyze(&mut errors) else {
-                return errors;
-            };
-            let Some(fixup_output) = analysis_output.fixup(&mut errors) else {
-                return errors;
-            };
-            let Some(glsl_output) = fixup_output.pre_compile_glsl(&mut errors, &analysis_output)
-            else {
-                return errors;
-            };
+        if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
+            return Err(tower_lsp_server::jsonrpc::Error {
+                code: tower_lsp_server::jsonrpc::ErrorCode::ServerError(0),
+                message: format!("Compilation failed: {err}").into(),
+                data: None,
+            });
+        };
 
-            #[cfg(feature = "llvm_backend")]
-            {
-                use fleet::inkwell::context::Context;
-
-                let context = Context::create();
-                let _ = glsl_output.compile_llvm(
-                    &mut errors,
-                    &context,
-                    &analysis_output,
-                    &fixup_output,
-                );
-            }
-
-            let _ = glsl_output.compile_c(&mut errors, &analysis_output, &fixup_output);
-
-            errors
-        }
-
-        let errors = run_all_main_phases(&src);
+        let errors = errors.get(&pm.state).0.clone();
 
         Ok(DocumentDiagnosticReportResult::Report(
             DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
@@ -912,30 +932,47 @@ impl LanguageServer for Backend {
             });
         };
 
-        let mut errors = vec![];
+        let mut pm = PassManager::default();
+        insert_minimal_pipeline(&mut pm);
+        insert_compile_passes(&mut pm);
 
-        let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
+        pm.state.insert_default::<Errors>();
+        pm.state.insert(InputSource(src.to_string()));
+
+        if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
             return Err(tower_lsp_server::jsonrpc::Error {
-                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
-                message: "Tokenization failed completely".into(),
+                code: tower_lsp_server::jsonrpc::ErrorCode::ServerError(0),
+                message: format!("Compilation failed: {err}").into(),
                 data: None,
             });
         };
 
-        let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
-            return Err(tower_lsp_server::jsonrpc::Error {
-                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
-                message: "Parsing failed completely".into(),
-                data: None,
-            });
+        let analysis_data = (
+            pm.state.get(),
+            pm.state.get(),
+            pm.state.get(),
+            pm.state.get(),
+            pm.state.get(),
+        );
+
+        let analysis_data = if let (
+            Some(type_data),
+            Some(type_sets),
+            Some(function_data),
+            Some(variable_data),
+            Some(scope_data),
+        ) = &analysis_data
+        {
+            Some(AnalysisData {
+                type_data,
+                type_sets,
+                function_data,
+                variable_data,
+                scope_data,
+            })
+        } else {
+            None
         };
-        let analysis_output = parser_output.analyze(&mut errors);
-        let fixup_output = analysis_output
-            .as_ref()
-            .and_then(|ao| ao.fixup(&mut errors));
-        let _glsl_output = fixup_output
-            .as_ref()
-            .and_then(|ao| ao.pre_compile_glsl(&mut errors, analysis_output.as_ref().unwrap()));
 
         let cpos = params.text_document_position_params.position;
         let find_pass = FindContainingNodePass::new(SourceLocation {
@@ -944,19 +981,16 @@ impl LanguageServer for Backend {
             column: cpos.character as usize,
         });
 
-        if let Ok((node_hierarchy, hovered_token)) = find_pass.visit_program(
-            &mut analysis_output
-                .as_ref()
-                .map(|a| a.program.clone())
-                .unwrap_or(parser_output.program.clone()),
-        ) {
+        if let Ok((node_hierarchy, hovered_token)) =
+            find_pass.visit_program(&mut pm.state.get_mut().unwrap())
+        {
             Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
                     value: self.full_hover_text(
                         &node_hierarchy,
-                        fixup_output.as_ref().map(|fo| &fo.stats),
-                        analysis_output.as_ref().map(|a| &a.type_analysis_data),
+                        pm.state.get().as_deref(),
+                        analysis_data,
                         hovered_token.as_ref(),
                     ),
                 }),
@@ -995,27 +1029,23 @@ impl LanguageServer for Backend {
             });
         };
 
-        let mut errors = vec![];
+        let mut pm = PassManager::default();
+        insert_minimal_pipeline(&mut pm);
 
-        let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
-            return Err(tower_lsp_server::jsonrpc::Error {
-                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
-                message: "Tokenization failed completely".into(),
-                data: None,
-            });
-        };
+        pm.state.insert_default::<Errors>();
+        pm.state.insert(InputSource(src.to_string()));
 
-        let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
+        if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
             return Err(tower_lsp_server::jsonrpc::Error {
-                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
-                message: "Parsing failed completely".into(),
+                code: tower_lsp_server::jsonrpc::ErrorCode::ServerError(0),
+                message: format!("Compilation failed: {err}").into(),
                 data: None,
             });
         };
 
         let semantic_tokens =
             ExtractSemanticTokensPass::new(&SEMANTIC_TOKEN_TYPES, &SEMANTIC_TOKEN_MODIFIERS)
-                .visit_program(&mut parser_output.program.clone());
+                .visit_program(&mut pm.state.get_mut().unwrap());
 
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             result_id: None,
@@ -1043,35 +1073,20 @@ impl LanguageServer for Backend {
             });
         };
 
-        let mut errors = vec![];
-        let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
-            return Err(tower_lsp_server::jsonrpc::Error {
-                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
-                message: "Tokenization failed completely".into(),
-                data: None,
-            });
+        let doc_end = SourceLocation::end(&src);
+
+        // even invalid input shouldn't be formatted
+        let new_text = match infra::format(src) {
+            Err(err) => {
+                return Err(tower_lsp_server::jsonrpc::Error {
+                    code: tower_lsp_server::jsonrpc::ErrorCode::ServerError(0),
+                    message: format!("Compilation failed: {err}").into(),
+                    data: None,
+                });
+            }
+            Ok(new_text) => new_text,
         };
 
-        let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
-            return Err(tower_lsp_server::jsonrpc::Error {
-                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
-                message: "Parsing failed completely".into(),
-                data: None,
-            });
-        };
-
-        if errors
-            .iter()
-            .any(|err| err.severity == ErrorSeverity::Error)
-        {
-            return Err(tower_lsp_server::jsonrpc::Error {
-                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
-                message: "Code has parse errors. Not formatting".into(),
-                data: None,
-            });
-        }
-
-        let new_text = parser_output.format();
         self.documents
             .write()
             .unwrap()
@@ -1082,8 +1097,6 @@ impl LanguageServer for Backend {
             .unwrap()
             .semantic_tokens_refresh
             .store(true, Ordering::Relaxed);
-
-        let doc_end = SourceLocation::end(src.clone());
 
         Ok(Some(vec![TextEdit {
             range: Range {
@@ -1117,24 +1130,48 @@ impl LanguageServer for Backend {
             });
         };
 
-        let mut errors = vec![];
+        let mut pm = PassManager::default();
+        insert_minimal_pipeline(&mut pm);
+        insert_fix_passes(&mut pm);
+        insert_compile_passes(&mut pm);
 
-        let Some(tokenizer_output) = TokenizerOutput::new(&src, &mut errors) else {
+        pm.state.insert_default::<Errors>();
+        pm.state.insert(InputSource(src.to_string()));
+
+        if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
             return Err(tower_lsp_server::jsonrpc::Error {
-                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
-                message: "Tokenization failed completely".into(),
+                code: tower_lsp_server::jsonrpc::ErrorCode::ServerError(0),
+                message: format!("Compilation failed: {err}").into(),
                 data: None,
             });
         };
 
-        let Ok(parser_output) = tokenizer_output.parse(&mut errors) else {
-            return Err(tower_lsp_server::jsonrpc::Error {
-                code: tower_lsp_server::jsonrpc::ErrorCode::ParseError,
-                message: "Parsing failed completely".into(),
-                data: None,
-            });
+        let analysis_data = (
+            pm.state.get(),
+            pm.state.get(),
+            pm.state.get(),
+            pm.state.get(),
+            pm.state.get(),
+        );
+
+        let analysis_data = if let (
+            Some(type_data),
+            Some(type_sets),
+            Some(function_data),
+            Some(variable_data),
+            Some(scope_data),
+        ) = &analysis_data
+        {
+            Some(AnalysisData {
+                type_data,
+                type_sets,
+                function_data,
+                variable_data,
+                scope_data,
+            })
+        } else {
+            None
         };
-        let analysis_output = parser_output.analyze(&mut errors);
 
         let cpos = params.text_document_position_params.position;
         let cpos_sl = SourceLocation {
@@ -1144,12 +1181,9 @@ impl LanguageServer for Backend {
         };
         let find_pass = FindContainingNodePass::new(cpos_sl);
 
-        if let Ok((node_hierarchy, _hovered_token)) = find_pass.visit_program(
-            &mut analysis_output
-                .as_ref()
-                .map(|a| a.program.clone())
-                .unwrap_or(parser_output.program.clone()),
-        ) {
+        if let Ok((node_hierarchy, _hovered_token)) =
+            find_pass.visit_program(&mut pm.state.get_mut().unwrap())
+        {
             let mut prev_node = None;
             let mut function_call = None;
             for node in node_hierarchy.iter().rev() {
@@ -1166,21 +1200,14 @@ impl LanguageServer for Backend {
             };
 
             let label = self
-                .generate_node_hover(
-                    function_call.clone(),
-                    analysis_output.as_ref().map(|a| &a.type_analysis_data),
-                )
+                .generate_node_hover(function_call.clone(), analysis_data)
                 .0;
 
-            let Some(analysis_output) = analysis_output else {
+            let Some(analysis_data) = analysis_data else {
                 return Ok(None);
             };
 
-            let Some(ref_func) = analysis_output
-                .type_analysis_data
-                .function_data
-                .get(&function_call.id)
-            else {
+            let Some(ref_func) = analysis_data.function_data.get(&function_call.id) else {
                 return Ok(None);
             };
 

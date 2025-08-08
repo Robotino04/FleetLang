@@ -40,7 +40,10 @@
 - heap allocations
 - warnings for unused functions/variables
 - disallow returning arrays
+- add different errors for missing Pass dependencies and for failed check_empty calls
 
+- track definitions and references of variables
+- make from_node into from_range
 
 ## Building
 ### LLVM

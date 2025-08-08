@@ -1,6 +1,6 @@
 use indoc::indoc;
 
-use crate::common::assert_formatting_and_same_behaviour;
+use crate::common::{assert_formatting, assert_formatting_and_same_behaviour};
 
 #[test]
 fn expand() {
@@ -366,5 +366,27 @@ fn collapse_extern() {
             }"##
         },
         "main",
+    );
+}
+
+/// Semantically invalid but parsable code should still be formatted
+#[test]
+fn accept_invalid() {
+    assert_formatting(
+        indoc! {r##"
+            let 
+            main    =   (
+
+            ) 
+
+                -> i32 {
+            return nonexistent();
+             }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return nonexistent();
+            }"##
+        },
     );
 }

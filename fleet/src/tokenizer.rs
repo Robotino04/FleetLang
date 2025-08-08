@@ -1,8 +1,9 @@
-use std::cmp::Ordering;
+use std::{cell::RefMut, cmp::Ordering};
 
-use itertools::Itertools;
-
-use crate::infra::{ErrorSeverity, FleetError};
+use crate::{
+    infra::{ErrorSeverity, FleetError},
+    passes::pass_manager::{Errors, GlobalState, InputSource, Pass, PassFactory, PassResult},
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Token {
@@ -148,12 +149,13 @@ impl SourceLocation {
     }
 }
 
-pub struct Tokenizer<'errors> {
+pub struct Tokenizer<'state> {
+    errors: RefMut<'state, Errors>,
     chars: Vec<char>,
-    current_location: SourceLocation,
 
-    tokens: Vec<Token>,
-    errors: &'errors mut Vec<FleetError>,
+    tokens: RefMut<'state, Vec<Token>>,
+
+    current_location: SourceLocation,
 
     unk_char_accumulator: String,
     unk_char_token: Token,
@@ -161,14 +163,29 @@ pub struct Tokenizer<'errors> {
     trivia_accumulator: Vec<Trivia>,
 }
 
-impl<'errors> Tokenizer<'errors> {
-    pub fn new(src: String, errors: &'errors mut Vec<FleetError>) -> Self {
-        Self {
-            chars: src.chars().collect_vec(),
-            current_location: SourceLocation::start(),
+impl PassFactory for Tokenizer<'_> {
+    type Output<'state> = Tokenizer<'state>;
+    type Params = ();
 
-            tokens: vec![],
-            errors,
+    fn try_new<'state>(
+        state: &'state mut GlobalState,
+        _params: Self::Params,
+    ) -> Result<Self::Output<'state>, String>
+    where
+        Self: Sized,
+    {
+        let source = state.check_named::<InputSource>()?;
+        let errors = state.check_named()?;
+
+        let tokens = state.insert(vec![]);
+
+        Ok(Self::Output {
+            errors: errors.get_mut(state),
+            tokens: tokens.get_mut(state),
+
+            chars: source.get(state).chars().collect(),
+
+            current_location: SourceLocation::start(),
 
             unk_char_accumulator: "".to_string(),
             unk_char_token: Token {
@@ -181,10 +198,28 @@ impl<'errors> Tokenizer<'errors> {
             },
 
             trivia_accumulator: vec![],
-        }
+        })
+    }
+}
+impl Pass for Tokenizer<'_> {
+    fn run<'state>(self: Box<Self>) -> PassResult {
+        self.tokenize();
+
+        Ok(())
+    }
+}
+
+impl<'errors> Tokenizer<'errors> {
+    fn done(&self) -> bool {
+        self.current_location.index >= self.chars.len()
     }
 
     fn advance(&mut self) {
+        if self.done() {
+            eprintln!("Tried advancing past EOF");
+            return;
+        }
+
         match self.chars[self.current_location.index] {
             '\n' => {
                 self.current_location.index += 1;
@@ -242,7 +277,7 @@ impl<'errors> Tokenizer<'errors> {
         token
     }
 
-    pub fn tokenize(mut self) -> Vec<Token> {
+    pub fn tokenize(mut self) {
         while self.current_location.index < self.chars.len() {
             match self.chars[self.current_location.index] {
                 '(' => {
@@ -382,7 +417,7 @@ impl<'errors> Tokenizer<'errors> {
                             self.advance();
                             let content_start_location = self.current_location;
 
-                            while self.chars[self.current_location.index] != '\n' {
+                            while self.chars[self.current_location.index] != '\n' && !self.done() {
                                 self.advance();
 
                                 if self.current_location.index >= self.chars.len() {
@@ -583,7 +618,7 @@ impl<'errors> Tokenizer<'errors> {
                     let start_location = self.current_location;
 
                     self.advance(); // "
-                    while !matches!(self.chars[self.current_location.index], '"') {
+                    while !matches!(self.chars[self.current_location.index], '"') && !self.done() {
                         self.advance();
 
                         if self.current_location.index >= self.chars.len() {
@@ -643,7 +678,7 @@ impl<'errors> Tokenizer<'errors> {
         }
 
         // clean up/format the trivia so this logic doesn't have tp spread into all other parts
-        for token in &mut self.tokens {
+        for token in self.tokens.iter_mut() {
             while matches!(
                 token.leading_trivia.first().map(|t| t.kind.clone()),
                 Some(TriviaKind::EmptyLine)
@@ -689,7 +724,7 @@ impl<'errors> Tokenizer<'errors> {
             }
         }
 
-        for token in &self.tokens {
+        for token in self.tokens.iter() {
             if let Token {
                 type_: TokenType::UnknownCharacters(_),
                 ..
@@ -702,8 +737,6 @@ impl<'errors> Tokenizer<'errors> {
                 ));
             }
         }
-
-        self.tokens
     }
     fn flush_trailing_trivia(&mut self) {
         if let (Some(last_token), Some(trivia)) =

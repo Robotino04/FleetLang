@@ -1,6 +1,7 @@
 use std::{
-    cell::RefCell,
+    cell::{Ref, RefCell, RefMut},
     collections::{HashMap, HashSet},
+    ops::Deref,
     rc::Rc,
     vec::Vec,
 };
@@ -11,16 +12,19 @@ use crate::{
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-        LiteralExpression, OnStatement, OnStatementIterator, PerNodeData, Program, ReturnStatement,
+        LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
         ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
-    passes::type_propagation::{
-        Function, FunctionID, RuntimeType, TypeAnalysisData, UnionFindSet, UnionFindSetPtr,
-        Variable,
+    passes::{
+        pass_manager::{
+            Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, StatData, TypeSets,
+            VariableData,
+        },
+        type_propagation::{Function, FunctionID, RuntimeType, Variable},
     },
     tokenizer::SourceLocation,
 };
@@ -167,43 +171,64 @@ impl MergableStat for NodeStats {
     }
 }
 
-pub struct StatTracker<'errors, 'inputs> {
-    stats: PerNodeData<NodeStats>,
+pub struct StatTracker<'state> {
+    errors: RefMut<'state, Errors>,
+    program: Option<RefMut<'state, Program>>,
+
+    variable_data: Ref<'state, VariableData>,
+    type_sets: Ref<'state, TypeSets>,
+    function_data: Ref<'state, FunctionData>,
+
+    stats: RefMut<'state, StatData>,
+
     function_stats: HashMap<FunctionID, NodeStats>,
-    errors: &'errors mut Vec<FleetError>,
-
-    _type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
-    type_sets: &'inputs UnionFindSet<RuntimeType>,
-    variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
-    function_data: &'inputs PerNodeData<Rc<RefCell<Function>>>,
-
     current_function: Option<Rc<RefCell<Function>>>,
     loop_count: usize,
 }
 
-impl<'errors, 'inputs> StatTracker<'errors, 'inputs> {
-    pub fn new(
-        error_output: &'errors mut Vec<FleetError>,
-        analysis_data: &'inputs TypeAnalysisData,
-    ) -> Self {
-        Self {
-            stats: PerNodeData::default(),
+impl PassFactory for StatTracker<'_> {
+    type Output<'state> = StatTracker<'state>;
+    type Params = ();
+
+    fn try_new<'state>(
+        state: &'state mut GlobalState,
+        _params: Self::Params,
+    ) -> Result<Self::Output<'state>, String> {
+        let errors = state.check_named()?;
+        let program = state.check_named()?;
+        let variable_data = state.check_named()?;
+        let type_sets = state.check_named()?;
+        let function_data = state.check_named()?;
+
+        let stats = state.insert_default::<StatData>();
+
+        Ok(Self::Output {
+            errors: errors.get_mut(state),
+            program: Some(program.get_mut(state)),
+
+            variable_data: variable_data.get(state),
+            type_sets: type_sets.get(state),
+            function_data: function_data.get(state),
+
+            stats: stats.get_mut(state),
+
             function_stats: HashMap::default(),
-            errors: error_output,
-
-            _type_data: &analysis_data.type_data,
-            type_sets: &analysis_data.type_sets,
-            variable_data: &analysis_data.variable_data,
-            function_data: &analysis_data.function_data,
-
             current_function: None,
             loop_count: 0,
-        }
+        })
+    }
+}
+impl Pass for StatTracker<'_> {
+    fn run<'state>(mut self: Box<Self>) -> PassResult {
+        let mut program = self.program.take().unwrap();
+        self.visit_program(&mut program);
+
+        Ok(())
     }
 }
 
-impl AstVisitor for StatTracker<'_, '_> {
-    type ProgramOutput = PerNodeData<NodeStats>;
+impl AstVisitor for StatTracker<'_> {
+    type ProgramOutput = ();
     type FunctionDefinitionOutput = NodeStats;
     type FunctionBodyOutput = NodeStats;
     type SimpleBindingOutput = NodeStats;
@@ -231,7 +256,7 @@ impl AstVisitor for StatTracker<'_, '_> {
                 }
                 stats.uses_gpu = stats.uses_gpu.serial(uses_gpu);
             }
-            if *prev_stats == *self.stats {
+            if prev_stats == **self.stats {
                 break;
             } else {
                 prev_stats = self.stats.clone();
@@ -257,7 +282,6 @@ impl AstVisitor for StatTracker<'_, '_> {
                 severity: ErrorSeverity::Error,
             });
         }
-        self.stats
     }
 
     fn visit_function_definition(

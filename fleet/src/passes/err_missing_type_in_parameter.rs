@@ -1,17 +1,42 @@
+use std::cell::RefMut;
+
 use crate::{
-    ast::{AstVisitor, FunctionDefinition},
+    ast::{AstVisitor, FunctionDefinition, Program},
     infra::{ErrorSeverity, FleetError},
+    passes::pass_manager::{Errors, Pass, PassFactory, PassResult},
 };
 
-use super::partial_visitor::PartialAstVisitor;
+use super::{partial_visitor::PartialAstVisitor, pass_manager::GlobalState};
 
-pub struct ErrMissingTypeInParam<'a> {
-    errors: &'a mut Vec<FleetError>,
+pub struct ErrMissingTypeInParam<'state> {
+    errors: RefMut<'state, Errors>,
+    program: Option<RefMut<'state, Program>>,
 }
 
-impl<'a> ErrMissingTypeInParam<'a> {
-    pub fn new(errors: &'a mut Vec<FleetError>) -> Self {
-        Self { errors }
+impl PassFactory for ErrMissingTypeInParam<'_> {
+    type Output<'state> = ErrMissingTypeInParam<'state>;
+    type Params = ();
+
+    fn try_new<'state>(
+        state: &'state mut GlobalState,
+        _params: Self::Params,
+    ) -> Result<Self::Output<'state>, String>
+    where
+        Self: Sized,
+    {
+        Ok(Self::Output {
+            errors: state.get_mut_named::<Errors>()?,
+            program: Some(state.get_mut_named::<Program>()?),
+        })
+    }
+}
+impl Pass for ErrMissingTypeInParam<'_> {
+    fn run<'state>(mut self: Box<Self>) -> PassResult {
+        let program = &mut self.program.take().unwrap();
+
+        self.visit_program(program);
+
+        Ok(())
     }
 }
 

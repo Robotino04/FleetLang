@@ -1,55 +1,71 @@
-use std::{cell::RefCell, mem::swap, rc::Rc};
+use std::{
+    cell::{Ref, RefMut},
+    mem::swap,
+};
 
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, AstVisitor, BinaryExpression,
         CastExpression, CompilerExpression, Expression, FunctionCallExpression, GroupingLValue,
-        HasID, LValue, LiteralExpression, OnStatement, OnStatementIterator, PerNodeData, Type,
+        HasID, LValue, LiteralExpression, OnStatement, OnStatementIterator, Program, Type,
         UnaryExpression, VariableAccessExpression, VariableAssignmentExpression, VariableLValue,
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
         partial_visitor::PartialAstVisitor,
-        type_propagation::{
-            RuntimeType, UnionFindSet, UnionFindSetPtr, Variable, VariableScope, VariableScopeStack,
+        pass_manager::{
+            Errors, GlobalState, Pass, PassFactory, PassResult, ScopeData, TypeData, TypeSets,
+            VariableData,
         },
+        type_propagation::VariableScopeStack,
     },
 };
 
-pub struct LValueReducer<'errors, 'inputs> {
-    errors: &'errors mut Vec<FleetError>,
+pub struct LValueReducer<'state> {
+    errors: RefMut<'state, Errors>,
+    program: Option<RefMut<'state, Program>>,
     valid_lvalues: Option<Vec<LValue>>,
 
-    variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
-    type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
-    type_sets: &'inputs UnionFindSet<RuntimeType>,
-    scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
+    variable_data: Ref<'state, VariableData>,
+    type_data: Ref<'state, TypeData>,
+    type_sets: Ref<'state, TypeSets>,
+    scope_data: Ref<'state, ScopeData>,
 
     is_top_level_lvalue: bool,
     previous_lvalue_valid: bool,
 }
 
-impl<'errors, 'inputs> LValueReducer<'errors, 'inputs> {
-    pub fn new(
-        errors: &'errors mut Vec<FleetError>,
-        valid_lvalues: Option<Vec<LValue>>,
-        type_data: &'inputs PerNodeData<UnionFindSetPtr<RuntimeType>>,
-        type_sets: &'inputs UnionFindSet<RuntimeType>,
-        variable_data: &'inputs PerNodeData<Rc<RefCell<Variable>>>,
-        scope_data: &'inputs PerNodeData<Rc<RefCell<VariableScope>>>,
-    ) -> Self {
-        Self {
-            errors,
-            valid_lvalues,
-            type_data,
-            type_sets,
-            variable_data,
-            scope_data,
+impl PassFactory for LValueReducer<'_> {
+    type Output<'state> = LValueReducer<'state>;
+    type Params = ();
+
+    fn try_new<'state>(
+        state: &'state mut GlobalState,
+        _params: Self::Params,
+    ) -> Result<Self::Output<'state>, String> {
+        Ok(Self::Output {
+            errors: state.get_mut_named::<Errors>()?,
+            program: Some(state.get_mut_named::<Program>()?),
+            variable_data: state.get_named::<VariableData>()?,
+            scope_data: state.get_named::<ScopeData>()?,
+            type_data: state.get_named::<TypeData>()?,
+            type_sets: state.get_named::<TypeSets>()?,
+            valid_lvalues: None,
             is_top_level_lvalue: true,
             previous_lvalue_valid: true,
-        }
+        })
     }
+}
+impl Pass for LValueReducer<'_> {
+    fn run<'state>(mut self: Box<Self>) -> PassResult {
+        let mut program = self.program.take().unwrap();
+        self.visit_program(&mut program);
 
+        Ok(())
+    }
+}
+
+impl LValueReducer<'_> {
     fn is_variable_lvalue_equal(&self, a: &VariableLValue, b: &LValue) -> Option<bool> {
         Some(match b {
             LValue::Variable(b) => {
@@ -162,7 +178,8 @@ impl<'errors, 'inputs> LValueReducer<'errors, 'inputs> {
                 let a_data = self.variable_data.get(&a.id)?.borrow();
                 let b_data = self.variable_data.get(&b.id)?.borrow();
 
-                a_data.id == b_data.id && a_data.is_constant && b_data.is_constant // "is-constant" is technically redundant, but lets be extra sure
+                // "is-constant" is technically redundant, but lets be extra sure
+                a_data.id == b_data.id && a_data.is_constant && b_data.is_constant
             }
             Expression::Grouping(b) => {
                 self.is_variable_access_expression_equal(a, &b.subexpression)?
@@ -225,7 +242,7 @@ impl<'errors, 'inputs> LValueReducer<'errors, 'inputs> {
     }
 }
 
-impl<'errors, 'inputs> PartialAstVisitor for LValueReducer<'errors, 'inputs> {
+impl PartialAstVisitor for LValueReducer<'_> {
     fn partial_visit_variable_lvalue(&mut self, a: &mut VariableLValue) {
         let Some(valid_lvalues) = &self.valid_lvalues else {
             // everything is valid

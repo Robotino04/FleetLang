@@ -1,28 +1,49 @@
+use std::cell::RefMut;
+
 use crate::{
     ast::{
         AstVisitor, BlockStatement, ForLoopStatement, FunctionBody, FunctionDefinition,
-        IfStatement, Statement, WhileLoopStatement,
+        IfStatement, Program, Statement, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
+    passes::pass_manager::{Errors, GlobalState, Pass, PassFactory, PassResult},
     tokenizer::{Token, TokenType},
 };
 
 use super::{find_node_bonds::find_node_bounds, partial_visitor::PartialAstVisitor};
 
-pub struct FixNonBlockStatements<'a> {
-    errors: &'a mut Vec<FleetError>,
-    id_generator: &'a mut IdGenerator,
+pub struct FixNonBlockStatements<'state> {
+    errors: RefMut<'state, Errors>,
+    program: Option<RefMut<'state, Program>>,
+    id_generator: RefMut<'state, IdGenerator>,
 }
 
-impl<'a> FixNonBlockStatements<'a> {
-    pub fn new(errors: &'a mut Vec<FleetError>, id_generator: &'a mut IdGenerator) -> Self {
-        Self {
-            errors,
-            id_generator,
-        }
-    }
+impl PassFactory for FixNonBlockStatements<'_> {
+    type Output<'state> = FixNonBlockStatements<'state>;
+    type Params = ();
 
+    fn try_new<'state>(
+        state: &'state mut GlobalState,
+        _params: Self::Params,
+    ) -> Result<Self::Output<'state>, String> {
+        Ok(Self::Output {
+            errors: state.get_mut_named::<Errors>()?,
+            program: Some(state.get_mut_named::<Program>()?),
+            id_generator: state.get_mut_named::<IdGenerator>()?,
+        })
+    }
+}
+impl Pass for FixNonBlockStatements<'_> {
+    fn run<'state>(mut self: Box<Self>) -> PassResult {
+        let mut program = self.program.take().unwrap();
+        self.visit_program(&mut program);
+
+        Ok(())
+    }
+}
+
+impl FixNonBlockStatements<'_> {
     fn create_fake_block_arround(&mut self, node: &Statement) -> Statement {
         let (start, end) = find_node_bounds(node);
 

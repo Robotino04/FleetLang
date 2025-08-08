@@ -1,6 +1,8 @@
-use std::fmt;
+use std::cell::{Ref, RefMut};
 
 use either::Either;
+use itertools::Itertools;
+use thiserror::Error;
 
 use crate::{
     ast::{
@@ -16,34 +18,27 @@ use crate::{
         VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
-    passes::type_propagation::{FunctionID, RuntimeType, VariableID},
+    passes::{
+        pass_manager::{Errors, GlobalState, Pass, PassError, PassFactory, PassResult},
+        type_propagation::{FunctionID, RuntimeType, VariableID},
+    },
     tokenizer::{Keyword, SourceLocation, Token, TokenType},
 };
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
+#[error(
+    "{file_name}:{start_line}:{start_column} - {end_line}:{end_column}: {msg}",
+    start_line = .start.line,
+    start_column = .start.column,
+    end_line = .end.line,
+    end_column = .end.column
+)]
 pub struct ParserError {
     pub file_name: String,
     pub msg: String,
     pub start: SourceLocation,
     pub end: SourceLocation,
 }
-
-impl fmt::Display for ParserError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}:{}:{} - {}:{}: {}",
-            self.file_name,
-            self.start.line,
-            self.start.column,
-            self.end.line,
-            self.end.column,
-            self.msg
-        )
-    }
-}
-
-impl std::error::Error for ParserError {}
 
 impl From<FleetError> for ParserError {
     fn from(value: FleetError) -> Self {
@@ -57,14 +52,6 @@ impl From<FleetError> for ParserError {
 }
 
 type Result<T> = ::core::result::Result<T, ParserError>;
-
-#[derive(Debug)]
-pub struct Parser<'errors> {
-    tokens: Vec<Token>,
-    index: usize,
-    errors: &'errors mut Vec<FleetError>,
-    id_generator: IdGenerator,
-}
 
 #[derive(Debug, Clone)]
 pub struct IdGenerator {
@@ -99,6 +86,68 @@ impl Default for IdGenerator {
             variable_id_counter: VariableID(0),
             function_id_counter: FunctionID(0),
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct Parser<'state> {
+    errors: RefMut<'state, Errors>,
+    tokens: Ref<'state, Vec<Token>>,
+
+    id_generator: RefMut<'state, IdGenerator>,
+    program: RefMut<'state, Program>,
+
+    index: usize,
+}
+
+impl PassFactory for Parser<'_> {
+    type Output<'state> = Parser<'state>;
+    type Params = ();
+
+    fn try_new<'state>(
+        state: &'state mut GlobalState,
+        _params: Self::Params,
+    ) -> ::core::result::Result<Self::Output<'state>, String>
+    where
+        Self: Sized,
+    {
+        let tokens = state.check_named::<Vec<Token>>()?;
+        let errors = state.check_named()?;
+
+        let mut id_generator = IdGenerator::default();
+        let program = state.insert(Program {
+            functions: vec![],
+            id: id_generator.next_node_id(),
+        });
+        let id_generator = state.insert(id_generator);
+
+        let tokens = tokens.get(state);
+        let index = tokens
+            .iter()
+            .find_position(|token| !matches!(token.type_, TokenType::UnknownCharacters(_)))
+            .map(|(index, _)| index)
+            .unwrap_or(tokens.len()); // all unknown characters means we treat this like an empty vec
+
+        Ok(Self::Output {
+            errors: errors.get_mut(state),
+            tokens,
+
+            program: program.get_mut(state),
+            id_generator: id_generator.get_mut(state),
+
+            index,
+        })
+    }
+}
+impl Pass for Parser<'_> {
+    fn run<'state>(self: Box<Self>) -> PassResult {
+        self.parse_program()
+            .map_err(|err| PassError::CompilerError {
+                source: err.into(),
+                producing_pass: Self::name(),
+            })?;
+
+        Ok(())
     }
 }
 
@@ -197,20 +246,7 @@ macro_rules! unable_to_parse {
     };
 }
 
-impl<'errors> Parser<'errors> {
-    pub fn new(tokens: Vec<Token>, errors: &'errors mut Vec<FleetError>) -> Self {
-        Self {
-            tokens: tokens
-                .iter()
-                .filter(|&tok| !matches!(tok.type_, TokenType::UnknownCharacters(_)))
-                .cloned()
-                .collect(),
-            index: 0,
-            errors,
-            id_generator: IdGenerator::default(),
-        }
-    }
-
+impl<'state> Parser<'state> {
     fn current_token(&self) -> Option<Token> {
         if self.index < self.tokens.len() {
             Some(self.tokens[self.index].clone())
@@ -227,36 +263,23 @@ impl<'errors> Parser<'errors> {
     fn consume(&mut self) -> Option<Token> {
         let t = self.current_token();
         self.index += 1;
+        while let Some(TokenType::UnknownCharacters(_)) = self.current_token_type() {
+            self.index += 1;
+        }
         t
     }
 
-    pub fn parse_program(mut self) -> Result<(Program, IdGenerator)> {
-        let mut functions = vec![];
-
+    pub fn parse_program(mut self) -> Result<()> {
         while !self.is_done() {
             let recovery_start = self.current_token();
             if let Ok(function) = self.parse_function_definition() {
-                functions.push(function);
+                self.program.functions.push(function);
             } else {
                 recover_until!(self, recovery_start, TokenType::Keyword(Keyword::Let));
-                /*
-                if let Some(token) = self.consume() {
-                    self.errors.push(ParseError {
-                        start: token.start,
-                        end: token.end,
-                        message: format!("Unexpected token {:?}", token),
-                    });
-                }*/
             }
         }
 
-        Ok((
-            Program {
-                functions,
-                id: self.id_generator.next_node_id(),
-            },
-            self.id_generator,
-        ))
+        Ok(())
     }
 
     pub fn parse_function_definition(&mut self) -> Result<FunctionDefinition> {
@@ -285,9 +308,9 @@ impl<'errors> Parser<'errors> {
         let close_paren_token = expect!(self, TokenType::CloseParen)?;
         let right_arrow_token = expect!(self, TokenType::SingleRightArrow)?;
         let mut moved_errors = vec![];
-        std::mem::swap(&mut moved_errors, self.errors);
+        std::mem::swap(&mut moved_errors, &mut self.errors);
         let return_type = self.parse_type().ok();
-        std::mem::swap(&mut moved_errors, self.errors);
+        std::mem::swap(&mut moved_errors, &mut self.errors);
         let body = self.parse_function_body()?;
 
         Ok(FunctionDefinition {
@@ -1084,9 +1107,9 @@ impl<'errors> Parser<'errors> {
                 let open_bracket_token = expect!(self, TokenType::OpenBracket)?;
 
                 let mut moved_errors = vec![];
-                std::mem::swap(&mut moved_errors, self.errors);
+                std::mem::swap(&mut moved_errors, &mut self.errors);
                 let size = self.parse_expression().ok();
-                std::mem::swap(&mut moved_errors, self.errors);
+                std::mem::swap(&mut moved_errors, &mut self.errors);
 
                 let close_bracket_token = expect!(self, TokenType::CloseBracket)?;
                 type_ = Type::Array(ArrayType {
