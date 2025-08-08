@@ -111,3 +111,21 @@ fn same_name_index() {
         },
     );
 }
+
+#[test]
+fn no_iterators() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                on self.gpus[0] () {
+                }
+                return 42;
+            }
+        "##},
+        SourceLocation {
+            index: 27,
+            line: 2,
+            column: 4,
+        },
+    );
+}

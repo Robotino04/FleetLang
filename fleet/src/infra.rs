@@ -10,6 +10,7 @@ use crate::{
     parser::Parser,
     passes::{
         err_missing_type_in_parameter::ErrMissingTypeInParam,
+        err_too_few_iterators::ErrTooFewIterators,
         find_node_bonds::find_node_bounds,
         fix_non_block_statements::FixNonBlockStatements,
         fix_trailing_comma::FixTrailingComma,
@@ -142,6 +143,7 @@ pub fn insert_fix_passes(pm: &mut PassManager) {
     pm.insert::<FixNonBlockStatements>();
     pm.insert::<FixTrailingComma>();
     pm.insert::<ErrMissingTypeInParam>();
+    pm.insert::<ErrTooFewIterators>();
 }
 
 pub fn insert_minimal_pipeline(pm: &mut PassManager) {
