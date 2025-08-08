@@ -1148,7 +1148,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         if cfg!(not(feature = "gpu_backend")) {
             self.errors.push(FleetError::from_node(
-                &**body,
+                executor,
                 "The GPU backend is disabled for this build of Fleet",
                 ErrorSeverity::Error,
             ));
