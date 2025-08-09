@@ -1,12 +1,23 @@
-import * as monaco from "monaco-editor";
+import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
+import "./monaco-imports";
+
+// IDEA: import "monaco-editor/esm/vs/editor/contrib/documentSymbols/browser/documentSymbols";
+// IDEA: import "monaco-editor/esm/vs/editor/contrib/documentSymbols/browser/outlineModel";
+
 import Server from "./server";
 import { IntoServer, FromServer } from "./codec";
 import { MonacoLspTransport } from "./monaco-lsp-transport";
 import "./monaco-fleet-lang";
-import initWasm, { compile_to_c } from "../assets/wasm/fleetls_wasm.js";
+import initWasm, { compile_to_c } from "@assets/wasm/fleetls_wasm.js";
+import latteTheme from "@assets/themes/latte.json";
+import mochaTheme from "@assets/themes/mocha.json";
+import { convertVsCodeThemeToStandalone } from "./theming";
+
+monaco.editor.defineTheme("latte", convertVsCodeThemeToStandalone(latteTheme));
+monaco.editor.defineTheme("mocha", convertVsCodeThemeToStandalone(mochaTheme));
 
 const defaultProperties: monaco.editor.IStandaloneEditorConstructionOptions = {
-  theme: "vs-dark",
+  theme: "mocha",
   automaticLayout: true,
   "semanticHighlighting.enabled": true,
   tabSize: 4,
@@ -16,7 +27,8 @@ const defaultProperties: monaco.editor.IStandaloneEditorConstructionOptions = {
     cycle: true,
   },
   emptySelectionClipboard: true,
-  fontFamily: "'Fira Code', monospace",
+  fontFamily:
+    "'Maple Mono NF', 'Maple Mono', 'Fira Code', 'Source Code Pro', 'JetBrains Mono', 'Consolas', 'Courier New', 'Monaco', 'Inconsolata', 'Ubuntu Mono', 'Cascadia Code', 'IBM Plex Mono', 'Roboto Mono', 'Hack', 'Anonymous Pro', 'Menlo', 'Operator Mono', monospace",
   fontSize: 15,
   fontLigatures: true,
 };
@@ -28,6 +40,18 @@ const editor = monaco.editor.create(document.getElementById("editor")!, {
   ...defaultProperties,
 });
 
+function createTemporaryOutputMessage(
+  percentage: number,
+  bytes_done: number,
+  bytes_total: number,
+) {
+  return (
+    "// Compiled C output will appear here\n" +
+    "// FleetLS is currently being loaded:\n" +
+    `// ${(percentage * 100).toFixed(2)}% (${(bytes_done / 1024 / 1024).toFixed(2)}MB / ${(bytes_total / 1024 / 1024).toFixed(2)}MB)`
+  );
+}
+
 const outputEditor = monaco.editor.create(
   document.getElementById("output-editor")!,
   {
@@ -37,7 +61,7 @@ const outputEditor = monaco.editor.create(
         "This code is automatically compiled by FleetC and can't be modified. " +
         "You can modify the Fleet code on the left however and see how this code changes!",
     },
-    value: "// Compiled C output will appear here",
+    value: createTemporaryOutputMessage(0, 0, 0),
     language: "c",
     ...defaultProperties,
   },
@@ -48,7 +72,15 @@ async function setupLanguageServer() {
   // Create the LSP transport queues
   const intoServer = new IntoServer();
   const fromServer = FromServer.create();
-  const server = await Server.initialize(intoServer, fromServer);
+  const server = await Server.initialize(
+    intoServer,
+    fromServer,
+    (percent, bytes_done, bytes_total) => {
+      outputEditor.setValue(
+        createTemporaryOutputMessage(percent, bytes_done, bytes_total),
+      );
+    },
+  );
   new MonacoLspTransport(editor, intoServer, fromServer);
   return server;
 }

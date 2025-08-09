@@ -1,4 +1,5 @@
 {
+  "$schema": "https://www.schemastore.org/tsconfig.json",
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
@@ -7,8 +8,9 @@
     "forceConsistentCasingInFileNames": true,
     "allowSyntheticDefaultImports": true,
     "paths": {
-      "@wasm/*": ["./assets/wasm/*"]
-    }
+      "@assets/*": ["./assets/*"]
+    },
+    "resolveJsonModule": true
   },
   "include": ["src/*", "vite.config.ts"],
   "exclude": ["node_modules", "dist"]

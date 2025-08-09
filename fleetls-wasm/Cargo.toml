@@ -8,7 +8,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 console_error_panic_hook = "0.1.7"
-fleetls-lib = { path = "../fleetls-lib", default-features = false}
+fleetls-lib = { path = "../fleetls-lib", default-features = false }
 futures = "0.3.21"
 gloo-timers = { version = "0.3.0", features = ["futures"] }
 js-sys = "0.3.57"

@@ -1,23 +1,33 @@
 import { defineConfig } from "vite";
 import monacoEditorPlugin from "vite-plugin-monaco-editor";
-import { EditorLanguageWorks } from "vite-plugin-monaco-editor/dist/lnaguageWork";
+import { visualizer } from "rollup-plugin-visualizer";
 
 export default defineConfig({
   plugins: [
     monacoEditorPlugin({
-      // You can add languages or features here if needed
-      languageWorkers: ["editorWorkerService"],
+      languageWorkers: [
+        /*"editorWorkerService"*/
+      ],
+      globalAPI: false,
     }),
   ],
   resolve: {
     alias: {
-      "@wasm": "/assets/wasm",
+      "@assets": "/assets",
     },
   },
   build: {
     outDir: "dist",
     rollupOptions: {
-      input: "src/server.ts",
+      external: [],
+      plugins: [
+        visualizer({
+          filename: "dist/stats.html",
+          open: false,
+          gzipSize: true,
+          brotliSize: true,
+        }),
+      ],
     },
   },
   server: {

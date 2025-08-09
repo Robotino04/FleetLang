@@ -1,9 +1,10 @@
 {
-  "name": "editor",
-  "version": "1.0.0",
-  "license": "ISC",
+  "name": "fleetls-editor",
+  "version": "0.0.1",
   "scripts": {
-    "dev": "vite"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
     "json-rpc-2.0": "^1.7.1",
@@ -15,6 +16,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "rollup-plugin-visualizer": "^6.0.3",
     "typescript": "^5.8.3"
   }
 }

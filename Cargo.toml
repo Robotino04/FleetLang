@@ -5,4 +5,9 @@ default-members = ["fleet", "fleetc", "fleetls", "fleetls-lib"]
 
 [profile.dev]
 opt-level = 1 # used to avoid stack overflows in debug builds
-panic = "abort"
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1

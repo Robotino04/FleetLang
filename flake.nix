@@ -105,6 +105,7 @@
               pkgs.viu
 
               pkgs.wasm-bindgen-cli
+              pkgs.binaryen
               pkgs.nodejs
             ];
             LD_LIBRARY_PATH = "/run/opengl-driver/lib:/run/opengl-driver-32/lib:" + shared_attrs.LD_LIBRARY_PATH;
