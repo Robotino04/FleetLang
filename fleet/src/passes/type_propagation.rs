@@ -991,16 +991,24 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.visit_executor(executor);
 
-        for OnStatementIterator {
-            open_bracket_token: _,
-            binding,
-            equal_token: _,
-            max_value,
-            close_bracket_token: _,
-        } in iterators
+        // TODO: remove/inline into loop after we allow triangular iterators
+        let iterators = iterators.iter_mut().map(|osi| {
+            let max_value_type = self.visit_expression(&mut osi.max_value);
+            (osi, max_value_type)
+        });
+
+        for (
+            OnStatementIterator {
+                open_bracket_token: _,
+                binding,
+                equal_token: _,
+                max_value: _,
+                close_bracket_token: _,
+            },
+            max_value_type,
+        ) in iterators.collect_vec()
         {
             let iterator_type = self.visit_simple_binding(binding);
-            let max_value_type = self.visit_expression(max_value);
             if !RuntimeType::merge_types(iterator_type, max_value_type, &mut self.type_sets) {
                 let iterator_type_str = self.stringify_type_ptr(iterator_type);
                 let max_value_type_str = self.stringify_type_ptr(max_value_type);

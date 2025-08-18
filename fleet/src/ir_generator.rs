@@ -2668,23 +2668,30 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(right_value)
     }
 
-    fn visit_variable_lvalue(
-        &mut self,
-        VariableLValue {
+    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
+        let lvalue_clone = lvalue.clone();
+        let VariableLValue {
             name,
             name_token: _,
             id,
-        }: &mut VariableLValue,
-    ) -> Self::LValueOutput {
+        } = lvalue;
+
         let var = self.variable_data.get(id).unwrap_or_else(|| {
             panic!("Variable data for {name:?} should exist before calling ir_generator")
         });
-        let storage = self
-            .variable_storage
-            .get(&var.borrow().id)
-            .expect("Variables should have storage before being accessed")
-            .0;
-        Ok(storage)
+        let Some(storage) = self.variable_storage.get(&var.borrow().id) else {
+            return self.report_error(FleetError::from_node(
+                &lvalue_clone,
+                format!(
+                    "Variables should have storage before being accessed.\
+                        \nVarData: {:#?}\nVarStorage: {:#?}\nThis ID: {:?}",
+                    self.variable_data, self.variable_storage, lvalue_clone.id
+                ),
+                ErrorSeverity::Error,
+            ));
+        };
+
+        Ok(storage.0)
     }
 
     fn visit_array_index_lvalue(

@@ -128,3 +128,39 @@ fn no_iterators() {
         },
     );
 }
+
+#[test]
+fn recursive_iterator_definition() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                on self.gpus[0][i: i32 = i] () {}
+                return 0;
+            }
+        "##},
+        SourceLocation {
+            index: 52,
+            line: 2,
+            column: 29,
+        },
+    );
+}
+
+#[test]
+fn triangular_iterator() {
+    // NOTE: this restriction will get lifted in the future
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                on self.gpus[0][i: i32 = 5][j: i32 = i] () {}
+                return 0;
+            }
+        "##},
+        SourceLocation {
+            index: 64,
+            line: 2,
+            column: 41,
+        },
+    );
+}
+

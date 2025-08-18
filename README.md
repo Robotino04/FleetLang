@@ -41,7 +41,6 @@
 - warnings for unused functions/variables
 - disallow returning arrays
 - add different errors for missing Pass dependencies and for failed check_empty calls
-- make `on self.gpus[0][i:i32 = i] (){}` not compile
 - allow variable redefinition
 - move runtime_type_to_byte_size somewhere common
 
