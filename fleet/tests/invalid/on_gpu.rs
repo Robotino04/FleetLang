@@ -117,8 +117,7 @@ fn no_iterators() {
     assert_compile_error(
         indoc! {r##"
             let main = () -> i32 {
-                on self.gpus[0] () {
-                }
+                on self.gpus[0] () {}
                 return 42;
             }
         "##},

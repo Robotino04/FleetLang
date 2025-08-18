@@ -29,8 +29,7 @@ fn for_counter_allocation() {
             let function = (param: i32) -> i32 {
                 let some_var: i32 = 10;
                 // this hung in R#, because i was not being allocated and always read some_var, which never reached 0.
-                for (let i: i32 = 5; i != 0; i = i - 1) {
-                }
+                for (let i: i32 = 5; i != 0; i = i - 1) {}
                 return some_var;
             }
             let main = () -> i32 {

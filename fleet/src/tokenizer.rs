@@ -23,7 +23,6 @@ pub enum TriviaKind {
     LineComment(String),
     BlockComment(String),
     EmptyLine,
-    EmptyLineAtTokenSide,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -677,53 +676,6 @@ impl<'errors> Tokenizer<'errors> {
             self.trivia_accumulator.clear();
         }
 
-        // clean up/format the trivia so this logic doesn't have tp spread into all other parts
-        for token in self.tokens.iter_mut() {
-            while matches!(
-                token.leading_trivia.first().map(|t| t.kind.clone()),
-                Some(TriviaKind::EmptyLine)
-            ) {
-                token.leading_trivia = token
-                    .leading_trivia
-                    .split_first()
-                    .map(|(_first, remainder)| remainder.to_vec())
-                    .unwrap_or_default();
-            }
-
-            let mut leading_end = token
-                .leading_trivia
-                .iter_mut()
-                .rev()
-                .map(|t| &mut t.kind)
-                .peekable();
-            while matches!(leading_end.peek(), Some(TriviaKind::EmptyLine)) {
-                if let Some(current @ TriviaKind::EmptyLine) = leading_end.next() {
-                    *current = TriviaKind::EmptyLineAtTokenSide;
-                } else {
-                    break;
-                }
-            }
-
-            while matches!(
-                token.trailing_trivia.last().map(|t| t.kind.clone()),
-                Some(TriviaKind::EmptyLine)
-            ) {
-                token.trailing_trivia.pop();
-            }
-            let mut trailing_end = token
-                .trailing_trivia
-                .iter_mut()
-                .map(|t| &mut t.kind)
-                .peekable();
-            while matches!(trailing_end.peek(), Some(TriviaKind::EmptyLine)) {
-                if let Some(current @ TriviaKind::EmptyLine) = trailing_end.next() {
-                    *current = TriviaKind::EmptyLineAtTokenSide;
-                } else {
-                    break;
-                }
-            }
-        }
-
         for token in self.tokens.iter() {
             if let Token {
                 type_: TokenType::UnknownCharacters(_),
@@ -748,8 +700,7 @@ impl<'errors> Tokenizer<'errors> {
                 eprintln!("Flushing {trivia:?} to {last_token:#?}");
                 last_token
                     .trailing_trivia
-                    .extend(self.trivia_accumulator.clone());
-                self.trivia_accumulator.clear();
+                    .append(&mut self.trivia_accumulator);
             }
         }
     }

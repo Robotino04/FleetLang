@@ -182,8 +182,7 @@ fn unknown_characters_2() {
 fn missing_return() {
     assert_compile_error(
         indoc! {r##"
-            let main = () -> i32 {
-            }
+            let main = () -> i32 {}
         "##},
         SourceLocation {
             index: 21,

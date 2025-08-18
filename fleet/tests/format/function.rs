@@ -88,6 +88,7 @@ fn collapse_2() {
             let main = () -> i32 {
                 return 0;
             }
+
             let b = () -> i32 {
                 return 0;
             }"##
@@ -116,7 +117,6 @@ fn expand_multiple_statements() {
     );
 }
 
-#[ignore = "Not sure how to do this yet"]
 #[test]
 fn preserve_newlines_without_comments() {
     assert_formatting_and_same_behaviour::<i32>(
@@ -388,5 +388,49 @@ fn accept_invalid() {
                 return nonexistent();
             }"##
         },
+    );
+}
+
+#[test]
+fn preserve_spacing_return() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                return 0;
+
+                // preserve pls
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                return 0;
+
+                // preserve pls
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn preserve_spacing_extern() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let putchar = (char: i32) -> i32 @extern "putchar";
+
+            let main = () -> i32 {
+                putchar(10);
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let putchar = (char: i32) -> i32 @extern "putchar";
+
+            let main = () -> i32 {
+                putchar(10);
+                return 0;
+            }"##
+        },
+        "main",
     );
 }

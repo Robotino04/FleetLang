@@ -22,6 +22,8 @@ use crate::{
 pub struct AstToDocumentModelConverter<'state> {
     program: Option<RefMut<'state, Program>>,
     output_de: Option<RefMut<'state, DocumentElement>>,
+
+    is_first_in_statement: bool,
 }
 
 impl PassFactory for AstToDocumentModelConverter<'_> {
@@ -42,6 +44,7 @@ impl PassFactory for AstToDocumentModelConverter<'_> {
         Ok(Self::Output {
             program: Some(program.get_mut(state)),
             output_de: Some(output_de.get_mut(state)),
+            is_first_in_statement: false,
         })
     }
 }
@@ -54,19 +57,87 @@ impl Pass for AstToDocumentModelConverter<'_> {
         Ok(())
     }
 }
+struct TokenToElementConfig {
+    leading_pre_spacer: DocumentElement,
+    leading_post_spacer: DocumentElement,
+    trailing_pre_spacer: DocumentElement,
+    trailing_post_spacer: DocumentElement,
+    allow_leading_newlines: bool,
+    allow_trailing_newlines: bool,
+}
+
+impl TokenToElementConfig {
+    fn semicolon() -> Self {
+        Self {
+            allow_leading_newlines: false,
+            allow_trailing_newlines: true,
+            ..Default::default()
+        }
+    }
+    fn open_brace() -> Self {
+        Self {
+            allow_leading_newlines: true,
+            allow_trailing_newlines: true,
+            ..Default::default()
+        }
+    }
+
+    fn open_paren() -> Self {
+        Self {
+            leading_pre_spacer: DocumentElement::empty(),
+            leading_post_spacer: DocumentElement::single_collapsable_space(),
+            trailing_pre_spacer: DocumentElement::empty(),
+            trailing_post_spacer: DocumentElement::single_collapsable_space(),
+            allow_leading_newlines: false,
+            allow_trailing_newlines: false,
+        }
+    }
+    fn close_paren() -> Self {
+        Self {
+            leading_pre_spacer: DocumentElement::single_collapsable_space(),
+            leading_post_spacer: DocumentElement::empty(),
+            trailing_pre_spacer: DocumentElement::single_collapsable_space(),
+            trailing_post_spacer: DocumentElement::empty(),
+            allow_leading_newlines: false,
+            allow_trailing_newlines: false,
+        }
+    }
+}
+
+impl Default for TokenToElementConfig {
+    fn default() -> Self {
+        Self {
+            leading_pre_spacer: DocumentElement::empty(),
+            leading_post_spacer: DocumentElement::single_collapsable_space(),
+            trailing_pre_spacer: DocumentElement::single_collapsable_space(),
+            trailing_post_spacer: DocumentElement::empty(),
+            allow_leading_newlines: false,
+            allow_trailing_newlines: false,
+        }
+    }
+}
 
 impl AstToDocumentModelConverter<'_> {
-    fn trivia_to_element(&self, trivia: &[Trivia]) -> DocumentElement {
+    fn trivia_to_element(
+        &mut self,
+        trivia: &[Trivia],
+        mut allow_newlines: bool,
+    ) -> DocumentElement {
+        allow_newlines |= self.is_first_in_statement;
+        self.is_first_in_statement = false;
+
         DocumentElement::spaced_concatentation(
-            DocumentElement::CollapsableSpace,
+            DocumentElement::single_collapsable_space(),
             trivia
                 .iter()
-                .map(|t| match &t.kind {
-                    TriviaKind::LineComment(contents) => DocumentElement::Concatenation(vec![
-                        DocumentElement::Text("// ".to_string()),
-                        DocumentElement::Text(contents.trim().to_string()),
-                        DocumentElement::CollapsableLineBreak,
-                    ]),
+                .filter_map(|t| match &t.kind {
+                    TriviaKind::LineComment(contents) => {
+                        Some(DocumentElement::Concatenation(vec![
+                            DocumentElement::Text("// ".to_string()),
+                            DocumentElement::Text(contents.trim().to_string()),
+                            DocumentElement::single_collapsable_linebreak(),
+                        ]))
+                    }
                     TriviaKind::BlockComment(contents) => {
                         let min_space = contents
                             .split("\n")
@@ -97,7 +168,7 @@ impl AstToDocumentModelConverter<'_> {
                             if line.trim() == "" { "" } else { line }
                         });
 
-                        DocumentElement::Concatenation(vec![
+                        Some(DocumentElement::Concatenation(vec![
                             DocumentElement::Text("/*".to_string()),
                             DocumentElement::spaced_concatentation(
                                 DocumentElement::ForcedLineBreak,
@@ -106,10 +177,15 @@ impl AstToDocumentModelConverter<'_> {
                                     .collect(),
                             ),
                             DocumentElement::Text("*/".to_string()),
-                        ])
+                        ]))
                     }
-                    TriviaKind::EmptyLine => DocumentElement::CollapsableLineBreak,
-                    TriviaKind::EmptyLineAtTokenSide => DocumentElement::ForcedLineBreak,
+                    TriviaKind::EmptyLine => {
+                        if allow_newlines {
+                            Some(DocumentElement::CollapsableLineBreak { max: 2, count: 1 })
+                        } else {
+                            None
+                        }
+                    }
                 })
                 .collect(),
         )
@@ -196,25 +272,24 @@ impl AstToDocumentModelConverter<'_> {
         DocumentElement::Text(s.to_string())
     }
 
-    fn token_to_element(&self, token: &Token) -> DocumentElement {
-        self.token_to_element_custom_spacers(
-            token,
-            DocumentElement::empty(),
-            DocumentElement::CollapsableSpace,
-            DocumentElement::CollapsableSpace,
-            DocumentElement::empty(),
-        )
+    fn token_to_element(&mut self, token: &Token) -> DocumentElement {
+        self.token_to_element_config(token, Default::default())
     }
-    fn token_to_element_custom_spacers(
-        &self,
+    fn token_to_element_config(
+        &mut self,
         token: &Token,
-        leading_pre_spacer: DocumentElement,
-        leading_post_spacer: DocumentElement,
-        trailing_pre_spacer: DocumentElement,
-        trailing_post_spacer: DocumentElement,
+        TokenToElementConfig {
+            leading_pre_spacer,
+            leading_post_spacer,
+            trailing_pre_spacer,
+            trailing_post_spacer,
+            allow_leading_newlines,
+            allow_trailing_newlines,
+        }: TokenToElementConfig,
     ) -> DocumentElement {
         let mut elements = vec![];
-        let leading_trivia_element = self.trivia_to_element(&token.leading_trivia);
+        let leading_trivia_element =
+            self.trivia_to_element(&token.leading_trivia, allow_leading_newlines);
         if leading_trivia_element != DocumentElement::Concatenation(vec![]) {
             elements.push(leading_pre_spacer);
             elements.push(leading_trivia_element);
@@ -223,7 +298,8 @@ impl AstToDocumentModelConverter<'_> {
 
         elements.push(self.token_type_to_element(token));
 
-        let trailing_trivia_element = self.trivia_to_element(&token.trailing_trivia);
+        let trailing_trivia_element =
+            self.trivia_to_element(&token.trailing_trivia, allow_trailing_newlines);
         if trailing_trivia_element != DocumentElement::Concatenation(vec![]) {
             elements.push(trailing_pre_spacer);
             elements.push(trailing_trivia_element);
@@ -248,16 +324,16 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         DocumentElement::Concatenation(vec![
-            DocumentElement::SpaceEater,
+            DocumentElement::LineBreakEater,
             DocumentElement::spaced_concatentation(
-                DocumentElement::CollapsableLineBreak,
+                DocumentElement::single_collapsable_linebreak(),
                 program
                     .functions
                     .iter_mut()
                     .map(|f| self.visit_function_definition(f))
                     .collect(),
             ),
-            DocumentElement::ReverseSpaceEater,
+            DocumentElement::ReverseLineBreakEater,
         ])
     }
 
@@ -277,22 +353,20 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             id: _,
         }: &mut FunctionDefinition,
     ) -> Self::FunctionDefinitionOutput {
+        self.is_first_in_statement = true;
         DocumentElement::spaced_concatentation(
-            DocumentElement::CollapsableSpace,
+            DocumentElement::single_collapsable_space(),
             vec![
                 self.token_to_element(let_token),
                 self.token_to_element(name_token),
                 self.token_to_element(equal_token),
                 DocumentElement::Concatenation(vec![
-                    self.token_to_element_custom_spacers(
+                    self.token_to_element_config(
                         open_paren_token,
-                        DocumentElement::empty(),
-                        DocumentElement::CollapsableSpace,
-                        DocumentElement::empty(),
-                        DocumentElement::CollapsableSpace,
+                        TokenToElementConfig::open_paren(),
                     ),
                     DocumentElement::spaced_concatentation(
-                        DocumentElement::CollapsableSpace,
+                        DocumentElement::single_collapsable_space(),
                         parameters
                             .iter_mut()
                             .map(|(param, comma)| {
@@ -308,12 +382,9 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
                             .collect(),
                     ),
                     DocumentElement::ReverseSpaceEater, // consumes the open_brace space if there is a comment in the parens
-                    self.token_to_element_custom_spacers(
+                    self.token_to_element_config(
                         close_paren_token,
-                        DocumentElement::CollapsableSpace,
-                        DocumentElement::empty(),
-                        DocumentElement::CollapsableSpace,
-                        DocumentElement::empty(),
+                        TokenToElementConfig::close_paren(),
                     ),
                 ]),
                 self.token_to_element(right_arrow_token),
@@ -322,6 +393,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
                 } else {
                     DocumentElement::empty()
                 },
+                DocumentElement::LineBreakEater,
                 self.visit_function_body(body),
             ],
         )
@@ -348,9 +420,9 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
         DocumentElement::Concatenation(vec![
             self.token_to_element(at_token),
             self.token_to_element(extern_token),
-            DocumentElement::CollapsableSpace,
+            DocumentElement::single_collapsable_space(),
             self.token_to_element(symbol_token),
-            self.token_to_element(semicolon_token),
+            self.token_to_element_config(semicolon_token, TokenToElementConfig::semicolon()),
         ])
     }
 
@@ -367,7 +439,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             DocumentElement::Concatenation(vec![
                 self.token_to_element(name_token),
                 self.token_to_element(colon_token),
-                DocumentElement::CollapsableSpace,
+                DocumentElement::single_collapsable_space(),
                 self.visit_type(type_),
             ])
         } else {
@@ -383,9 +455,10 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             id: _,
         }: &mut ExpressionStatement,
     ) -> Self::StatementOutput {
+        self.is_first_in_statement = true;
         DocumentElement::Concatenation(vec![
             self.visit_expression(expression),
-            self.token_to_element(semicolon_token),
+            self.token_to_element_config(semicolon_token, TokenToElementConfig::semicolon()),
         ])
     }
 
@@ -402,8 +475,9 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             id: _,
         }: &mut OnStatement,
     ) -> Self::StatementOutput {
+        self.is_first_in_statement = true;
         DocumentElement::spaced_concatentation(
-            DocumentElement::CollapsableSpace,
+            DocumentElement::single_collapsable_space(),
             vec![
                 self.token_to_element(on_token),
                 DocumentElement::Concatenation(vec![
@@ -422,9 +496,9 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
                                     vec![
                                         self.token_to_element(open_bracket_token),
                                         self.visit_simple_binding(binding),
-                                        DocumentElement::CollapsableSpace,
+                                        DocumentElement::single_collapsable_space(),
                                         self.token_to_element(equal_token),
-                                        DocumentElement::CollapsableSpace,
+                                        DocumentElement::single_collapsable_space(),
                                         self.visit_expression(max_value),
                                         self.token_to_element(close_bracket_token),
                                     ]
@@ -436,7 +510,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
                 DocumentElement::Concatenation(vec![
                     self.token_to_element(open_paren_token),
                     DocumentElement::spaced_concatentation(
-                        DocumentElement::CollapsableSpace,
+                        DocumentElement::single_collapsable_space(),
                         bindings
                             .iter_mut()
                             .map(|(binding, comma)| {
@@ -453,6 +527,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
                     ),
                     self.token_to_element(close_paren_token),
                 ]),
+                DocumentElement::LineBreakEater,
                 self.visit_statement(body),
             ],
         )
@@ -467,30 +542,45 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             id: _,
         }: &mut BlockStatement,
     ) -> Self::StatementOutput {
-        DocumentElement::spaced_concatentation(
-            DocumentElement::CollapsableLineBreak,
-            vec![
+        self.is_first_in_statement = true;
+        if body.is_empty() {
+            DocumentElement::Concatenation(vec![
                 self.token_to_element(open_brace_token),
-                DocumentElement::Indentation(Box::new(DocumentElement::spaced_concatentation(
-                    DocumentElement::CollapsableLineBreak,
-                    vec![
-                        DocumentElement::spaced_concatentation(
-                            DocumentElement::CollapsableLineBreak,
-                            body.iter_mut().map(|s| self.visit_statement(s)).collect(),
-                        ),
-                        self.trivia_to_element(&close_brace_token.leading_trivia),
-                    ],
-                ))),
-                DocumentElement::spaced_concatentation(
-                    DocumentElement::CollapsableSpace,
-                    vec![
-                        // valid use of token_type_to_element because we break the trivia across indentation boundaries
-                        self.token_type_to_element(close_brace_token),
-                        self.trivia_to_element(&close_brace_token.trailing_trivia),
-                    ],
-                ),
-            ],
-        )
+                DocumentElement::ReverseLineBreakEater,
+                DocumentElement::LineBreakEater,
+                self.token_to_element(close_brace_token),
+            ])
+        } else {
+            DocumentElement::spaced_concatentation(
+                DocumentElement::single_collapsable_linebreak(),
+                vec![
+                    self.token_to_element_config(
+                        open_brace_token,
+                        TokenToElementConfig::open_brace(),
+                    ),
+                    DocumentElement::LineBreakEater,
+                    DocumentElement::Indentation(Box::new(DocumentElement::spaced_concatentation(
+                        DocumentElement::single_collapsable_linebreak(),
+                        vec![
+                            DocumentElement::spaced_concatentation(
+                                DocumentElement::single_collapsable_linebreak(),
+                                body.iter_mut().map(|s| self.visit_statement(s)).collect(),
+                            ),
+                            self.trivia_to_element(&close_brace_token.leading_trivia, true),
+                        ],
+                    ))),
+                    DocumentElement::ReverseLineBreakEater,
+                    DocumentElement::spaced_concatentation(
+                        DocumentElement::single_collapsable_space(),
+                        vec![
+                            // valid use of token_type_to_element because we break the trivia across indentation boundaries
+                            self.token_type_to_element(close_brace_token),
+                            self.trivia_to_element(&close_brace_token.trailing_trivia, true),
+                        ],
+                    ),
+                ],
+            )
+        }
     }
 
     fn visit_return_statement(
@@ -502,17 +592,18 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             id: _,
         }: &mut ReturnStatement,
     ) -> Self::StatementOutput {
+        self.is_first_in_statement = true;
         DocumentElement::Concatenation(vec![
             if let Some(value) = value {
                 DocumentElement::Concatenation(vec![
                     self.token_to_element(return_token),
-                    DocumentElement::CollapsableSpace,
+                    DocumentElement::single_collapsable_space(),
                     self.visit_expression(value),
                 ])
             } else {
                 self.token_to_element(return_token)
             },
-            self.token_to_element(semicolon_token),
+            self.token_to_element_config(semicolon_token, TokenToElementConfig::semicolon()),
         ])
     }
 
@@ -527,9 +618,10 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             id: _,
         }: &mut VariableDefinitionStatement,
     ) -> Self::StatementOutput {
+        self.is_first_in_statement = true;
         DocumentElement::Concatenation(vec![
             DocumentElement::spaced_concatentation(
-                DocumentElement::CollapsableSpace,
+                DocumentElement::single_collapsable_space(),
                 vec![
                     self.token_to_element(let_token),
                     self.visit_simple_binding(binding),
@@ -537,7 +629,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
                     self.visit_expression(value),
                 ],
             ),
-            self.token_to_element(semicolon_token),
+            self.token_to_element_config(semicolon_token, TokenToElementConfig::semicolon()),
         ])
     }
 
@@ -552,21 +644,24 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             id: _,
         }: &mut IfStatement,
     ) -> Self::StatementOutput {
+        self.is_first_in_statement = true;
         let mut elements = vec![DocumentElement::spaced_concatentation(
-            DocumentElement::CollapsableSpace,
+            DocumentElement::single_collapsable_space(),
             vec![
                 self.token_to_element(if_token),
                 self.visit_expression(condition),
+                DocumentElement::LineBreakEater,
                 self.visit_statement(if_body),
             ],
         )];
 
         for (token, condition, body) in elifs {
             elements.push(DocumentElement::spaced_concatentation(
-                DocumentElement::CollapsableSpace,
+                DocumentElement::single_collapsable_space(),
                 vec![
                     self.token_to_element(token),
                     self.visit_expression(condition),
+                    DocumentElement::LineBreakEater,
                     self.visit_statement(body),
                 ],
             ));
@@ -574,15 +669,19 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
 
         if let Some((else_token, else_body)) = else_ {
             elements.push(DocumentElement::spaced_concatentation(
-                DocumentElement::CollapsableSpace,
+                DocumentElement::single_collapsable_space(),
                 vec![
                     self.token_to_element(else_token),
+                    DocumentElement::LineBreakEater,
                     self.visit_statement(else_body),
                 ],
             ));
         }
 
-        DocumentElement::spaced_concatentation(DocumentElement::CollapsableLineBreak, elements)
+        DocumentElement::spaced_concatentation(
+            DocumentElement::single_collapsable_linebreak(),
+            elements,
+        )
     }
 
     fn visit_while_loop_statement(
@@ -594,11 +693,13 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             id: _,
         }: &mut WhileLoopStatement,
     ) -> Self::StatementOutput {
+        self.is_first_in_statement = true;
         DocumentElement::spaced_concatentation(
-            DocumentElement::CollapsableSpace,
+            DocumentElement::single_collapsable_space(),
             vec![
                 self.token_to_element(while_token),
                 self.visit_expression(condition),
+                DocumentElement::LineBreakEater,
                 self.visit_statement(body),
             ],
         )
@@ -618,8 +719,9 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             id: _,
         }: &mut ForLoopStatement,
     ) -> Self::StatementOutput {
+        self.is_first_in_statement = true;
         DocumentElement::spaced_concatentation(
-            DocumentElement::CollapsableSpace,
+            DocumentElement::single_collapsable_space(),
             vec![
                 self.token_to_element(for_token),
                 DocumentElement::Concatenation(vec![
@@ -630,7 +732,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
                             .as_mut()
                             .map(|con| {
                                 DocumentElement::Concatenation(vec![
-                                    DocumentElement::CollapsableSpace,
+                                    DocumentElement::single_collapsable_space(),
                                     self.visit_expression(con),
                                     self.token_to_element(second_semicolon_token),
                                 ])
@@ -640,7 +742,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
                             .as_mut()
                             .map(|inc| {
                                 DocumentElement::Concatenation(vec![
-                                    DocumentElement::CollapsableSpace,
+                                    DocumentElement::single_collapsable_space(),
                                     self.visit_expression(inc),
                                 ])
                             })
@@ -648,22 +750,39 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
                     ]),
                     self.token_to_element(close_paren_token),
                 ]),
+                DocumentElement::LineBreakEater,
                 self.visit_statement(body),
             ],
         )
     }
 
-    fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
+    fn visit_break_statement(
+        &mut self,
+        BreakStatement {
+            break_token,
+            semicolon_token,
+            id: _,
+        }: &mut BreakStatement,
+    ) -> Self::StatementOutput {
+        self.is_first_in_statement = true;
         DocumentElement::Concatenation(vec![
-            self.token_to_element(&break_stmt.break_token),
-            self.token_to_element(&break_stmt.semicolon_token),
+            self.token_to_element(break_token),
+            self.token_to_element_config(semicolon_token, TokenToElementConfig::semicolon()),
         ])
     }
 
-    fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
+    fn visit_skip_statement(
+        &mut self,
+        SkipStatement {
+            skip_token,
+            semicolon_token,
+            id: _,
+        }: &mut SkipStatement,
+    ) -> Self::StatementOutput {
+        self.is_first_in_statement = true;
         DocumentElement::Concatenation(vec![
-            self.token_to_element(&skip_stmt.skip_token),
-            self.token_to_element(&skip_stmt.semicolon_token),
+            self.token_to_element(skip_token),
+            self.token_to_element_config(semicolon_token, TokenToElementConfig::semicolon()),
         ])
     }
 
@@ -737,7 +856,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
         DocumentElement::Concatenation(vec![
             self.token_to_element(open_bracket_token),
             DocumentElement::spaced_concatentation(
-                DocumentElement::CollapsableSpace,
+                DocumentElement::single_collapsable_space(),
                 elements
                     .iter_mut()
                     .map(|(item, comma)| match comma {
@@ -769,7 +888,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             DocumentElement::Concatenation(vec![
                 self.token_to_element(open_paren_token),
                 DocumentElement::spaced_concatentation(
-                    DocumentElement::CollapsableSpace,
+                    DocumentElement::single_collapsable_space(),
                     arguments
                         .iter_mut()
                         .map(|(arg, comma)| match comma {
@@ -804,7 +923,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             DocumentElement::Concatenation(vec![
                 self.token_to_element(open_paren_token),
                 DocumentElement::spaced_concatentation(
-                    DocumentElement::CollapsableSpace,
+                    DocumentElement::single_collapsable_space(),
                     arguments
                         .iter_mut()
                         .map(|(arg, comma)| match comma {
@@ -849,21 +968,9 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
         }: &mut GroupingExpression,
     ) -> Self::ExpressionOutput {
         DocumentElement::Concatenation(vec![
-            self.token_to_element_custom_spacers(
-                open_paren_token,
-                DocumentElement::empty(),
-                DocumentElement::CollapsableSpace,
-                DocumentElement::empty(),
-                DocumentElement::CollapsableSpace,
-            ),
+            self.token_to_element_config(open_paren_token, TokenToElementConfig::open_paren()),
             self.visit_expression(subexpression),
-            self.token_to_element_custom_spacers(
-                close_paren_token,
-                DocumentElement::CollapsableSpace,
-                DocumentElement::empty(),
-                DocumentElement::CollapsableSpace,
-                DocumentElement::empty(),
-            ),
+            self.token_to_element_config(close_paren_token, TokenToElementConfig::close_paren()),
         ])
     }
 
@@ -903,7 +1010,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
         }: &mut CastExpression,
     ) -> Self::ExpressionOutput {
         DocumentElement::spaced_concatentation(
-            DocumentElement::CollapsableSpace,
+            DocumentElement::single_collapsable_space(),
             vec![
                 self.visit_expression(operand),
                 self.token_to_element(as_token),
@@ -923,7 +1030,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
         }: &mut BinaryExpression,
     ) -> Self::ExpressionOutput {
         DocumentElement::spaced_concatentation(
-            DocumentElement::CollapsableSpace,
+            DocumentElement::single_collapsable_space(),
             vec![
                 self.visit_expression(left),
                 self.token_to_element(operator_token),
@@ -942,7 +1049,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
         }: &mut VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
         DocumentElement::spaced_concatentation(
-            DocumentElement::CollapsableSpace,
+            DocumentElement::single_collapsable_space(),
             vec![
                 self.visit_lvalue(lvalue),
                 self.token_to_element(equal_token),

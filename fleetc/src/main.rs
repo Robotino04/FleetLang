@@ -155,6 +155,16 @@ fn main() {
 
     let dm = pm.state.get::<DocumentElement>().unwrap().clone();
 
+    /*
+    println!("{}", generate_header("Raw DM", 50));
+    println!("{dm:#?}");
+
+    let dm = fully_flatten_document(dm);
+
+    println!("{}", generate_header("Flattened DM", 50));
+    println!("{dm:#?}");
+    */
+
     println!("{}", generate_header("Pretty-Printed", 50));
     println!("{}", stringify_document(dm));
 

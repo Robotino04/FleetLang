@@ -546,8 +546,7 @@ fn shadow_parameter() {
 fn unit_no_return() {
     assert_compile_and_return_value(
         indoc! {r##"
-            let foo = () -> () {
-            }
+            let foo = () -> () {}
             let main = () -> i32 {
                 foo();
                 return 3;

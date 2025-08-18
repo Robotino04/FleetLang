@@ -207,8 +207,7 @@ fn empty_elif_with_else() {
                 if a != 0 {
                     a = 1;
                 }
-                elif true {
-                }
+                elif true {}
                 else {
                     a = 3;
                 }
@@ -229,8 +228,7 @@ fn empty_elif_without_else() {
                 if a != 0 {
                     a = 1;
                 }
-                elif true {
-                }
+                elif true {}
                 return a;
             }
         "##},

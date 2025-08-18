@@ -321,3 +321,23 @@ fn remove_parens_3() {
         },
     );
 }
+
+#[test]
+fn preserve_spacing_expressions() {
+    assert_formatting(
+        indoc! {r##"
+            let main = () -> i32 {
+                3 || 1 == 7 - 8 && 2 != 9;
+
+                return 3 || 1 == 7 - 8 && 2 != 9;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                3 || 1 == 7 - 8 && 2 != 9;
+
+                return 3 || 1 == 7 - 8 && 2 != 9;
+            }"##
+        },
+    );
+}

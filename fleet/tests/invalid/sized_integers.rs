@@ -61,8 +61,7 @@ fn assign_wrong_size() {
 fn arg_wrong_size() {
     assert_compile_error(
         indoc! {r##"
-            let foo = (a: i8) -> () {
-            }
+            let foo = (a: i8) -> () {}
             let main = () -> i64 {
                 let a: i64 = 2;
                 foo(a);
@@ -70,8 +69,8 @@ fn arg_wrong_size() {
             }
         "##},
         SourceLocation {
-            index: 79,
-            line: 5,
+            index: 78,
+            line: 4,
             column: 8,
         },
     );

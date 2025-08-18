@@ -20,6 +20,7 @@ fn collapse_while() {
                 while false {
                     1;
                 }
+
                 return 2;
             }"##
         },
@@ -184,6 +185,60 @@ fn for_remove_parens_incrementer() {
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; i = i + 1) {
                     break;
+                }
+                return 2;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn preserve_spacing_skip() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                for (let i: i32 = 0; i < 10; i = i + 1) {
+                    skip;
+
+                    // preserve pls
+                }
+                return 2;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                for (let i: i32 = 0; i < 10; i = i + 1) {
+                    skip;
+
+                    // preserve pls
+                }
+                return 2;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn preserve_spacing_break() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                for (let i: i32 = 0; i < 10; i = i + 1) {
+                    break;
+
+                    // preserve pls
+                }
+                return 2;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                for (let i: i32 = 0; i < 10; i = i + 1) {
+                    break;
+
+                    // preserve pls
                 }
                 return 2;
             }"##
