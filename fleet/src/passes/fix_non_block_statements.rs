@@ -11,7 +11,7 @@ use crate::{
     tokenizer::{Token, TokenType},
 };
 
-use super::{find_node_bonds::find_node_bounds, partial_visitor::PartialAstVisitor};
+use super::{find_node_bounds::find_node_bounds, partial_visitor::PartialAstVisitor};
 
 pub struct FixNonBlockStatements<'state> {
     errors: RefMut<'state, Errors>,

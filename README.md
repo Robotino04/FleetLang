@@ -18,7 +18,6 @@
 - if expressions
 - allow single manual newlines. Maybe add newline eaters after {\n and before \n} and print trivia newlines as long as they are inside a statement
 - add quick fix system for e.g. non-block as if body
-- notes for removable parens
 - maybe make non-block-statement fixes a code action instead of formatting. Replace `assert_compile_error_no_formatting` after
 - tuple types
 - structs
@@ -26,7 +25,6 @@
 - strings
 - comptime evaluation
 - comptime type eval for generics (similar to zig/hblang)
-- use AstVisitor for `find_node_bounds`
 - simplify `get_precedence` and `get_associativity` using impl or a trait
 - add way to get length of array
 - consistent error language style

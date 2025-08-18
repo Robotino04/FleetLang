@@ -28,7 +28,7 @@ use crate::{
     tokenizer::SourceLocation,
 };
 
-use super::find_node_bonds::find_node_bounds;
+use super::find_node_bounds::find_node_bounds;
 
 pub trait MergableStat {
     fn serial(self, other: Self) -> Self;

@@ -8,7 +8,8 @@ use crate::{
         ReturnStatement, ThreadExecutor, UnaryExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, WhileLoopStatement,
     },
-    passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+    infra::{ErrorSeverity, FleetError},
+    passes::pass_manager::{Errors, GlobalState, Pass, PassFactory, PassResult},
 };
 
 use super::{
@@ -23,6 +24,7 @@ enum OperandSide {
 }
 
 pub struct RemoveParensPass<'state> {
+    errors: RefMut<'state, Errors>,
     program: Option<RefMut<'state, Program>>,
 
     parent_precedence: usize,
@@ -39,7 +41,8 @@ impl PassFactory for RemoveParensPass<'_> {
         _params: Self::Params,
     ) -> Result<Self::Output<'state>, String> {
         Ok(Self::Output {
-            program: Some(state.get_mut_named::<Program>()?),
+            errors: state.get_mut_named()?,
+            program: Some(state.get_mut_named()?),
             parent_precedence: Expression::TOP_PRECEDENCE,
             parent_associativity: Associativity::Both,
             current_side: OperandSide::Left,
@@ -212,6 +215,17 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                     ]
                     .concat();
 
+                    self.errors.push(FleetError::from_token(
+                        open_paren_token,
+                        "Unnecessary parentheses",
+                        ErrorSeverity::Note,
+                    ));
+                    self.errors.push(FleetError::from_token(
+                        close_paren_token,
+                        "Unnecessary parentheses",
+                        ErrorSeverity::Note,
+                    ));
+
                     let mut leading_pass = AddLeadingTriviaPass::new(leading_trivia);
                     leading_pass.visit_expression(&mut *subexpression);
                     let mut trailing_pass = AddTrailingTriviaPass::new(trailing_trivia);
@@ -356,6 +370,17 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                         close_paren_token.trailing_trivia.clone(),
                     ]
                     .concat();
+
+                    self.errors.push(FleetError::from_token(
+                        open_paren_token,
+                        "Unnecessary parentheses",
+                        ErrorSeverity::Note,
+                    ));
+                    self.errors.push(FleetError::from_token(
+                        close_paren_token,
+                        "Unnecessary parentheses",
+                        ErrorSeverity::Note,
+                    ));
 
                     let mut leading_pass = AddLeadingTriviaPass::new(leading_trivia);
                     leading_pass.visit_lvalue(&mut *sublvalue);
