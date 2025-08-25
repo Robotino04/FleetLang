@@ -24,7 +24,7 @@ let put_number = (n: i32) -> () {
     }
 }
 
-let min = (a: f32, b: f32) -> f32 {
+let min = (a: i32, b: i32) -> i32 {
     if a > b {
         return b;
     }
@@ -32,7 +32,7 @@ let min = (a: f32, b: f32) -> f32 {
         return a;
     }
 }
-let max = (a: f32, b: f32) -> f32 {
+let max = (a: i32, b: i32) -> i32 {
     if b > a {
         return b;
     }
@@ -40,7 +40,7 @@ let max = (a: f32, b: f32) -> f32 {
         return a;
     }
 }
-let clamp = (x: f32, minv: f32, maxv: f32) -> f32 {
+let clamp = (x: i32, minv: i32, maxv: i32) -> i32 {
     return min(max(x, minv), maxv);
 }
 
@@ -88,8 +88,8 @@ let main = () -> i32 {
         for (let x = 0; x < width; x = x + 1) {
             // make image binary to avoid float-rounding issues in test. Can also be a simple grayscale otherwise:
             // let brightness = (image[y][x] * 255) as i32;
-            let brightness = 0;
-            if image[y][x] != 0 {
+            let brightness = clamp((image[y][x] * 255) as i32, 0, 255);
+            if brightness != 0 {
                 brightness = 255;
             }
 

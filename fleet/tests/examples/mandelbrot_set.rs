@@ -37,7 +37,11 @@ fn generate_mandelbrot_ppm(width: usize, height: usize) -> String {
     for row in image.iter() {
         for &value in row.iter() {
             // make image binary to avoid float-rounding issues in test
-            let intensity = if value != 0.0 { 255 } else { 0 };
+            let intensity = if ((value * 255.0) as i32).clamp(0, 255) != 0 {
+                255
+            } else {
+                0
+            };
             output.push_str(&format!("{intensity} {intensity} {intensity} "));
         }
         output.push('\n');
