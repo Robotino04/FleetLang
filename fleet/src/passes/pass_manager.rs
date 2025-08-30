@@ -219,7 +219,7 @@ impl<T> EmptyEntry<T> {
 
 pub trait PassFactory {
     type Output<'state>: Pass + 'state;
-    type Params: 'static;
+    type Params: Clone + 'static;
 
     fn try_new<'state>(
         state: &'state mut GlobalState,
@@ -268,7 +268,7 @@ pub trait DynPassFactory {
 
 pub struct PassFactoryWrapper<T: PassFactory> {
     _marker: PhantomData<T>,
-    params: Box<dyn Fn() -> T::Params>,
+    params: T::Params,
 }
 
 impl<T> DynPassFactory for PassFactoryWrapper<T>
@@ -283,7 +283,7 @@ where
         &self,
         state: &'state mut GlobalState,
     ) -> Result<Box<dyn Pass + 'state>, String> {
-        T::try_new(state, (self.params)()).map(|p| Box::new(p) as Box<dyn Pass + 'state>)
+        T::try_new(state, self.params.clone()).map(|p| Box::new(p) as Box<dyn Pass + 'state>)
     }
 }
 
@@ -297,16 +297,16 @@ impl PassManager {
     pub fn insert<P: PassFactory<Params = ()> + 'static>(&mut self) {
         self.factories.push_back(Box::new(PassFactoryWrapper::<P> {
             _marker: PhantomData,
-            params: Box::new(|| ()) as Box<_>,
+            params: (),
         }));
     }
-    pub fn insert_params<P>(&mut self, params: impl Fn() -> P::Params + 'static)
+    pub fn insert_params<P>(&mut self, params: P::Params)
     where
         P: PassFactory + 'static,
     {
         self.factories.push_back(Box::new(PassFactoryWrapper::<P> {
             _marker: PhantomData,
-            params: Box::new(params) as Box<_>,
+            params,
         }));
     }
 

@@ -11,6 +11,7 @@ pub mod partial_visitor;
 pub mod pass_manager;
 pub mod remove_parens;
 pub mod save_artifact_pass;
+pub mod simple_function_pass;
 pub mod stat_tracker;
 pub mod store_pass;
 pub mod swap_pass;

@@ -425,12 +425,11 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
         .unwrap();
 
     let object_file = dir.path().join("test.o");
-    let object_file_clone = object_file.clone();
     let binary_file = dir.path().join("test");
 
     let target_machine = pm.state.insert(target_machine);
     pm.insert::<LLVMOptimizerPass>();
-    pm.insert_params::<SaveArtifactPass>(move || (object_file_clone.clone(), ArtifactType::Object));
+    pm.insert_params::<SaveArtifactPass>((object_file.clone(), ArtifactType::Object));
     pm.run().unwrap();
 
     let _target_machine = target_machine.get(&pm.state);
@@ -492,12 +491,11 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
 }
 fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     let c_file = dir.path().join("test.c");
-    let c_file_clone = c_file.clone();
     let obj_file = dir.path().join("test.o");
     let binary_file = dir.path().join("test");
 
     let mut pm = compile_or_panic(src);
-    pm.insert_params::<SaveArtifactPass>(move || (c_file_clone.clone(), ArtifactType::CCode));
+    pm.insert_params::<SaveArtifactPass>((c_file.clone(), ArtifactType::CCode));
     pm.run().unwrap();
 
     let needs_runtime = pm

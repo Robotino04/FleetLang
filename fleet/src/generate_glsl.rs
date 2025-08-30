@@ -484,6 +484,7 @@ impl<'state> GLSLCodeGenerator<'state> {
             }
         }
     }
+    #[allow(unused)]
     fn runtime_type_to_byte_size(&self, type_: RuntimeType) -> usize {
         match type_ {
             RuntimeType::I8 => 1,

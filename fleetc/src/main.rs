@@ -1,25 +1,28 @@
-use std::{env::args, fs::read_to_string, path::Path, process::exit};
+use std::path::PathBuf;
+use std::{fs::read_to_string, process::exit};
+
+use clap::{Parser, ValueEnum};
 
 use fleet::NewtypeDerefNoDefault;
 use fleet::ast::Program;
 use fleet::ast_to_dm::AstToDocumentModelConverter;
-use fleet::document_model::{DocumentElement, stringify_document};
+use fleet::document_model::{DocumentElement, fully_flatten_document, stringify_document};
 use fleet::infra::{
     ErrorSeverity, FleetError, insert_c_passes, insert_compile_passes, insert_fix_passes,
-    insert_minimal_pipeline, print_error_message,
+    insert_minimal_pipeline,
 };
 use fleet::inkwell::module::Module;
 use fleet::inkwell::targets::{CodeModel, RelocMode, Target, TargetTriple};
 use fleet::inkwell::{self, OptimizationLevel};
 use fleet::ir_generator::{IrGenerator, LLVMOptimizerPass};
-use fleet::passes::pass_manager::{
-    CCodeOutput, Errors, FunctionData, InputSource, PassError, PassManager, StatData, VariableData,
-};
+use fleet::passes::pass_manager::{Errors, InputSource, PassError, PassManager, StatData};
 use fleet::passes::save_artifact_pass::{ArtifactType, SaveArtifactPass};
+use fleet::passes::simple_function_pass::SingleFunctionPass;
 use fleet::passes::store_pass::StorePass;
 use fleet::passes::swap_pass::SwapPass;
 use fleet::tokenizer::Token;
 
+#[allow(unused)]
 fn generate_header(text: impl AsRef<str>, length: usize) -> String {
     format!("{:-^length$}", "|".to_string() + text.as_ref() + "|")
 }
@@ -35,17 +38,64 @@ NewtypeDerefNoDefault!(pub RawProgram, Program);
 NewtypeDerefNoDefault!(pub FixedProgram, Program);
 NewtypeDerefNoDefault!(pub UnoptimizedModule, Module<'static>);
 
-fn main() {
-    let input_path = args().nth(1).unwrap_or("test.fl".into());
-    let output_path = Path::new("output.o");
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+#[command(propagate_version = true)]
+struct Cli {
+    /// The file to compile
+    input_file: PathBuf,
 
-    let src = read_to_string(&input_path).unwrap_or_else(|_| {
-        eprintln!("Input file {input_path:?} doesn't exist or isn't readable");
+    /// The file to write to
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+
+    /// Dump intermediate representations instead of compiling to a binary. Can be repeated
+    #[arg(short, long, group = "output_type")]
+    dump: Vec<DumpOption>,
+
+    /// Format the file instead of compiling it
+    #[arg(short, long, group = "output_type")]
+    format: bool,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+enum DumpOption {
+    /// Dump the generated C code
+    CCode,
+    /// Dump the document model before flattening
+    DocumentModel,
+    /// Dump the document model after flattening
+    DocumentModelFlat,
+    /// Dump the parsed AST before any modifications
+    AstRaw,
+    /// Dump the fully transformed AST
+    AstFull,
+    /// Dump the unoptimized LLVM IR
+    LlvmIr,
+    /// Dump the optimized LLVM IR
+    LlvmIrOptimized,
+    /// Dump the parsed tokens
+    Tokens,
+    /// Dump statistics on AST nodes
+    NodeStats,
+}
+
+fn main() {
+    let cli = Cli::parse();
+
+    let src = read_to_string(&cli.input_file).unwrap_or_else(|_| {
+        eprintln!(
+            "Input file {:?} doesn't exist or isn't readable",
+            cli.input_file
+        );
         exit(1);
     });
 
     let print_all_errors_and_message = |msg, errors: &Vec<FleetError>| {
         let mut worst_error = None;
+        if !errors.is_empty() {
+            eprintln!("{:-^50}", "");
+        }
         for error in errors {
             if let Some(prev) = worst_error {
                 match (prev, error.severity) {
@@ -61,12 +111,11 @@ fn main() {
             }
         }
         if let Some(worst_severity) = worst_error {
-            println!("{}", generate_header("Errors", 50));
             for error in errors {
-                print_error_message(&src, error);
+                eprintln!("{}", error.to_string_ansi(&src));
             }
             let ansi_color = ansi_color_for_severity(worst_severity);
-            println!("\x1B[{ansi_color}m{msg}\x1B[0m");
+            eprintln!("\x1B[{ansi_color}m{msg}\x1B[0m");
         }
     };
 
@@ -92,18 +141,113 @@ fn main() {
     pm.insert::<StorePass<Program, FixedProgram>>();
     insert_compile_passes(&mut pm);
     insert_c_passes(&mut pm);
-    pm.insert_params::<SaveArtifactPass>(|| ("./out.c".into(), ArtifactType::CCode));
+    pm.insert_params::<SaveArtifactPass>(("./out.c".into(), ArtifactType::CCode));
 
     pm.insert::<IrGenerator>();
-    pm.insert_params::<SaveArtifactPass>(|| ("./out_unopt.ll".into(), ArtifactType::LlvmIr));
+    pm.insert_params::<SaveArtifactPass>(("./out_unopt.ll".into(), ArtifactType::LlvmIr));
     pm.insert::<StorePass<Module, UnoptimizedModule>>();
     pm.insert::<LLVMOptimizerPass>();
-    pm.insert_params::<SaveArtifactPass>(|| ("./out_opt.ll".into(), ArtifactType::LlvmIr));
-    pm.insert_params::<SaveArtifactPass>(|| (output_path.to_owned(), ArtifactType::Object));
+    pm.insert_params::<SaveArtifactPass>(("./out_opt.ll".into(), ArtifactType::LlvmIr));
 
     pm.insert::<SwapPass<Program, FixedProgram>>();
     pm.insert::<AstToDocumentModelConverter>();
     pm.insert::<SwapPass<Program, FixedProgram>>();
+
+    pm.insert_params::<SingleFunctionPass<_, _>>(|_: &RawProgram| {
+        eprintln!("{:-^50}", "");
+        Ok(())
+    });
+
+    // TODO: this can't be the best option
+    let output_file_name = cli.output.clone().unwrap_or("/dev/stdout".parse().unwrap());
+
+    if cli.dump.is_empty() {
+        if cli.format {
+            pm.insert_params::<SingleFunctionPass<_, _>>(|dm: &DocumentElement| {
+                std::fs::write(
+                    cli.output.unwrap_or(cli.input_file),
+                    stringify_document(fully_flatten_document(dm.clone())),
+                )
+                .unwrap();
+                Ok(())
+            });
+        } else {
+            pm.insert_params::<SaveArtifactPass>((
+                cli.output.unwrap_or(cli.input_file.with_extension("o")),
+                ArtifactType::Object,
+            ));
+        }
+    }
+
+    for (i, dump_type) in cli.dump.iter().enumerate() {
+        if i != 0 {
+            // insert separators
+            let output_file_name = output_file_name.clone();
+            pm.insert_params::<SingleFunctionPass<_, _>>(|_: &RawProgram| {
+                std::fs::write(output_file_name, "-".repeat(50) + "\n").unwrap();
+                Ok(())
+            });
+        }
+
+        let output_file_name = output_file_name.clone();
+        match dump_type {
+            DumpOption::CCode => {
+                pm.insert_params::<SaveArtifactPass>((output_file_name, ArtifactType::CCode));
+            }
+            DumpOption::AstRaw => {
+                pm.insert_params::<SingleFunctionPass<_, _>>(|rp: &RawProgram| {
+                    std::fs::write(output_file_name, format!("{rp:#?}")).unwrap();
+                    Ok(())
+                });
+            }
+            DumpOption::LlvmIr => {
+                pm.insert_params::<SingleFunctionPass<_, _>>(|module: &UnoptimizedModule| {
+                    std::fs::write(output_file_name, module.to_string()).unwrap();
+                    Ok(())
+                });
+            }
+            DumpOption::Tokens => {
+                pm.insert_params::<SingleFunctionPass<_, _>>(|tokens: &Vec<Token>| {
+                    std::fs::write(output_file_name, format!("{tokens:#?}")).unwrap();
+                    Ok(())
+                });
+            }
+            DumpOption::AstFull => {
+                pm.insert_params::<SingleFunctionPass<_, _>>(|program: &Program| {
+                    std::fs::write(output_file_name, format!("{program:#?}")).unwrap();
+                    Ok(())
+                });
+            }
+            DumpOption::DocumentModel => {
+                pm.insert_params::<SingleFunctionPass<_, _>>(|dm: &DocumentElement| {
+                    std::fs::write(output_file_name, format!("{dm:#?}")).unwrap();
+                    Ok(())
+                });
+            }
+            DumpOption::LlvmIrOptimized => {
+                pm.insert_params::<SingleFunctionPass<_, _>>(|module: &Module| {
+                    std::fs::write(output_file_name, module.to_string()).unwrap();
+                    Ok(())
+                });
+            }
+            DumpOption::DocumentModelFlat => {
+                pm.insert_params::<SingleFunctionPass<_, _>>(|dm: &DocumentElement| {
+                    std::fs::write(
+                        output_file_name,
+                        format!("{:#?}", fully_flatten_document(dm.clone())),
+                    )
+                    .unwrap();
+                    Ok(())
+                });
+            }
+            DumpOption::NodeStats => {
+                pm.insert_params::<SingleFunctionPass<_, _>>(|stats: &StatData| {
+                    std::fs::write(output_file_name, format!("{stats:#?}")).unwrap();
+                    Ok(())
+                });
+            }
+        }
+    }
 
     let errors = pm.state.insert_default::<Errors>();
     pm.state.insert(InputSource(src.to_string()));
@@ -113,7 +257,7 @@ fn main() {
         Err(err @ PassError::CompilerError { .. }) => {
             let errors = errors.get(&pm.state).clone();
             print_all_errors_and_message("Compilation failed internally", &errors);
-            println!("{err}");
+            eprintln!("{err}");
             exit(1);
         }
         Err(PassError::InvalidInput { .. }) => {
@@ -133,45 +277,16 @@ fn main() {
         panic!("these errors should have resulted in a PassError::InvalidInput");
     }
 
-    println!("{}", generate_header("Tokens", 50));
-    println!("{:#?}", pm.state.get::<Vec<Token>>());
-
-    println!("{}", generate_header("AST", 50));
-    println!("{:#?}", pm.state.get::<RawProgram>());
-
-    println!("{}", generate_header("Referenced Variables", 50));
-    println!("{:#?}", pm.state.get::<VariableData>());
-    println!("{}", generate_header("Referenced Functions", 50));
-    println!("{:#?}", pm.state.get::<FunctionData>());
-
-    println!("{}", generate_header("Node Stats", 50));
-    println!("{:#?}", pm.state.get::<StatData>());
-
-    println!("{}", generate_header("LLVM IR (unoptimized)", 50));
-    println!("{}", pm.state.get::<Module>().unwrap().to_string());
-
-    println!("{}", generate_header("C Code", 50));
-    println!("{}", &pm.state.get::<CCodeOutput>().unwrap().0);
-
-    let dm = pm.state.get::<DocumentElement>().unwrap().clone();
-
-    /*
-    println!("{}", generate_header("Raw DM", 50));
-    println!("{dm:#?}");
-
-    let dm = fully_flatten_document(dm);
-
-    println!("{}", generate_header("Flattened DM", 50));
-    println!("{dm:#?}");
-    */
-
-    println!("{}", generate_header("Pretty-Printed", 50));
-    println!("{}", stringify_document(dm));
-
-    println!("{}", generate_header("LLVM IR (optimized)", 50));
-    println!("{}", pm.state.get::<Module>().unwrap().to_string());
-
-    println!("Object file written to {output_path:?}");
-
     print_all_errors_and_message("There are warnings", &errors);
+}
+
+#[cfg(test)]
+mod test {
+    use crate::Cli;
+
+    #[test]
+    fn verify_cli() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
 }

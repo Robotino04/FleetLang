@@ -10,6 +10,7 @@ use crate::passes::pass_manager::{
     CCodeOutput, GlobalState, Pass, PassError, PassFactory, PassResult,
 };
 
+#[derive(Copy, Clone)]
 pub enum ArtifactType {
     #[cfg(feature = "llvm_backend")]
     Object,

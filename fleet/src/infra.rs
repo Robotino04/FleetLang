@@ -1,3 +1,4 @@
+use indoc::formatdoc;
 use itertools::Itertools;
 
 use crate::{
@@ -61,81 +62,97 @@ impl FleetError {
             severity,
         }
     }
-}
 
-pub fn print_error_message(source: &str, error: &FleetError) {
-    let ansi_color = match error.severity {
-        ErrorSeverity::Error => "31",
-        ErrorSeverity::Warning => "33",
-        ErrorSeverity::Note => "34",
-    };
+    pub fn to_string(&self, source: &str) -> String {
+        self.to_string_impl(source, false)
+    }
+    pub fn to_string_ansi(&self, source: &str) -> String {
+        self.to_string_impl(source, true)
+    }
 
-    let num_before_error_lines = 3;
-    let num_after_error_lines = 3;
-
-    let max_line_number_len = (error.end.line + num_after_error_lines).to_string().len();
-
-    let pad_with_line_number =
-        |(line, text): (usize, &str)| format!("{line:<max_line_number_len$}| {text}");
-
-    let source_lines = source
-        .split("\n")
-        .enumerate()
-        .map(|(line, text)| (line + 1, text));
-
-    let before_err = source_lines.clone().take(error.start.line - 1);
-    let err = source_lines
-        .clone()
-        .skip(error.start.line - 1)
-        .take(error.end.line - error.start.line + 1)
-        .map(|(line, text)| {
-            let start_col = if line == error.start.line {
-                error.start.column
-            } else {
-                0
-            };
-            let end_col = if line == error.end.line {
-                error.end.column.min(text.len())
-            } else {
-                text.len()
+    fn to_string_impl(&self, source: &str, use_ansi: bool) -> String {
+        let (enable_color, disable_color) = {
+            let nr = match self.severity {
+                ErrorSeverity::Error => 31,
+                ErrorSeverity::Warning => 33,
+                ErrorSeverity::Note => 34,
             };
 
-            pad_with_line_number((
-                line,
-                format!(
-                    "{}\x1B[{ansi_color}m{}\x1B[0m{}",
-                    &text[..start_col],
-                    &text[start_col..end_col],
-                    &text[end_col..]
-                )
-                .as_str(),
-            ))
-        })
-        .join("\n");
-    let after_err = source_lines.skip(error.end.line);
+            if use_ansi {
+                (format!("\x1B[{nr}m"), "\x1B[0m")
+            } else {
+                ("".to_string(), "")
+            }
+        };
 
-    let before_err_trunc = before_err
-        .skip(error.start.line.saturating_sub(num_before_error_lines + 1))
-        .skip_while(|(_line, text)| text.trim() == "")
-        .map(pad_with_line_number)
-        .join("\n");
-    let after_err_trunc = after_err
-        .take(num_after_error_lines)
-        .map(pad_with_line_number)
-        .join("\n");
+        let num_before_error_lines = 3;
+        let num_after_error_lines = 3;
 
-    println!(
-        "\x1B[{ansi_color}m[FLEETC: {}] {}\x1B[0m",
-        match error.severity {
-            ErrorSeverity::Error => "ERROR",
-            ErrorSeverity::Warning => "WARNING",
-            ErrorSeverity::Note => "NOTE",
-        },
-        error.message
-    );
-    println!("{before_err_trunc}");
-    println!("{err}");
-    println!("{after_err_trunc}\n");
+        let max_line_number_len = (self.end.line + num_after_error_lines).to_string().len();
+
+        let pad_with_line_number =
+            |(line, text): (usize, &str)| format!("{line:<max_line_number_len$}| {text}");
+
+        let source_lines = source
+            .split("\n")
+            .enumerate()
+            .map(|(line, text)| (line + 1, text));
+
+        let before_err = source_lines.clone().take(self.start.line - 1);
+        let err = source_lines
+            .clone()
+            .skip(self.start.line - 1)
+            .take(self.end.line - self.start.line + 1)
+            .map(|(line, text)| {
+                let start_col = if line == self.start.line {
+                    self.start.column
+                } else {
+                    0
+                };
+                let end_col = if line == self.end.line {
+                    self.end.column.min(text.len())
+                } else {
+                    text.len()
+                };
+
+                pad_with_line_number((
+                    line,
+                    format!(
+                        "{}{enable_color}{}{disable_color}{}",
+                        &text[..start_col],
+                        &text[start_col..end_col],
+                        &text[end_col..]
+                    )
+                    .as_str(),
+                ))
+            })
+            .join("\n");
+        let after_err = source_lines.skip(self.end.line);
+
+        let before_err_trunc = before_err
+            .skip(self.start.line.saturating_sub(num_before_error_lines + 1))
+            .skip_while(|(_line, text)| text.trim() == "")
+            .map(pad_with_line_number)
+            .join("\n");
+        let after_err_trunc = after_err
+            .take(num_after_error_lines)
+            .map(pad_with_line_number)
+            .join("\n");
+
+        formatdoc!(
+            "
+            {enable_color}[FLEETC: {}] {}{disable_color}
+            {before_err_trunc}
+            {err}
+            {after_err_trunc}",
+            match self.severity {
+                ErrorSeverity::Error => "ERROR",
+                ErrorSeverity::Warning => "WARNING",
+                ErrorSeverity::Note => "NOTE",
+            },
+            self.message
+        )
+    }
 }
 
 pub fn insert_fix_passes(pm: &mut PassManager) {

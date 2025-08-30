@@ -5,4 +5,5 @@ edition = "2024"
 default-run = "fleetc"
 
 [dependencies]
+clap = { version = "4.5.46", features = ["derive"] }
 fleet = { path = "../fleet" }
