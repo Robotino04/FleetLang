@@ -4,11 +4,13 @@ use std::{
     cell::{Ref, RefCell, RefMut},
     collections::{HashMap, VecDeque},
     error::Error,
+    fmt::Debug,
     marker::PhantomData,
     option::Option,
     rc::Rc,
 };
 
+use itertools::Itertools;
 use thiserror::Error;
 
 use crate::{
@@ -243,6 +245,8 @@ pub enum PassError {
         #[source]
         source: Box<dyn Error>,
     },
+    #[error("Pass manager stalled with {passes_left:#?} left to execute")]
+    PassManagerStall { passes_left: Vec<String> },
 }
 
 pub type PassResult = Result<(), PassError>;
@@ -294,7 +298,10 @@ pub struct PassManager {
 }
 
 impl PassManager {
-    pub fn insert<P: PassFactory<Params = ()> + 'static>(&mut self) {
+    pub fn insert<P>(&mut self)
+    where
+        P: PassFactory<Params = ()> + 'static,
+    {
         self.factories.push_back(Box::new(PassFactoryWrapper::<P> {
             _marker: PhantomData,
             params: (),
@@ -311,17 +318,39 @@ impl PassManager {
     }
 
     pub fn run(&mut self) -> PassResult {
+        let mut failed_passes = VecDeque::new();
+
         while let Some(factory) = self.factories.pop_front() {
             let pass = factory.try_new_dyn(&mut self.state);
             match pass {
                 Ok(pass) => {
-                    pass.run()?;
+                    eprintln!("{:-^80}", format!("| Running {:?} |", factory.name()));
+                    let res = pass.run();
+                    eprintln!("{:-^80}", "");
+                    res?;
+
+                    // retry all previously failed passes
+                    for failed_pass in failed_passes.drain(..).rev() {
+                        self.factories.push_front(failed_pass);
+                    }
                 }
-                Err(missing_field) => panic!(
-                    "Pass {:?} failed to construct: missing {missing_field:?}",
-                    factory.name()
-                ),
+                Err(missing_field) => {
+                    eprintln!(
+                        "Pass {:?} failed to construct: missing {missing_field:?}",
+                        factory.name()
+                    );
+                    failed_passes.push_back(factory);
+                }
             }
+        }
+
+        if !failed_passes.is_empty() {
+            return Err(PassError::PassManagerStall {
+                passes_left: failed_passes
+                    .into_iter()
+                    .map(|pass| pass.name())
+                    .collect_vec(),
+            });
         }
 
         Ok(())

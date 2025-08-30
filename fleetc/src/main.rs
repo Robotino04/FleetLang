@@ -93,9 +93,6 @@ fn main() {
 
     let print_all_errors_and_message = |msg, errors: &Vec<FleetError>| {
         let mut worst_error = None;
-        if !errors.is_empty() {
-            eprintln!("{:-^50}", "");
-        }
         for error in errors {
             if let Some(prev) = worst_error {
                 match (prev, error.severity) {
@@ -135,6 +132,92 @@ fn main() {
         .unwrap();
 
     let mut pm = PassManager::default();
+
+    // insert output passes first so partial results still get output
+    {
+        // TODO: this can't be the best option
+        let output_file_name = cli.output.clone().unwrap_or("/dev/stdout".parse().unwrap());
+
+        if cli.dump.is_empty() {
+            if cli.format {
+                pm.insert_params::<SingleFunctionPass<_, _>>(|dm: &DocumentElement| {
+                    std::fs::write(
+                        cli.output.unwrap_or(cli.input_file),
+                        stringify_document(fully_flatten_document(dm.clone())),
+                    )
+                    .unwrap();
+                    Ok(())
+                });
+            } else {
+                pm.insert_params::<SaveArtifactPass>((
+                    cli.output.unwrap_or(cli.input_file.with_extension("o")),
+                    ArtifactType::Object,
+                ));
+            }
+        }
+
+        for dump_type in &cli.dump {
+            let output_file_name = output_file_name.clone();
+            match dump_type {
+                DumpOption::CCode => {
+                    pm.insert_params::<SaveArtifactPass>((output_file_name, ArtifactType::CCode));
+                }
+                DumpOption::AstRaw => {
+                    pm.insert_params::<SingleFunctionPass<_, _>>(|rp: &RawProgram| {
+                        std::fs::write(output_file_name, format!("{rp:#?}\n")).unwrap();
+                        Ok(())
+                    });
+                }
+                DumpOption::LlvmIr => {
+                    pm.insert_params::<SingleFunctionPass<_, _>>(|module: &UnoptimizedModule| {
+                        std::fs::write(output_file_name, module.to_string() + "\n").unwrap();
+                        Ok(())
+                    });
+                }
+                DumpOption::Tokens => {
+                    pm.insert_params::<SingleFunctionPass<_, _>>(|tokens: &Vec<Token>| {
+                        std::fs::write(output_file_name, format!("{tokens:#?}\n")).unwrap();
+                        Ok(())
+                    });
+                }
+                DumpOption::AstFull => {
+                    pm.insert_params::<SingleFunctionPass<_, _>>(|program: &Program| {
+                        std::fs::write(output_file_name, format!("{program:#?}\n")).unwrap();
+                        Ok(())
+                    });
+                }
+                DumpOption::DocumentModel => {
+                    pm.insert_params::<SingleFunctionPass<_, _>>(|dm: &DocumentElement| {
+                        std::fs::write(output_file_name, format!("{dm:#?}\n")).unwrap();
+                        Ok(())
+                    });
+                }
+                DumpOption::LlvmIrOptimized => {
+                    pm.insert_params::<SingleFunctionPass<_, _>>(|module: &Module| {
+                        std::fs::write(output_file_name, module.to_string() + "\n").unwrap();
+                        Ok(())
+                    });
+                }
+                DumpOption::DocumentModelFlat => {
+                    pm.insert_params::<SingleFunctionPass<_, _>>(|dm: &DocumentElement| {
+                        std::fs::write(
+                            output_file_name,
+                            format!("{:#?}\n", fully_flatten_document(dm.clone())),
+                        )
+                        .unwrap();
+                        Ok(())
+                    });
+                }
+                DumpOption::NodeStats => {
+                    pm.insert_params::<SingleFunctionPass<_, _>>(|stats: &StatData| {
+                        std::fs::write(output_file_name, format!("{stats:#?}\n")).unwrap();
+                        Ok(())
+                    });
+                }
+            }
+        }
+    }
+
     insert_minimal_pipeline(&mut pm);
     pm.insert::<StorePass<Program, RawProgram>>();
     insert_fix_passes(&mut pm);
@@ -153,108 +236,12 @@ fn main() {
     pm.insert::<AstToDocumentModelConverter>();
     pm.insert::<SwapPass<Program, FixedProgram>>();
 
-    pm.insert_params::<SingleFunctionPass<_, _>>(|_: &RawProgram| {
-        eprintln!("{:-^50}", "");
-        Ok(())
-    });
-
-    // TODO: this can't be the best option
-    let output_file_name = cli.output.clone().unwrap_or("/dev/stdout".parse().unwrap());
-
-    if cli.dump.is_empty() {
-        if cli.format {
-            pm.insert_params::<SingleFunctionPass<_, _>>(|dm: &DocumentElement| {
-                std::fs::write(
-                    cli.output.unwrap_or(cli.input_file),
-                    stringify_document(fully_flatten_document(dm.clone())),
-                )
-                .unwrap();
-                Ok(())
-            });
-        } else {
-            pm.insert_params::<SaveArtifactPass>((
-                cli.output.unwrap_or(cli.input_file.with_extension("o")),
-                ArtifactType::Object,
-            ));
-        }
-    }
-
-    for (i, dump_type) in cli.dump.iter().enumerate() {
-        if i != 0 {
-            // insert separators
-            let output_file_name = output_file_name.clone();
-            pm.insert_params::<SingleFunctionPass<_, _>>(|_: &RawProgram| {
-                std::fs::write(output_file_name, "-".repeat(50) + "\n").unwrap();
-                Ok(())
-            });
-        }
-
-        let output_file_name = output_file_name.clone();
-        match dump_type {
-            DumpOption::CCode => {
-                pm.insert_params::<SaveArtifactPass>((output_file_name, ArtifactType::CCode));
-            }
-            DumpOption::AstRaw => {
-                pm.insert_params::<SingleFunctionPass<_, _>>(|rp: &RawProgram| {
-                    std::fs::write(output_file_name, format!("{rp:#?}")).unwrap();
-                    Ok(())
-                });
-            }
-            DumpOption::LlvmIr => {
-                pm.insert_params::<SingleFunctionPass<_, _>>(|module: &UnoptimizedModule| {
-                    std::fs::write(output_file_name, module.to_string()).unwrap();
-                    Ok(())
-                });
-            }
-            DumpOption::Tokens => {
-                pm.insert_params::<SingleFunctionPass<_, _>>(|tokens: &Vec<Token>| {
-                    std::fs::write(output_file_name, format!("{tokens:#?}")).unwrap();
-                    Ok(())
-                });
-            }
-            DumpOption::AstFull => {
-                pm.insert_params::<SingleFunctionPass<_, _>>(|program: &Program| {
-                    std::fs::write(output_file_name, format!("{program:#?}")).unwrap();
-                    Ok(())
-                });
-            }
-            DumpOption::DocumentModel => {
-                pm.insert_params::<SingleFunctionPass<_, _>>(|dm: &DocumentElement| {
-                    std::fs::write(output_file_name, format!("{dm:#?}")).unwrap();
-                    Ok(())
-                });
-            }
-            DumpOption::LlvmIrOptimized => {
-                pm.insert_params::<SingleFunctionPass<_, _>>(|module: &Module| {
-                    std::fs::write(output_file_name, module.to_string()).unwrap();
-                    Ok(())
-                });
-            }
-            DumpOption::DocumentModelFlat => {
-                pm.insert_params::<SingleFunctionPass<_, _>>(|dm: &DocumentElement| {
-                    std::fs::write(
-                        output_file_name,
-                        format!("{:#?}", fully_flatten_document(dm.clone())),
-                    )
-                    .unwrap();
-                    Ok(())
-                });
-            }
-            DumpOption::NodeStats => {
-                pm.insert_params::<SingleFunctionPass<_, _>>(|stats: &StatData| {
-                    std::fs::write(output_file_name, format!("{stats:#?}")).unwrap();
-                    Ok(())
-                });
-            }
-        }
-    }
-
     let errors = pm.state.insert_default::<Errors>();
     pm.state.insert(InputSource(src.to_string()));
     let _target_machine = pm.state.insert(target_machine);
 
     match pm.run() {
-        Err(err @ PassError::CompilerError { .. }) => {
+        Err(err @ (PassError::CompilerError { .. } | PassError::PassManagerStall { .. })) => {
             let errors = errors.get(&pm.state).clone();
             print_all_errors_and_message("Compilation failed internally", &errors);
             eprintln!("{err}");

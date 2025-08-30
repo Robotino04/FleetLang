@@ -149,7 +149,7 @@ pub fn assert_compile_error_no_formatting(src: &str, error_start: SourceLocation
 
     match pm.run() {
         Err(PassError::InvalidInput { .. }) => {}
-        Err(err @ PassError::CompilerError { .. }) => {
+        Err(err @ (PassError::CompilerError { .. } | PassError::PassManagerStall { .. })) => {
             panic!("Should have produced an InvalidInput error. Got: {err}")
         }
         Ok(()) => panic!("Should have produced an InvalidInput error. Got: Ok(())"),

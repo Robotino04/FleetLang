@@ -12,34 +12,30 @@ use super::pass_manager::{GlobalState, PassResult};
 /// Copies the data in `From` to `To`
 ///
 /// Note that you can only store into wrappers of `T`, not a `T` itself.
-pub struct StorePass<From, To, T = <To as Deref>::Target>
+pub struct StorePass<From, To>
 where
-    From: Borrow<T>,
-    To: DerefMut<Target = T> + ::core::convert::From<T>,
-    T: Clone,
+    To: DerefMut<Target: Sized> + ::core::convert::From<<To as Deref>::Target>,
+    From: Borrow<<To as Deref>::Target>,
 {
-    _marker: PhantomData<(From, To, T)>,
+    _marker: PhantomData<(From, To)>,
 }
 
-pub struct StorePassImpl<'state, From, To, T>
+pub struct StorePassImpl<'state, From, To>
 where
-    From: Borrow<T>,
-    To: DerefMut<Target = T> + ::core::convert::From<T>,
-    T: Clone,
+    To: DerefMut<Target: Sized> + ::core::convert::From<<To as Deref>::Target>,
+    From: Borrow<<To as Deref>::Target>,
 {
     from: CheckedEntry<From>,
     to: EmptyEntry<To>,
     state: &'state mut GlobalState,
-    _marker: PhantomData<T>,
 }
 
-impl<From, To, T> PassFactory for StorePass<From, To, T>
+impl<From, To> PassFactory for StorePass<From, To>
 where
-    From: Borrow<T> + 'static,
-    To: DerefMut<Target = T> + ::core::convert::From<T> + 'static,
-    T: Clone + 'static,
+    To: DerefMut<Target: Sized + Clone> + ::core::convert::From<<To as Deref>::Target> + 'static,
+    From: Borrow<<To as Deref>::Target> + 'static,
 {
-    type Output<'state> = StorePassImpl<'state, From, To, T>;
+    type Output<'state> = StorePassImpl<'state, From, To>;
     type Params = ();
 
     fn try_new<'state>(
@@ -58,20 +54,14 @@ where
         let from = state.check_named::<From>()?;
         let to = state.check_empty_named::<To>()?;
 
-        Ok(Self::Output {
-            from,
-            to,
-            state,
-            _marker: PhantomData,
-        })
+        Ok(Self::Output { from, to, state })
     }
 }
 
-impl<From, To, T> Pass for StorePassImpl<'_, From, To, T>
+impl<From, To> Pass for StorePassImpl<'_, From, To>
 where
-    From: Borrow<T> + 'static,
-    To: DerefMut<Target = T> + ::core::convert::From<T> + 'static,
-    T: Clone,
+    To: DerefMut<Target: Sized + Clone> + ::core::convert::From<<To as Deref>::Target> + 'static,
+    From: Borrow<<To as Deref>::Target> + 'static,
 {
     fn run(self: Box<Self>) -> PassResult {
         let from = self.from.get(self.state).deref().borrow().clone();

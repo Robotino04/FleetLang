@@ -31,7 +31,7 @@ where
 
     fn try_new<'state>(
         state: &'state mut GlobalState,
-        _params: Self::Params,
+        params: Self::Params,
     ) -> Result<Self::Output<'state>, String>
     where
         Self: Sized,
@@ -40,7 +40,7 @@ where
 
         Ok(Self::Output {
             from,
-            function: _params,
+            function: params,
             state,
             _marker: PhantomData,
         })
