@@ -24,8 +24,9 @@ use crate::{
             PassResult, PrecompiledGlslFunctions, ScopeData, StatData, TypeData, TypeSets,
             VariableData,
         },
+        runtime_type::RuntimeType,
         top_level_binding_finder::TopLevelBindingFinder,
-        type_propagation::{Function, RuntimeType},
+        type_propagation::Function,
     },
 };
 

@@ -30,7 +30,8 @@ use crate::{
             Errors, FunctionData, GlobalState, Pass, PassError, PassFactory, PassResult,
             PrecompiledGlslFunctions, ScopeData, StatData, TypeData, TypeSets, VariableData,
         },
-        type_propagation::{Function, FunctionID, RuntimeType, Variable},
+        runtime_type::RuntimeType,
+        type_propagation::{Function, FunctionID, Variable},
     },
 };
 

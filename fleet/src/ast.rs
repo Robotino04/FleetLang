@@ -3,7 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::{passes::type_propagation::RuntimeType, tokenizer::Token};
+use crate::{passes::runtime_type::RuntimeType, tokenizer::Token};
 
 #[derive(Clone, Debug)]
 pub enum AstNode {

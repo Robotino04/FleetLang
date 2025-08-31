@@ -17,11 +17,10 @@ use crate::{
     ast::PerNodeData,
     infra::FleetError,
     passes::{
+        runtime_type::RuntimeType,
         stat_tracker::NodeStats,
-        type_propagation::{
-            Function, FunctionID, RuntimeType, UnionFindSet, UnionFindSetPtr, Variable,
-            VariableScope,
-        },
+        type_propagation::{Function, FunctionID, Variable, VariableScope},
+        union_find_set::{UnionFindSet, UnionFindSetPtr},
     },
 };
 

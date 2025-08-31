@@ -20,7 +20,8 @@ use crate::{
     infra::{ErrorSeverity, FleetError},
     passes::{
         pass_manager::{Errors, GlobalState, Pass, PassError, PassFactory, PassResult},
-        type_propagation::{FunctionID, RuntimeType, VariableID},
+        runtime_type::RuntimeType,
+        type_propagation::{FunctionID, VariableID},
     },
     tokenizer::{Keyword, SourceLocation, Token, TokenType},
 };

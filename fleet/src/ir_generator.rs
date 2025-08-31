@@ -42,9 +42,10 @@ use crate::{
             Errors, FunctionData, GlobalState, Pass, PassError, PassFactory, PassResult,
             PrecompiledGlslFunctions, ScopeData, StatData, TypeData, TypeSets, VariableData,
         },
+        runtime_type::RuntimeType,
         stat_tracker::YesNoMaybe,
         top_level_binding_finder::TopLevelBindingFinder,
-        type_propagation::{FunctionID, RuntimeType, VariableID},
+        type_propagation::{FunctionID, VariableID},
     },
     tokenizer::SourceLocation,
 };

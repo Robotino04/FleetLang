@@ -163,4 +163,3 @@ fn triangular_iterator() {
         },
     );
 }
-

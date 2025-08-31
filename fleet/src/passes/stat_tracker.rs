@@ -23,7 +23,8 @@ use crate::{
             Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, StatData, TypeSets,
             VariableData,
         },
-        type_propagation::{Function, FunctionID, RuntimeType, Variable},
+        runtime_type::RuntimeType,
+        type_propagation::{Function, FunctionID, Variable},
     },
     tokenizer::SourceLocation,
 };
