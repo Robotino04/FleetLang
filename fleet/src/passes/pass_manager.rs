@@ -18,8 +18,8 @@ use crate::{
     infra::FleetError,
     passes::{
         runtime_type::RuntimeType,
+        scope_analysis::{Function, FunctionID, Variable, VariableScope},
         stat_tracker::NodeStats,
-        type_propagation::{Function, FunctionID, Variable, VariableScope},
         union_find_set::{UnionFindSet, UnionFindSetPtr},
     },
 };
@@ -98,7 +98,11 @@ impl GlobalState {
         T: Any,
     {
         let existing_entry = self.entries.insert(t.type_id(), Box::new(RefCell::new(t)));
-        assert!(existing_entry.is_none());
+        assert!(
+            existing_entry.is_none(),
+            "Tried inserting {:?} but it was already present",
+            type_name::<T>()
+        );
         CheckedEntry(PhantomData)
     }
 

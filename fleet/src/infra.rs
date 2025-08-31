@@ -18,6 +18,7 @@ use crate::{
         lvalue_reducer::LValueReducer,
         pass_manager::{Errors, InputSource, PassError, PassManager},
         remove_parens::RemoveParensPass,
+        scope_analysis::ScopeAnalyzer,
         stat_tracker::StatTracker,
         store_pass::StorePass,
         type_propagation::TypePropagator,
@@ -168,6 +169,7 @@ pub fn insert_minimal_pipeline(pm: &mut PassManager) {
     pm.insert::<Parser>();
 }
 pub fn insert_compile_passes(pm: &mut PassManager) {
+    pm.insert::<ScopeAnalyzer>();
     pm.insert::<TypePropagator>();
     pm.insert::<LValueReducer>();
     pm.insert::<StatTracker>();

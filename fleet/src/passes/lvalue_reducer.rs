@@ -17,7 +17,7 @@ use crate::{
             Errors, GlobalState, Pass, PassFactory, PassResult, ScopeData, TypeData, TypeSets,
             VariableData,
         },
-        type_propagation::VariableScopeStack,
+        scope_analysis::VariableScopeStack,
     },
 };
 

@@ -21,7 +21,7 @@ use crate::{
     passes::{
         pass_manager::{Errors, GlobalState, Pass, PassError, PassFactory, PassResult},
         runtime_type::RuntimeType,
-        type_propagation::{FunctionID, VariableID},
+        scope_analysis::{FunctionID, VariableID},
     },
     tokenizer::{Keyword, SourceLocation, Token, TokenType},
 };

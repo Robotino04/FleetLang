@@ -1,8 +1,5 @@
 use std::{
-    cell::{RefCell, RefMut},
-    collections::HashMap,
-    error::Error,
-    hash::Hash,
+    cell::{Ref, RefCell, RefMut},
     rc::Rc,
 };
 
@@ -28,235 +25,10 @@ use crate::{
             TypeSets, VariableData,
         },
         runtime_type::RuntimeType,
+        scope_analysis::Function,
         union_find_set::{UnionFindSet, UnionFindSetPtr},
     },
 };
-
-type AnyResult<T> = ::core::result::Result<T, Box<dyn Error>>;
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct VariableID(pub u64);
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct FunctionID(pub u64);
-
-#[derive(Clone, Debug)]
-pub struct Variable {
-    pub name: String,
-    pub type_: UnionFindSetPtr<RuntimeType>,
-    pub is_constant: bool,
-    pub id: VariableID,
-}
-
-#[derive(Clone, Debug)]
-pub struct Function {
-    pub name: String,
-    pub return_type: UnionFindSetPtr<RuntimeType>,
-    pub parameter_types: Vec<(UnionFindSetPtr<RuntimeType>, String)>,
-    pub id: FunctionID,
-}
-
-#[derive(Clone, Default, Debug)]
-pub struct VariableScope {
-    pub variable_map: HashMap<String, Rc<RefCell<Variable>>>,
-    pub parent_references: HashMap<String, Rc<RefCell<Variable>>>,
-    pub copy_from_parent: bool,
-    pub is_read_guard: bool,
-    pub is_write_guard: bool,
-    pub parent: Option<Rc<RefCell<VariableScope>>>,
-}
-
-impl VariableScope {
-    pub fn vars_and_refs(&self) -> HashMap<String, Rc<RefCell<Variable>>> {
-        let mut map = self.variable_map.clone();
-        map.extend(self.parent_references.clone().drain());
-        map
-    }
-}
-
-#[derive(Default)]
-pub struct VariableScopeStack {
-    current: Rc<RefCell<VariableScope>>,
-}
-
-impl VariableScopeStack {
-    pub fn from_scope(current: Rc<RefCell<VariableScope>>) -> Self {
-        Self { current }
-    }
-
-    /// access a variable for reading without checking if a parent reference for it exists
-    pub fn get_read_noref(&self, name: &str) -> Option<Rc<RefCell<Variable>>> {
-        let mut copy_from_parent_scopes = vec![];
-
-        let mut current = Some(self.current.clone());
-
-        let mut res = None;
-        while let Some(scope) = current {
-            if let Some(value) = scope.borrow().variable_map.get(name) {
-                res = Some(value.clone());
-                break;
-            }
-            if scope.borrow().copy_from_parent {
-                copy_from_parent_scopes.push(scope.clone());
-            }
-            if scope.borrow().is_read_guard {
-                break;
-            }
-
-            current = scope.borrow().parent.clone();
-        }
-
-        if let Some(res) = res.clone() {
-            for scope in copy_from_parent_scopes {
-                scope
-                    .borrow_mut()
-                    .parent_references
-                    .insert(name.to_string(), res.clone());
-            }
-        }
-
-        res
-    }
-    /// access a variable for writing without checking if a parent reference for it exists
-    pub fn get_write_noref(&self, name: &str) -> Option<Rc<RefCell<Variable>>> {
-        let mut copy_from_parent_scopes = vec![];
-
-        let mut current = Some(self.current.clone());
-
-        let mut res = None;
-        while let Some(scope) = current {
-            if let Some(value) = scope.borrow().variable_map.get(name) {
-                res = Some(value.clone());
-                break;
-            }
-            if scope.borrow().copy_from_parent {
-                copy_from_parent_scopes.push(scope.clone());
-            }
-            if scope.borrow().is_write_guard {
-                break;
-            }
-
-            current = scope.borrow().parent.clone();
-        }
-
-        if let Some(res) = res.clone() {
-            for scope in copy_from_parent_scopes {
-                scope
-                    .borrow_mut()
-                    .parent_references
-                    .insert(name.to_string(), res.clone());
-            }
-        }
-
-        res
-    }
-
-    pub fn get_read(&self, name: &str) -> Option<Rc<RefCell<Variable>>> {
-        let mut copy_from_parent_scopes = vec![];
-
-        let mut current = Some(self.current.clone());
-
-        let mut res = None;
-        while let Some(scope) = current {
-            if let Some(value) = scope.borrow().variable_map.get(name) {
-                res = Some(value.clone());
-                break;
-            }
-            if let Some(value) = scope.borrow().parent_references.get(name) {
-                res = Some(value.clone());
-                break;
-            }
-            if scope.borrow().copy_from_parent {
-                copy_from_parent_scopes.push(scope.clone());
-            }
-            if scope.borrow().is_read_guard {
-                break;
-            }
-
-            current = scope.borrow().parent.clone();
-        }
-
-        if let Some(res) = res.clone() {
-            for scope in copy_from_parent_scopes {
-                scope
-                    .borrow_mut()
-                    .parent_references
-                    .insert(name.to_string(), res.clone());
-            }
-        }
-
-        res
-    }
-    pub fn get_write(&self, name: &str) -> Option<Rc<RefCell<Variable>>> {
-        let mut copy_from_parent_scopes = vec![];
-
-        let mut current = Some(self.current.clone());
-
-        let mut res = None;
-        while let Some(scope) = current {
-            if let Some(value) = scope.borrow().variable_map.get(name) {
-                res = Some(value.clone());
-                break;
-            }
-            if let Some(value) = scope.borrow().parent_references.get(name) {
-                res = Some(value.clone());
-                break;
-            }
-            if scope.borrow().copy_from_parent {
-                copy_from_parent_scopes.push(scope.clone());
-            }
-            if scope.borrow().is_write_guard {
-                break;
-            }
-
-            current = scope.borrow().parent.clone();
-        }
-
-        if let Some(res) = res.clone() {
-            for scope in copy_from_parent_scopes {
-                scope
-                    .borrow_mut()
-                    .parent_references
-                    .insert(name.to_string(), res.clone());
-            }
-        }
-
-        res
-    }
-
-    pub fn try_insert(&mut self, var: Variable) -> AnyResult<()> {
-        if self.current.borrow().variable_map.contains_key(&var.name) {
-            Err("variable already exists".into())
-        } else {
-            self.current
-                .borrow_mut()
-                .variable_map
-                .insert(var.name.clone(), Rc::new(RefCell::new(var)));
-            Ok(())
-        }
-    }
-    pub fn push_child(&mut self) {
-        self.current = Rc::new(RefCell::new(VariableScope {
-            parent: Some(self.current.clone()),
-            ..Default::default()
-        }));
-    }
-    pub fn pop(&mut self) {
-        let tmp = self
-            .current
-            .borrow()
-            .parent
-            .as_ref()
-            .expect("Tried popping the global scope")
-            .clone();
-
-        self.current = tmp;
-    }
-
-    pub fn top_mut(&self) -> RefMut<VariableScope> {
-        self.current.borrow_mut()
-    }
-}
 
 pub struct TypePropagator<'state> {
     errors: RefMut<'state, Errors>,
@@ -265,12 +37,10 @@ pub struct TypePropagator<'state> {
 
     type_sets: RefMut<'state, TypeSets>,
     node_types: RefMut<'state, TypeData>,
-    referenced_variable: RefMut<'state, VariableData>,
-    referenced_function: RefMut<'state, FunctionData>,
-    contained_scope: RefMut<'state, ScopeData>,
+    referenced_variable: Ref<'state, VariableData>,
+    referenced_function: Ref<'state, FunctionData>,
+    containing_scope: Ref<'state, ScopeData>,
 
-    variable_scopes: VariableScopeStack,
-    function_list: HashMap<String, Rc<RefCell<Function>>>,
     current_function: Option<Rc<RefCell<Function>>>,
     require_constant: bool,
 }
@@ -289,9 +59,9 @@ impl PassFactory for TypePropagator<'_> {
 
         let type_sets = state.insert_default();
         let node_types = state.insert_default();
-        let referenced_variable = state.insert_default();
-        let referenced_function = state.insert_default();
-        let contained_scope = state.insert_default();
+        let referenced_variable = state.check_named()?;
+        let referenced_function = state.check_named()?;
+        let scope_data = state.check_named()?;
 
         Ok(Self::Output {
             errors: errors.get_mut(state),
@@ -300,12 +70,10 @@ impl PassFactory for TypePropagator<'_> {
 
             type_sets: type_sets.get_mut(state),
             node_types: node_types.get_mut(state),
-            referenced_variable: referenced_variable.get_mut(state),
-            referenced_function: referenced_function.get_mut(state),
-            contained_scope: contained_scope.get_mut(state),
+            referenced_variable: referenced_variable.get(state),
+            referenced_function: referenced_function.get(state),
+            containing_scope: scope_data.get(state),
 
-            variable_scopes: VariableScopeStack::default(),
-            function_list: HashMap::new(),
             current_function: None,
             require_constant: false,
         })
@@ -334,10 +102,9 @@ impl<'a> TypePropagator<'a> {
             right_arrow_token: _,
             return_type,
             body: _,
-            id: _,
+            id,
         } = function;
 
-        self.variable_scopes.push_child(); // temporary parameter scope
         let return_type = return_type
             .as_mut()
             .map(|t| self.visit_type(t))
@@ -347,29 +114,21 @@ impl<'a> TypePropagator<'a> {
             .map(|(param, _comma)| (self.visit_simple_binding(param), param.name.clone()))
             .collect();
 
-        if self
-            .function_list
-            .insert(
-                name.clone(),
-                Rc::new(RefCell::new(Function {
-                    name: name.clone(),
-                    return_type,
-                    parameter_types,
-                    id: self.id_generator.next_function_id(),
-                })),
-            )
-            .is_some()
-        {
+        let Some(ref_func) = self.referenced_function.get(id) else {
             self.errors.push(FleetError::from_node(
                 &function_clone,
-                format!("Multiple functions named {name:?} defined"),
+                format!("Function {name:?} wasn't processed by ScopeAnalysis"),
                 ErrorSeverity::Error,
             ));
-        }
-
-        // this is just the registration, so nothing has to be specialized
-        // self.require_fully_specialized_scope(stmt_clone);
-        self.variable_scopes.pop();
+            return;
+        };
+        *ref_func.borrow_mut() = Function {
+            name: name.clone(),
+            return_type: Some(return_type),
+            parameter_types: Some(parameter_types),
+            id: self.id_generator.next_function_id(),
+            definition_node_id: *id,
+        };
     }
 
     fn generate_mismatched_type_error_if<I: Into<AstNode> + Clone>(
@@ -394,38 +153,37 @@ impl<'a> TypePropagator<'a> {
         }
     }
 
-    fn require_fully_specialized<I: Into<AstNode> + Clone>(
+    fn require_fully_specialized_scope<I: Into<AstNode> + Clone>(
         &mut self,
-        node: &I,
-        name: impl AsRef<str>,
-        actual_type: RuntimeType,
+        error_node: &I,
+        scope_node: &impl HasID,
     ) {
-        if let RuntimeType::Unknown | RuntimeType::UnsizedFloat | RuntimeType::UnsizedInteger =
-            actual_type
-        {
-            self.errors.push(FleetError::from_node(
-                node,
-                format!(
-                    "The type of {} cannot be inferred completely. Best effort: {}",
-                    name.as_ref(),
-                    actual_type.stringify(&self.type_sets)
-                ),
-                ErrorSeverity::Error,
-            ));
-        }
-    }
-
-    fn require_fully_specialized_scope<I: Into<AstNode> + Clone>(&mut self, error_node: &I) {
-        let scope = self.variable_scopes.current.borrow().clone();
+        let scope = self
+            .containing_scope
+            .get(&scope_node.get_id())
+            .unwrap()
+            .borrow();
 
         for (name, variable) in &scope.variable_map {
-            let type_ = self.type_sets.get_mut(variable.borrow().type_);
-            type_.specialize_int_size();
+            let actual_type = self.type_sets.get_mut(variable.borrow().type_.unwrap());
+            actual_type.specialize_int_size();
 
-            let type_ = *type_;
+            // release the borrow
+            let actual_type = *actual_type;
 
             // TODO: once we track variable definitions, use that here
-            self.require_fully_specialized(error_node, format!("{name:?}"), type_);
+            if let RuntimeType::Unknown | RuntimeType::UnsizedFloat | RuntimeType::UnsizedInteger =
+                actual_type
+            {
+                self.errors.push(FleetError::from_node(
+                    error_node,
+                    format!(
+                        "The type of {name:?} cannot be inferred completely. Best effort: {}",
+                        actual_type.stringify(&self.type_sets)
+                    ),
+                    ErrorSeverity::Error,
+                ));
+            }
         }
     }
 
@@ -467,7 +225,7 @@ impl AstVisitor for TypePropagator<'_> {
         let fdef_clone = fdef.clone();
         let FunctionDefinition {
             let_token: _,
-            name,
+            name: _,
             name_token: _,
             equal_token: _,
             open_paren_token: _,
@@ -480,8 +238,8 @@ impl AstVisitor for TypePropagator<'_> {
         } = fdef;
 
         let this_function = self
-            .function_list
-            .get(name)
+            .referenced_function
+            .get(id)
             .expect("All functions should have been registered before traversing the tree")
             .clone();
 
@@ -491,23 +249,13 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.current_function = Some(this_function.clone());
 
-        self.variable_scopes.push_child(); // the parameter scope
         for (param, _comma) in parameters {
             self.visit_simple_binding(param);
         }
 
         self.visit_function_body(body);
 
-        self.require_fully_specialized_scope(&fdef_clone);
-        self.variable_scopes.pop();
-
-        self.referenced_function
-            .insert(body.get_id(), this_function.clone());
-
-        self.referenced_function.insert(*id, this_function);
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+        self.require_fully_specialized_scope(&fdef_clone, body);
     }
 
     fn visit_statement_function_body(
@@ -537,7 +285,7 @@ impl AstVisitor for TypePropagator<'_> {
         let simple_binding_clone = simple_binding.clone();
         let SimpleBinding {
             name_token: _,
-            name,
+            name: _,
             type_,
             id,
         } = simple_binding;
@@ -547,25 +295,6 @@ impl AstVisitor for TypePropagator<'_> {
         } else {
             self.type_sets.insert_set(RuntimeType::Unknown)
         };
-        if self
-            .variable_scopes
-            .try_insert(Variable {
-                name: name.clone(),
-                type_: defined_type,
-                is_constant: false,
-                id: self.id_generator.next_variable_id(),
-            })
-            .is_err()
-        {
-            self.errors.push(FleetError::from_node(
-                &simple_binding_clone,
-                format!(
-                    "A variable named {} was already defined in this scope",
-                    name.clone()
-                ),
-                ErrorSeverity::Error,
-            ));
-        }
         if *self.type_sets.get(defined_type) == RuntimeType::Unit {
             self.errors.push(FleetError::from_node(
                 &type_
@@ -577,17 +306,9 @@ impl AstVisitor for TypePropagator<'_> {
             ));
         }
 
-        self.referenced_variable.insert(
-            *id,
-            self.variable_scopes
-                .get_write(name)
-                .expect("This variable should have just been added")
-                .clone(),
-        );
-        self.node_types.insert(*id, defined_type);
+        self.referenced_variable.get(id).unwrap().borrow_mut().type_ = Some(defined_type);
 
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+        self.node_types.insert(*id, defined_type);
 
         defined_type
     }
@@ -597,13 +318,10 @@ impl AstVisitor for TypePropagator<'_> {
         ExpressionStatement {
             expression,
             semicolon_token: _,
-            id,
+            id: _,
         }: &mut ExpressionStatement,
     ) -> Self::StatementOutput {
         let _type = self.visit_expression(expression);
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_on_statement(&mut self, stmt: &mut OnStatement) -> Self::StatementOutput {
@@ -616,11 +334,8 @@ impl AstVisitor for TypePropagator<'_> {
             bindings,
             close_paren_token: _,
             body,
-            id,
+            id: _,
         } = stmt;
-
-        self.variable_scopes.push_child();
-        self.variable_scopes.top_mut().copy_from_parent = true;
 
         self.visit_executor(executor);
 
@@ -684,16 +399,9 @@ impl AstVisitor for TypePropagator<'_> {
         }
         self.require_constant = false;
 
-        // cannot write to the outside anymore
-        self.variable_scopes.top_mut().is_write_guard = true;
-
         self.visit_statement(body);
 
-        self.require_fully_specialized_scope(&stmt_clone);
-        self.variable_scopes.pop();
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+        self.require_fully_specialized_scope(&stmt_clone, &**body);
     }
 
     fn visit_block_statement(&mut self, stmt: &mut BlockStatement) -> Self::StatementOutput {
@@ -702,20 +410,16 @@ impl AstVisitor for TypePropagator<'_> {
             open_brace_token: _,
             body,
             close_brace_token: _,
-            id,
+            id: _,
         } = stmt;
 
-        self.variable_scopes.push_child();
-
-        for stmt in body {
+        for stmt in &mut *body {
             self.visit_statement(stmt);
         }
 
-        self.require_fully_specialized_scope(&stmt_clone);
-        self.variable_scopes.pop();
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+        if let Some(body_part) = body.first() {
+            self.require_fully_specialized_scope(&stmt_clone, body_part);
+        }
     }
 
     fn visit_return_statement(&mut self, stmt: &mut ReturnStatement) -> Self::StatementOutput {
@@ -737,7 +441,8 @@ impl AstVisitor for TypePropagator<'_> {
             .as_ref()
             .expect("Return statements should only appear inside functions")
             .borrow()
-            .return_type;
+            .return_type
+            .unwrap();
 
         if !RuntimeType::merge_types(this_type, expected_type, &mut self.type_sets) {
             let expected_type_str = self.stringify_type_ptr(expected_type);
@@ -753,9 +458,6 @@ impl AstVisitor for TypePropagator<'_> {
         }
 
         self.node_types.insert(*id, this_type);
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_variable_definition_statement(
@@ -769,7 +471,7 @@ impl AstVisitor for TypePropagator<'_> {
             equals_token: _,
             value,
             semicolon_token: _,
-            id,
+            id: _,
         } = vardef_stmt;
 
         // evaluated before the binding so it can potentially access variables that get shadowed
@@ -790,9 +492,6 @@ impl AstVisitor for TypePropagator<'_> {
                 ErrorSeverity::Error,
             ));
         }
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_if_statement(
@@ -803,7 +502,7 @@ impl AstVisitor for TypePropagator<'_> {
             if_body,
             elifs,
             else_,
-            id,
+            id: _,
         }: &mut IfStatement,
     ) -> Self::StatementOutput {
         let cond_type = self.visit_expression(condition);
@@ -832,9 +531,6 @@ impl AstVisitor for TypePropagator<'_> {
         if let Some((_else_token, else_body)) = else_ {
             self.visit_statement(else_body);
         }
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_while_loop_statement(
@@ -843,7 +539,7 @@ impl AstVisitor for TypePropagator<'_> {
             while_token: _,
             condition,
             body,
-            id,
+            id: _,
         }: &mut WhileLoopStatement,
     ) -> Self::StatementOutput {
         let cond_type = self.visit_expression(condition);
@@ -856,9 +552,6 @@ impl AstVisitor for TypePropagator<'_> {
             *self.type_sets.get(cond_type),
         );
         self.visit_statement(body);
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_for_loop_statement(
@@ -872,10 +565,9 @@ impl AstVisitor for TypePropagator<'_> {
             incrementer,
             close_paren_token: _,
             body,
-            id,
+            id: _,
         }: &mut ForLoopStatement,
     ) -> Self::StatementOutput {
-        self.variable_scopes.push_child();
         self.visit_statement(initializer);
 
         if let Some(con) = condition {
@@ -893,11 +585,7 @@ impl AstVisitor for TypePropagator<'_> {
         }
         self.visit_statement(body);
 
-        self.require_fully_specialized_scope(&**initializer);
-        self.variable_scopes.pop();
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+        self.require_fully_specialized_scope(&**initializer, &**body);
     }
 
     fn visit_break_statement(
@@ -905,11 +593,9 @@ impl AstVisitor for TypePropagator<'_> {
         BreakStatement {
             break_token: _,
             semicolon_token: _,
-            id,
+            id: _,
         }: &mut BreakStatement,
     ) -> Self::StatementOutput {
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_skip_statement(
@@ -917,19 +603,15 @@ impl AstVisitor for TypePropagator<'_> {
         SkipStatement {
             skip_token: _,
             semicolon_token: _,
-            id,
+            id: _,
         }: &mut SkipStatement,
     ) -> Self::StatementOutput {
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_self_executor_host(
         &mut self,
-        SelfExecutorHost { token: _, id }: &mut SelfExecutorHost,
+        SelfExecutorHost { token: _, id: _ }: &mut SelfExecutorHost,
     ) -> Self::ExecutorHostOutput {
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_thread_executor(
@@ -941,7 +623,7 @@ impl AstVisitor for TypePropagator<'_> {
             open_bracket_token: _,
             index,
             close_bracket_token: _,
-            id,
+            id: _,
         }: &mut ThreadExecutor,
     ) -> Self::ExecutorOutput {
         self.visit_executor_host(host);
@@ -954,9 +636,6 @@ impl AstVisitor for TypePropagator<'_> {
             "numeric",
             *self.type_sets.get(index_type),
         );
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_gpu_executor(
@@ -968,7 +647,7 @@ impl AstVisitor for TypePropagator<'_> {
             open_bracket_token: _,
             gpu_index,
             close_bracket_token: _,
-            id,
+            id: _,
         }: &mut GPUExecutor,
     ) -> Self::ExecutorOutput {
         self.visit_executor_host(host);
@@ -981,9 +660,6 @@ impl AstVisitor for TypePropagator<'_> {
             "numeric",
             *self.type_sets.get(index_type),
         );
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
     }
 
     fn visit_literal_expression(
@@ -1001,9 +677,6 @@ impl AstVisitor for TypePropagator<'_> {
             LiteralKind::Bool(_) => RuntimeType::Boolean,
         });
         self.node_types.insert(*id, type_);
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
 
         type_
     }
@@ -1038,9 +711,6 @@ impl AstVisitor for TypePropagator<'_> {
             }
         }
 
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
         let type_ = self.type_sets.insert_set(RuntimeType::ArrayOf {
             subtype: element_type,
             size: Some(elements.len()),
@@ -1062,7 +732,7 @@ impl AstVisitor for TypePropagator<'_> {
             close_paren_token,
             id,
         } = expression;
-        let Some(ref_function) = self.function_list.get(name).cloned() else {
+        let Some(ref_function) = self.referenced_function.get(id).cloned() else {
             self.errors.push(FleetError::from_node(
                 &expression_clone,
                 format!("No function named {name:?} is defined"),
@@ -1076,9 +746,13 @@ impl AstVisitor for TypePropagator<'_> {
 
             return self.type_sets.insert_set(RuntimeType::Error);
         };
-        self.referenced_function.insert(*id, ref_function.clone());
 
-        let num_expected_arguments = ref_function.borrow().parameter_types.len();
+        let num_expected_arguments = ref_function
+            .borrow()
+            .parameter_types
+            .as_ref()
+            .unwrap()
+            .len();
 
         for (i, types) in expression
             .arguments
@@ -1086,7 +760,14 @@ impl AstVisitor for TypePropagator<'_> {
             .map(|(arg, _comma)| (self.visit_expression(arg), arg))
             .collect_vec()
             .iter()
-            .zip_longest(ref_function.borrow().parameter_types.iter())
+            .zip_longest(
+                ref_function
+                    .borrow()
+                    .parameter_types
+                    .as_ref()
+                    .unwrap()
+                    .iter(),
+            )
             .enumerate()
         {
             match types {
@@ -1133,10 +814,9 @@ impl AstVisitor for TypePropagator<'_> {
             }
         }
 
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
-        let detached_return_type = self.type_sets.detach(ref_function.borrow().return_type);
+        let detached_return_type = self
+            .type_sets
+            .detach(ref_function.borrow().return_type.unwrap());
 
         self.node_types.insert(*id, detached_return_type);
 
@@ -1162,6 +842,10 @@ impl AstVisitor for TypePropagator<'_> {
             UnionFindSetPtr<RuntimeType>,
         ) = match name.as_str() {
             "zero" => (vec![], self.type_sets.insert_set(RuntimeType::Unknown)),
+            "comptime" => {
+                let type_ = self.type_sets.insert_set(RuntimeType::Unknown);
+                (vec![(type_, "value".to_string())], type_)
+            }
             _ => {
                 self.errors.push(FleetError::from_node(
                     &expression_clone,
@@ -1191,11 +875,8 @@ impl AstVisitor for TypePropagator<'_> {
         {
             match types {
                 EitherOrBoth::Both((arg_type, arg), (param_type, param_name)) => {
-                    // function arguments shouldn't get specialized by calling the function
-                    let param_type = self.type_sets.detach(*param_type);
-
-                    if !RuntimeType::merge_types(arg_type, param_type, &mut self.type_sets) {
-                        let param_type_str = self.stringify_type_ptr(param_type);
+                    if !RuntimeType::merge_types(arg_type, *param_type, &mut self.type_sets) {
+                        let param_type_str = self.stringify_type_ptr(*param_type);
                         let arg_type_str = self.stringify_type_ptr(arg_type);
 
                         self.errors.push(FleetError::from_node(
@@ -1232,9 +913,6 @@ impl AstVisitor for TypePropagator<'_> {
                 }
             }
         }
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
 
         self.node_types.insert(*id, return_type);
 
@@ -1279,9 +957,6 @@ impl AstVisitor for TypePropagator<'_> {
             ));
         }
 
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
         self.node_types.insert(*id, subtype);
         subtype
     }
@@ -1295,9 +970,6 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         }: &mut GroupingExpression,
     ) -> Self::ExpressionOutput {
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
         let type_ = self.visit_expression(subexpression);
         self.node_types.insert(*id, type_);
         type_
@@ -1313,7 +985,7 @@ impl AstVisitor for TypePropagator<'_> {
             name_token: _,
             id,
         } = expression;
-        let Some(ref_variable) = self.variable_scopes.get_read(name) else {
+        let Some(ref_variable) = self.referenced_variable.get(id) else {
             self.errors.push(FleetError::from_node(
                 &expression_clone,
                 format!("No variable named {name:?} is defined"),
@@ -1328,13 +1000,10 @@ impl AstVisitor for TypePropagator<'_> {
                 ErrorSeverity::Error,
             ));
         }
-        self.referenced_variable.insert(*id, ref_variable.clone());
 
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
-        self.node_types.insert(*id, ref_variable.borrow().type_);
-        return ref_variable.borrow().type_;
+        let type_ = ref_variable.borrow().type_.unwrap();
+        self.node_types.insert(*id, type_);
+        type_
     }
 
     fn visit_unary_expression(
@@ -1393,9 +1062,6 @@ impl AstVisitor for TypePropagator<'_> {
             UnaryOperation::LogicalNot => self.type_sets.insert_set(RuntimeType::Boolean),
             UnaryOperation::Negate => type_,
         };
-
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
 
         self.node_types.insert(*id, this_type);
         this_type
@@ -1634,9 +1300,6 @@ impl AstVisitor for TypePropagator<'_> {
             &mut self.type_sets,
         );
 
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
         self.node_types.insert(*id, to_ptr);
         to_ptr
     }
@@ -1778,9 +1441,6 @@ impl AstVisitor for TypePropagator<'_> {
             }
         }
 
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
         let this_type = match operation {
             BinaryOperation::Add
             | BinaryOperation::Subtract
@@ -1826,9 +1486,6 @@ impl AstVisitor for TypePropagator<'_> {
             ));
         }
 
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
         self.node_types.insert(*id, left_type);
         left_type
     }
@@ -1840,7 +1497,7 @@ impl AstVisitor for TypePropagator<'_> {
             name_token: _,
             id,
         } = lvalue;
-        let Some(ref_variable) = self.variable_scopes.get_write(name) else {
+        let Some(ref_variable) = self.referenced_variable.get(id) else {
             self.errors.push(FleetError::from_node(
                 &lvalue_clone,
                 format!("No variable named {name:?} is defined"),
@@ -1855,13 +1512,10 @@ impl AstVisitor for TypePropagator<'_> {
                 ErrorSeverity::Error,
             ));
         }
-        self.referenced_variable.insert(*id, ref_variable.clone());
 
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
-        self.node_types.insert(*id, ref_variable.borrow().type_);
-        return ref_variable.borrow().type_;
+        let type_ = ref_variable.borrow().type_.unwrap();
+        self.node_types.insert(*id, type_);
+        type_
     }
 
     fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
@@ -1902,9 +1556,6 @@ impl AstVisitor for TypePropagator<'_> {
             ));
         }
 
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
         self.node_types.insert(*id, subtype);
         subtype
     }
@@ -1932,9 +1583,6 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         }: &mut SimpleType,
     ) -> Self::TypeOutput {
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
         // make sure function registration gets the same type as the full eval
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
@@ -1952,9 +1600,6 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         }: &mut UnitType,
     ) -> Self::TypeOutput {
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
         // make sure function registration gets the same type as the full eval
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
@@ -1965,9 +1610,6 @@ impl AstVisitor for TypePropagator<'_> {
     }
 
     fn visit_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> Self::TypeOutput {
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
         }
@@ -1986,9 +1628,6 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         }: &mut ArrayType,
     ) -> Self::TypeOutput {
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
-
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
         }

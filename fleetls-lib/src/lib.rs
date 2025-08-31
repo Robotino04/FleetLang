@@ -20,6 +20,7 @@ use fleet::{
             Errors, FunctionData, InputSource, PassError, PassManager, ScopeData, StatData,
             TypeData, TypeSets, VariableData,
         },
+        scope_analysis::ComptimeDeps,
     },
     tokenizer::{SourceLocation, Token},
 };
@@ -102,6 +103,7 @@ struct AnalysisData<'a> {
     function_data: &'a FunctionData,
     variable_data: &'a VariableData,
     scope_data: &'a ScopeData,
+    comptime_deps: &'a ComptimeDeps,
 }
 
 impl Backend {
@@ -112,6 +114,7 @@ impl Backend {
             function_data: _,
             variable_data: _,
             scope_data: _,
+            comptime_deps: _,
         }) = analysis_data
         else {
             return "/* No type data available */".to_string();
@@ -159,6 +162,7 @@ impl Backend {
                                 function_data,
                                 variable_data: _,
                                 scope_data: _,
+                                comptime_deps: _,
                             }) = analysis_data
                             else {
                                 return "/* No type data available */".to_string();
@@ -166,7 +170,10 @@ impl Backend {
                             let Some(ref_func) = function_data.get(&id) else {
                                 return "/* Function doesn't exist */".to_string();
                             };
-                            let return_type = type_sets.get(ref_func.borrow().return_type);
+                            let Some(return_type) = ref_func.borrow().return_type else {
+                                return "/* Not processed by ScopeAnalyzer */".to_string();
+                            };
+                            let return_type = type_sets.get(return_type);
                             return_type.stringify(type_sets)
                         })
                 ),
@@ -204,6 +211,7 @@ impl Backend {
                                 function_data: _,
                                 variable_data,
                                 scope_data: _,
+                                comptime_deps: _,
                             }) = analysis_data
                             else {
                                 return "/* No type data available */".to_string();
@@ -211,7 +219,12 @@ impl Backend {
                             let Some(ref_var) = variable_data.get(&id) else {
                                 return "/* Variable doesn't exist */".to_string();
                             };
-                            let type_ = type_sets.get(ref_var.borrow().type_);
+                            let Some(type_) = ref_var.borrow().type_ else {
+                                return "/* Variable wasn't processed by ScopeAnalyzer */"
+                                    .to_string();
+                            };
+
+                            let type_ = type_sets.get(type_);
                             type_.stringify(type_sets)
                         })
                 ),
@@ -465,6 +478,7 @@ impl Backend {
                         function_data,
                         variable_data: _,
                         scope_data: _,
+                        comptime_deps: _,
                     }) = analysis_data
                     else {
                         return (
@@ -478,20 +492,26 @@ impl Backend {
                             "/* Function doesn't exist */".to_string(),
                         );
                     };
-                    let return_type = type_sets
-                        .get(ref_func.borrow().return_type)
-                        .stringify(type_sets);
-                    let parameters = Itertools::intersperse(
-                        ref_func
-                            .borrow()
-                            .parameter_types
-                            .iter()
-                            .map(|(param, name)| {
+                    let Some(return_type) = ref_func.borrow().return_type else {
+                        return (
+                            "/* Return type not processed by ScopeAnalyzer */".to_string(),
+                            "/* Return type not processed by ScopeAnalyzer */".to_string(),
+                        );
+                    };
+                    let return_type = type_sets.get(return_type).stringify(type_sets);
+                    let parameters = if let Some(param_types) =
+                        ref_func.borrow().parameter_types.as_ref()
+                    {
+                        Itertools::intersperse(
+                            param_types.iter().map(|(param, name)| {
                                 name.clone() + ": " + &type_sets.get(*param).stringify(type_sets)
                             }),
-                        ", ".to_string(),
-                    )
-                    .collect::<String>();
+                            ", ".to_string(),
+                        )
+                        .collect::<String>()
+                    } else {
+                        "/* Param types not processed by ScopeAnalyzer */".to_string()
+                    };
 
                     (parameters, return_type)
                 })();
@@ -517,6 +537,7 @@ impl Backend {
                         function_data,
                         variable_data: _,
                         scope_data: _,
+                        comptime_deps: _,
                     }) = analysis_data
                     else {
                         return (
@@ -530,20 +551,26 @@ impl Backend {
                             "/* Compiler function doesn't exist */".to_string(),
                         );
                     };
-                    let return_type = type_sets
-                        .get(ref_func.borrow().return_type)
-                        .stringify(type_sets);
-                    let parameters = Itertools::intersperse(
-                        ref_func
-                            .borrow()
-                            .parameter_types
-                            .iter()
-                            .map(|(param, name)| {
+                    let Some(return_type) = ref_func.borrow().return_type else {
+                        return (
+                            "/* Return type not processed by ScopeAnalyzer */".to_string(),
+                            "/* Return type not processed by ScopeAnalyzer */".to_string(),
+                        );
+                    };
+                    let return_type = type_sets.get(return_type).stringify(type_sets);
+                    let parameters = if let Some(param_types) =
+                        ref_func.borrow().parameter_types.as_ref()
+                    {
+                        Itertools::intersperse(
+                            param_types.iter().map(|(param, name)| {
                                 name.clone() + ": " + &type_sets.get(*param).stringify(type_sets)
                             }),
-                        ", ".to_string(),
-                    )
-                    .collect::<String>();
+                            ", ".to_string(),
+                        )
+                        .collect::<String>()
+                    } else {
+                        "/* Param types not processed by ScopeAnalyzer */".to_string()
+                    };
 
                     (parameters, return_type)
                 })();
@@ -680,6 +707,9 @@ impl Backend {
 
                         ---- Debug Stats ----
                         ```rust
+                        evaluation_time: {}
+                        evaluation_deps: {}
+
                         {}
                         ```
 
@@ -699,6 +729,20 @@ impl Backend {
                 .map_or("No AST Node".to_string(), |(info, debug)| format!(
                     "{info} // {debug}"
                 )),
+            analysis_data
+                .as_ref()
+                .and_then(|analysis| analysis.comptime_deps.get(&node_hierarchy.last()?.get_id()))
+                .map_or(
+                    "No evaluation time data available".to_string(),
+                    |(eval_time, _deps)| format!("{eval_time:?}")
+                ),
+            analysis_data
+                .as_ref()
+                .and_then(|analysis| analysis.comptime_deps.get(&node_hierarchy.last()?.get_id()))
+                .map_or(
+                    "No evaluation time data available".to_string(),
+                    |(_eval_time, deps)| format!("{deps:#?}")
+                ),
             stats
                 .as_ref()
                 .and_then(|stat| stat.get(&node_hierarchy.last()?.get_id()).cloned())
@@ -954,6 +998,7 @@ impl LanguageServer for Backend {
             pm.state.get(),
             pm.state.get(),
             pm.state.get(),
+            pm.state.get(),
         );
 
         let analysis_data = if let (
@@ -962,6 +1007,7 @@ impl LanguageServer for Backend {
             Some(function_data),
             Some(variable_data),
             Some(scope_data),
+            Some(comptime_deps),
         ) = &analysis_data
         {
             Some(AnalysisData {
@@ -970,6 +1016,7 @@ impl LanguageServer for Backend {
                 function_data,
                 variable_data,
                 scope_data,
+                comptime_deps,
             })
         } else {
             None
@@ -1153,6 +1200,7 @@ impl LanguageServer for Backend {
             pm.state.get(),
             pm.state.get(),
             pm.state.get(),
+            pm.state.get(),
         );
 
         let analysis_data = if let (
@@ -1161,6 +1209,7 @@ impl LanguageServer for Backend {
             Some(function_data),
             Some(variable_data),
             Some(scope_data),
+            Some(comptime_deps),
         ) = &analysis_data
         {
             Some(AnalysisData {
@@ -1169,6 +1218,7 @@ impl LanguageServer for Backend {
                 function_data,
                 variable_data,
                 scope_data,
+                comptime_deps,
             })
         } else {
             None
@@ -1211,6 +1261,10 @@ impl LanguageServer for Backend {
             let Some(ref_func) = analysis_data.function_data.get(&function_call.id) else {
                 return Ok(None);
             };
+            let ref_func_borrow = ref_func.borrow();
+            let Some(parameter_types) = ref_func_borrow.parameter_types.as_ref() else {
+                return Ok(None);
+            };
 
             let active_parameter = prev_node
                 .map(|argument| {
@@ -1225,7 +1279,7 @@ impl LanguageServer for Backend {
                             function_call
                                 .arguments
                                 .len()
-                                .min(ref_func.borrow().parameter_types.len().saturating_sub(1))
+                                .min(parameter_types.len().saturating_sub(1))
                                 as u32
                         })
                 })
@@ -1235,8 +1289,7 @@ impl LanguageServer for Backend {
                     function_call
                         .arguments
                         .len()
-                        .min(ref_func.borrow().parameter_types.len().saturating_sub(1))
-                        as u32
+                        .min(parameter_types.len().saturating_sub(1)) as u32
                 });
 
             Ok(Some(SignatureHelp {

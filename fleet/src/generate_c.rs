@@ -25,8 +25,8 @@ use crate::{
             VariableData,
         },
         runtime_type::RuntimeType,
+        scope_analysis::Function,
         top_level_binding_finder::TopLevelBindingFinder,
-        type_propagation::Function,
     },
 };
 
@@ -189,6 +189,8 @@ impl CCodeGenerator<'_> {
     fn generate_function_declaration(&self, function: &Function, mangle: bool) -> String {
         let params = function
             .parameter_types
+            .as_ref()
+            .unwrap()
             .iter()
             .map(|(param, name)| {
                 let (type_, after_id) = self.runtime_type_to_c(*self.type_sets.get(*param));
@@ -196,7 +198,8 @@ impl CCodeGenerator<'_> {
             })
             .join(", ");
 
-        let (type_, after_id) = self.runtime_type_to_c(*self.type_sets.get(function.return_type));
+        let (type_, after_id) =
+            self.runtime_type_to_c(*self.type_sets.get(function.return_type.unwrap()));
         type_
             + &after_id
             + " "
@@ -207,7 +210,7 @@ impl CCodeGenerator<'_> {
             }
             .as_str()
             + "("
-            + if function.parameter_types.is_empty() {
+            + if function.parameter_types.as_ref().unwrap().is_empty() {
                 "void"
             } else {
                 &params
@@ -380,6 +383,8 @@ impl AstVisitor for CCodeGenerator<'_> {
             parent_function
                 .borrow()
                 .parameter_types
+                .as_ref()
+                .unwrap()
                 .iter()
                 .map(|(_param, name)| self.mangle_variable(name))
                 .join(",")
@@ -732,7 +737,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             .expect("var data must exist before calling c_generator")
             .clone();
 
-        let type_ = *self.type_sets.get(ref_var.borrow().type_);
+        let type_ = *self.type_sets.get(ref_var.borrow().type_.unwrap());
 
         if let RuntimeType::ArrayOf {
             subtype: _,
@@ -1142,7 +1147,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             id,
         } = expr;
 
-        let (_pre_statements, _args): (Vec<_>, Vec<_>) = arguments
+        let (pre_statements, args): (Vec<_>, Vec<_>) = arguments
             .iter_mut()
             .map(|(arg, _comma)| self.visit_expression(arg))
             .map(
@@ -1200,6 +1205,10 @@ impl AstVisitor for CCodeGenerator<'_> {
                     }
                 }
             }
+            "comptime" => PreStatementValue {
+                pre_statements: pre_statements.first().unwrap().clone(),
+                out_value: args.first().unwrap().clone(),
+            },
             _ => {
                 self.errors.push(FleetError::from_node(
                     &expr_clone,
@@ -1289,7 +1298,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             .expect("var data must exist before calling c_generator")
             .clone();
 
-        let type_ = self.type_sets.get(ref_var.borrow().type_);
+        let type_ = self.type_sets.get(ref_var.borrow().type_.unwrap());
 
         if let RuntimeType::ArrayOf {
             subtype: _,

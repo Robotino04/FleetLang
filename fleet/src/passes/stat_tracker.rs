@@ -24,7 +24,7 @@ use crate::{
             VariableData,
         },
         runtime_type::RuntimeType,
-        type_propagation::{Function, FunctionID, Variable},
+        scope_analysis::{Function, FunctionID, Variable},
     },
     tokenizer::SourceLocation,
 };
@@ -338,7 +338,11 @@ impl AstVisitor for StatTracker<'_> {
                 .as_ref()
                 .expect("Function body analyzed for termination without a containing function");
 
-            if *self.type_sets.get(current_function.borrow().return_type) != RuntimeType::Unit {
+            if *self
+                .type_sets
+                .get(current_function.borrow().return_type.unwrap())
+                != RuntimeType::Unit
+            {
                 self.errors.push(FleetError::from_node(
                     &body_clone,
                     "All code paths must return.",

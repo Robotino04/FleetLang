@@ -31,7 +31,7 @@ use crate::{
             PrecompiledGlslFunctions, ScopeData, StatData, TypeData, TypeSets, VariableData,
         },
         runtime_type::RuntimeType,
-        type_propagation::{Function, FunctionID, Variable},
+        scope_analysis::{Function, FunctionID, Variable},
     },
 };
 
@@ -215,7 +215,7 @@ impl<'state> GLSLCodeGenerator<'state> {
             .map(|(name, variable)| {
                 (
                     name.clone(),
-                    *type_sets.get(variable.borrow().type_),
+                    *type_sets.get(variable.borrow().type_.unwrap()),
                     variable.clone(),
                 )
             })
@@ -529,6 +529,8 @@ impl<'state> GLSLCodeGenerator<'state> {
     fn generate_function_declaration(&self, function: &Function, mangle: bool) -> String {
         let params = function
             .parameter_types
+            .as_ref()
+            .unwrap()
             .iter()
             .map(|(param, name)| {
                 let (type_, after_id) = self.runtime_type_to_glsl(*self.type_sets.get(*param));
@@ -537,7 +539,7 @@ impl<'state> GLSLCodeGenerator<'state> {
             .join(", ");
 
         let (type_, after_id) =
-            self.runtime_type_to_glsl(*self.type_sets.get(function.return_type));
+            self.runtime_type_to_glsl(*self.type_sets.get(function.return_type.unwrap()));
         type_
             + &after_id
             + " "
@@ -548,7 +550,7 @@ impl<'state> GLSLCodeGenerator<'state> {
             }
             .as_str()
             + "("
-            + if function.parameter_types.is_empty() {
+            + if function.parameter_types.as_ref().unwrap().is_empty() {
                 "void"
             } else {
                 &params
@@ -768,7 +770,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             .expect("var data must exist before calling glsl_generator")
             .clone();
 
-        let type_ = *self.type_sets.get(ref_var.borrow().type_);
+        let type_ = *self.type_sets.get(ref_var.borrow().type_.unwrap());
 
         if let RuntimeType::ArrayOf {
             subtype: _,
@@ -1298,7 +1300,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             .expect("var data must exist before calling glsl_generator")
             .clone();
 
-        let type_ = self.type_sets.get(ref_var.borrow().type_);
+        let type_ = self.type_sets.get(ref_var.borrow().type_.unwrap());
 
         if let RuntimeType::ArrayOf {
             subtype: _,

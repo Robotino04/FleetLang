@@ -43,9 +43,9 @@ use crate::{
             PrecompiledGlslFunctions, ScopeData, StatData, TypeData, TypeSets, VariableData,
         },
         runtime_type::RuntimeType,
+        scope_analysis::{FunctionID, VariableID},
         stat_tracker::YesNoMaybe,
         top_level_binding_finder::TopLevelBindingFinder,
-        type_propagation::{FunctionID, VariableID},
     },
     tokenizer::SourceLocation,
 };
@@ -445,7 +445,8 @@ impl<'a> IrGenerator<'_> {
                     .get(&function.get_id())
                     .expect("Function data should exist before calling ir_generator")
                     .borrow()
-                    .return_type;
+                    .return_type
+                    .unwrap();
                 Ok(*self.type_sets.get(inferred_type))
             })?;
         let return_type_ir = self.runtime_type_to_llvm(return_type, function)?;
@@ -478,7 +479,7 @@ impl<'a> IrGenerator<'_> {
             .iter()
             .flat_map(|(param, var)| -> Result<_> {
                 Ok(match_any_type_enum_as_basic_type!(
-                    self.runtime_type_to_llvm(*self.type_sets.get(var.borrow().type_), param)?,
+                    self.runtime_type_to_llvm(*self.type_sets.get(var.borrow().type_.unwrap()), param)?,
                     type_ => {
                         type_.into()
                     },
@@ -721,7 +722,8 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .get(&function.get_id())
                     .expect("Function data should exist before calling ir_generator")
                     .borrow()
-                    .return_type;
+                    .return_type
+                    .unwrap();
                 Ok(*self.type_sets.get(inferred_type))
             })?;
         let return_type_ir = self.runtime_type_to_llvm(return_type, function)?;
@@ -863,7 +865,8 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .get(&simple_binding.id)
                     .expect("variable data should exist before calling ir_generator")
                     .borrow()
-                    .type_;
+                    .type_
+                    .unwrap();
                 Ok(*self.type_sets.get(inferred_type))
             })?;
 
@@ -1852,6 +1855,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     ))?,
                 })
             }
+            "comptime" => Ok(*args.first().unwrap()),
             _ => self.report_error(FleetError::from_node(
                 &expr_clone,
                 format!("No compiler function named {name:?} is implemented for the LLVM backend"),
@@ -1944,7 +1948,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         };
         let storage = storage.clone();
 
-        let result_type = *self.type_sets.get(var.borrow().type_);
+        let result_type = *self.type_sets.get(var.borrow().type_.unwrap());
         let result_type_ir = self.runtime_type_to_llvm(result_type, &expr_clone)?;
 
         let result = if let RuntimeType::ArrayOf { .. } = result_type {
