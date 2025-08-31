@@ -36,7 +36,7 @@ fn ansi_color_for_severity(severity: ErrorSeverity) -> &'static str {
 
 NewtypeDerefNoDefault!(pub RawProgram, Program);
 NewtypeDerefNoDefault!(pub FixedProgram, Program);
-NewtypeDerefNoDefault!(pub UnoptimizedModule, Module<'static>);
+NewtypeDerefNoDefault!(pub OptimizedModule, Module<'static>);
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -169,7 +169,7 @@ fn main() {
                     });
                 }
                 DumpOption::LlvmIr => {
-                    pm.insert_params::<SingleFunctionPass<_, _>>(|module: &UnoptimizedModule| {
+                    pm.insert_params::<SingleFunctionPass<_, _>>(|module: &Module| {
                         std::fs::write(output_file_name, module.to_string() + "\n").unwrap();
                         Ok(())
                     });
@@ -193,7 +193,7 @@ fn main() {
                     });
                 }
                 DumpOption::LlvmIrOptimized => {
-                    pm.insert_params::<SingleFunctionPass<_, _>>(|module: &Module| {
+                    pm.insert_params::<SingleFunctionPass<_, _>>(|module: &OptimizedModule| {
                         std::fs::write(output_file_name, module.to_string() + "\n").unwrap();
                         Ok(())
                     });
@@ -228,8 +228,8 @@ fn main() {
 
     pm.insert::<IrGenerator>();
     pm.insert_params::<SaveArtifactPass>(("./out_unopt.ll".into(), ArtifactType::LlvmIr));
-    pm.insert::<StorePass<Module, UnoptimizedModule>>();
     pm.insert::<LLVMOptimizerPass>();
+    pm.insert::<StorePass<Module, OptimizedModule>>();
     pm.insert_params::<SaveArtifactPass>(("./out_opt.ll".into(), ArtifactType::LlvmIr));
 
     pm.insert::<SwapPass<Program, FixedProgram>>();
