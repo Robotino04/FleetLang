@@ -4,6 +4,7 @@ in
   pkgs.mkShell rec {
     packages = [
       pkgs.cargo
+      pkgs.clippy
       pkgs.rustc
       pkgs.cargo-watch
       pkgs.libz
