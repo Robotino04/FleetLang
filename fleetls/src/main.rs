@@ -1,4 +1,4 @@
-use fleetls_lib::tower_lsp_server::{LspService, Server};
+use fleetls_lib::tower_lsp_server::{self, LspService, Server};
 use fleetls_lib::{Backend, BackgroundThreadState};
 use std::env::args;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -9,56 +9,77 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::sleep;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
-#[tokio::main]
-async fn main() {
-    if args().any(|arg| arg == "--stdio") {
-        let (service, loopback_socket) = LspService::new(|client| {
-            let shared_state = Arc::new(Mutex::new(BackgroundThreadState {
-                semantic_tokens_refresh: AtomicBool::new(false),
-            }));
+use crate::flush_on_write::ToFlushOnWrite;
 
-            let client_clone = client.clone();
-            let state_for_task = shared_state.clone();
-            tokio::spawn(async move {
-                loop {
-                    BackgroundThreadState::run_background_thread(&state_for_task, &client_clone)
-                        .await;
-                    sleep(Duration::from_millis(50)).await;
-                }
-            });
+pub mod flush_on_write;
 
-            Backend {
-                client,
-                background_state: shared_state,
-                documents: Default::default(),
-            }
-        });
+fn create_lsp_service(
+    shutdown_flag: Arc<AtomicBool>,
+) -> (
+    tower_lsp_server::LspService<Backend>,
+    tower_lsp_server::ClientSocket,
+) {
+    LspService::new(|client| {
+        let shared_state = Arc::new(Mutex::new(BackgroundThreadState {
+            semantic_tokens_refresh: AtomicBool::new(false),
+        }));
 
-        let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
-
-        Server::new(stdin.compat(), stdout.compat_write(), loopback_socket)
-            .serve(service)
-            .await;
-    } else {
-        let shutdown_flag = Arc::new(AtomicBool::new(false));
-        let shutdown_flag_clone = shutdown_flag.clone();
+        let client_clone = client.clone();
+        let state_for_task = shared_state.clone();
 
         tokio::spawn(async move {
-            let mut sigterm = signal(SignalKind::terminate()).unwrap();
-            let mut sigint = signal(SignalKind::interrupt()).unwrap();
+            loop {
+                if shutdown_flag.load(Ordering::SeqCst) {
+                    eprintln!("Background thread exiting due to shutdown signal.");
+                    break;
+                }
 
-            tokio::select! {
-                _ = sigterm.recv() => {
-                    eprintln!("Received SIGTERM");
-                }
-                _ = sigint.recv() => {
-                    eprintln!("Received SIGINT");
-                }
+                BackgroundThreadState::run_background_thread(&state_for_task, &client_clone).await;
+                sleep(Duration::from_millis(50)).await;
             }
-
-            shutdown_flag_clone.store(true, Ordering::SeqCst);
         });
 
+        Backend {
+            client,
+            background_state: shared_state,
+            documents: Default::default(),
+        }
+    })
+}
+
+#[tokio::main]
+async fn main() {
+    let shutdown_flag = Arc::new(AtomicBool::new(false));
+    let (service, loopback_socket) = create_lsp_service(shutdown_flag.clone());
+
+    let shutdown_flag_clone = shutdown_flag.clone();
+    tokio::spawn(async move {
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        let mut sigint = signal(SignalKind::interrupt()).unwrap();
+
+        tokio::select! {
+            _ = sigterm.recv() => {
+                eprintln!("Received SIGTERM");
+            }
+            _ = sigint.recv() => {
+                eprintln!("Received SIGINT");
+            }
+        }
+
+        shutdown_flag_clone.store(true, Ordering::SeqCst);
+    });
+
+    if args().any(|arg| arg == "--stdio") {
+        let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
+
+        Server::new(
+            stdin.compat(),
+            stdout.compat_write().flush_on_write(),
+            loopback_socket,
+        )
+        .serve(service)
+        .await;
+    } else {
         let socket = tokio::net::TcpSocket::new_v4().unwrap();
         socket.set_reuseaddr(true).unwrap();
         socket
@@ -76,7 +97,7 @@ async fn main() {
                 conn = listener.accept() => conn,
                 _ = sleep(Duration::from_millis(100)) => continue,
             } {
-                Ok(pair) => pair,
+                Ok(ok) => ok,
                 Err(err) => {
                     eprintln!("Error accepting connection: {err}");
                     continue;
@@ -85,31 +106,7 @@ async fn main() {
 
             let shutdown_flag = shutdown_flag.clone();
             tokio::spawn(async move {
-                let (service, loopback_socket) = LspService::new(|client| {
-                    let shared_state = Arc::new(Mutex::new(BackgroundThreadState {
-                        semantic_tokens_refresh: AtomicBool::new(false),
-                    }));
-
-                    let client_clone = client.clone();
-                    let state_for_task = shared_state.clone();
-                    tokio::spawn(async move {
-                        while !shutdown_flag.load(Ordering::SeqCst) {
-                            BackgroundThreadState::run_background_thread(
-                                &state_for_task,
-                                &client_clone,
-                            )
-                            .await;
-                            sleep(Duration::from_millis(50)).await;
-                        }
-                        eprintln!("Background thread exiting due to shutdown signal.");
-                    });
-
-                    Backend {
-                        client,
-                        background_state: shared_state,
-                        documents: Default::default(),
-                    }
-                });
+                let (service, loopback_socket) = create_lsp_service(shutdown_flag.clone());
 
                 let (read_half, write_half) = tokio::io::split(client_connection);
                 let (mut read_half, mut write_half) =
@@ -122,7 +119,7 @@ async fn main() {
                 eprintln!("Client session closed.");
             });
         }
-
-        eprintln!("LSP shutdown complete.");
     }
+
+    eprintln!("LSP shutdown complete.");
 }
