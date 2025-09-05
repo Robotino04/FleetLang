@@ -691,17 +691,21 @@ impl<'errors> Tokenizer<'errors> {
         }
     }
     fn flush_trailing_trivia(&mut self) {
-        if let (Some(last_token), Some(trivia)) =
+        let (Some(last_token), Some(trivia)) =
             (self.tokens.last_mut(), self.trivia_accumulator.last())
-        {
-            if last_token.end.line == trivia.end.line
-                || (last_token.end.line + 1 == trivia.end.line && trivia.end.column == 0)
-            {
-                eprintln!("Flushing {trivia:?} to {last_token:#?}");
-                last_token
-                    .trailing_trivia
-                    .append(&mut self.trivia_accumulator);
-            }
+        else {
+            return;
+        };
+
+        let same_line = last_token.end.line == trivia.end.line;
+        let trailing_with_newline =
+            last_token.end.line + 1 == trivia.end.line && trivia.end.column == 0;
+
+        if same_line || trailing_with_newline {
+            eprintln!("Flushing {trivia:?} to {last_token:#?}");
+            last_token
+                .trailing_trivia
+                .append(&mut self.trivia_accumulator);
         }
     }
 }

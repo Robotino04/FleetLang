@@ -758,10 +758,10 @@ impl AstVisitor for StatTracker<'_> {
                 used_variables: vec![],
             },
         };
-        if let Some(ref_function) = self.function_data.get(id) {
-            if let Some(stat2) = self.function_stats.get(&ref_function.borrow().id) {
-                stat = stat.serial(stat2.clone());
-            }
+        if let Some(ref_function) = self.function_data.get(id)
+            && let Some(stat2) = self.function_stats.get(&ref_function.borrow().id)
+        {
+            stat = stat.serial(stat2.clone());
         }
         stat.terminates_function = YesNoMaybe::No;
 

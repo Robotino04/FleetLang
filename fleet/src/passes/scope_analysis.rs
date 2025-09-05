@@ -262,7 +262,7 @@ impl VariableScopeStack {
         self.current = tmp;
     }
 
-    pub fn top_mut(&self) -> RefMut<VariableScope> {
+    pub fn top_mut(&self) -> RefMut<'_, VariableScope> {
         self.current.borrow_mut()
     }
 }

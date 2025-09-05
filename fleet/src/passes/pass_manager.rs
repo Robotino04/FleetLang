@@ -113,7 +113,7 @@ impl GlobalState {
         self.insert(T::default())
     }
 
-    pub fn get<T>(&self) -> Option<Ref<T>>
+    pub fn get<T>(&self) -> Option<Ref<'_, T>>
     where
         T: Any,
     {
@@ -126,7 +126,7 @@ impl GlobalState {
         )
     }
 
-    pub fn get_mut<T>(&self) -> Option<RefMut<T>>
+    pub fn get_mut<T>(&self) -> Option<RefMut<'_, T>>
     where
         T: Any,
     {
@@ -139,14 +139,14 @@ impl GlobalState {
         )
     }
 
-    pub fn get_named<T>(&self) -> Result<Ref<T>, String>
+    pub fn get_named<T>(&self) -> Result<Ref<'_, T>, String>
     where
         T: Any,
     {
         self.get().ok_or(type_name::<T>().to_string())
     }
 
-    pub fn get_mut_named<T>(&self) -> Result<RefMut<T>, String>
+    pub fn get_mut_named<T>(&self) -> Result<RefMut<'_, T>, String>
     where
         T: Any,
     {
@@ -189,7 +189,7 @@ impl GlobalState {
 pub struct CheckedEntry<T>(PhantomData<T>);
 
 impl<T> CheckedEntry<T> {
-    pub fn get(self, state: &GlobalState) -> Ref<T>
+    pub fn get(self, state: &GlobalState) -> Ref<'_, T>
     where
         T: Any,
     {
@@ -198,7 +198,7 @@ impl<T> CheckedEntry<T> {
         )
     }
 
-    pub fn get_mut(self, state: &GlobalState) -> RefMut<T>
+    pub fn get_mut(self, state: &GlobalState) -> RefMut<'_, T>
     where
         T: Any,
     {

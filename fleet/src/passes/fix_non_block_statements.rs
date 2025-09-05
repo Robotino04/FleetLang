@@ -94,21 +94,21 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
         }
 
         let body_clone = body.clone();
-        if let FunctionBody::Statement(stmt_body) = body {
-            if !matches!(stmt_body.statement, Statement::Block { .. }) {
-                self.errors.push(FleetError::from_node(
-                    &body_clone,
-                    "Functions must have a block as the body",
-                    ErrorSeverity::Error,
-                ));
-                self.errors.push(FleetError::from_node(
-                    &body_clone,
-                    "Formatting will fix this",
-                    ErrorSeverity::Note,
-                ));
+        if let FunctionBody::Statement(stmt_body) = body
+            && !matches!(stmt_body.statement, Statement::Block { .. })
+        {
+            self.errors.push(FleetError::from_node(
+                &body_clone,
+                "Functions must have a block as the body",
+                ErrorSeverity::Error,
+            ));
+            self.errors.push(FleetError::from_node(
+                &body_clone,
+                "Formatting will fix this",
+                ErrorSeverity::Note,
+            ));
 
-                stmt_body.statement = self.create_fake_block_arround(&stmt_body.statement);
-            }
+            stmt_body.statement = self.create_fake_block_arround(&stmt_body.statement);
         }
 
         self.visit_function_body(body);
