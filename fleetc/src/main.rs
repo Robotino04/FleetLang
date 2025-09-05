@@ -140,9 +140,10 @@ fn main() {
 
         if cli.dump.is_empty() {
             if cli.format {
+                let output_file_name = output_file_name.clone();
                 pm.insert_params::<SingleFunctionPass<_, _>>(|dm: &DocumentElement| {
                     std::fs::write(
-                        cli.output.unwrap_or(cli.input_file),
+                        output_file_name,
                         stringify_document(fully_flatten_document(dm.clone())),
                     )
                     .unwrap();
