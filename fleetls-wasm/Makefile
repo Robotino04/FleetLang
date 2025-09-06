@@ -13,21 +13,22 @@ OUT_FILE=$(OUT_PATH)/$(OUT_FILENAME)
 .PHONY: release debug clean clean-cargo
 
 
+debug: $(DEBUG_FILE)
+	mkdir -p $(OUT_PATH)
+	wasm-bindgen $(DEBUG_FILE) --out-dir $(OUT_PATH) --target web --typescript --keep-debug
+
 release: $(RELEASE_FILE)
 	mkdir -p $(OUT_PATH)
 	wasm-bindgen $(RELEASE_FILE) --out-dir $(OUT_PATH) --target web --typescript
 	wasm-opt -Oz -o $(OUT_FILE).opt $(OUT_FILE)
 	mv $(OUT_FILE).opt $(OUT_FILE)
 
-debug: $(DEBUG_FILE)
-	mkdir -p $(OUT_PATH)
-	wasm-bindgen $(DEBUG_FILE) --out-dir $(OUT_PATH) --target web --typescript --keep-debug
-
-$(RELEASE_FILE):
+$(RELEASE_FILE): FORCE
 	cargo build --profile wasm-release
-$(DEBUG_FILE):
+$(DEBUG_FILE): FORCE
 	cargo build --profile dev
 
+FORCE:
 
 clean:
 	rm -fr $(OUT_PATH)

@@ -8,10 +8,12 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 console_error_panic_hook = "0.1.7"
+console_log = { version = "1.0.0", features = ["color"] }
 fleetls-lib = { path = "../fleetls-lib", default-features = false }
 futures = "0.3.21"
 gloo-timers = { version = "0.3.0", features = ["futures"] }
 js-sys = "0.3.57"
+log = "0.4.28"
 wasm-bindgen = "0.2.81"
 wasm-bindgen-futures = { version = "0.4.30", features = [
     "futures-core-03-stream",

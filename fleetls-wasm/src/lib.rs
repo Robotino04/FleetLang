@@ -14,8 +14,15 @@ use fleetls_lib::{
     tower_lsp_server::{LspService, Server},
 };
 use futures::stream::TryStreamExt;
-use wasm_bindgen::{JsCast, prelude::*};
+use log::{Level, info};
+use wasm_bindgen::{JsCast, prelude::wasm_bindgen, prelude::*};
 use wasm_bindgen_futures::{spawn_local, stream::JsStream};
+
+#[wasm_bindgen(start)]
+pub fn startup() {
+    console_error_panic_hook::set_once();
+    console_log::init_with_level(Level::Info).expect("error initializing log");
+}
 
 #[wasm_bindgen]
 pub struct ServerConfig {
@@ -58,9 +65,7 @@ pub fn compile_to_c(src: String) -> Option<String> {
 // NOTE: input needs to be an AsyncIterator<Uint8Array, never, void> specifically
 #[wasm_bindgen]
 pub async fn serve(config: ServerConfig) -> Result<(), JsValue> {
-    console_error_panic_hook::set_once();
-
-    web_sys::console::log_1(&"server::serve".into());
+    info!("server::serve");
 
     let ServerConfig {
         into_server,
