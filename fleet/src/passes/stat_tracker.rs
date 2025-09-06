@@ -5,6 +5,8 @@ use std::{
     vec::Vec,
 };
 
+use log::info;
+
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
@@ -260,7 +262,7 @@ impl AstVisitor for StatTracker<'_> {
                 break;
             } else {
                 prev_stats = self.stats.clone();
-                eprintln!("Stats aren't stable yet")
+                info!("Stats aren't stable yet")
             }
         }
 

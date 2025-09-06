@@ -5,12 +5,13 @@ use inkwell::{
     module::Module,
     targets::{FileType, TargetMachine},
 };
+use log::info;
 
 use crate::passes::pass_manager::{
     CCodeOutput, GlobalState, Pass, PassError, PassFactory, PassResult,
 };
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum ArtifactType {
     #[cfg(feature = "llvm_backend")]
     Object,
@@ -107,17 +108,18 @@ impl Pass for SaveArtifactPass<'_> {
                     source: err.into(),
                 })?,
             #[cfg(feature = "llvm_backend")]
-            ArtifactType::LlvmIr => std::fs::write(self.filename, self.module.unwrap().to_string())
+            ArtifactType::LlvmIr => std::fs::write(&self.filename, self.module.unwrap().to_string())
                 .map_err(|err| PassError::CompilerError {
                     producing_pass: Self::name(),
                     source: err.into(),
                 })?,
-            ArtifactType::CCode => std::fs::write(self.filename, self.ccode.unwrap().to_string())
+            ArtifactType::CCode => std::fs::write(&self.filename, self.ccode.unwrap().to_string())
                 .map_err(|err| PassError::CompilerError {
                 producing_pass: Self::name(),
                 source: err.into(),
             })?,
         }
+        info!("Wrote {:?} to {:?}", self.artifact_type, self.filename);
 
         Ok(())
     }

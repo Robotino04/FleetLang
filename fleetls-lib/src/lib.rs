@@ -26,6 +26,7 @@ use fleet::{
 };
 use indoc::indoc;
 use itertools::Itertools;
+use log::info;
 use std::{
     collections::HashMap,
     sync::{
@@ -769,8 +770,8 @@ impl Backend {
 
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        eprintln!("{}", "-".repeat(80));
-        eprintln!("{params:#?}");
+        info!("{}", "-".repeat(80));
+        info!("{params:#?}");
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
@@ -827,8 +828,8 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, params: InitializedParams) {
-        eprintln!("{}", "-".repeat(80));
-        eprintln!("{params:#?}");
+        info!("{}", "-".repeat(80));
+        info!("{params:#?}");
 
         self.client
             .log_message(MessageType::INFO, "server initialized!")
@@ -839,8 +840,8 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentDiagnosticParams,
     ) -> Result<DocumentDiagnosticReportResult> {
-        eprintln!("{}", "-".repeat(80));
-        eprintln!("{params:#?}");
+        info!("{}", "-".repeat(80));
+        info!("{params:#?}");
 
         let Some(src) = self.read_document(&params.text_document) else {
             return Err(tower_lsp_server::jsonrpc::Error {
@@ -921,8 +922,8 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        eprintln!("{}", "-".repeat(80));
-        eprintln!("{params:#?}");
+        info!("{}", "-".repeat(80));
+        info!("{params:#?}");
 
         self.documents.write().unwrap().insert(
             params.text_document.uri,
@@ -936,8 +937,8 @@ impl LanguageServer for Backend {
             .store(true, Ordering::Relaxed);
     }
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        eprintln!("{}", "-".repeat(80));
-        eprintln!("{params:#?}");
+        info!("{}", "-".repeat(80));
+        info!("{params:#?}");
 
         self.documents
             .write()
@@ -951,8 +952,8 @@ impl LanguageServer for Backend {
             .store(true, Ordering::Relaxed);
     }
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        eprintln!("{}", "-".repeat(80));
-        eprintln!("{params:#?}");
+        info!("{}", "-".repeat(80));
+        info!("{params:#?}");
 
         self.documents
             .write()
@@ -961,8 +962,8 @@ impl LanguageServer for Backend {
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        eprintln!("{}", "-".repeat(80));
-        eprintln!("{params:#?}");
+        info!("{}", "-".repeat(80));
+        info!("{params:#?}");
 
         let Some(src) = self.read_document(&params.text_document_position_params.text_document)
         else {
@@ -1062,8 +1063,8 @@ impl LanguageServer for Backend {
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        eprintln!("{}", "-".repeat(80));
-        eprintln!("{params:#?}");
+        info!("{}", "-".repeat(80));
+        info!("{params:#?}");
 
         let Some(src) = self.read_document(&params.text_document) else {
             return Err(tower_lsp_server::jsonrpc::Error {
@@ -1106,8 +1107,8 @@ impl LanguageServer for Backend {
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
-        eprintln!("{}", "-".repeat(80));
-        eprintln!("{params:#?}");
+        info!("{}", "-".repeat(80));
+        info!("{params:#?}");
 
         let Some(src) = self.read_document(&params.text_document) else {
             return Err(tower_lsp_server::jsonrpc::Error {
@@ -1162,8 +1163,8 @@ impl LanguageServer for Backend {
     }
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
-        eprintln!("{}", "-".repeat(80));
-        eprintln!("{params:#?}");
+        info!("{}", "-".repeat(80));
+        info!("{params:#?}");
 
         let Some(src) = self.read_document(&params.text_document_position_params.text_document)
         else {

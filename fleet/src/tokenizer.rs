@@ -1,5 +1,7 @@
 use std::{cell::RefMut, cmp::Ordering};
 
+use log::{error, info};
+
 use crate::{
     infra::{ErrorSeverity, FleetError},
     passes::pass_manager::{Errors, GlobalState, InputSource, Pass, PassFactory, PassResult},
@@ -215,7 +217,7 @@ impl<'errors> Tokenizer<'errors> {
 
     fn advance(&mut self) {
         if self.done() {
-            eprintln!("Tried advancing past EOF");
+            error!("Tried advancing past EOF");
             return;
         }
 
@@ -254,7 +256,7 @@ impl<'errors> Tokenizer<'errors> {
             self.unk_char_token.end = self.current_location;
             self.unk_char_accumulator = c.to_string();
         }
-        eprintln!("Unexpected character {c:?}");
+        error!("Unexpected character {c:?}");
     }
     fn single_char_token(&mut self, t: TokenType) -> Token {
         self.multi_char_token(1, t)
@@ -702,7 +704,7 @@ impl<'errors> Tokenizer<'errors> {
             last_token.end.line + 1 == trivia.end.line && trivia.end.column == 0;
 
         if same_line || trailing_with_newline {
-            eprintln!("Flushing {trivia:?} to {last_token:#?}");
+            info!("Flushing {trivia:?} to {last_token:#?}");
             last_token
                 .trailing_trivia
                 .append(&mut self.trivia_accumulator);

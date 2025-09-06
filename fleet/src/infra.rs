@@ -1,4 +1,3 @@
-use indoc::formatdoc;
 use itertools::Itertools;
 
 use crate::{
@@ -140,19 +139,35 @@ impl FleetError {
             .map(pad_with_line_number)
             .join("\n");
 
-        formatdoc!(
-            "
-            {enable_color}[FLEETC: {}] {}{disable_color}
-            {before_err_trunc}
-            {err}
-            {after_err_trunc}",
+        assert!(
+            !self.message.ends_with("\n"),
+            "Message of error ends with newline: {self:#?}"
+        );
+
+        let mut output = format!(
+            "{enable_color}[{}] {}{disable_color}",
             match self.severity {
                 ErrorSeverity::Error => "ERROR",
                 ErrorSeverity::Warning => "WARNING",
                 ErrorSeverity::Note => "NOTE",
             },
             self.message
-        )
+        );
+
+        if !before_err_trunc.is_empty() {
+            output.push('\n');
+            output.push_str(&before_err_trunc);
+        }
+        if !err.is_empty() {
+            output.push('\n');
+            output.push_str(&err);
+        }
+        if !after_err_trunc.is_empty() {
+            output.push('\n');
+            output.push_str(&after_err_trunc);
+        }
+
+        output
     }
 }
 

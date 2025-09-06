@@ -2,6 +2,7 @@ use std::cell::{Ref, RefMut};
 
 use either::Either;
 use itertools::Itertools;
+use log::{error, warn};
 use thiserror::Error;
 
 use crate::{
@@ -200,7 +201,7 @@ macro_rules! recover_until {
                     $(Some($recovery_stops) => break),+,
                     _ => {
                         $self.consume();
-                        eprintln!(
+                        warn!(
                             "Recovering from error until one of [{}]",
                             concat!($(stringify!($recovery_stops)), +)
                         );
@@ -429,7 +430,7 @@ impl<'state> Parser<'state> {
                     if let Ok(stmt) = self.parse_statement() {
                         body.push(stmt);
                     } else {
-                        eprintln!("failed to parse statement");
+                        error!("failed to parse statement");
                         recover_until!(
                             self,
                             recovery_start,

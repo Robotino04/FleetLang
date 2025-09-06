@@ -10,6 +10,7 @@ tower-lsp-server = { version = "0.22.0", default-features = false, features = [
 ] }
 indoc = "2.0.6"
 itertools = "0.14.0"
+log = "0.4.28"
 
 [features]
 llvm_backend = ["fleet/llvm_backend"]

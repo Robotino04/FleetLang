@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::{fs::read_to_string, process::exit};
 
@@ -56,6 +57,9 @@ struct Cli {
     /// Format the file instead of compiling it
     #[arg(short, long, group = "output_type")]
     format: bool,
+
+    #[command(flatten)]
+    verbosity: clap_verbosity_flag::Verbosity,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -82,6 +86,20 @@ enum DumpOption {
 
 fn main() {
     let cli = Cli::parse();
+    env_logger::Builder::new()
+        .format(|fmt, record| {
+            let level = record.level();
+            let level_style = fmt.default_level_style(level);
+
+            writeln!(
+                fmt,
+                "{level_style}[{level}]{level_style:#} {}",
+                record.args()
+            )
+        })
+        .filter_level(cli.verbosity.into())
+        .parse_default_env()
+        .init();
 
     let src = read_to_string(&cli.input_file).unwrap_or_else(|_| {
         eprintln!(
@@ -109,7 +127,8 @@ fn main() {
         }
         if let Some(worst_severity) = worst_error {
             for error in errors {
-                eprintln!("{}", error.to_string_ansi(&src));
+                // double newline
+                eprintln!("{}\n", error.to_string_ansi(&src));
             }
             let ansi_color = ansi_color_for_severity(worst_severity);
             eprintln!("\x1B[{ansi_color}m{msg}\x1B[0m");

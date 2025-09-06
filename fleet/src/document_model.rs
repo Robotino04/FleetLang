@@ -1,4 +1,5 @@
 use indent::indent_all_by;
+use log::info;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DocumentElement {
@@ -76,7 +77,7 @@ pub fn fully_flatten_document(mut element: DocumentElement) -> DocumentElement {
         }
     }
 
-    eprintln!("Took {i} iterations to flatten document");
+    info!("Took {i} iterations to flatten document");
 
     element
 }

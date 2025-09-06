@@ -9,6 +9,7 @@ use indent::indent_by;
 use indoc::formatdoc;
 
 use itertools::Itertools;
+use log::warn;
 
 #[cfg(feature = "gpu_backend")]
 use crate::ast::AstNode;
@@ -131,7 +132,7 @@ impl Pass for GLSLCodeGenerator<'_> {
                     }
                 })?);
         } else {
-            eprintln!("Skipping glsl pregen because nothing uses the gpu");
+            warn!("Skipping glsl pregen because nothing uses the gpu");
         }
 
         Ok(())
@@ -635,7 +636,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             .expect("Functions should be tracked before calling glsl_generator");
 
         if self.stats.get(id).unwrap().uses_gpu.at_least_maybe() {
-            eprintln!("Not generating GLSL for function {name:?} because it may use the gpu.");
+            warn!("Not generating GLSL for function {name:?} because it may use the gpu.");
             return Ok(None);
         }
 

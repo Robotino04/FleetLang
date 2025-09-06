@@ -11,6 +11,7 @@ use std::{
 };
 
 use itertools::Itertools;
+use log::{info, warn};
 use thiserror::Error;
 
 use crate::{
@@ -327,9 +328,9 @@ impl PassManager {
             let pass = factory.try_new_dyn(&mut self.state);
             match pass {
                 Ok(pass) => {
-                    eprintln!("{:-^80}", format!("| Running {:?} |", factory.name()));
+                    info!("{:-^80}", format!("| Running {:?} |", factory.name()));
                     let res = pass.run();
-                    eprintln!("{:-^80}", "");
+                    info!("{:-^80}", "");
                     res?;
 
                     // retry all previously failed passes
@@ -338,7 +339,7 @@ impl PassManager {
                     }
                 }
                 Err(missing_field) => {
-                    eprintln!(
+                    warn!(
                         "Pass {:?} failed to construct: missing {missing_field:?}",
                         factory.name()
                     );

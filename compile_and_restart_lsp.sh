@@ -12,7 +12,7 @@ function restart_lsp() {
 }
 
 (
-    (cargo build -p fleetls --bin fleetls --color=always 2>&1 || echo "\033[31m!!Starting last successful build!!\033[0m") && (./target/debug/fleetls &)
+    (cargo build -p fleetls --bin fleetls --color=always 2>&1 || echo "\033[31m!!Starting last successful build!!\033[0m") && (./target/debug/fleetls tcp -p 1234 &)
     restart_lsp
 ) | while IFS= read -r line; do
     echo -e "$line"
