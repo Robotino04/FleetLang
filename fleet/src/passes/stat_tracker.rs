@@ -247,6 +247,8 @@ impl AstVisitor for StatTracker<'_> {
         let mut prev_stats = self.stats.clone();
 
         loop {
+            let err_backup = self.errors.clone();
+
             for f in &mut program.functions {
                 let NodeStats {
                     terminates_function,
@@ -263,7 +265,9 @@ impl AstVisitor for StatTracker<'_> {
                 break;
             } else {
                 prev_stats = self.stats.clone();
-                info!("Stats aren't stable yet")
+                // don't duplicate errors when running multiple times
+                *self.errors = err_backup;
+                info!("Stats aren't stable yet.")
             }
         }
 
