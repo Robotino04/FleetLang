@@ -26,11 +26,11 @@ use crate::{
     tokenizer::{FileName, SourceLocation, SourceRange, Token, Tokenizer},
 };
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum ErrorSeverity {
-    Error,
-    Warning,
     Note,
+    Warning,
+    Error,
 }
 
 #[derive(Clone, Debug)]

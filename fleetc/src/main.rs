@@ -109,24 +109,13 @@ fn main() {
         exit(1);
     });
 
-    let print_all_errors_and_message = |msg, errors: &Vec<FleetError>| {
-        let mut worst_error = None;
-        for error in errors {
-            if let Some(prev) = worst_error {
-                match (prev, error.severity) {
-                    (ErrorSeverity::Warning, ErrorSeverity::Error)
-                    | (ErrorSeverity::Note, ErrorSeverity::Error)
-                    | (ErrorSeverity::Note, ErrorSeverity::Warning) => {
-                        worst_error = Some(error.severity);
-                    }
-                    _ => {}
-                }
-            } else {
-                worst_error = Some(error.severity);
-            }
-        }
-        if let Some(worst_severity) = worst_error {
-            for error in errors {
+    let print_all_errors_and_message = |msg, mut errors: Vec<FleetError>| {
+        // error -> warning -> node, then sort by file location
+        errors.sort_by_key(|err| err.highlight_groups().first().unwrap().start);
+        errors.sort_by_key(|err| err.severity);
+
+        if let Some(worst_severity) = errors.iter().map(|err| err.severity).max() {
+            for error in &errors {
                 // double newline
                 eprintln!("{}\n", error.to_string_ansi(&src));
             }
@@ -266,13 +255,13 @@ fn main() {
     match pm.run() {
         Err(err @ (PassError::CompilerError { .. } | PassError::PassManagerStall { .. })) => {
             let errors = errors.get(&pm.state).clone();
-            print_all_errors_and_message("Compilation failed internally", &errors);
+            print_all_errors_and_message("Compilation failed internally", errors.into());
             eprintln!("{err}");
             exit(1);
         }
         Err(PassError::InvalidInput { .. }) => {
             let errors = errors.get(&pm.state).clone();
-            print_all_errors_and_message("Program has errors", &errors);
+            print_all_errors_and_message("Program has errors", errors.into());
             exit(1);
         }
         Ok(()) => (),
@@ -283,11 +272,11 @@ fn main() {
         .iter()
         .any(|err| err.severity == ErrorSeverity::Error)
     {
-        print_all_errors_and_message("Compilation has errors", &errors);
+        print_all_errors_and_message("Compilation has errors", errors.into());
         panic!("these errors should have resulted in a PassError::InvalidInput");
     }
 
-    print_all_errors_and_message("There are warnings", &errors);
+    print_all_errors_and_message("There are warnings", errors.into());
 }
 
 #[cfg(test)]
