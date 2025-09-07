@@ -1,8 +1,9 @@
-use std::{cell::RefMut, cmp::Ordering};
+use std::{cell::RefMut, cmp::Ordering, rc::Rc};
 
 use log::{error, info};
 
 use crate::{
+    NewtypeDeref,
     infra::{ErrorSeverity, FleetError},
     passes::pass_manager::{Errors, GlobalState, InputSource, Pass, PassFactory, PassResult},
 };
@@ -15,6 +16,16 @@ pub struct Token {
     // https://langdev.stackexchange.com/questions/2289/preserving-comments-in-ast
     pub leading_trivia: Vec<Trivia>,
     pub trailing_trivia: Vec<Trivia>,
+
+    pub file_name: FileName,
+}
+
+NewtypeDeref!(pub FileName, Rc<String>, Clone, PartialEq, Eq);
+
+impl From<String> for FileName {
+    fn from(value: String) -> Self {
+        Self(Rc::new(value))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -182,6 +193,7 @@ impl SourceRange {
 pub struct Tokenizer<'state> {
     errors: RefMut<'state, Errors>,
     chars: Vec<char>,
+    file_name: FileName,
 
     tokens: RefMut<'state, Vec<Token>>,
 
@@ -205,6 +217,8 @@ impl PassFactory for Tokenizer<'_> {
         Self: Sized,
     {
         let source = state.check_named::<InputSource>()?;
+        let file_name = state.get_named::<InputSource>()?.file_name.clone();
+
         let errors = state.check_named()?;
 
         let tokens = state.insert(vec![]);
@@ -213,7 +227,8 @@ impl PassFactory for Tokenizer<'_> {
             errors: errors.get_mut(state),
             tokens: tokens.get_mut(state),
 
-            chars: source.get(state).chars().collect(),
+            chars: source.get(state).source.chars().collect(),
+            file_name,
 
             current_location: SourceLocation::start(),
 
@@ -274,6 +289,7 @@ impl<'errors> Tokenizer<'errors> {
                 range: self.unk_char_range,
                 leading_trivia: vec![],
                 trailing_trivia: vec![],
+                file_name: self.file_name.clone(),
             });
 
             self.unk_char_range.start = self.current_location;
@@ -297,6 +313,7 @@ impl<'errors> Tokenizer<'errors> {
 
             leading_trivia: self.trivia_accumulator.clone(),
             trailing_trivia: vec![],
+            file_name: self.file_name.clone(),
         };
         self.trivia_accumulator.clear();
         token
@@ -481,13 +498,12 @@ impl<'errors> Tokenizer<'errors> {
                             let content_end_location = self.current_location;
 
                             if self.current_location.index + 1 >= self.chars.len() {
-                                self.errors.push(FleetError {
-                                    highlight_groups: vec![
-                                        start_location.until(content_end_location),
-                                    ],
-                                    message: "Unclosed block comment".to_string(),
-                                    severity: ErrorSeverity::Error,
-                                });
+                                self.errors.push(FleetError::from_range(
+                                    start_location.until(content_end_location),
+                                    "Unclosed block comment".to_string(),
+                                    ErrorSeverity::Error,
+                                    self.file_name.clone(),
+                                ));
                             } else {
                                 self.advance(); // *
                                 self.advance(); // /
@@ -569,6 +585,7 @@ impl<'errors> Tokenizer<'errors> {
 
                         leading_trivia: self.trivia_accumulator.clone(),
                         trailing_trivia: vec![],
+                        file_name: self.file_name.clone(),
                     });
                     self.trivia_accumulator.clear();
                 }
@@ -606,13 +623,13 @@ impl<'errors> Tokenizer<'errors> {
                         type_: if is_float {
                             TokenType::Float(
                                 lexeme.parse().unwrap_or_else(|_| {
-                                    self.errors.push(FleetError {
-                                        highlight_groups: vec![
-                                            start_location.until(self.current_location),
-                                        ],
-                                        message: format!("Unable to parse {lexeme:?} as a float"),
-                                        severity: ErrorSeverity::Error,
-                                    });
+                                    self.errors.push(FleetError::from_range(
+                                        start_location.until(self.current_location),
+                                        format!("Unable to parse {lexeme:?} as a float"),
+                                        ErrorSeverity::Error,
+                                        self.file_name.clone(),
+                                    ));
+
                                     0.0
                                 }),
                                 lexeme.clone(),
@@ -620,13 +637,12 @@ impl<'errors> Tokenizer<'errors> {
                         } else {
                             TokenType::Integer(
                                 lexeme.parse().unwrap_or_else(|_| {
-                                    self.errors.push(FleetError {
-                                        highlight_groups: vec![
-                                            start_location.until(self.current_location),
-                                        ],
-                                        message: format!("Unable to parse {lexeme:?} as a float"),
-                                        severity: ErrorSeverity::Error,
-                                    });
+                                    self.errors.push(FleetError::from_range(
+                                        start_location.until(self.current_location),
+                                        format!("Unable to parse {lexeme:?} as a float"),
+                                        ErrorSeverity::Error,
+                                        self.file_name.clone(),
+                                    ));
                                     0
                                 }),
                                 lexeme.clone(),
@@ -635,6 +651,7 @@ impl<'errors> Tokenizer<'errors> {
 
                         leading_trivia: self.trivia_accumulator.clone(),
                         trailing_trivia: vec![],
+                        file_name: self.file_name.clone(),
                     });
                     self.trivia_accumulator.clear();
                 }
@@ -662,6 +679,7 @@ impl<'errors> Tokenizer<'errors> {
 
                         leading_trivia: self.trivia_accumulator.clone(),
                         trailing_trivia: vec![],
+                        file_name: self.file_name.clone(),
                     });
                     self.trivia_accumulator.clear();
                 }
@@ -693,6 +711,7 @@ impl<'errors> Tokenizer<'errors> {
                 range: self.unk_char_range,
                 leading_trivia: vec![],
                 trailing_trivia: vec![],
+                file_name: self.file_name.clone(),
             });
         }
 

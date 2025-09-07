@@ -23,6 +23,7 @@ use crate::{
         stat_tracker::NodeStats,
         union_find_set::{UnionFindSet, UnionFindSetPtr},
     },
+    tokenizer::FileName,
 };
 
 #[macro_export]
@@ -82,8 +83,13 @@ NewtypeDeref!(pub TypeSets, UnionFindSet<RuntimeType>);
 NewtypeDeref!(pub ScopeData, PerNodeData<Rc<RefCell<VariableScope>>>);
 NewtypeDeref!(pub StatData, PerNodeData<NodeStats>);
 NewtypeDeref!(pub PrecompiledGlslFunctions, HashMap<FunctionID, (String, String)>);
-NewtypeDeref!(pub InputSource, String);
 NewtypeDeref!(pub CCodeOutput, String);
+
+#[derive(Debug, Clone)]
+pub struct InputSource {
+    pub source: String,
+    pub file_name: FileName,
+}
 
 pub use NewtypeDeref;
 pub use NewtypeDerefNoDefault;

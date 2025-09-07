@@ -3,7 +3,10 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::{passes::runtime_type::RuntimeType, tokenizer::Token};
+use crate::{
+    passes::runtime_type::RuntimeType,
+    tokenizer::{FileName, Token},
+};
 
 #[derive(Clone, Debug)]
 pub enum AstNode {
@@ -372,6 +375,8 @@ pub trait AstVisitor {
 pub struct Program {
     pub functions: Vec<FunctionDefinition>,
     pub id: NodeID,
+
+    pub file_name: FileName,
 }
 generate_ast_requirements!(Program, unwrap_program);
 

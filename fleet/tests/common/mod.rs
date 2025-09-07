@@ -96,7 +96,10 @@ impl SubprocessTestableReturnType for f64 {
 pub fn assert_parser_or_tokenizer_error(src: &str, error_start: SourceLocation) {
     let mut pm = PassManager::default();
     let errors = pm.state.insert_default::<Errors>();
-    pm.state.insert(InputSource(src.to_string()));
+    pm.state.insert(InputSource {
+        source: src.to_string(),
+        file_name: "test.fl".to_string().into(),
+    });
 
     insert_minimal_pipeline(&mut pm);
 
@@ -112,7 +115,7 @@ fn assert_error_at_position(errors: &Vec<FleetError>, error_start: SourceLocatio
         errors
             .iter()
             .flat_map(|err| err
-                .highlight_groups
+                .highlight_groups()
                 .iter()
                 .map(|range| (range, err.severity)))
             .any(|(range, severity)| range.start == error_start
@@ -126,7 +129,7 @@ fn assert_warning_at_position(errors: &Vec<FleetError>, warning_start: SourceLoc
         errors
             .iter()
             .flat_map(|warn| warn
-                .highlight_groups
+                .highlight_groups()
                 .iter()
                 .map(|range| (range, warn.severity)))
             .any(|(range, severity)| range.start == warning_start
@@ -151,7 +154,10 @@ pub fn assert_compile_error(src: &str, error_start: SourceLocation) {
 pub fn assert_compile_error_no_formatting(src: &str, error_start: SourceLocation) {
     let mut pm = PassManager::default();
     let errors = pm.state.insert_default::<Errors>();
-    pm.state.insert(InputSource(src.to_string()));
+    pm.state.insert(InputSource {
+        source: src.to_string(),
+        file_name: "test.fl".to_string().into(),
+    });
 
     insert_minimal_pipeline(&mut pm);
     insert_fix_passes(&mut pm);
@@ -173,7 +179,10 @@ pub fn assert_compile_error_no_formatting(src: &str, error_start: SourceLocation
 pub fn assert_compile_and_warning(src: &str, warning_start: SourceLocation) {
     let mut pm = PassManager::default();
     let errors = pm.state.insert_default::<Errors>();
-    pm.state.insert(InputSource(src.to_string()));
+    pm.state.insert(InputSource {
+        source: src.to_string(),
+        file_name: "test.fl".to_string().into(),
+    });
 
     insert_minimal_pipeline(&mut pm);
     insert_fix_passes(&mut pm);
@@ -277,7 +286,10 @@ pub fn assert_formatting_and_same_behaviour<ReturnType>(
 fn compile_or_panic(src: &str) -> PassManager {
     let mut pm = PassManager::default();
     let errors = pm.state.insert_default::<Errors>();
-    pm.state.insert(InputSource(src.to_string()));
+    pm.state.insert(InputSource {
+        source: src.to_string(),
+        file_name: "test.fl".to_string().into(),
+    });
 
     insert_minimal_pipeline(&mut pm);
     insert_fix_passes(&mut pm);
@@ -295,7 +307,11 @@ fn compile_or_panic(src: &str) -> PassManager {
 }
 
 fn format_or_panic(src: &str) -> String {
-    format(src.to_string()).unwrap()
+    format(InputSource {
+        source: src.to_string(),
+        file_name: "test.fl".to_string().into(),
+    })
+    .unwrap()
 }
 
 fn execute_or_panic<ReturnType>(src: &str, function_name: &str) -> ReturnType {

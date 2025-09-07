@@ -4,6 +4,7 @@ pub mod err_missing_type_in_parameter;
 pub mod err_too_few_iterators;
 pub mod find_containing_node;
 pub mod find_node_bounds;
+pub mod first_token_of_node;
 pub mod fix_non_block_statements;
 pub mod fix_trailing_comma;
 pub mod lvalue_reducer;

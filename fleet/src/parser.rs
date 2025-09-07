@@ -20,7 +20,9 @@ use crate::{
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
-        pass_manager::{Errors, GlobalState, Pass, PassError, PassFactory, PassResult},
+        pass_manager::{
+            Errors, GlobalState, InputSource, Pass, PassError, PassFactory, PassResult,
+        },
         runtime_type::RuntimeType,
         scope_analysis::{FunctionID, VariableID},
     },
@@ -115,9 +117,11 @@ impl PassFactory for Parser<'_> {
         let errors = state.check_named()?;
 
         let mut id_generator = IdGenerator::default();
+        let file_name = state.get_named::<InputSource>()?.file_name.clone();
         let program = state.insert(Program {
             functions: vec![],
             id: id_generator.next_node_id(),
+            file_name,
         });
         let id_generator = state.insert(id_generator);
 
@@ -209,14 +213,18 @@ macro_rules! recover_until {
             let recovery_end = $self.current_token();
             if $start_of_recovery != recovery_end {
                 if let (Some(start), Some(end)) = ($start_of_recovery, recovery_end) {
-                    $self.errors.push(FleetError {
-                        highlight_groups: vec![start.range.start.until(end.range.end)],
-                        message: format!(
-                            "Recovered by skipping until one of [{}]",
-                            stringify!($($recovery_stops), +)
-                        ),
-                        severity: ErrorSeverity::Warning,
-                    })
+                    $self.errors.push(
+                        FleetError::try_new(
+                            vec![start.range.start.until(end.range.end)],
+                            format!(
+                                "Recovered by skipping until one of [{}]",
+                                stringify!($($recovery_stops), +)
+                            ),
+                            ErrorSeverity::Warning,
+                            start.file_name,
+                        )
+                        .unwrap(),
+                    )
                 }
             }
         }

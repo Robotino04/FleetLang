@@ -11,8 +11,14 @@ use crate::ast::{
 };
 
 pub trait PartialAstVisitor {
-    fn partial_visit_program(mut self, Program { functions, id: _ }: &mut Program)
-    where
+    fn partial_visit_program(
+        mut self,
+        Program {
+            functions,
+            id: _,
+            file_name: _,
+        }: &mut Program,
+    ) where
         Self: Sized,
     {
         for f in functions {

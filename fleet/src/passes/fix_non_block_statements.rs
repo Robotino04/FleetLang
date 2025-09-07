@@ -7,7 +7,10 @@ use crate::{
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
-    passes::pass_manager::{Errors, GlobalState, Pass, PassFactory, PassResult},
+    passes::{
+        first_token_of_node::first_token_of_node,
+        pass_manager::{Errors, GlobalState, Pass, PassFactory, PassResult},
+    },
     tokenizer::{Token, TokenType},
 };
 
@@ -47,12 +50,15 @@ impl FixNonBlockStatements<'_> {
     fn create_fake_block_arround(&mut self, node: &Statement) -> Statement {
         let range = find_node_bounds(node);
 
+        let file_name = first_token_of_node(node).unwrap().file_name;
+
         Statement::Block(BlockStatement {
             open_brace_token: Token {
                 type_: TokenType::OpenBrace,
                 range: range.start.until(range.start),
                 leading_trivia: vec![],
                 trailing_trivia: vec![],
+                file_name: file_name.clone(),
             },
             body: vec![node.clone()],
             close_brace_token: Token {
@@ -60,6 +66,7 @@ impl FixNonBlockStatements<'_> {
                 range: range.end.until(range.end),
                 leading_trivia: vec![],
                 trailing_trivia: vec![],
+                file_name,
             },
             id: self.id_generator.next_node_id(),
         })

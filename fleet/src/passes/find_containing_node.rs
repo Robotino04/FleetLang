@@ -1,5 +1,3 @@
-use itertools::Itertools;
-
 use crate::ast::{
     ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
     BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,

@@ -885,7 +885,10 @@ impl LanguageServer for Backend {
         };
 
         let errors = pm.state.insert_default::<Errors>();
-        pm.state.insert(InputSource(src.to_string()));
+        pm.state.insert(InputSource {
+            source: src.to_string(),
+            file_name: params.text_document.uri.path().to_string().into(),
+        });
 
         if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
             return Err(tower_lsp_server::jsonrpc::Error {
@@ -905,7 +908,7 @@ impl LanguageServer for Backend {
                     items: errors
                         .iter()
                         .flat_map(|error| {
-                            error.highlight_groups.iter().map(|range| Diagnostic {
+                            error.highlight_groups().iter().map(|range| Diagnostic {
                                 range: source_range_to_lsp_range(*range),
                                 severity: Some(match error.severity {
                                     ErrorSeverity::Error => DiagnosticSeverity::ERROR,
@@ -989,7 +992,16 @@ impl LanguageServer for Backend {
         insert_compile_passes(&mut pm);
 
         pm.state.insert_default::<Errors>();
-        pm.state.insert(InputSource(src.to_string()));
+        pm.state.insert(InputSource {
+            source: src.to_string(),
+            file_name: params
+                .text_document_position_params
+                .text_document
+                .uri
+                .path()
+                .to_string()
+                .into(),
+        });
 
         if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
             return Err(tower_lsp_server::jsonrpc::Error {
@@ -1088,7 +1100,10 @@ impl LanguageServer for Backend {
         insert_minimal_pipeline(&mut pm);
 
         pm.state.insert_default::<Errors>();
-        pm.state.insert(InputSource(src.to_string()));
+        pm.state.insert(InputSource {
+            source: src.to_string(),
+            file_name: params.text_document.uri.path().to_string().into(),
+        });
 
         if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
             return Err(tower_lsp_server::jsonrpc::Error {
@@ -1131,7 +1146,10 @@ impl LanguageServer for Backend {
         let doc_end = SourceLocation::end(&src);
 
         // even invalid input shouldn't be formatted
-        let new_text = match infra::format(src) {
+        let new_text = match infra::format(InputSource {
+            source: src.to_string(),
+            file_name: params.text_document.uri.path().to_string().into(),
+        }) {
             Err(err) => {
                 return Err(tower_lsp_server::jsonrpc::Error {
                     code: tower_lsp_server::jsonrpc::ErrorCode::ServerError(0),
@@ -1191,7 +1209,16 @@ impl LanguageServer for Backend {
         insert_compile_passes(&mut pm);
 
         pm.state.insert_default::<Errors>();
-        pm.state.insert(InputSource(src.to_string()));
+        pm.state.insert(InputSource {
+            source: src.to_string(),
+            file_name: params
+                .text_document_position_params
+                .text_document
+                .uri
+                .path()
+                .to_string()
+                .into(),
+        });
 
         if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
             return Err(tower_lsp_server::jsonrpc::Error {

@@ -257,7 +257,10 @@ fn main() {
     pm.insert::<SwapPass<Program, FixedProgram>>();
 
     let errors = pm.state.insert_default::<Errors>();
-    pm.state.insert(InputSource(src.to_string()));
+    pm.state.insert(InputSource {
+        source: src.to_string(),
+        file_name: cli.input_file.to_string_lossy().to_string().into(),
+    });
     let _target_machine = pm.state.insert(target_machine);
 
     match pm.run() {

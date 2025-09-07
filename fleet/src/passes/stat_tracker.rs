@@ -21,6 +21,7 @@ use crate::{
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
+        first_token_of_node::first_token_of_node,
         pass_manager::{
             Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, StatData, TypeSets,
             VariableData,
@@ -28,7 +29,7 @@ use crate::{
         runtime_type::RuntimeType,
         scope_analysis::{Function, FunctionID, Variable},
     },
-    tokenizer::{SourceLocation, SourceRange},
+    tokenizer::{FileName, SourceLocation, SourceRange},
 };
 
 use super::find_node_bounds::find_node_bounds;
@@ -274,18 +275,17 @@ impl AstVisitor for StatTracker<'_> {
                 .clone();
             self.stats.insert(program.id, main_stat);
         } else {
-            self.errors.push(FleetError {
-                highlight_groups: vec![
-                    SourceLocation::start().until(
-                        program
-                            .functions
-                            .first()
-                            .map_or(SourceLocation::start(), |f| f.close_paren_token.range.end),
-                    ),
-                ],
-                message: "No main function was found.".to_string(),
-                severity: ErrorSeverity::Error,
-            });
+            self.errors.push(FleetError::from_range(
+                SourceLocation::start().until(
+                    program
+                        .functions
+                        .first()
+                        .map_or(SourceLocation::start(), |f| f.close_paren_token.range.end),
+                ),
+                "No main function was found.".to_string(),
+                ErrorSeverity::Error,
+                program.file_name.clone(),
+            ));
         }
     }
 
@@ -486,23 +486,28 @@ impl AstVisitor for StatTracker<'_> {
         }: &mut BlockStatement,
     ) -> Self::StatementOutput {
         let mut body_stat = NodeStats::nothing();
-        let mut unreachable_range: Option<SourceRange> = None;
+        let mut unreachable_range: Option<(SourceRange, FileName)> = None;
         for stmt in body {
             if body_stat.terminates_function == YesNoMaybe::Yes {
-                if let Some(prev_range) = unreachable_range {
-                    unreachable_range = Some(prev_range.extend_with(find_node_bounds(stmt)));
+                if let Some((prev_range, file_name)) = unreachable_range {
+                    unreachable_range =
+                        Some((prev_range.extend_with(find_node_bounds(stmt)), file_name));
                 } else {
-                    unreachable_range = Some(find_node_bounds(stmt));
+                    unreachable_range = Some((
+                        find_node_bounds(stmt),
+                        first_token_of_node(stmt).unwrap().file_name,
+                    ));
                 }
             }
             body_stat = body_stat.serial(self.visit_statement(stmt));
         }
-        if let Some(range) = unreachable_range {
-            self.errors.push(FleetError {
-                highlight_groups: vec![range],
-                message: "This code is unreachable".to_string(),
-                severity: ErrorSeverity::Warning,
-            });
+        if let Some((range, file_name)) = unreachable_range {
+            self.errors.push(FleetError::from_range(
+                range,
+                "This code is unreachable".to_string(),
+                ErrorSeverity::Warning,
+                file_name,
+            ));
         }
         self.stats.insert(*id, body_stat.clone());
         body_stat

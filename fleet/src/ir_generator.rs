@@ -549,22 +549,21 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     ))?;
 
             if let Err(err) = self.module.link_in_module(runtime_module_declarations) {
-                self.errors.push(FleetError {
-                    highlight_groups: vec![
-                        SourceLocation::start().until(
-                            program
-                                .functions
-                                .first()
-                                .map_or(SourceLocation::start(), |f| f.close_paren_token.range.end),
-                        ),
-                    ],
-                    message: format!(
+                self.errors.push(FleetError::from_range(
+                    SourceLocation::start().until(
+                        program
+                            .functions
+                            .first()
+                            .map_or(SourceLocation::start(), |f| f.close_paren_token.range.end),
+                    ),
+                    format!(
                         "Linking with runtime library declarations failed: {}\nModule dump:\n{}",
                         unescape(err.to_str().unwrap()),
                         self.module.print_to_string().to_str().unwrap()
                     ),
-                    severity: ErrorSeverity::Error,
-                });
+                    ErrorSeverity::Error,
+                    program.file_name.clone(),
+                ));
             }
         }
 
@@ -693,22 +692,21 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         }
 
         if let Err(err) = self.module.verify() {
-            self.errors.push(FleetError {
-                highlight_groups: vec![
-                    SourceLocation::start().until(
-                        program
-                            .functions
-                            .first()
-                            .map_or(SourceLocation::start(), |f| f.close_paren_token.range.end),
-                    ),
-                ],
-                message: format!(
+            self.errors.push(FleetError::from_range(
+                SourceLocation::start().until(
+                    program
+                        .functions
+                        .first()
+                        .map_or(SourceLocation::start(), |f| f.close_paren_token.range.end),
+                ),
+                format!(
                     "LLVM module is invalid: {}\nModule dump:\n{}",
                     unescape(err.to_str().unwrap()),
                     self.module.print_to_string().to_str().unwrap()
                 ),
-                severity: ErrorSeverity::Error,
-            });
+                ErrorSeverity::Error,
+                program.file_name.clone(),
+            ));
         }
 
         Ok(())

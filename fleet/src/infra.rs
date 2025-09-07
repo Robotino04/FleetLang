@@ -12,6 +12,7 @@ use crate::{
         err_missing_type_in_parameter::ErrMissingTypeInParam,
         err_too_few_iterators::ErrTooFewIterators,
         find_node_bounds::find_node_bounds,
+        first_token_of_node::first_token_of_node,
         fix_non_block_statements::FixNonBlockStatements,
         fix_trailing_comma::FixTrailingComma,
         lvalue_reducer::LValueReducer,
@@ -22,7 +23,7 @@ use crate::{
         store_pass::StorePass,
         type_propagation::TypePropagator,
     },
-    tokenizer::{SourceLocation, SourceRange, Token, Tokenizer},
+    tokenizer::{FileName, SourceLocation, SourceRange, Token, Tokenizer},
 };
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -34,17 +35,59 @@ pub enum ErrorSeverity {
 
 #[derive(Clone, Debug)]
 pub struct FleetError {
-    pub highlight_groups: Vec<SourceRange>,
+    /// ranges are guaranteed to be sorted and non-overlapping
+    highlight_groups: Vec<SourceRange>,
     pub message: String,
     pub severity: ErrorSeverity,
+    pub file_name: FileName,
 }
 
 impl FleetError {
+    /// Returns [None] if `highlight_groups` contains overlapping ranges or is empty
+    pub fn try_new(
+        mut highlight_groups: Vec<SourceRange>,
+        message: impl ToString,
+        severity: ErrorSeverity,
+        file_name: FileName,
+    ) -> Option<Self> {
+        highlight_groups.sort_by_key(|hl| hl.start);
+
+        if highlight_groups.is_empty() {
+            return None;
+        }
+
+        for (a, b) in highlight_groups.iter().tuple_windows() {
+            if a.end > b.start {
+                return None;
+            }
+        }
+
+        Some(Self {
+            highlight_groups,
+            message: message.to_string(),
+            severity,
+            file_name,
+        })
+    }
+    pub fn from_range(
+        range: SourceRange,
+        msg: impl ToString,
+        severity: ErrorSeverity,
+        file_name: FileName,
+    ) -> Self {
+        Self {
+            highlight_groups: vec![range],
+            message: msg.to_string(),
+            severity,
+            file_name,
+        }
+    }
     pub fn from_token(token: &Token, msg: impl ToString, severity: ErrorSeverity) -> Self {
         Self {
             highlight_groups: vec![token.range],
             message: msg.to_string(),
             severity,
+            file_name: token.file_name.clone(),
         }
     }
     pub fn from_node<I: Into<AstNode> + Clone>(
@@ -56,7 +99,14 @@ impl FleetError {
             highlight_groups: vec![find_node_bounds(node)],
             message: msg.to_string(),
             severity,
+            file_name: first_token_of_node(node)
+                .expect("Cannot create FleetError from empty node")
+                .file_name,
         }
+    }
+
+    pub fn highlight_groups(&self) -> &Vec<SourceRange> {
+        &self.highlight_groups
     }
 
     pub fn to_string(&self, source: &str) -> String {
@@ -169,12 +219,15 @@ impl FleetError {
         );
 
         let mut output = format!(
-            "{enable_color}[{}] {}{disable_color}",
+            "{enable_color}[{}] {}:{}:{}: {}{disable_color}",
             match self.severity {
                 ErrorSeverity::Error => "ERROR",
                 ErrorSeverity::Warning => "WARNING",
                 ErrorSeverity::Note => "NOTE",
             },
+            self.file_name.0,
+            self.start().line,
+            self.start().column,
             self.message
         );
 
@@ -221,14 +274,14 @@ pub fn insert_c_passes(pm: &mut PassManager) {
 
 NewtypeDeref!(ParseErrorsOnly, Errors);
 
-pub fn format(source: String) -> Result<String, PassError> {
+pub fn format(source: InputSource) -> Result<String, PassError> {
     let mut pm = PassManager::default();
     insert_minimal_pipeline(&mut pm);
     pm.insert::<StorePass<Errors, ParseErrorsOnly>>();
     insert_fix_passes(&mut pm);
     pm.insert::<AstToDocumentModelConverter>();
 
-    pm.state.insert(InputSource(source));
+    pm.state.insert(source);
     pm.state.insert_default::<Errors>();
 
     pm.run()?;
