@@ -10,7 +10,7 @@ use fleet::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
-    tokenizer::{SourceLocation, Token, Trivia, TriviaKind},
+    tokenizer::{SourceLocation, SourceRange, Token, Trivia, TriviaKind},
 };
 use tower_lsp_server::lsp_types::{SemanticToken, SemanticTokenModifier, SemanticTokenType};
 
@@ -31,9 +31,6 @@ fn token_delta_start(prev_start: SourceLocation, start: SourceLocation) -> u32 {
     } else {
         start.column as u32
     }
-}
-fn token_length(start: SourceLocation, end: SourceLocation) -> u32 {
-    (end.index - start.index) as u32
 }
 
 impl<'inputs> ExtractSemanticTokensPass<'inputs> {
@@ -57,18 +54,22 @@ impl<'inputs> ExtractSemanticTokensPass<'inputs> {
     ) {
         self.build_comment_tokens_from_trivia(&token.leading_trivia);
         self.semantic_tokens.push(SemanticToken {
-            delta_line: token_delta_line(self.previous_token_start, token.start),
-            delta_start: token_delta_start(self.previous_token_start, token.start),
-            length: token_length(token.start, token.end),
+            delta_line: token_delta_line(self.previous_token_start, token.range.start),
+            delta_start: token_delta_start(self.previous_token_start, token.range.start),
+            length: token.range.num_chars() as u32,
             token_type: self.find_token_type_index(token_type),
             token_modifiers_bitset: self.build_token_modifier_bitset(token_modifiers),
         });
-        self.previous_token_start = token.start;
+        self.previous_token_start = token.range.start;
         self.build_comment_tokens_from_trivia(&token.trailing_trivia);
     }
 
     fn build_comment_tokens_from_trivia(&mut self, trivia: &Vec<Trivia>) {
-        for Trivia { kind, start, end } in trivia {
+        for Trivia {
+            kind,
+            range: SourceRange { start, end },
+        } in trivia
+        {
             if let TriviaKind::LineComment(content) | TriviaKind::BlockComment(content) = kind {
                 let mut mod_start = *start;
                 for line in content.split("\n") {

@@ -550,11 +550,14 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
             if let Err(err) = self.module.link_in_module(runtime_module_declarations) {
                 self.errors.push(FleetError {
-                    start: SourceLocation::start(),
-                    end: program
-                        .functions
-                        .first()
-                        .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
+                    highlight_groups: vec![
+                        SourceLocation::start().until(
+                            program
+                                .functions
+                                .first()
+                                .map_or(SourceLocation::start(), |f| f.close_paren_token.range.end),
+                        ),
+                    ],
                     message: format!(
                         "Linking with runtime library declarations failed: {}\nModule dump:\n{}",
                         unescape(err.to_str().unwrap()),
@@ -691,11 +694,14 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         if let Err(err) = self.module.verify() {
             self.errors.push(FleetError {
-                start: SourceLocation::start(),
-                end: program
-                    .functions
-                    .first()
-                    .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
+                highlight_groups: vec![
+                    SourceLocation::start().until(
+                        program
+                            .functions
+                            .first()
+                            .map_or(SourceLocation::start(), |f| f.close_paren_token.range.end),
+                    ),
+                ],
                 message: format!(
                     "LLVM module is invalid: {}\nModule dump:\n{}",
                     unescape(err.to_str().unwrap()),

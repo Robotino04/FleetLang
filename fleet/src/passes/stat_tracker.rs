@@ -28,7 +28,7 @@ use crate::{
         runtime_type::RuntimeType,
         scope_analysis::{Function, FunctionID, Variable},
     },
-    tokenizer::SourceLocation,
+    tokenizer::{SourceLocation, SourceRange},
 };
 
 use super::find_node_bounds::find_node_bounds;
@@ -275,11 +275,14 @@ impl AstVisitor for StatTracker<'_> {
             self.stats.insert(program.id, main_stat);
         } else {
             self.errors.push(FleetError {
-                start: SourceLocation::start(),
-                end: program
-                    .functions
-                    .first()
-                    .map_or(SourceLocation::start(), |f| f.close_paren_token.end),
+                highlight_groups: vec![
+                    SourceLocation::start().until(
+                        program
+                            .functions
+                            .first()
+                            .map_or(SourceLocation::start(), |f| f.close_paren_token.range.end),
+                    ),
+                ],
                 message: "No main function was found.".to_string(),
                 severity: ErrorSeverity::Error,
             });
@@ -483,21 +486,20 @@ impl AstVisitor for StatTracker<'_> {
         }: &mut BlockStatement,
     ) -> Self::StatementOutput {
         let mut body_stat = NodeStats::nothing();
-        let mut unreachable_range = None;
+        let mut unreachable_range: Option<SourceRange> = None;
         for stmt in body {
             if body_stat.terminates_function == YesNoMaybe::Yes {
-                if let Some((prev_start, _prev_end)) = unreachable_range {
-                    unreachable_range = Some((prev_start, find_node_bounds(stmt).1));
+                if let Some(prev_range) = unreachable_range {
+                    unreachable_range = Some(prev_range.extend_with(find_node_bounds(stmt)));
                 } else {
                     unreachable_range = Some(find_node_bounds(stmt));
                 }
             }
             body_stat = body_stat.serial(self.visit_statement(stmt));
         }
-        if let Some((start, end)) = unreachable_range {
+        if let Some(range) = unreachable_range {
             self.errors.push(FleetError {
-                start,
-                end,
+                highlight_groups: vec![range],
                 message: "This code is unreachable".to_string(),
                 severity: ErrorSeverity::Warning,
             });

@@ -45,21 +45,19 @@ impl Pass for FixNonBlockStatements<'_> {
 
 impl FixNonBlockStatements<'_> {
     fn create_fake_block_arround(&mut self, node: &Statement) -> Statement {
-        let (start, end) = find_node_bounds(node);
+        let range = find_node_bounds(node);
 
         Statement::Block(BlockStatement {
             open_brace_token: Token {
                 type_: TokenType::OpenBrace,
-                start,
-                end: start,
+                range: range.start.until(range.start),
                 leading_trivia: vec![],
                 trailing_trivia: vec![],
             },
             body: vec![node.clone()],
             close_brace_token: Token {
                 type_: TokenType::CloseBrace,
-                start: end,
-                end,
+                range: range.end.until(range.end),
                 leading_trivia: vec![],
                 trailing_trivia: vec![],
             },

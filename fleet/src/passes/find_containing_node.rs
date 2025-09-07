@@ -1,3 +1,5 @@
+use itertools::Itertools;
+
 use crate::ast::{
     ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
     BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
@@ -8,7 +10,7 @@ use crate::ast::{
     ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
     VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
 };
-use crate::tokenizer::{SourceLocation, Token};
+use crate::tokenizer::{SourceLocation, SourceRange, Token};
 
 pub struct FindContainingNodePass {
     node_hierarchy: Vec<AstNode>,
@@ -25,24 +27,19 @@ impl FindContainingNodePass {
         }
     }
 
-    fn visit_token(&mut self, token: &Token) -> Result<(SourceLocation, SourceLocation), ()> {
-        if (token.start.line..=token.end.line).contains(&self.search_position.line)
-            && (token.start.column..token.end.column).contains(&self.search_position.column)
-        {
+    fn visit_token(&mut self, token: &Token) -> Result<SourceRange, ()> {
+        if token.range.contains(self.search_position) {
             self.token = Some(token.clone());
             return Err(());
         }
-        Ok((
-            token.start,
-            SourceLocation {
-                column: token.end.column.saturating_sub(1),
-                ..token.end
-            },
-        ))
+        Ok(token.range.start.until(SourceLocation {
+            column: token.range.end.column.saturating_sub(1),
+            ..token.range.end
+        }))
     }
 }
 
-type ResultRange = Result<(SourceLocation, SourceLocation), ()>;
+type ResultRange = Result<SourceRange, ()>;
 
 impl AstVisitor for FindContainingNodePass {
     type ProgramOutput = Result<(Vec<AstNode>, Option<Token>), ()>;
@@ -89,7 +86,7 @@ impl AstVisitor for FindContainingNodePass {
             id: _,
         } = function;
 
-        let left_bound = self.visit_token(let_token)?.0;
+        let left_bound = self.visit_token(let_token)?.start;
         self.visit_token(name_token)?;
         self.visit_token(equal_token)?;
         self.visit_token(open_paren_token)?;
@@ -104,14 +101,14 @@ impl AstVisitor for FindContainingNodePass {
         if let Some(return_type) = return_type {
             self.visit_type(return_type)?;
         }
-        let right_bound = self.visit_function_body(body)?.1;
+        let right_bound = self.visit_function_body(body)?.end;
 
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(left_bound.until(right_bound))
     }
 
     fn visit_statement_function_body(
@@ -123,14 +120,14 @@ impl AstVisitor for FindContainingNodePass {
 
         let StatementFunctionBody { statement, id: _ } = statement_function_body;
 
-        let (left_bound, right_bound) = self.visit_statement(statement)?;
+        let range = self.visit_statement(statement)?;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_extern_function_body(
@@ -149,34 +146,39 @@ impl AstVisitor for FindContainingNodePass {
             id: _,
         } = extern_function_body;
 
-        let left_bound = self.visit_token(at_token)?.0;
+        let left_bound = self.visit_token(at_token)?.start;
         self.visit_token(extern_token)?;
         self.visit_token(symbol_token)?;
-        let right_bound = self.visit_token(semicolon_token)?.1;
+        let right_bound = self.visit_token(semicolon_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_simple_binding(&mut self, binding: &mut SimpleBinding) -> Self::SimpleBindingOutput {
         self.node_hierarchy.push(binding.clone().into());
 
-        let (left_bound, mut right_bound) = self.visit_token(&binding.name_token)?;
+        let SourceRange {
+            start: left_bound,
+            end: mut right_bound,
+        } = self.visit_token(&binding.name_token)?;
         if let Some((colon_token, type_)) = &mut binding.type_ {
             self.visit_token(colon_token)?;
-            right_bound = self.visit_type(type_)?.1;
+            right_bound = self.visit_type(type_)?.end;
         }
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_expression_statement(
@@ -185,21 +187,22 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::StatementOutput {
         self.node_hierarchy.push(expr_stmt.clone().into());
 
-        let left_bound = self.visit_expression(&mut expr_stmt.expression)?.0;
-        let right_bound = self.visit_token(&expr_stmt.semicolon_token)?.1;
+        let left_bound = self.visit_expression(&mut expr_stmt.expression)?.start;
+        let right_bound = self.visit_token(&expr_stmt.semicolon_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
         self.node_hierarchy.push(on_stmt.clone().into());
 
-        let left_bound = self.visit_token(&on_stmt.on_token)?.0;
+        let left_bound = self.visit_token(&on_stmt.on_token)?.start;
         self.visit_token(&on_stmt.open_paren_token)?;
         self.visit_executor(&mut on_stmt.executor)?;
         for OnStatementIterator {
@@ -217,31 +220,33 @@ impl AstVisitor for FindContainingNodePass {
             self.visit_token(close_bracket_token)?;
         }
         self.visit_token(&on_stmt.close_paren_token)?;
-        let right_bound = self.visit_statement(&mut on_stmt.body)?.1;
+        let right_bound = self.visit_statement(&mut on_stmt.body)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_block_statement(&mut self, block_stmt: &mut BlockStatement) -> Self::StatementOutput {
         self.node_hierarchy.push(block_stmt.clone().into());
 
-        let left_bound = self.visit_token(&block_stmt.open_brace_token)?.0;
+        let left_bound = self.visit_token(&block_stmt.open_brace_token)?.start;
         for stmt in &mut block_stmt.body {
             self.visit_statement(stmt)?;
         }
-        let right_bound = self.visit_token(&block_stmt.close_brace_token)?.1;
+        let right_bound = self.visit_token(&block_stmt.close_brace_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_return_statement(
@@ -250,18 +255,19 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::StatementOutput {
         self.node_hierarchy.push(return_stmt.clone().into());
 
-        let left_bound = self.visit_token(&return_stmt.return_token)?.0;
+        let left_bound = self.visit_token(&return_stmt.return_token)?.start;
         if let Some(retvalue) = &mut return_stmt.value {
             self.visit_expression(retvalue)?;
         }
-        let right_bound = self.visit_token(&return_stmt.semicolon_token)?.1;
+        let right_bound = self.visit_token(&return_stmt.semicolon_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_variable_definition_statement(
@@ -270,42 +276,44 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::StatementOutput {
         self.node_hierarchy.push(vardef_stmt.clone().into());
 
-        let left_bound = self.visit_token(&vardef_stmt.let_token)?.0;
+        let left_bound = self.visit_token(&vardef_stmt.let_token)?.start;
         self.visit_simple_binding(&mut vardef_stmt.binding)?;
         self.visit_token(&vardef_stmt.equals_token)?;
         self.visit_expression(&mut vardef_stmt.value)?;
-        let right_bound = self.visit_token(&vardef_stmt.semicolon_token)?.1;
+        let right_bound = self.visit_token(&vardef_stmt.semicolon_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::StatementOutput {
         self.node_hierarchy.push(if_stmt.clone().into());
 
-        let left_bound = self.visit_token(&if_stmt.if_token)?.0;
+        let left_bound = self.visit_token(&if_stmt.if_token)?.start;
         self.visit_expression(&mut if_stmt.condition)?;
-        let mut right_bound = self.visit_statement(&mut if_stmt.if_body)?.1;
+        let mut right_bound = self.visit_statement(&mut if_stmt.if_body)?.end;
         for (elif_token, elif_condition, elif_body) in &mut if_stmt.elifs {
             self.visit_token(elif_token)?;
             self.visit_expression(elif_condition)?;
-            right_bound = self.visit_statement(elif_body)?.1;
+            right_bound = self.visit_statement(elif_body)?.end;
         }
         if let Some((else_token, else_body)) = &mut if_stmt.else_ {
             self.visit_token(else_token)?;
-            right_bound = self.visit_statement(else_body)?.1;
+            right_bound = self.visit_statement(else_body)?.end;
         }
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_while_loop_statement(
@@ -314,16 +322,17 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::StatementOutput {
         self.node_hierarchy.push(while_stmt.clone().into());
 
-        let left_bound = self.visit_token(&while_stmt.while_token)?.0;
+        let left_bound = self.visit_token(&while_stmt.while_token)?.start;
         self.visit_expression(&mut while_stmt.condition)?;
-        let right_bound = self.visit_statement(&mut while_stmt.body)?.1;
+        let right_bound = self.visit_statement(&mut while_stmt.body)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_for_loop_statement(
@@ -332,7 +341,7 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::StatementOutput {
         self.node_hierarchy.push(for_stmt.clone().into());
 
-        let left_bound = self.visit_token(&for_stmt.for_token)?.0;
+        let left_bound = self.visit_token(&for_stmt.for_token)?.start;
         self.visit_token(&for_stmt.open_paren_token)?;
         self.visit_statement(&mut for_stmt.initializer)?;
         if let Some(c) = &mut for_stmt.condition {
@@ -343,42 +352,45 @@ impl AstVisitor for FindContainingNodePass {
             self.visit_expression(i)?;
         }
         self.visit_token(&for_stmt.close_paren_token)?;
-        let right_bound = self.visit_statement(&mut for_stmt.body)?.1;
+        let right_bound = self.visit_statement(&mut for_stmt.body)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
         self.node_hierarchy.push(break_stmt.clone().into());
 
-        let left_bound = self.visit_token(&break_stmt.break_token)?.0;
-        let right_bound = self.visit_token(&break_stmt.semicolon_token)?.1;
+        let left_bound = self.visit_token(&break_stmt.break_token)?.start;
+        let right_bound = self.visit_token(&break_stmt.semicolon_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
         self.node_hierarchy.push(skip_stmt.clone().into());
 
-        let left_bound = self.visit_token(&skip_stmt.skip_token)?.0;
-        let right_bound = self.visit_token(&skip_stmt.semicolon_token)?.1;
+        let left_bound = self.visit_token(&skip_stmt.skip_token)?.start;
+        let right_bound = self.visit_token(&skip_stmt.semicolon_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_self_executor_host(
@@ -387,15 +399,14 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::ExecutorHostOutput {
         self.node_hierarchy.push(executor_host.clone().into());
 
-        let (left_bound, right_bound) = self.visit_token(&executor_host.token)?;
+        let range = self.visit_token(&executor_host.token)?;
 
-        // TODO: Make a function to check this fn(&[(SourceLocation, SourceLocation)]) -> bool
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
@@ -411,19 +422,20 @@ impl AstVisitor for FindContainingNodePass {
             id: _,
         } = executor;
 
-        let left_bound = self.visit_executor_host(host)?.0;
+        let left_bound = self.visit_executor_host(host)?.start;
         self.visit_token(dot_token)?;
         self.visit_token(thread_token)?;
         self.visit_token(open_bracket_token)?;
         self.visit_expression(index)?;
-        let right_bound = self.visit_token(close_bracket_token)?.1;
+        let right_bound = self.visit_token(close_bracket_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_gpu_executor(&mut self, executor: &mut GPUExecutor) -> Self::ExecutorOutput {
@@ -439,19 +451,20 @@ impl AstVisitor for FindContainingNodePass {
             id: _,
         } = executor;
 
-        let left_bound = self.visit_executor_host(host)?.0;
+        let left_bound = self.visit_executor_host(host)?.start;
         self.visit_token(dot_token)?;
         self.visit_token(gpus_token)?;
         self.visit_token(open_bracket_token)?;
         self.visit_expression(gpu_index)?;
-        let right_bound = self.visit_token(close_bracket_token)?.1;
+        let right_bound = self.visit_token(close_bracket_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_literal_expression(
@@ -460,14 +473,18 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::ExpressionOutput {
         self.node_hierarchy.push(expression.clone().into());
 
-        let (left_bound, right_bound) = self.visit_token(&expression.token)?;
+        let SourceRange {
+            start: left_bound,
+            end: right_bound,
+        } = self.visit_token(&expression.token)?;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_array_expression(
@@ -476,7 +493,7 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::ExpressionOutput {
         self.node_hierarchy.push(expression.clone().into());
 
-        let left_bound = self.visit_token(&expression.open_bracket_token)?.0;
+        let left_bound = self.visit_token(&expression.open_bracket_token)?.start;
 
         for (item, comma) in &mut expression.elements {
             self.visit_expression(item)?;
@@ -485,14 +502,15 @@ impl AstVisitor for FindContainingNodePass {
             }
         }
 
-        let right_bound = self.visit_token(&expression.close_bracket_token)?.1;
+        let right_bound = self.visit_token(&expression.close_bracket_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_function_call_expression(
@@ -501,7 +519,7 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::ExpressionOutput {
         self.node_hierarchy.push(expression.clone().into());
 
-        let left_bound = self.visit_token(&expression.name_token)?.0;
+        let left_bound = self.visit_token(&expression.name_token)?.start;
         self.visit_token(&expression.open_paren_token)?;
         for (arg, comma) in &mut expression.arguments {
             self.visit_expression(arg)?;
@@ -509,14 +527,15 @@ impl AstVisitor for FindContainingNodePass {
                 self.visit_token(comma)?;
             }
         }
-        let right_bound = self.visit_token(&expression.close_paren_token)?.1;
+        let right_bound = self.visit_token(&expression.close_paren_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_compiler_expression(
@@ -525,7 +544,7 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::ExpressionOutput {
         self.node_hierarchy.push(expression.clone().into());
 
-        let left_bound = self.visit_token(&expression.at_token)?.0;
+        let left_bound = self.visit_token(&expression.at_token)?.start;
         self.visit_token(&expression.name_token)?;
         self.visit_token(&expression.open_paren_token)?;
         for (arg, comma) in &mut expression.arguments {
@@ -534,14 +553,15 @@ impl AstVisitor for FindContainingNodePass {
                 self.visit_token(comma)?;
             }
         }
-        let right_bound = self.visit_token(&expression.close_paren_token)?.1;
+        let right_bound = self.visit_token(&expression.close_paren_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_array_index_expression(
@@ -550,17 +570,18 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::ExpressionOutput {
         self.node_hierarchy.push(expression.clone().into());
 
-        let left_bound = self.visit_expression(&mut expression.array)?.0;
+        let left_bound = self.visit_expression(&mut expression.array)?.start;
         self.visit_token(&expression.open_bracket_token)?;
         self.visit_expression(&mut expression.index)?;
-        let right_bound = self.visit_token(&expression.close_bracket_token)?.1;
+        let right_bound = self.visit_token(&expression.close_bracket_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_grouping_expression(
@@ -569,16 +590,17 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::ExpressionOutput {
         self.node_hierarchy.push(expression.clone().into());
 
-        let left_bound = self.visit_token(&expression.open_paren_token)?.0;
+        let left_bound = self.visit_token(&expression.open_paren_token)?.start;
         self.visit_expression(&mut expression.subexpression)?;
-        let right_bound = self.visit_token(&expression.close_paren_token)?.1;
+        let right_bound = self.visit_token(&expression.close_paren_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_variable_access_expression(
@@ -587,14 +609,18 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::ExpressionOutput {
         self.node_hierarchy.push(expression.clone().into());
 
-        let (left_bound, right_bound) = self.visit_token(&expression.name_token)?;
+        let SourceRange {
+            start: left_bound,
+            end: right_bound,
+        } = self.visit_token(&expression.name_token)?;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_unary_expression(
@@ -603,30 +629,32 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::ExpressionOutput {
         self.node_hierarchy.push(expression.clone().into());
 
-        let left_bound = self.visit_token(&expression.operator_token)?.0;
-        let right_bound = self.visit_expression(&mut expression.operand)?.1;
+        let left_bound = self.visit_token(&expression.operator_token)?.start;
+        let right_bound = self.visit_expression(&mut expression.operand)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
         self.node_hierarchy.push(expression.clone().into());
 
-        let left_bound = self.visit_expression(&mut expression.operand)?.0;
+        let left_bound = self.visit_expression(&mut expression.operand)?.start;
         self.visit_token(&expression.as_token)?;
-        let right_bound = self.visit_type(&mut expression.type_)?.1;
+        let right_bound = self.visit_type(&mut expression.type_)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_binary_expression(
@@ -635,16 +663,17 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::ExpressionOutput {
         self.node_hierarchy.push(expression.clone().into());
 
-        let left_bound = self.visit_expression(&mut expression.left)?.0;
+        let left_bound = self.visit_expression(&mut expression.left)?.start;
         self.visit_token(&expression.operator_token)?;
-        let right_bound = self.visit_expression(&mut expression.right)?.1;
+        let right_bound = self.visit_expression(&mut expression.right)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_variable_assignment_expression(
@@ -653,117 +682,134 @@ impl AstVisitor for FindContainingNodePass {
     ) -> Self::ExpressionOutput {
         self.node_hierarchy.push(expression.clone().into());
 
-        let left_bound = self.visit_lvalue(&mut expression.lvalue)?.0;
+        let left_bound = self.visit_lvalue(&mut expression.lvalue)?.start;
         self.visit_token(&expression.equal_token)?;
-        let right_bound = self.visit_expression(&mut expression.right)?.1;
+        let right_bound = self.visit_expression(&mut expression.right)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
         self.node_hierarchy.push(lvalue.clone().into());
 
-        let (left_bound, right_bound) = self.visit_token(&lvalue.name_token)?;
+        let SourceRange {
+            start: left_bound,
+            end: right_bound,
+        } = self.visit_token(&lvalue.name_token)?;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
         self.node_hierarchy.push(lvalue.clone().into());
 
-        let left_bound = self.visit_lvalue(&mut lvalue.array)?.0;
+        let left_bound = self.visit_lvalue(&mut lvalue.array)?.start;
         self.visit_token(&lvalue.open_bracket_token)?;
         self.visit_expression(&mut lvalue.index)?;
-        let right_bound = self.visit_token(&lvalue.close_bracket_token)?.1;
+        let right_bound = self.visit_token(&lvalue.close_bracket_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {
         self.node_hierarchy.push(lvalue.clone().into());
 
-        let left_bound = self.visit_token(&lvalue.open_paren_token)?.0;
+        let left_bound = self.visit_token(&lvalue.open_paren_token)?.start;
         self.visit_lvalue(&mut lvalue.sublvalue)?;
-        let right_bound = self.visit_token(&lvalue.close_paren_token)?.1;
+        let right_bound = self.visit_token(&lvalue.close_paren_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_simple_type(&mut self, type_: &mut SimpleType) -> Self::TypeOutput {
         self.node_hierarchy.push(type_.clone().into());
 
-        let (left_bound, right_bound) = self.visit_token(&type_.token)?;
+        let SourceRange {
+            start: left_bound,
+            end: right_bound,
+        } = self.visit_token(&type_.token)?;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
         self.node_hierarchy.push(unit_type.clone().into());
 
-        let left_bound = self.visit_token(&unit_type.open_paren_token)?.0;
-        let right_bound = self.visit_token(&unit_type.close_paren_token)?.1;
+        let left_bound = self.visit_token(&unit_type.open_paren_token)?.start;
+        let right_bound = self.visit_token(&unit_type.close_paren_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {
         self.node_hierarchy.push(idk_type.clone().into());
 
-        let (left_bound, right_bound) = self.visit_token(&idk_type.token)?;
+        let SourceRange {
+            start: left_bound,
+            end: right_bound,
+        } = self.visit_token(&idk_type.token)?;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 
     fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
         self.node_hierarchy.push(array_type.clone().into());
 
-        let left_bound = self.visit_type(&mut array_type.subtype)?.0;
+        let left_bound = self.visit_type(&mut array_type.subtype)?.start;
         self.visit_token(&array_type.open_bracket_token)?;
         if let Some(size) = &mut array_type.size {
             self.visit_expression(size)?;
         }
-        let right_bound = self.visit_token(&array_type.close_bracket_token)?.1;
+        let right_bound = self.visit_token(&array_type.close_bracket_token)?.end;
 
-        if left_bound <= self.search_position && self.search_position <= right_bound {
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
             return Err(());
         }
 
         self.node_hierarchy.pop();
-        Ok((left_bound, right_bound))
+        Ok(range)
     }
 }

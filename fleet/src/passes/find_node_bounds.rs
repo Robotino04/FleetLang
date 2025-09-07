@@ -9,10 +9,10 @@ use crate::{
         UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
-    tokenizer::SourceLocation,
+    tokenizer::{SourceLocation, SourceRange},
 };
 
-pub fn find_node_bounds<I>(node: &I) -> (SourceLocation, SourceLocation)
+pub fn find_node_bounds<I>(node: &I) -> SourceRange
 where
     I: Into<AstNode> + Clone,
 {
@@ -20,8 +20,8 @@ where
         AstNode::Program(Program { functions, id: _ }) => functions
             .iter()
             .map(find_node_bounds)
-            .reduce(|(start1, end1), (start2, end2)| (start1.min(start2), end1.max(end2)))
-            .unwrap_or((SourceLocation::start(), SourceLocation::start())),
+            .reduce(SourceRange::extend_with)
+            .unwrap_or(SourceLocation::start().until(SourceLocation::start())),
         AstNode::FunctionDefinition(FunctionDefinition {
             let_token,
             name: _,
@@ -34,7 +34,7 @@ where
             return_type: _,
             body,
             id: _,
-        }) => (let_token.start, find_node_bounds(body).1),
+        }) => let_token.range.extend_with(find_node_bounds(body)),
         AstNode::ExternFunctionBody(ExternFunctionBody {
             at_token,
             extern_token: _,
@@ -42,7 +42,7 @@ where
             symbol_token: _,
             semicolon_token,
             id: _,
-        }) => (at_token.start, semicolon_token.end),
+        }) => at_token.range.extend_with(semicolon_token.range),
         AstNode::StatementFunctionBody(StatementFunctionBody { statement, id: _ }) => {
             find_node_bounds(statement)
         }
@@ -51,19 +51,17 @@ where
             name: _,
             type_,
             id: _,
-        }) => (
-            name_token.start,
-            if let Some((_colon, type_)) = type_ {
-                find_node_bounds(type_).1
-            } else {
-                name_token.end
-            },
+        }) => name_token.range.extend_with(
+            type_
+                .as_ref()
+                .map(|(_colon, type_)| find_node_bounds(type_))
+                .unwrap_or(name_token.range),
         ),
         AstNode::ExpressionStatement(ExpressionStatement {
             expression,
             semicolon_token,
             id: _,
-        }) => (find_node_bounds(expression).0, semicolon_token.end),
+        }) => find_node_bounds(expression).extend_with(semicolon_token.range),
         AstNode::OnStatement(OnStatement {
             on_token,
             executor: _,
@@ -73,19 +71,19 @@ where
             close_paren_token: _,
             body,
             id: _,
-        }) => (on_token.start, find_node_bounds(&**body).1),
+        }) => on_token.range.extend_with(find_node_bounds(&**body)),
         AstNode::BlockStatement(BlockStatement {
             open_brace_token,
             body: _,
             close_brace_token,
             id: _,
-        }) => (open_brace_token.start, close_brace_token.end),
+        }) => open_brace_token.range.extend_with(close_brace_token.range),
         AstNode::ReturnStatement(ReturnStatement {
             return_token,
             value: _,
             semicolon_token,
             id: _,
-        }) => (return_token.start, semicolon_token.end),
+        }) => return_token.range.extend_with(semicolon_token.range),
 
         AstNode::VariableDefinitionStatement(VariableDefinitionStatement {
             let_token,
@@ -94,7 +92,7 @@ where
             value: _,
             semicolon_token,
             id: _,
-        }) => (let_token.start, semicolon_token.end),
+        }) => let_token.range.extend_with(semicolon_token.range),
         AstNode::IfStatement(IfStatement {
             if_token,
             condition: _,
@@ -102,22 +100,21 @@ where
             elifs,
             else_,
             id: _,
-        }) => (
-            if_token.start,
+        }) => if_token.range.extend_with(
             else_
                 .clone()
-                .map(|(_else_token, else_body)| find_node_bounds(&*else_body).1)
+                .map(|(_else_token, else_body)| find_node_bounds(&*else_body))
                 .or(elifs
                     .last()
-                    .map(|(_elif_token, _condition, elif_body)| find_node_bounds(elif_body).1))
-                .unwrap_or(find_node_bounds(&**if_body).1),
+                    .map(|(_elif_token, _condition, elif_body)| find_node_bounds(elif_body)))
+                .unwrap_or(find_node_bounds(&**if_body)),
         ),
         AstNode::WhileLoopStatement(WhileLoopStatement {
             while_token,
             condition: _,
             body,
             id: _,
-        }) => (while_token.start, find_node_bounds(&**body).1),
+        }) => while_token.range.extend_with(find_node_bounds(&**body)),
         AstNode::ForLoopStatement(ForLoopStatement {
             for_token,
             open_paren_token: _,
@@ -128,19 +125,19 @@ where
             close_paren_token: _,
             body,
             id: _,
-        }) => (for_token.start, find_node_bounds(&**body).1),
+        }) => for_token.range.extend_with(find_node_bounds(&**body)),
         AstNode::BreakStatement(BreakStatement {
             break_token,
             semicolon_token,
             id: _,
-        }) => (break_token.start, semicolon_token.end),
+        }) => break_token.range.extend_with(semicolon_token.range),
         AstNode::SkipStatement(SkipStatement {
             skip_token,
             semicolon_token,
             id: _,
-        }) => (skip_token.start, semicolon_token.end),
+        }) => skip_token.range.extend_with(semicolon_token.range),
 
-        AstNode::SelfExecutorHost(SelfExecutorHost { token, id: _ }) => (token.start, token.end),
+        AstNode::SelfExecutorHost(SelfExecutorHost { token, id: _ }) => token.range,
         AstNode::ThreadExecutor(ThreadExecutor {
             host,
             dot_token: _,
@@ -149,7 +146,7 @@ where
             index: _,
             close_bracket_token,
             id: _,
-        }) => (find_node_bounds(host).0, close_bracket_token.end),
+        }) => find_node_bounds(host).extend_with(close_bracket_token.range),
         AstNode::GPUExecutor(GPUExecutor {
             host,
             dot_token: _,
@@ -158,43 +155,47 @@ where
             gpu_index: _,
             close_bracket_token,
             id: _,
-        }) => (find_node_bounds(host).0, close_bracket_token.end),
+        }) => find_node_bounds(host).extend_with(close_bracket_token.range),
         AstNode::UnaryExpression(UnaryExpression {
             operator_token,
             operation: _,
             operand,
             id: _,
-        }) => (operator_token.start, find_node_bounds(&**operand).1),
+        }) => operator_token
+            .range
+            .extend_with(find_node_bounds(&**operand)),
         AstNode::CastExpression(CastExpression {
             operand,
             as_token: _,
             type_,
             id: _,
-        }) => (find_node_bounds(&**operand).0, find_node_bounds(type_).1),
+        }) => find_node_bounds(&**operand).extend_with(find_node_bounds(type_)),
         AstNode::LiteralExpression(LiteralExpression {
             value: _,
             token,
             id: _,
-        }) => (token.start, token.end),
+        }) => token.range,
         AstNode::ArrayExpression(ArrayExpression {
             open_bracket_token,
             elements: _,
             close_bracket_token,
             id: _,
-        }) => (open_bracket_token.start, close_bracket_token.end),
+        }) => open_bracket_token
+            .range
+            .extend_with(close_bracket_token.range),
         AstNode::BinaryExpression(BinaryExpression {
             left,
             operator_token: _,
             operation: _,
             right,
             id: _,
-        }) => (find_node_bounds(&**left).0, find_node_bounds(&**right).1),
+        }) => find_node_bounds(&**left).extend_with(find_node_bounds(&**right)),
         AstNode::GroupingExpression(GroupingExpression {
             open_paren_token,
             subexpression: _,
             close_paren_token,
             id: _,
-        }) => (open_paren_token.start, close_paren_token.end),
+        }) => open_paren_token.range.extend_with(close_paren_token.range),
 
         AstNode::FunctionCallExpression(FunctionCallExpression {
             name: _,
@@ -203,7 +204,7 @@ where
             arguments: _,
             close_paren_token,
             id: _,
-        }) => (name_token.start, close_paren_token.end),
+        }) => name_token.range.extend_with(close_paren_token.range),
         AstNode::CompilerExpression(CompilerExpression {
             at_token,
             name: _,
@@ -212,60 +213,60 @@ where
             arguments: _,
             close_paren_token,
             id: _,
-        }) => (at_token.start, close_paren_token.end),
+        }) => at_token.range.extend_with(close_paren_token.range),
         AstNode::ArrayIndexExpression(ArrayIndexExpression {
             array,
             open_bracket_token: _,
             index: _,
             close_bracket_token,
             id: _,
-        }) => (find_node_bounds(&**array).0, close_bracket_token.end),
+        }) => find_node_bounds(&**array).extend_with(close_bracket_token.range),
         AstNode::VariableAccessExpression(VariableAccessExpression {
             name: _,
             name_token,
             id: _,
-        }) => (name_token.start, name_token.end),
+        }) => name_token.range,
         AstNode::VariableAssignmentExpression(VariableAssignmentExpression {
             lvalue,
             equal_token: _,
             right,
             id: _,
-        }) => (find_node_bounds(lvalue).0, find_node_bounds(&**right).1),
+        }) => find_node_bounds(lvalue).extend_with(find_node_bounds(&**right)),
         AstNode::VariableLValue(VariableLValue {
             name: _,
             name_token,
             id: _,
-        }) => (name_token.start, name_token.end),
+        }) => name_token.range,
         AstNode::ArrayIndexLValue(ArrayIndexLValue {
             array,
             open_bracket_token: _,
             index: _,
             close_bracket_token,
             id: _,
-        }) => (find_node_bounds(&**array).0, close_bracket_token.end),
+        }) => find_node_bounds(&**array).extend_with(close_bracket_token.range),
         AstNode::GroupingLValue(GroupingLValue {
             open_paren_token,
             sublvalue: _,
             close_paren_token,
             id: _,
-        }) => (open_paren_token.start, close_paren_token.end),
+        }) => open_paren_token.range.extend_with(close_paren_token.range),
         AstNode::SimpleType(SimpleType {
             token,
             type_: _,
             id: _,
-        }) => (token.start, token.end),
+        }) => token.range.extend_with(token.range),
         AstNode::UnitType(UnitType {
             open_paren_token,
             close_paren_token,
             id: _,
-        }) => (open_paren_token.start, close_paren_token.end),
-        AstNode::IdkType(IdkType { token, id: _ }) => (token.start, token.end),
+        }) => open_paren_token.range.extend_with(close_paren_token.range),
+        AstNode::IdkType(IdkType { token, id: _ }) => token.range,
         AstNode::ArrayType(ArrayType {
             subtype,
             open_bracket_token: _,
             size: _,
             close_bracket_token,
             id: _,
-        }) => (find_node_bounds(&**subtype).0, close_bracket_token.end),
+        }) => find_node_bounds(&**subtype).extend_with(close_bracket_token.range),
     }
 }

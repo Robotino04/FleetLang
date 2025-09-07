@@ -10,10 +10,7 @@ use crate::{
 #[derive(Clone, Debug, PartialEq)]
 pub struct Token {
     pub type_: TokenType,
-    /// inclusive
-    pub start: SourceLocation,
-    /// non-inclusive
-    pub end: SourceLocation,
+    pub range: SourceRange,
 
     // https://langdev.stackexchange.com/questions/2289/preserving-comments-in-ast
     pub leading_trivia: Vec<Trivia>,
@@ -30,8 +27,7 @@ pub enum TriviaKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Trivia {
     pub kind: TriviaKind,
-    pub start: SourceLocation,
-    pub end: SourceLocation,
+    pub range: SourceRange,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -148,6 +144,39 @@ impl SourceLocation {
             column: src.as_ref().split("\n").last().unwrap_or("").len() + 1,
         }
     }
+
+    pub fn until(self, other: SourceLocation) -> SourceRange {
+        SourceRange {
+            start: self,
+            end: other,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct SourceRange {
+    /// inclusive
+    pub start: SourceLocation,
+    /// non-inclusive
+    pub end: SourceLocation,
+}
+
+impl SourceRange {
+    pub fn contains(&self, other: SourceLocation) -> bool {
+        self.start <= other && other < self.end
+    }
+
+    /// Constructs the smallest [SourceRange] that includes both `self` and `other`
+    pub fn extend_with(self, other: SourceRange) -> Self {
+        Self {
+            start: self.start.min(other.start),
+            end: self.start.min(other.end),
+        }
+    }
+
+    pub fn num_chars(&self) -> usize {
+        self.end.index - self.start.index
+    }
 }
 
 pub struct Tokenizer<'state> {
@@ -159,7 +188,7 @@ pub struct Tokenizer<'state> {
     current_location: SourceLocation,
 
     unk_char_accumulator: String,
-    unk_char_token: Token,
+    unk_char_range: SourceRange,
 
     trivia_accumulator: Vec<Trivia>,
 }
@@ -189,14 +218,7 @@ impl PassFactory for Tokenizer<'_> {
             current_location: SourceLocation::start(),
 
             unk_char_accumulator: "".to_string(),
-            unk_char_token: Token {
-                type_: TokenType::UnknownCharacters("".to_string()),
-                start: SourceLocation::start(),
-                end: SourceLocation::start(),
-
-                leading_trivia: vec![],
-                trailing_trivia: vec![],
-            },
+            unk_char_range: SourceLocation::start().until(SourceLocation::start()),
 
             trivia_accumulator: vec![],
         })
@@ -236,24 +258,27 @@ impl<'errors> Tokenizer<'errors> {
 
     fn unknown_character(&mut self, c: char) {
         if self.unk_char_accumulator.is_empty() {
-            self.unk_char_token.start = self.current_location;
+            self.unk_char_range.start = self.current_location;
             self.advance();
-            self.unk_char_token.end = self.current_location;
+            self.unk_char_range.end = self.current_location;
             self.unk_char_accumulator = c.to_string();
-        } else if self.unk_char_token.end.index == self.current_location.index {
+        } else if self.unk_char_range.end.index == self.current_location.index {
             self.unk_char_accumulator
                 .push(self.chars[self.current_location.index]);
 
             self.advance();
-            self.unk_char_token.end = self.current_location;
+            self.unk_char_range.end = self.current_location;
         } else {
-            self.unk_char_token.type_ =
-                TokenType::UnknownCharacters(self.unk_char_accumulator.clone());
-            self.tokens.push(self.unk_char_token.clone());
+            self.tokens.push(Token {
+                type_: TokenType::UnknownCharacters(self.unk_char_accumulator.clone()),
+                range: self.unk_char_range,
+                leading_trivia: vec![],
+                trailing_trivia: vec![],
+            });
 
-            self.unk_char_token.start = self.current_location;
+            self.unk_char_range.start = self.current_location;
             self.advance();
-            self.unk_char_token.end = self.current_location;
+            self.unk_char_range.end = self.current_location;
             self.unk_char_accumulator = c.to_string();
         }
         error!("Unexpected character {c:?}");
@@ -267,8 +292,7 @@ impl<'errors> Tokenizer<'errors> {
             self.advance();
         }
         let token = Token {
-            start,
-            end: self.current_location,
+            range: start.until(self.current_location),
             type_: t,
 
             leading_trivia: self.trivia_accumulator.clone(),
@@ -437,8 +461,7 @@ impl<'errors> Tokenizer<'errors> {
 
                             self.trivia_accumulator.push(Trivia {
                                 kind: TriviaKind::LineComment(content.clone()),
-                                start: start_location,
-                                end: end_location,
+                                range: start_location.until(end_location),
                             });
                             self.flush_trailing_trivia();
                         }
@@ -459,8 +482,9 @@ impl<'errors> Tokenizer<'errors> {
 
                             if self.current_location.index + 1 >= self.chars.len() {
                                 self.errors.push(FleetError {
-                                    start: start_location,
-                                    end: content_end_location,
+                                    highlight_groups: vec![
+                                        start_location.until(content_end_location),
+                                    ],
                                     message: "Unclosed block comment".to_string(),
                                     severity: ErrorSeverity::Error,
                                 });
@@ -477,8 +501,7 @@ impl<'errors> Tokenizer<'errors> {
 
                             self.trivia_accumulator.push(Trivia {
                                 kind: TriviaKind::BlockComment(content.clone()),
-                                start: start_location,
-                                end: end_location,
+                                range: start_location.until(end_location),
                             });
                             self.flush_trailing_trivia();
                         }
@@ -511,8 +534,7 @@ impl<'errors> Tokenizer<'errors> {
                         .collect::<String>();
 
                     self.tokens.push(Token {
-                        start: start_location,
-                        end: self.current_location,
+                        range: start_location.until(self.current_location),
                         type_: match lexeme.as_str() {
                             "on" => TokenType::Keyword(Keyword::On),
                             "self" => TokenType::Keyword(Keyword::Self_),
@@ -580,14 +602,14 @@ impl<'errors> Tokenizer<'errors> {
                         .collect::<String>();
 
                     self.tokens.push(Token {
-                        start: start_location,
-                        end: self.current_location,
+                        range: start_location.until(self.current_location),
                         type_: if is_float {
                             TokenType::Float(
                                 lexeme.parse().unwrap_or_else(|_| {
                                     self.errors.push(FleetError {
-                                        start: start_location,
-                                        end: self.current_location,
+                                        highlight_groups: vec![
+                                            start_location.until(self.current_location),
+                                        ],
                                         message: format!("Unable to parse {lexeme:?} as a float"),
                                         severity: ErrorSeverity::Error,
                                     });
@@ -599,8 +621,9 @@ impl<'errors> Tokenizer<'errors> {
                             TokenType::Integer(
                                 lexeme.parse().unwrap_or_else(|_| {
                                     self.errors.push(FleetError {
-                                        start: start_location,
-                                        end: self.current_location,
+                                        highlight_groups: vec![
+                                            start_location.until(self.current_location),
+                                        ],
                                         message: format!("Unable to parse {lexeme:?} as a float"),
                                         severity: ErrorSeverity::Error,
                                     });
@@ -634,8 +657,7 @@ impl<'errors> Tokenizer<'errors> {
                         .collect::<String>();
 
                     self.tokens.push(Token {
-                        start: start_location,
-                        end: self.current_location,
+                        range: start_location.until(self.current_location),
                         type_: TokenType::StringLiteral(lexeme),
 
                         leading_trivia: self.trivia_accumulator.clone(),
@@ -653,8 +675,7 @@ impl<'errors> Tokenizer<'errors> {
                     self.advance();
                     self.trivia_accumulator.push(Trivia {
                         kind: TriviaKind::EmptyLine,
-                        start,
-                        end: self.current_location,
+                        range: start.until(self.current_location),
                     });
                 }
 
@@ -665,10 +686,14 @@ impl<'errors> Tokenizer<'errors> {
         }
 
         // flush the last unknown character
+
         if !self.unk_char_accumulator.is_empty() {
-            self.unk_char_token.type_ =
-                TokenType::UnknownCharacters(self.unk_char_accumulator.clone());
-            self.tokens.push(self.unk_char_token.clone());
+            self.tokens.push(Token {
+                type_: TokenType::UnknownCharacters(self.unk_char_accumulator.clone()),
+                range: self.unk_char_range,
+                leading_trivia: vec![],
+                trailing_trivia: vec![],
+            });
         }
 
         if let Some(token) = self.tokens.last_mut() {
@@ -699,9 +724,9 @@ impl<'errors> Tokenizer<'errors> {
             return;
         };
 
-        let same_line = last_token.end.line == trivia.end.line;
+        let same_line = last_token.range.end.line == trivia.range.end.line;
         let trailing_with_newline =
-            last_token.end.line + 1 == trivia.end.line && trivia.end.column == 0;
+            last_token.range.end.line + 1 == trivia.range.end.line && trivia.range.end.column == 0;
 
         if same_line || trailing_with_newline {
             info!("Flushing {trivia:?} to {last_token:#?}");

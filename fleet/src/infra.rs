@@ -22,7 +22,7 @@ use crate::{
         store_pass::StorePass,
         type_propagation::TypePropagator,
     },
-    tokenizer::{SourceLocation, Token, Tokenizer},
+    tokenizer::{SourceLocation, SourceRange, Token, Tokenizer},
 };
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -34,8 +34,7 @@ pub enum ErrorSeverity {
 
 #[derive(Clone, Debug)]
 pub struct FleetError {
-    pub start: SourceLocation,
-    pub end: SourceLocation,
+    pub highlight_groups: Vec<SourceRange>,
     pub message: String,
     pub severity: ErrorSeverity,
 }
@@ -43,8 +42,7 @@ pub struct FleetError {
 impl FleetError {
     pub fn from_token(token: &Token, msg: impl ToString, severity: ErrorSeverity) -> Self {
         Self {
-            start: token.start,
-            end: token.end,
+            highlight_groups: vec![token.range],
             message: msg.to_string(),
             severity,
         }
@@ -54,10 +52,8 @@ impl FleetError {
         msg: impl ToString,
         severity: ErrorSeverity,
     ) -> Self {
-        let (start, end) = find_node_bounds(node);
         Self {
-            start,
-            end,
+            highlight_groups: vec![find_node_bounds(node)],
             message: msg.to_string(),
             severity,
         }
@@ -68,6 +64,21 @@ impl FleetError {
     }
     pub fn to_string_ansi(&self, source: &str) -> String {
         self.to_string_impl(source, true)
+    }
+
+    pub fn start(&self) -> SourceLocation {
+        self.highlight_groups
+            .iter()
+            .map(|range| range.start)
+            .min()
+            .expect("FleetError without highlight group")
+    }
+    pub fn end(&self) -> SourceLocation {
+        self.highlight_groups
+            .iter()
+            .map(|range| range.end)
+            .max()
+            .expect("FleetError without highlight group")
     }
 
     fn to_string_impl(&self, source: &str, use_ansi: bool) -> String {
@@ -85,10 +96,13 @@ impl FleetError {
             }
         };
 
+        let self_start = self.start();
+        let self_end = self.end();
+
         let num_before_error_lines = 3;
         let num_after_error_lines = 3;
 
-        let max_line_number_len = (self.end.line + num_after_error_lines).to_string().len();
+        let max_line_number_len = (self_end.line + num_after_error_lines).to_string().len();
 
         let pad_with_line_number =
             |(line, text): (usize, &str)| format!("{line:<max_line_number_len$}| {text}");
@@ -98,39 +112,49 @@ impl FleetError {
             .enumerate()
             .map(|(line, text)| (line + 1, text));
 
-        let before_err = source_lines.clone().take(self.start.line - 1);
+        let before_err = source_lines.clone().take(self_start.line - 1);
         let err = source_lines
             .clone()
-            .skip(self.start.line - 1)
-            .take(self.end.line - self.start.line + 1)
+            .skip(self_start.line - 1)
+            .take(self_end.line - self_start.line + 1)
             .map(|(line, text)| {
-                let start_col = if line == self.start.line {
-                    self.start.column
-                } else {
-                    0
-                };
-                let end_col = if line == self.end.line {
-                    self.end.column.min(text.len())
-                } else {
-                    text.len()
-                };
+                let mut text = text.to_string();
 
-                pad_with_line_number((
-                    line,
-                    format!(
-                        "{}{enable_color}{}{disable_color}{}",
-                        &text[..start_col],
-                        &text[start_col..end_col],
-                        &text[end_col..]
-                    )
-                    .as_str(),
-                ))
+                for SourceRange {
+                    start: hl_start,
+                    end: hl_end,
+                } in &self.highlight_groups
+                {
+                    let start_col = if line == hl_start.line {
+                        self_start.column
+                    } else {
+                        0
+                    };
+                    let end_col = if line == hl_end.line {
+                        self_end.column.min(text.len())
+                    } else {
+                        text.len()
+                    };
+
+                    text = pad_with_line_number((
+                        line,
+                        format!(
+                            "{}{enable_color}{}{disable_color}{}",
+                            &text[..start_col],
+                            &text[start_col..end_col],
+                            &text[end_col..]
+                        )
+                        .as_str(),
+                    ))
+                }
+
+                text
             })
             .join("\n");
-        let after_err = source_lines.skip(self.end.line);
+        let after_err = source_lines.skip(self_end.line);
 
         let before_err_trunc = before_err
-            .skip(self.start.line.saturating_sub(num_before_error_lines + 1))
+            .skip(self_start.line.saturating_sub(num_before_error_lines + 1))
             .skip_while(|(_line, text)| text.trim() == "")
             .map(pad_with_line_number)
             .join("\n");

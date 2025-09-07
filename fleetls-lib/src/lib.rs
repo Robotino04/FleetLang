@@ -22,7 +22,7 @@ use fleet::{
         },
         scope_analysis::ComptimeDeps,
     },
-    tokenizer::{SourceLocation, Token},
+    tokenizer::{SourceLocation, SourceRange, Token},
 };
 use indoc::indoc;
 use itertools::Itertools;
@@ -105,6 +105,19 @@ struct AnalysisData<'a> {
     variable_data: &'a VariableData,
     scope_data: &'a ScopeData,
     comptime_deps: &'a ComptimeDeps,
+}
+
+pub fn source_loc_to_position(loc: SourceLocation) -> Position {
+    Position {
+        line: loc.line as u32 - 1,
+        character: loc.column as u32,
+    }
+}
+pub fn source_range_to_lsp_range(range: SourceRange) -> Range {
+    Range {
+        start: source_loc_to_position(range.start),
+        end: source_loc_to_position(range.end),
+    }
 }
 
 impl Backend {
@@ -891,29 +904,22 @@ impl LanguageServer for Backend {
                     result_id: None,
                     items: errors
                         .iter()
-                        .map(|error| Diagnostic {
-                            range: Range {
-                                start: Position {
-                                    line: (error.start.line - 1) as u32,
-                                    character: error.start.column as u32,
-                                },
-                                end: Position {
-                                    line: (error.end.line - 1) as u32,
-                                    character: error.end.column as u32,
-                                },
-                            },
-                            severity: Some(match error.severity {
-                                ErrorSeverity::Error => DiagnosticSeverity::ERROR,
-                                ErrorSeverity::Warning => DiagnosticSeverity::WARNING,
-                                ErrorSeverity::Note => DiagnosticSeverity::HINT,
-                            }),
-                            code: None,
-                            code_description: None,
-                            source: Some("FleetLS".to_string()),
-                            message: error.message.clone(),
-                            related_information: None,
-                            tags: None,
-                            data: None,
+                        .flat_map(|error| {
+                            error.highlight_groups.iter().map(|range| Diagnostic {
+                                range: source_range_to_lsp_range(*range),
+                                severity: Some(match error.severity {
+                                    ErrorSeverity::Error => DiagnosticSeverity::ERROR,
+                                    ErrorSeverity::Warning => DiagnosticSeverity::WARNING,
+                                    ErrorSeverity::Note => DiagnosticSeverity::HINT,
+                                }),
+                                code: None,
+                                code_description: None,
+                                source: Some("FleetLS".to_string()),
+                                message: error.message.clone(),
+                                related_information: None,
+                                tags: None,
+                                data: None,
+                            })
                         })
                         .collect(),
                 },
@@ -1045,12 +1051,12 @@ impl LanguageServer for Backend {
                 }),
                 range: hovered_token.map(|token| Range {
                     start: Position {
-                        line: token.start.line as u32 - 1,
-                        character: token.start.column as u32,
+                        line: token.range.start.line as u32 - 1,
+                        character: token.range.start.column as u32,
                     },
                     end: Position {
-                        line: token.end.line as u32 - 1,
-                        character: token.end.column as u32,
+                        line: token.range.end.line as u32 - 1,
+                        character: token.range.end.column as u32,
                     },
                 }),
             }))
@@ -1274,7 +1280,7 @@ impl LanguageServer for Backend {
                         .iter()
                         .find_position(|(arg, _token)| arg.get_id() == argument.get_id())
                         .map(|(i, _)| i as u32)
-                        .unwrap_or(if cpos_sl <= function_call.open_paren_token.start {
+                        .unwrap_or(if cpos_sl <= function_call.open_paren_token.range.start {
                             0
                         } else {
                             function_call
@@ -1284,7 +1290,7 @@ impl LanguageServer for Backend {
                                 as u32
                         })
                 })
-                .unwrap_or(if cpos_sl <= function_call.open_paren_token.start {
+                .unwrap_or(if cpos_sl <= function_call.open_paren_token.range.start {
                     0
                 } else {
                     function_call
