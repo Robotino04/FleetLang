@@ -9,6 +9,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum AstNode {
     Program(Program),
     FunctionDefinition(FunctionDefinition),
@@ -426,6 +427,7 @@ pub struct StatementFunctionBody {
 generate_ast_requirements!(StatementFunctionBody, unwrap_statement_function_body);
 
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum FunctionBody {
     Statement(StatementFunctionBody),
     Extern(ExternFunctionBody),
