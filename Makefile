@@ -18,8 +18,8 @@ all: out_llvm out_c
 clean:
 	rm -f out_llvm out_c.o out_c c_out.log llvm_out.log out_c2
 
-out_llvm: output.o fl_runtime/fl_runtime.o
-	clang++ $(LDFLAGS) $(CFLAGS) output.o fl_runtime/fl_runtime.o -o out_llvm
+out_llvm: test.o fl_runtime/fl_runtime.o
+	clang++ $(LDFLAGS) $(CFLAGS) test.o fl_runtime/fl_runtime.o -o out_llvm
 
 out_c.o: out.c fl_runtime/fl_runtime.h
 	clang $(CFLAGS) -c out.c -o out_c.o -Ifl_runtime/

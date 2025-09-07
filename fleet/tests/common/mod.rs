@@ -28,6 +28,7 @@ use fleet::{
     },
     tokenizer::SourceLocation,
 };
+use itertools::Itertools;
 use libc::{RTLD_DI_LINKMAP, RTLD_LAZY, dlclose, dlinfo, dlopen, mkfifo};
 use tempfile::{TempDir, tempdir};
 
@@ -110,7 +111,12 @@ fn assert_error_at_position(errors: &Vec<FleetError>, error_start: SourceLocatio
     assert!(
         errors
             .iter()
-            .any(|err| err.start == error_start && err.severity == ErrorSeverity::Error),
+            .flat_map(|err| err
+                .highlight_groups
+                .iter()
+                .map(|range| (range, err.severity)))
+            .any(|(range, severity)| range.start == error_start
+                && severity == ErrorSeverity::Error),
         "Expected an error at {error_start:?}. Got {errors:#?}"
     );
 }
@@ -119,7 +125,12 @@ fn assert_warning_at_position(errors: &Vec<FleetError>, warning_start: SourceLoc
     assert!(
         errors
             .iter()
-            .any(|err| err.start == warning_start && err.severity == ErrorSeverity::Warning),
+            .flat_map(|warn| warn
+                .highlight_groups
+                .iter()
+                .map(|range| (range, warn.severity)))
+            .any(|(range, severity)| range.start == warning_start
+                && severity == ErrorSeverity::Warning),
         "Expected a warning at {warning_start:?}. Got {errors:#?}"
     );
 }
@@ -590,6 +601,16 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     binary_file.to_str().unwrap().to_string()
 }
 
+fn clean_stderr(stderr: String) -> String {
+    // HACK: filter out lines from mesa that look like this
+    //     pci id for fd 9: 10de:2684, driver (null)
+    // TODO: remove this whenever mesa doesn't complain anymore
+    stderr
+        .lines()
+        .skip_while(|line| line.starts_with("pci id for fd ") && line.ends_with(", driver (null)"))
+        .join("\n")
+}
+
 fn run_and_check_output(
     binary: String,
     expected_result: impl SubprocessTestableReturnType,
@@ -665,7 +686,7 @@ fn run_and_check_output(
         "stdout doesn't match (left should be right)"
     );
     assert_eq!(
-        String::from_utf8(output.stderr).unwrap(),
+        clean_stderr(String::from_utf8(output.stderr).unwrap()),
         expected_stderr.as_ref(),
         "stderr doesn't match (left should be right)"
     );
