@@ -103,6 +103,40 @@ fn nan_equal() {
 }
 
 #[test]
+fn not_inf() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let inf = () -> f32 {
+                return 1 / 0;
+            }
+            let main = () -> bool {
+                return !inf();
+            }
+        "##},
+        "main",
+        false,
+    );
+}
+#[test]
+fn not_nan() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let inf = () -> f32 {
+                return 1 / 0;
+            }
+            let nan = () -> f32 {
+                return inf() - inf();
+            }
+            let main = () -> bool {
+                return !nan();
+            }
+        "##},
+        "main",
+        false,
+    );
+}
+
+#[test]
 fn inf_equal() {
     assert_compile_and_return_value(
         indoc! {r##"
