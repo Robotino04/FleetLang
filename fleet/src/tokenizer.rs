@@ -181,8 +181,12 @@ impl SourceRange {
     pub fn extend_with(self, other: SourceRange) -> Self {
         Self {
             start: self.start.min(other.start),
-            end: self.start.min(other.end),
+            end: self.end.max(other.end),
         }
+    }
+
+    pub fn intersects(&self, other: SourceRange) -> bool {
+        self.start < other.end && other.start < self.end
     }
 
     pub fn num_chars(&self) -> usize {

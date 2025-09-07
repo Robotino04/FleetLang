@@ -59,6 +59,11 @@ macro_rules! NewtypeDerefNoDefault {
                 Self(contents)
             }
         }
+        impl ::core::convert::From<$name > for $contents {
+            fn from(wrapper: $name) -> Self {
+                wrapper.0
+            }
+        }
     };
 }
 

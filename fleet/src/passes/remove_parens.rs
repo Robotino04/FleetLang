@@ -215,16 +215,15 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                     ]
                     .concat();
 
-                    self.errors.push(FleetError::from_token(
-                        open_paren_token,
-                        "Unnecessary parentheses",
-                        ErrorSeverity::Note,
-                    ));
-                    self.errors.push(FleetError::from_token(
-                        close_paren_token,
-                        "Unnecessary parentheses",
-                        ErrorSeverity::Note,
-                    ));
+                    self.errors.push({
+                        FleetError::try_new(
+                            vec![open_paren_token.range, close_paren_token.range],
+                            "Unnecessary parentheses".to_string(),
+                            ErrorSeverity::Note,
+                            open_paren_token.file_name.clone(),
+                        )
+                        .unwrap()
+                    });
 
                     let mut leading_pass = AddLeadingTriviaPass::new(leading_trivia);
                     leading_pass.visit_expression(&mut *subexpression);
@@ -371,16 +370,15 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                     ]
                     .concat();
 
-                    self.errors.push(FleetError::from_token(
-                        open_paren_token,
-                        "Unnecessary parentheses",
-                        ErrorSeverity::Note,
-                    ));
-                    self.errors.push(FleetError::from_token(
-                        close_paren_token,
-                        "Unnecessary parentheses",
-                        ErrorSeverity::Note,
-                    ));
+                    self.errors.push({
+                        FleetError::try_new(
+                            vec![open_paren_token.range, close_paren_token.range],
+                            "Unnecessary parentheses".to_string(),
+                            ErrorSeverity::Note,
+                            open_paren_token.file_name.clone(),
+                        )
+                        .unwrap()
+                    });
 
                     let mut leading_pass = AddLeadingTriviaPass::new(leading_trivia);
                     leading_pass.visit_lvalue(&mut *sublvalue);

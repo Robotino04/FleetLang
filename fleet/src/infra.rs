@@ -170,35 +170,37 @@ impl FleetError {
             .map(|(line, text)| {
                 let mut text = text.to_string();
 
+                let mut offset = 0;
+
                 for SourceRange {
                     start: hl_start,
                     end: hl_end,
                 } in &self.highlight_groups
                 {
+                    assert!(hl_start < hl_end);
                     let start_col = if line == hl_start.line {
-                        self_start.column
+                        hl_start.column + offset
                     } else {
                         0
                     };
                     let end_col = if line == hl_end.line {
-                        self_end.column.min(text.len())
+                        (hl_end.column + offset).min(text.len())
                     } else {
                         text.len()
                     };
 
-                    text = pad_with_line_number((
-                        line,
-                        format!(
-                            "{}{enable_color}{}{disable_color}{}",
-                            &text[..start_col],
-                            &text[start_col..end_col],
-                            &text[end_col..]
-                        )
-                        .as_str(),
-                    ))
+                    let new_text = format!(
+                        "{}{enable_color}{}{disable_color}{}",
+                        &text[..start_col],
+                        &text[start_col..end_col],
+                        &text[end_col..]
+                    );
+
+                    offset += new_text.len() - text.len();
+                    text = new_text;
                 }
 
-                text
+                pad_with_line_number((line, &text))
             })
             .join("\n");
         let after_err = source_lines.skip(self_end.line);
