@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    passes::runtime_type::RuntimeType,
+    passes::{runtime_type::RuntimeType, type_propagation::ComptimeValue},
     tokenizer::{FileName, Token},
 };
 
@@ -36,6 +36,7 @@ pub enum AstNode {
     GPUExecutor(GPUExecutor),
 
     LiteralExpression(LiteralExpression),
+    SyntheticValueExpression(SyntheticValueExpression),
     ArrayExpression(ArrayExpression),
     FunctionCallExpression(FunctionCallExpression),
     CompilerExpression(CompilerExpression),
@@ -93,6 +94,9 @@ impl HasID for AstNode {
             AstNode::SkipStatement(skip_statement) => skip_statement.get_id(),
 
             AstNode::LiteralExpression(literal_expression) => literal_expression.get_id(),
+            AstNode::SyntheticValueExpression(synthetic_value_expression) => {
+                synthetic_value_expression.get_id()
+            }
             AstNode::ArrayExpression(array_expression) => array_expression.get_id(),
             AstNode::FunctionCallExpression(function_call_expression) => {
                 function_call_expression.get_id()
@@ -275,6 +279,10 @@ pub trait AstVisitor {
             Expression::Literal(literal_expression) => {
                 self.visit_literal_expression(literal_expression)
             }
+            Expression::SyntheticValue(synthetic_value_expression
+            ) => {
+                self.visit_synthetic_value_expression(synthetic_value_expression)
+            }
             Expression::Array(array_expression) => self.visit_array_expression(array_expression),
             Expression::FunctionCall(function_call_expression) => {
                 self.visit_function_call_expression(function_call_expression)
@@ -304,6 +312,10 @@ pub trait AstVisitor {
     fn visit_literal_expression(
         &mut self,
         expression: &mut LiteralExpression,
+    ) -> Self::ExpressionOutput;
+    fn visit_synthetic_value_expression(
+        &mut self,
+        expression: &mut SyntheticValueExpression,
     ) -> Self::ExpressionOutput;
     fn visit_array_expression(
         &mut self,
@@ -790,7 +802,7 @@ pub enum Associativity {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LiteralKind {
-    Number(u64),
+    Number(i64),
     Float(f64),
     Bool(bool),
 }
@@ -801,6 +813,14 @@ pub struct LiteralExpression {
     pub id: NodeID,
 }
 generate_ast_requirements!(LiteralExpression, unwrap_literal_expression);
+
+#[derive(Clone, Debug)]
+pub struct SyntheticValueExpression {
+    pub value: ComptimeValue,
+    pub token: Token,
+    pub id: NodeID,
+}
+generate_ast_requirements!(SyntheticValueExpression, unwrap_synthetic_value_expression);
 
 #[derive(Clone, Debug)]
 pub struct ArrayExpression {
@@ -912,6 +932,7 @@ generate_ast_requirements!(
 #[derive(Clone, Debug)]
 pub enum Expression {
     Literal(LiteralExpression),
+    SyntheticValue(SyntheticValueExpression),
     Array(ArrayExpression),
     FunctionCall(FunctionCallExpression),
     CompilerExpression(CompilerExpression),
@@ -930,6 +951,7 @@ impl Expression {
         use BinaryOperation::*;
         match self {
             Expression::Literal { .. } => 0,
+            Expression::SyntheticValue { .. } => 0,
             Expression::Array { .. } => 0,
             Expression::ArrayIndex { .. } => 0,
             Expression::FunctionCall { .. } => 0,
@@ -971,6 +993,7 @@ impl Expression {
         use BinaryOperation::*;
         match self {
             Expression::Literal { .. } => Associativity::Both,
+            Expression::SyntheticValue { .. } => Associativity::Both,
             Expression::Array { .. } => Associativity::Both,
             Expression::ArrayIndex { .. } => Associativity::Left,
             Expression::FunctionCall { .. } => Associativity::Both,
@@ -1000,6 +1023,7 @@ impl HasID for Expression {
     fn get_id(&self) -> NodeID {
         match self {
             Expression::Literal(expr) => expr.get_id(),
+            Expression::SyntheticValue(expr) => expr.get_id(),
             Expression::Array(expr) => expr.get_id(),
             Expression::FunctionCall(expr) => expr.get_id(),
             Expression::CompilerExpression(expr) => expr.get_id(),
@@ -1018,6 +1042,9 @@ impl From<Expression> for AstNode {
     fn from(value: Expression) -> Self {
         match value {
             Expression::Literal(literal_expression) => literal_expression.into(),
+            Expression::SyntheticValue(synthetic_value_expression) => {
+                synthetic_value_expression.into()
+            }
             Expression::Array(array_expression) => array_expression.into(),
             Expression::FunctionCall(function_call_expression) => function_call_expression.into(),
             Expression::CompilerExpression(compiler_expression) => compiler_expression.into(),

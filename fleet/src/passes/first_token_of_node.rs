@@ -1,13 +1,6 @@
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
-        BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
-        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-        LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, SyntheticValueExpression, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement
     },
     tokenizer::Token,
 };
@@ -156,6 +149,11 @@ where
             id: _,
         }) => first_token_of_node(&*operand),
         AstNode::LiteralExpression(LiteralExpression {
+            value: _,
+            token,
+            id: _,
+        }) => Some(token),
+        AstNode::SyntheticValueExpression(SyntheticValueExpression {
             value: _,
             token,
             id: _,

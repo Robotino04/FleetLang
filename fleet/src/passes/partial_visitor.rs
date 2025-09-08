@@ -5,9 +5,9 @@ use crate::ast::{
     FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
     GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression, OnStatement,
     OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-    SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, Type, UnaryExpression,
-    UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-    VariableLValue, WhileLoopStatement,
+    SkipStatement, Statement, StatementFunctionBody, SyntheticValueExpression, ThreadExecutor,
+    Type, UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+    VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
 };
 
 pub trait PartialAstVisitor {
@@ -346,6 +346,9 @@ pub trait PartialAstVisitor {
             Expression::Literal(literal_expression) => {
                 self.partial_visit_literal_expression(literal_expression)
             }
+            Expression::SyntheticValue(synthetic_value_expression) => {
+                self.partial_visit_synthetic_value_expression(synthetic_value_expression)
+            }
             Expression::Array(array_expression) => {
                 self.partial_visit_array_expression(array_expression)
             }
@@ -385,6 +388,15 @@ pub trait PartialAstVisitor {
             token: _,
             id: _,
         }: &mut LiteralExpression,
+    ) {
+    }
+    fn partial_visit_synthetic_value_expression(
+        &mut self,
+        SyntheticValueExpression {
+            value: _,
+            token: _,
+            id: _,
+        }: &mut SyntheticValueExpression,
     ) {
     }
     fn partial_visit_array_expression(
@@ -733,6 +745,13 @@ where
         self.partial_visit_literal_expression(expression);
     }
 
+    fn visit_synthetic_value_expression(
+        &mut self,
+        expression: &mut SyntheticValueExpression,
+    ) -> Self::ExpressionOutput {
+        self.partial_visit_synthetic_value_expression(expression);
+    }
+
     fn visit_array_expression(
         &mut self,
         expression: &mut ArrayExpression,
@@ -760,13 +779,13 @@ where
     ) -> Self::ExpressionOutput {
         self.partial_visit_array_index_expression(expression);
     }
-
     fn visit_grouping_expression(
         &mut self,
         expression: &mut GroupingExpression,
     ) -> Self::ExpressionOutput {
         self.partial_visit_grouping_expression(expression);
     }
+
     fn visit_variable_access_expression(
         &mut self,
         expression: &mut VariableAccessExpression,

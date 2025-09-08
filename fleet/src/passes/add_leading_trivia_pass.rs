@@ -5,8 +5,8 @@ use crate::{
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        SimpleType, SkipStatement, StatementFunctionBody, SyntheticValueExpression, ThreadExecutor,
+        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     tokenizer::{Token, Trivia},
@@ -143,6 +143,13 @@ impl AstVisitor for AddLeadingTriviaPass {
     }
 
     fn visit_literal_expression(&mut self, expression: &mut LiteralExpression) {
+        self.visit_token(&mut expression.token);
+    }
+
+    fn visit_synthetic_value_expression(
+        &mut self,
+        expression: &mut SyntheticValueExpression,
+    ) -> Self::ExpressionOutput {
         self.visit_token(&mut expression.token);
     }
 

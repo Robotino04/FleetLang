@@ -1,12 +1,5 @@
 use crate::ast::{
-    ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
-    BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
-    ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-    FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-    LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
-    SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-    ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
-    VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+    ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor, BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, SyntheticValueExpression, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement
 };
 use crate::tokenizer::{SourceLocation, SourceRange, Token};
 
@@ -468,6 +461,26 @@ impl AstVisitor for FindContainingNodePass {
     fn visit_literal_expression(
         &mut self,
         expression: &mut LiteralExpression,
+    ) -> Self::ExpressionOutput {
+        self.node_hierarchy.push(expression.clone().into());
+
+        let SourceRange {
+            start: left_bound,
+            end: right_bound,
+        } = self.visit_token(&expression.token)?;
+
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        Ok(range)
+    }
+
+    fn visit_synthetic_value_expression(
+        &mut self,
+        expression: &mut SyntheticValueExpression,
     ) -> Self::ExpressionOutput {
         self.node_hierarchy.push(expression.clone().into());
 

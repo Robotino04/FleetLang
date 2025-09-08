@@ -7,8 +7,9 @@ use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, AstVisitor, BinaryExpression,
         CastExpression, CompilerExpression, Expression, FunctionCallExpression, GroupingLValue,
-        HasID, LValue, LiteralExpression, OnStatement, OnStatementIterator, Program, Type,
-        UnaryExpression, VariableAccessExpression, VariableAssignmentExpression, VariableLValue,
+        HasID, LValue, LiteralExpression, OnStatement, OnStatementIterator, Program,
+        SyntheticValueExpression, Type, UnaryExpression, VariableAccessExpression,
+        VariableAssignmentExpression, VariableLValue,
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
@@ -102,6 +103,7 @@ impl LValueReducer<'_> {
     fn is_expression_equal(&self, a: &Expression, b: &Expression) -> Option<bool> {
         match a {
             Expression::Literal(a) => self.is_literal_expression_equal(a, b),
+            Expression::SyntheticValue(a) => self.is_synthetic_value_expression_equal(a, b),
             Expression::Array(a) => self.is_array_expression_equal(a, b),
             Expression::FunctionCall(a) => self.is_function_call_expression_equal(a, b),
             Expression::CompilerExpression(a) => self.is_compiler_expression_equal(a, b),
@@ -123,6 +125,23 @@ impl LValueReducer<'_> {
                         == self.type_sets.get(*self.type_data.get(&b.id)?)
             }
             Expression::Grouping(b) => self.is_literal_expression_equal(a, &b.subexpression)?,
+            _ => false,
+        })
+    }
+    fn is_synthetic_value_expression_equal(
+        &self,
+        a: &SyntheticValueExpression,
+        b: &Expression,
+    ) -> Option<bool> {
+        Some(match b {
+            Expression::SyntheticValue(b) => {
+                a.value == b.value
+                    && self.type_sets.get(*self.type_data.get(&a.id)?)
+                        == self.type_sets.get(*self.type_data.get(&b.id)?)
+            }
+            Expression::Grouping(b) => {
+                self.is_synthetic_value_expression_equal(a, &b.subexpression)?
+            }
             _ => false,
         })
     }

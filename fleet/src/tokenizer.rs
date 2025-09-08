@@ -1,4 +1,4 @@
-use std::{cell::RefMut, cmp::Ordering, rc::Rc};
+use std::{cell::RefMut, cmp::Ordering, fmt::Debug, rc::Rc};
 
 use log::{error, info};
 
@@ -8,7 +8,7 @@ use crate::{
     passes::pass_manager::{Errors, GlobalState, InputSource, Pass, PassFactory, PassResult},
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Token {
     pub type_: TokenType,
     pub range: SourceRange,
@@ -18,6 +18,21 @@ pub struct Token {
     pub trailing_trivia: Vec<Trivia>,
 
     pub file_name: FileName,
+}
+
+impl Debug for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Token { .. }")
+        /*
+        f.debug_struct("Token")
+            .field("type_", &self.type_)
+            .field("range", &self.range)
+            .field("leading_trivia", &self.leading_trivia)
+            .field("trailing_trivia", &self.trailing_trivia)
+            .field("file_name", &self.file_name)
+            .finish()
+        */
+    }
 }
 
 NewtypeDeref!(pub FileName, Rc<String>, Clone, PartialEq, Eq);
@@ -60,7 +75,7 @@ pub enum TokenType {
     EqualSign,
     SingleRightArrow,
 
-    Integer(u64, String),
+    Integer(i64, String),
     Float(f64, String),
     StringLiteral(String),
 
@@ -83,6 +98,8 @@ pub enum TokenType {
     DoublePipe,
 
     UnknownCharacters(String),
+
+    Synthetic
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

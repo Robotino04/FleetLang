@@ -5,8 +5,8 @@ use crate::{
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        SimpleType, SkipStatement, StatementFunctionBody, SyntheticValueExpression, ThreadExecutor,
+        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     tokenizer::{SourceLocation, SourceRange},
@@ -175,6 +175,11 @@ where
             id: _,
         }) => find_node_bounds(&**operand).extend_with(find_node_bounds(type_)),
         AstNode::LiteralExpression(LiteralExpression {
+            value: _,
+            token,
+            id: _,
+        }) => token.range,
+        AstNode::SyntheticValueExpression(SyntheticValueExpression {
             value: _,
             token,
             id: _,

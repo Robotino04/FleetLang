@@ -267,6 +267,8 @@ impl AstToDocumentModelConverter<'_> {
 
             TokenType::DoubleAmpersand  => "&&",
             TokenType::DoublePipe       => "||",
+
+            TokenType::Synthetic        => "/* synthetic token */",
         };
 
         DocumentElement::Text(s.to_string())
@@ -840,6 +842,13 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
     fn visit_literal_expression(
         &mut self,
         expression: &mut LiteralExpression,
+    ) -> Self::ExpressionOutput {
+        self.token_to_element(&expression.token)
+    }
+
+    fn visit_synthetic_value_expression(
+        &mut self,
+        expression: &mut crate::ast::SyntheticValueExpression,
     ) -> Self::ExpressionOutput {
         self.token_to_element(&expression.token)
     }

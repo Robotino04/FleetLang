@@ -15,9 +15,9 @@ use crate::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        SyntheticValueExpression, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
@@ -725,6 +725,19 @@ impl AstVisitor for StatTracker<'_> {
             token: _,
             id,
         }: &mut LiteralExpression,
+    ) -> Self::ExpressionOutput {
+        let stat = NodeStats::nothing();
+        self.stats.insert(*id, stat.clone());
+        stat
+    }
+
+    fn visit_synthetic_value_expression(
+        &mut self,
+        SyntheticValueExpression {
+            value: _,
+            token: _,
+            id,
+        }: &mut SyntheticValueExpression,
     ) -> Self::ExpressionOutput {
         let stat = NodeStats::nothing();
         self.stats.insert(*id, stat.clone());

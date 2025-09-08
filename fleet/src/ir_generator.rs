@@ -1649,7 +1649,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     }
 
                     AnyTypeEnum::IntType(type_) => {
-                        RuntimeValueIR::Int(type_.const_int(*value, false))
+                        RuntimeValueIR::Int(type_.const_int(*value as u64, false))
                     }
 
                     _ => self.report_error(FleetError::from_node(

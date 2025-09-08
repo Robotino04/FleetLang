@@ -9,28 +9,16 @@ use itertools::Itertools;
 use thiserror::Error;
 
 use crate::{
-    NewtypeDeref,
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
-        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
-        IfStatement, LiteralExpression, NodeID, OnStatement, OnStatementIterator, PerNodeData,
-        Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
-        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
-    },
-    infra::{ErrorSeverity, FleetError},
-    parser::IdGenerator,
-    passes::{
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor, BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, NodeID, OnStatement, OnStatementIterator, PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, SyntheticValueExpression, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement
+    }, infra::{ErrorSeverity, FleetError}, parser::IdGenerator, passes::{
         pass_manager::{
             Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData,
             VariableData,
         },
         runtime_type::RuntimeType,
         union_find_set::UnionFindSetPtr,
-    },
+    }, NewtypeDeref
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -742,16 +730,24 @@ impl AstVisitor for ScopeAnalyzer<'_> {
 
         self.comptime_deps
             .add_dependencies(*id, [cond_dep, body_dep]);
+        self.comptime_deps.add_dependency(body_dep, cond_dep);
+
+        let mut prev_condition = cond_dep;
 
         for (_elif_token, elif_condition, elif_body) in elifs {
             let elif_dep = self.visit_expression(elif_condition);
             let body_dep = self.visit_statement(elif_body);
             self.comptime_deps
                 .add_dependencies(*id, [elif_dep, body_dep]);
+            self.comptime_deps.add_dependency(body_dep, elif_dep);
+            self.comptime_deps.add_dependency(elif_dep, prev_condition);
+            prev_condition = elif_dep;
         }
         if let Some((_else_token, else_body)) = else_ {
             let dep = self.visit_statement(else_body);
             self.comptime_deps.add_dependency(*id, dep);
+            self.comptime_deps.add_dependency(body_dep, dep);
+            self.comptime_deps.add_dependency(dep, prev_condition);
         }
 
         self.contained_scope
@@ -774,6 +770,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
 
         self.comptime_deps
             .add_dependencies(*id, [cond_dep, body_dep]);
+        self.comptime_deps.add_dependency(body_dep, cond_dep);
 
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
@@ -810,6 +807,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
 
         self.comptime_deps
             .add_dependencies(*id, [init_dep, body_dep]);
+        self.comptime_deps.add_dependency(body_dep, init_dep);
 
         self.variable_scopes.pop();
 
@@ -904,6 +902,22 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         expression: &mut LiteralExpression,
     ) -> Self::ExpressionOutput {
         let LiteralExpression {
+            value: _,
+            token: _,
+            id,
+        } = expression;
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
+        *id
+    }
+
+    fn visit_synthetic_value_expression(
+        &mut self,
+        expression: &mut SyntheticValueExpression,
+    ) -> Self::ExpressionOutput {
+        let SyntheticValueExpression {
             value: _,
             token: _,
             id,
@@ -1157,7 +1171,6 @@ impl AstVisitor for ScopeAnalyzer<'_> {
 
         *id
     }
-
     fn visit_binary_expression(
         &mut self,
         expression: &mut BinaryExpression,
@@ -1180,6 +1193,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
 
         *id
     }
+
     fn visit_variable_assignment_expression(
         &mut self,
         expression: &mut VariableAssignmentExpression,

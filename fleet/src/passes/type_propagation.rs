@@ -1,9 +1,13 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
+    error::Error,
     rc::Rc,
 };
 
 use itertools::{EitherOrBoth, Itertools};
+use log::error;
+use thiserror::Error;
 
 use crate::{
     ast::{
@@ -13,21 +17,25 @@ use crate::{
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        SkipStatement, StatementFunctionBody, SyntheticValueExpression, ThreadExecutor,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
     passes::{
+        find_node_bounds::find_node_bounds,
+        first_token_of_node::first_token_of_node,
         pass_manager::{
             Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData, TypeData,
             TypeSets, VariableData,
         },
         runtime_type::RuntimeType,
-        scope_analysis::Function,
+        scope_analysis::{ComptimeDeps, EvaluationTime, Function, VariableID},
         union_find_set::{UnionFindSet, UnionFindSetPtr},
     },
+    tokenizer::{Token, TokenType},
 };
 
 pub struct TypePropagator<'state> {
@@ -40,9 +48,1025 @@ pub struct TypePropagator<'state> {
     referenced_variable: Ref<'state, VariableData>,
     referenced_function: Ref<'state, FunctionData>,
     containing_scope: Ref<'state, ScopeData>,
+    comptime_deps: Ref<'state, ComptimeDeps>,
+
+    execution_state: ExecutionState,
 
     current_function: Option<Rc<RefCell<Function>>>,
     require_constant: bool,
+}
+
+#[derive(Debug, Error)]
+pub enum ComptimeEvalError {
+    #[error("Type mismatch: {}", display_error.message)]
+    TypeMismatch { display_error: FleetError },
+    #[error("Literal Overflow: {}", display_error.message)]
+    LiteralOverflowError { display_error: FleetError },
+    #[error(transparent)]
+    InternalOverflowError { source: Box<dyn Error> },
+    #[error("Out of bounds access: {}", display_error.message)]
+    OutOfRangeError { display_error: FleetError },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Int {
+    I8(i8),
+    I16(i16),
+    I32(i32),
+    I64(i64),
+    UnsizedInteger(i64),
+}
+
+impl Int {
+    pub fn map_repack<F>(self, f: F) -> Self
+    where
+        F: FnOnce(i64) -> i64,
+    {
+        match self {
+            Int::I8(v) => Int::I8(f(v as i64) as i8),
+            Int::I16(v) => Int::I16(f(v as i64) as i16),
+            Int::I32(v) => Int::I32(f(v as i64) as i32),
+            Int::I64(v) => Int::I64(f(v)),
+            Int::UnsizedInteger(v) => Int::UnsizedInteger(f(v)),
+        }
+    }
+
+    pub fn map<F, R>(self, f: F) -> R
+    where
+        F: FnOnce(i64) -> R,
+    {
+        match self {
+            Int::I8(v) => f(v as i64),
+            Int::I16(v) => f(v as i64),
+            Int::I32(v) => f(v as i64),
+            Int::I64(v) => f(v),
+            Int::UnsizedInteger(v) => f(v),
+        }
+    }
+
+    pub fn map_binary<F, R>(a: Self, b: Self, f: F) -> Option<R>
+    where
+        F: FnOnce(i64, i64) -> R,
+    {
+        use Int::*;
+
+        Some(match (a, b) {
+            (I8(a_val), I8(b_val)) => f(a_val as i64, b_val as i64),
+            (I16(a_val), I16(b_val)) => f(a_val as i64, b_val as i64),
+            (I32(a_val), I32(b_val)) => f(a_val as i64, b_val as i64),
+            (I64(a_val), I64(b_val)) => f(a_val, b_val),
+            (UnsizedInteger(a_val), UnsizedInteger(b_val)) => f(a_val, b_val),
+
+            (I8(a_val), UnsizedInteger(b_val)) | (UnsizedInteger(b_val), I8(a_val)) => {
+                f(a_val as i64, b_val)
+            }
+            (I16(a_val), UnsizedInteger(b_val)) | (UnsizedInteger(b_val), I16(a_val)) => {
+                f(a_val as i64, b_val)
+            }
+            (I32(a_val), UnsizedInteger(b_val)) | (UnsizedInteger(b_val), I32(a_val)) => {
+                f(a_val as i64, b_val)
+            }
+            (I64(a_val), UnsizedInteger(b_val)) | (UnsizedInteger(b_val), I64(a_val)) => {
+                f(a_val, b_val)
+            }
+
+            _ => return None,
+        })
+    }
+
+    pub fn map_repack_binary<F>(a: Self, b: Self, f: F) -> Option<Self>
+    where
+        F: FnOnce(i64, i64) -> i64,
+    {
+        use Int::*;
+
+        Some(match (a, b) {
+            (I8(a_val), I8(b_val)) => I8(f(a_val as i64, b_val as i64) as i8),
+            (I16(a_val), I16(b_val)) => I16(f(a_val as i64, b_val as i64) as i16),
+            (I32(a_val), I32(b_val)) => I32(f(a_val as i64, b_val as i64) as i32),
+            (I64(a_val), I64(b_val)) => I64(f(a_val, b_val)),
+            (UnsizedInteger(a_val), UnsizedInteger(b_val)) => UnsizedInteger(f(a_val, b_val)),
+
+            (I8(a_val), UnsizedInteger(b_val)) | (UnsizedInteger(b_val), I8(a_val)) => {
+                I8(f(a_val as i64, b_val) as i8)
+            }
+            (I16(a_val), UnsizedInteger(b_val)) | (UnsizedInteger(b_val), I16(a_val)) => {
+                I16(f(a_val as i64, b_val) as i16)
+            }
+            (I32(a_val), UnsizedInteger(b_val)) | (UnsizedInteger(b_val), I32(a_val)) => {
+                I32(f(a_val as i64, b_val) as i32)
+            }
+            (I64(a_val), UnsizedInteger(b_val)) | (UnsizedInteger(b_val), I64(a_val)) => {
+                I64(f(a_val, b_val))
+            }
+
+            _ => return None,
+        })
+    }
+
+    pub fn value<T>(self) -> ComptimeResult<T>
+    where
+        i8: TryInto<T, Error: Error + 'static>,
+        i16: TryInto<T, Error: Error + 'static>,
+        i32: TryInto<T, Error: Error + 'static>,
+        i64: TryInto<T, Error: Error + 'static>,
+    {
+        match self {
+            Int::I8(value) => {
+                value
+                    .try_into()
+                    .map_err(|err| ComptimeEvalError::InternalOverflowError {
+                        source: Box::new(err),
+                    })
+            }
+            Int::I16(value) => {
+                value
+                    .try_into()
+                    .map_err(|err| ComptimeEvalError::InternalOverflowError {
+                        source: Box::new(err),
+                    })
+            }
+            Int::I32(value) => {
+                value
+                    .try_into()
+                    .map_err(|err| ComptimeEvalError::InternalOverflowError {
+                        source: Box::new(err),
+                    })
+            }
+            Int::I64(value) => {
+                value
+                    .try_into()
+                    .map_err(|err| ComptimeEvalError::InternalOverflowError {
+                        source: Box::new(err),
+                    })
+            }
+            Int::UnsizedInteger(value) => {
+                value
+                    .try_into()
+                    .map_err(|err| ComptimeEvalError::InternalOverflowError {
+                        source: Box::new(err),
+                    })
+            }
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Float {
+    F32(f32),
+    F64(f64),
+    UnsizedFloat(f64),
+}
+impl Float {
+    pub fn map_repack<F>(self, f: F) -> Self
+    where
+        F: FnOnce(f64) -> f64,
+    {
+        match self {
+            Float::F32(v) => Float::F32(f(v as f64) as f32),
+            Float::F64(v) => Float::F64(f(v)),
+            Float::UnsizedFloat(v) => Float::UnsizedFloat(f(v)),
+        }
+    }
+    pub fn map<F, R>(self, f: F) -> R
+    where
+        F: FnOnce(f64) -> R,
+    {
+        match self {
+            Float::F32(v) => f(v as f64),
+            Float::F64(v) => f(v),
+            Float::UnsizedFloat(v) => f(v),
+        }
+    }
+
+    pub fn map_binary<F, R>(a: Self, b: Self, f: F) -> Option<R>
+    where
+        F: FnOnce(f64, f64) -> R,
+    {
+        use Float::*;
+
+        match (a, b) {
+            (F32(a_val), F32(b_val)) => {
+                let result = f(a_val as f64, b_val as f64);
+                Some(result)
+            }
+            (F64(a_val), F64(b_val)) => {
+                let result = f(a_val, b_val);
+                Some(result)
+            }
+            (UnsizedFloat(a_val), UnsizedFloat(b_val)) => {
+                let result = f(a_val, b_val);
+                Some(result)
+            }
+
+            (F32(a_val), UnsizedFloat(b_val)) => {
+                let result = f(a_val as f64, b_val);
+                Some(result)
+            }
+            (UnsizedFloat(a_val), F32(b_val)) => {
+                let result = f(a_val, b_val as f64);
+                Some(result)
+            }
+            (F64(a_val), UnsizedFloat(b_val)) => {
+                let result = f(a_val, b_val);
+                Some(result)
+            }
+            (UnsizedFloat(a_val), F64(b_val)) => {
+                let result = f(a_val, b_val);
+                Some(result)
+            }
+
+            _ => None,
+        }
+    }
+
+    pub fn map_repack_binary<F>(a: Self, b: Self, f: F) -> Option<Self>
+    where
+        F: FnOnce(f64, f64) -> f64,
+    {
+        use Float::*;
+
+        match (a, b) {
+            (F32(a_val), F32(b_val)) => {
+                let result = f(a_val as f64, b_val as f64) as f32;
+                Some(F32(result))
+            }
+            (F64(a_val), F64(b_val)) => {
+                let result = f(a_val, b_val);
+                Some(F64(result))
+            }
+            (UnsizedFloat(a_val), UnsizedFloat(b_val)) => {
+                let result = f(a_val, b_val);
+                Some(UnsizedFloat(result))
+            }
+
+            (F32(a_val), UnsizedFloat(b_val)) => {
+                let result = f(a_val as f64, b_val) as f32;
+                Some(F32(result))
+            }
+            (UnsizedFloat(a_val), F32(b_val)) => {
+                let result = f(a_val, b_val as f64) as f32;
+                Some(F32(result))
+            }
+            (F64(a_val), UnsizedFloat(b_val)) => {
+                let result = f(a_val, b_val);
+                Some(F64(result))
+            }
+            (UnsizedFloat(a_val), F64(b_val)) => {
+                let result = f(a_val, b_val);
+                Some(F64(result))
+            }
+
+            _ => None,
+        }
+    }
+
+    pub fn value<T>(self) -> ComptimeResult<T>
+    where
+        f32: TryInto<T, Error: Error + 'static>,
+        f64: TryInto<T, Error: Error + 'static>,
+    {
+        match self {
+            Float::F32(value) => {
+                value
+                    .try_into()
+                    .map_err(|err| ComptimeEvalError::InternalOverflowError {
+                        source: Box::new(err),
+                    })
+            }
+            Float::F64(value) => {
+                value
+                    .try_into()
+                    .map_err(|err| ComptimeEvalError::InternalOverflowError {
+                        source: Box::new(err),
+                    })
+            }
+            Float::UnsizedFloat(value) => {
+                value
+                    .try_into()
+                    .map_err(|err| ComptimeEvalError::InternalOverflowError {
+                        source: Box::new(err),
+                    })
+            }
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum Number {
+    Float(Float),
+    Int(Int),
+    UnsizedNumber(i64),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ComptimeValue {
+    Bool(bool),
+    Number(Number),
+    Array(Vec<ComptimeValue>),
+    Unit,
+}
+
+pub type ComptimeResult<T> = Result<T, ComptimeEvalError>;
+
+#[derive(Default)]
+struct ExecutionState {
+    variables: HashMap<VariableID, ComptimeValue>,
+}
+
+struct ComptimeExecutor<'state> {
+    state: &'state mut ExecutionState,
+    type_sets: &'state TypeSets,
+    type_data: &'state TypeData,
+    referenced_variable: &'state VariableData,
+}
+
+impl ComptimeExecutor<'_> {
+    fn get_expression_type(&self, expression: &impl HasID) -> RuntimeType {
+        *self.type_sets.get(
+            *self
+                .type_data
+                .get(&expression.get_id())
+                .expect("Expression wasn't typechecked before executing"),
+        )
+    }
+}
+
+impl AstVisitor for ComptimeExecutor<'_> {
+    type ProgramOutput = ComptimeResult<()>;
+    type FunctionDefinitionOutput = ComptimeResult<()>;
+    type FunctionBodyOutput = ComptimeResult<()>;
+    type SimpleBindingOutput = ComptimeResult<()>;
+    type StatementOutput = ComptimeResult<()>;
+    type ExecutorHostOutput = ComptimeResult<()>;
+    type ExecutorOutput = ComptimeResult<()>;
+    type ExpressionOutput = ComptimeResult<ComptimeValue>;
+    type LValueOutput = ComptimeResult<()>;
+    type TypeOutput = ComptimeResult<()>;
+
+    fn visit_program(self, program: &mut Program) -> Self::ProgramOutput {
+        todo!()
+    }
+
+    fn visit_function_definition(
+        &mut self,
+        function_definition: &mut FunctionDefinition,
+    ) -> Self::FunctionDefinitionOutput {
+        todo!()
+    }
+
+    fn visit_statement_function_body(
+        &mut self,
+        statement_function_body: &mut StatementFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        todo!()
+    }
+
+    fn visit_extern_function_body(
+        &mut self,
+        extern_function_body: &mut ExternFunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        todo!()
+    }
+
+    fn visit_simple_binding(
+        &mut self,
+        simple_binding: &mut SimpleBinding,
+    ) -> Self::SimpleBindingOutput {
+        todo!()
+    }
+
+    fn visit_expression_statement(
+        &mut self,
+        expr_stmt: &mut ExpressionStatement,
+    ) -> Self::StatementOutput {
+        todo!()
+    }
+
+    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
+        todo!()
+    }
+
+    fn visit_block_statement(&mut self, block: &mut BlockStatement) -> Self::StatementOutput {
+        todo!()
+    }
+
+    fn visit_return_statement(
+        &mut self,
+        return_stmt: &mut ReturnStatement,
+    ) -> Self::StatementOutput {
+        todo!()
+    }
+
+    fn visit_variable_definition_statement(
+        &mut self,
+        vardef_stmt: &mut VariableDefinitionStatement,
+    ) -> Self::StatementOutput {
+        todo!()
+    }
+
+    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::StatementOutput {
+        todo!()
+    }
+
+    fn visit_while_loop_statement(
+        &mut self,
+        while_stmt: &mut WhileLoopStatement,
+    ) -> Self::StatementOutput {
+        todo!()
+    }
+
+    fn visit_for_loop_statement(
+        &mut self,
+        for_stmt: &mut ForLoopStatement,
+    ) -> Self::StatementOutput {
+        todo!()
+    }
+
+    fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
+        todo!()
+    }
+
+    fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
+        todo!()
+    }
+
+    fn visit_self_executor_host(
+        &mut self,
+        executor_host: &mut SelfExecutorHost,
+    ) -> Self::ExecutorHostOutput {
+        todo!()
+    }
+
+    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
+        todo!()
+    }
+
+    fn visit_gpu_executor(&mut self, executor: &mut GPUExecutor) -> Self::ExecutorOutput {
+        todo!()
+    }
+
+    fn visit_literal_expression(
+        &mut self,
+        expression: &mut LiteralExpression,
+    ) -> Self::ExpressionOutput {
+        let expected_type = self.get_expression_type(expression);
+
+        Ok(match expression.value {
+            LiteralKind::Number(n) => ComptimeValue::Number(match expected_type {
+                RuntimeType::I8 => Number::Int(Int::I8(n.try_into().map_err(|_| {
+                    ComptimeEvalError::LiteralOverflowError {
+                        display_error: FleetError::from_node(
+                            expression,
+                            format!("Value {n} is too big for i8 literal"),
+                            ErrorSeverity::Error,
+                        ),
+                    }
+                })?)),
+                RuntimeType::I16 => Number::Int(Int::I16(n.try_into().map_err(|_| {
+                    ComptimeEvalError::LiteralOverflowError {
+                        display_error: FleetError::from_node(
+                            expression,
+                            format!("Value {n} is too big for i16 literal"),
+                            ErrorSeverity::Error,
+                        ),
+                    }
+                })?)),
+                RuntimeType::I32 => Number::Int(Int::I32(n.try_into().map_err(|_| {
+                    ComptimeEvalError::LiteralOverflowError {
+                        display_error: FleetError::from_node(
+                            expression,
+                            format!("Value {n} is too big for i32 literal"),
+                            ErrorSeverity::Error,
+                        ),
+                    }
+                })?)),
+                RuntimeType::I64 => Number::Int(Int::I64(n.try_into().map_err(|_| {
+                    ComptimeEvalError::LiteralOverflowError {
+                        display_error: FleetError::from_node(
+                            expression,
+                            format!("Value {n} is too big for i64 literal"),
+                            ErrorSeverity::Error,
+                        ),
+                    }
+                })?)),
+                RuntimeType::UnsizedInteger => {
+                    Number::Int(Int::UnsizedInteger(n.try_into().map_err(|_| {
+                        ComptimeEvalError::LiteralOverflowError {
+                            display_error: FleetError::from_node(
+                                expression,
+                                format!(
+                                    "Value {n} is too big for \
+                                    unsized integer literal. (internally i64)"
+                                ),
+                                ErrorSeverity::Error,
+                            ),
+                        }
+                    })?))
+                }
+                RuntimeType::Number => Number::UnsizedNumber(n.try_into().map_err(|_| {
+                    ComptimeEvalError::LiteralOverflowError {
+                        display_error: FleetError::from_node(
+                            expression,
+                            format!(
+                                "Value {n} is too big for \
+                                unsized number literal. (internally i64)"
+                            ),
+                            ErrorSeverity::Error,
+                        ),
+                    }
+                })?),
+                type_ => {
+                    return Err(ComptimeEvalError::TypeMismatch {
+                        display_error: FleetError::from_node(
+                            expression,
+                            format!(
+                                "Expected type {}, got {}",
+                                expected_type.stringify(&self.type_sets.0),
+                                type_.stringify(&self.type_sets.0),
+                            ),
+                            ErrorSeverity::Error,
+                        ),
+                    });
+                }
+            }),
+            LiteralKind::Float(n) => ComptimeValue::Number(match expected_type {
+                RuntimeType::F32 => {
+                    let n_f32 = n as f32;
+                    if n_f32 as f64 != n {
+                        return Err(ComptimeEvalError::LiteralOverflowError {
+                            display_error: FleetError::from_node(
+                                expression,
+                                format!("Value {n} is too big for f32 literal"),
+                                ErrorSeverity::Error,
+                            ),
+                        });
+                    }
+                    Number::Float(Float::F32(n_f32))
+                }
+                RuntimeType::F64 => Number::Float(Float::F64(n.try_into().map_err(|_| {
+                    ComptimeEvalError::LiteralOverflowError {
+                        display_error: FleetError::from_node(
+                            expression,
+                            format!("Value {n} is too big for f64 literal"),
+                            ErrorSeverity::Error,
+                        ),
+                    }
+                })?)),
+                RuntimeType::UnsizedFloat => {
+                    Number::Float(Float::UnsizedFloat(n.try_into().map_err(|_| {
+                        ComptimeEvalError::LiteralOverflowError {
+                            display_error: FleetError::from_node(
+                                expression,
+                                format!(
+                                    "Value {n} is too big for \
+                                    unsized float literal (internally f64)"
+                                ),
+                                ErrorSeverity::Error,
+                            ),
+                        }
+                    })?))
+                }
+                type_ => {
+                    return Err(ComptimeEvalError::TypeMismatch {
+                        display_error: FleetError::from_node(
+                            expression,
+                            format!(
+                                "Expected type {}, got {}",
+                                expected_type.stringify(&self.type_sets.0),
+                                type_.stringify(&self.type_sets.0),
+                            ),
+                            ErrorSeverity::Error,
+                        ),
+                    });
+                }
+            }),
+            LiteralKind::Bool(b) => ComptimeValue::Bool(b),
+        })
+    }
+
+    fn visit_synthetic_value_expression(
+        &mut self,
+        expression: &mut SyntheticValueExpression,
+    ) -> Self::ExpressionOutput {
+        Ok(expression.value.clone())
+    }
+
+    fn visit_array_expression(
+        &mut self,
+        expression: &mut ArrayExpression,
+    ) -> Self::ExpressionOutput {
+        Ok(ComptimeValue::Array(
+            expression
+                .elements
+                .iter_mut()
+                .map(|el| self.visit_expression(&mut el.0))
+                .collect::<Result<Vec<_>, _>>()?,
+        ))
+    }
+
+    fn visit_function_call_expression(
+        &mut self,
+        expression: &mut FunctionCallExpression,
+    ) -> Self::ExpressionOutput {
+        todo!()
+    }
+
+    fn visit_compiler_expression(
+        &mut self,
+        expression: &mut CompilerExpression,
+    ) -> Self::ExpressionOutput {
+        todo!()
+    }
+
+    fn visit_array_index_expression(
+        &mut self,
+        expr: &mut ArrayIndexExpression,
+    ) -> Self::ExpressionOutput {
+        let ArrayIndexExpression {
+            array,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id: _,
+        } = expr;
+
+        let ComptimeValue::Number(Number::Int(index)) = self.visit_expression(index)? else {
+            let actual_type = self.get_expression_type(&**index);
+            return Err(ComptimeEvalError::TypeMismatch {
+                display_error: FleetError::from_node(
+                    &**index,
+                    format!(
+                        "Expected index to have type {}, got {}",
+                        RuntimeType::UnsizedInteger.stringify(&self.type_sets.0),
+                        actual_type.stringify(&self.type_sets.0),
+                    ),
+                    ErrorSeverity::Error,
+                ),
+            });
+        };
+        let ComptimeValue::Array(values) = self.visit_expression(array)? else {
+            let actual_type = self.get_expression_type(&**array);
+            return Err(ComptimeEvalError::TypeMismatch {
+                display_error: FleetError::from_node(
+                    &**array,
+                    format!(
+                        "Expected array to have an array type, got {}",
+                        actual_type.stringify(&self.type_sets.0),
+                    ),
+                    ErrorSeverity::Error,
+                ),
+            });
+        };
+
+        let index = index.value::<usize>()?;
+
+        let values_len = values.len();
+
+        values
+            .into_iter()
+            .nth(index)
+            .ok_or_else(|| ComptimeEvalError::OutOfRangeError {
+                display_error: FleetError::from_node(
+                    expr,
+                    format!(
+                        "Index {} is out of bounds for this array with length {}",
+                        index, values_len
+                    ),
+                    ErrorSeverity::Error,
+                ),
+            })
+    }
+
+    fn visit_grouping_expression(
+        &mut self,
+        GroupingExpression {
+            open_paren_token: _,
+            subexpression,
+            close_paren_token: _,
+            id: _,
+        }: &mut GroupingExpression,
+    ) -> Self::ExpressionOutput {
+        self.visit_expression(subexpression)
+    }
+
+    fn visit_variable_access_expression(
+        &mut self,
+        expression: &mut VariableAccessExpression,
+    ) -> Self::ExpressionOutput {
+        todo!()
+    }
+
+    fn visit_unary_expression(
+        &mut self,
+        UnaryExpression {
+            operator_token: _,
+            operation,
+            operand,
+            id: _,
+        }: &mut UnaryExpression,
+    ) -> Self::ExpressionOutput {
+        match operation {
+            UnaryOperation::BitwiseNot => match self.visit_expression(operand)? {
+                ComptimeValue::Number(Number::Int(op_value)) => Ok(ComptimeValue::Number(
+                    Number::Int(op_value.map_repack(|x| !x)),
+                )),
+                ComptimeValue::Number(Number::UnsizedNumber(op_value)) => Ok(
+                    ComptimeValue::Number(Number::Int(Int::UnsizedInteger(!op_value))),
+                ),
+                _ => {
+                    let actual_type = self.get_expression_type(&**operand);
+                    Err(ComptimeEvalError::TypeMismatch {
+                        display_error: FleetError::from_node(
+                            &**operand,
+                            format!(
+                                "Expected operand to have type {}, got {}",
+                                RuntimeType::UnsizedInteger.stringify(&self.type_sets.0),
+                                actual_type.stringify(&self.type_sets.0),
+                            ),
+                            ErrorSeverity::Error,
+                        ),
+                    })
+                }
+            },
+            UnaryOperation::LogicalNot => match self.visit_expression(operand)? {
+                ComptimeValue::Number(op) => Ok(ComptimeValue::Bool(match op {
+                    Number::Float(op_value) => op_value.map(|x| x == 0.0),
+                    Number::Int(op_value) => op_value.map(|x| x == 0),
+                    Number::UnsizedNumber(op_value) => op_value == 0,
+                })),
+                ComptimeValue::Bool(op_value) => Ok(ComptimeValue::Bool(!op_value)),
+                _ => {
+                    let actual_type = self.get_expression_type(&**operand);
+                    Err(ComptimeEvalError::TypeMismatch {
+                        display_error: FleetError::from_node(
+                            &**operand,
+                            format!(
+                                "Expected operand to have type {}, got {}",
+                                RuntimeType::UnsizedInteger.stringify(&self.type_sets.0),
+                                actual_type.stringify(&self.type_sets.0),
+                            ),
+                            ErrorSeverity::Error,
+                        ),
+                    })
+                }
+            },
+            UnaryOperation::Negate => match self.visit_expression(operand)? {
+                ComptimeValue::Number(op) => Ok(ComptimeValue::Number(match op {
+                    Number::Float(op_value) => Number::Float(op_value.map_repack(|x| -x)),
+                    Number::Int(op_value) => Number::Int(op_value.map_repack(|x| -x)),
+                    Number::UnsizedNumber(op_value) => Number::UnsizedNumber(-op_value),
+                })),
+                _ => {
+                    let actual_type = self.get_expression_type(&**operand);
+                    Err(ComptimeEvalError::TypeMismatch {
+                        display_error: FleetError::from_node(
+                            &**operand,
+                            format!(
+                                "Expected operand to have type {}, got {}",
+                                RuntimeType::Number.stringify(&self.type_sets.0),
+                                actual_type.stringify(&self.type_sets.0),
+                            ),
+                            ErrorSeverity::Error,
+                        ),
+                    })
+                }
+            },
+        }
+    }
+
+    fn visit_cast_expression(
+        &mut self,
+        CastExpression {
+            operand,
+            as_token: _,
+            type_,
+            id: _,
+        }: &mut CastExpression,
+    ) -> Self::ExpressionOutput {
+        todo!()
+    }
+
+    fn visit_binary_expression(&mut self, expr: &mut BinaryExpression) -> Self::ExpressionOutput {
+        let expr_clone = expr.clone();
+        let BinaryExpression {
+            left,
+            operator_token: _,
+            operation,
+            right,
+            id: _,
+        } = expr;
+
+        let mismatched_type_error = {
+            let left_type = self.get_expression_type(&**left);
+            let right_type = self.get_expression_type(&**right);
+            ComptimeEvalError::TypeMismatch {
+                display_error: FleetError::from_node(
+                    &expr_clone,
+                    std::format!(
+                        "Expected operands to have same type, got {} and {}",
+                        left_type.stringify(&self.type_sets.0),
+                        right_type.stringify(&self.type_sets.0),
+                    ),
+                    ErrorSeverity::Error,
+                ),
+            }
+        };
+
+        let left_value = self.visit_expression(left)?;
+        let mut right_gen = |self_: &mut ComptimeExecutor| self_.visit_expression(right);
+
+        use ComptimeValue as CV;
+        match operation {
+            BinaryOperation::Add
+            | BinaryOperation::Subtract
+            | BinaryOperation::Multiply
+            | BinaryOperation::Divide
+            | BinaryOperation::Modulo => match left_value {
+                CV::Number(a) => match (a, right_gen(self)?) {
+                    (Number::Float(a), CV::Number(Number::Float(b))) => {
+                        Ok(CV::Number(Number::Float(
+                            Float::map_repack_binary(a, b, |a, b| match operation {
+                                BinaryOperation::Add => a + b,
+                                BinaryOperation::Subtract => a - b,
+                                BinaryOperation::Multiply => a * b,
+                                BinaryOperation::Divide => a / b,
+                                BinaryOperation::Modulo => a % b,
+                                _ => unreachable!(),
+                            })
+                            .ok_or(mismatched_type_error)?,
+                        )))
+                    }
+                    (Number::Int(a), CV::Number(Number::Int(b))) => Ok(CV::Number(Number::Int(
+                        Int::map_repack_binary(a, b, |a, b| match operation {
+                            BinaryOperation::Add => a + b,
+                            BinaryOperation::Subtract => a - b,
+                            BinaryOperation::Multiply => a * b,
+                            BinaryOperation::Divide => a / b,
+                            BinaryOperation::Modulo => a % b,
+                            _ => unreachable!(),
+                        })
+                        .ok_or(mismatched_type_error)?,
+                    ))),
+                    (Number::UnsizedNumber(a), CV::Number(Number::UnsizedNumber(b))) => {
+                        Ok(CV::Number(Number::UnsizedNumber(match operation {
+                            BinaryOperation::Add => a + b,
+                            BinaryOperation::Subtract => a - b,
+                            BinaryOperation::Multiply => a * b,
+                            BinaryOperation::Divide => a / b,
+                            BinaryOperation::Modulo => a % b,
+                            _ => unreachable!(),
+                        })))
+                    }
+
+                    _ => Err(mismatched_type_error),
+                },
+                _ => Err(mismatched_type_error),
+            },
+
+            BinaryOperation::GreaterThan
+            | BinaryOperation::GreaterThanOrEqual
+            | BinaryOperation::LessThan
+            | BinaryOperation::LessThanOrEqual => match left_value {
+                CV::Number(a) => match (a, right_gen(self)?) {
+                    (Number::Float(a), CV::Number(Number::Float(b))) => Ok(CV::Bool(
+                        Float::map_binary(a, b, |a, b| match operation {
+                            BinaryOperation::GreaterThan => a > b,
+                            BinaryOperation::GreaterThanOrEqual => a >= b,
+                            BinaryOperation::LessThan => a < b,
+                            BinaryOperation::LessThanOrEqual => a <= b,
+                            _ => unreachable!(),
+                        })
+                        .ok_or(mismatched_type_error)?,
+                    )),
+                    (Number::Int(a), CV::Number(Number::Int(b))) => Ok(CV::Bool(
+                        Int::map_binary(a, b, |a, b| match operation {
+                            BinaryOperation::GreaterThan => a > b,
+                            BinaryOperation::GreaterThanOrEqual => a >= b,
+                            BinaryOperation::LessThan => a < b,
+                            BinaryOperation::LessThanOrEqual => a <= b,
+                            _ => unreachable!(),
+                        })
+                        .ok_or(mismatched_type_error)?,
+                    )),
+                    (Number::UnsizedNumber(a), CV::Number(Number::UnsizedNumber(b))) => {
+                        Ok(CV::Bool(match operation {
+                            BinaryOperation::GreaterThan => a > b,
+                            BinaryOperation::GreaterThanOrEqual => a >= b,
+                            BinaryOperation::LessThan => a < b,
+                            BinaryOperation::LessThanOrEqual => a <= b,
+                            _ => unreachable!(),
+                        }))
+                    }
+
+                    _ => Err(mismatched_type_error),
+                },
+                _ => Err(mismatched_type_error),
+            },
+
+            BinaryOperation::Equal | BinaryOperation::NotEqual => match left_value {
+                CV::Number(a) => match (a, right_gen(self)?) {
+                    (Number::Float(a), CV::Number(Number::Float(b))) => Ok(CV::Bool(
+                        Float::map_binary(a, b, |a, b| match operation {
+                            BinaryOperation::Equal => a == b,
+                            BinaryOperation::NotEqual => a != b,
+                            _ => unreachable!(),
+                        })
+                        .ok_or(mismatched_type_error)?,
+                    )),
+                    (Number::Int(a), CV::Number(Number::Int(b))) => Ok(CV::Bool(
+                        Int::map_binary(a, b, |a, b| match operation {
+                            BinaryOperation::Equal => a == b,
+                            BinaryOperation::NotEqual => a != b,
+                            _ => unreachable!(),
+                        })
+                        .ok_or(mismatched_type_error)?,
+                    )),
+                    (Number::UnsizedNumber(a), CV::Number(Number::UnsizedNumber(b))) => {
+                        Ok(CV::Bool(match operation {
+                            BinaryOperation::Equal => a == b,
+                            BinaryOperation::NotEqual => a != b,
+                            _ => unreachable!(),
+                        }))
+                    }
+
+                    _ => Err(mismatched_type_error),
+                },
+
+                CV::Bool(a) => match right_gen(self)? {
+                    CV::Bool(b) => Ok(CV::Bool(match operation {
+                        BinaryOperation::Equal => a && b,
+                        BinaryOperation::NotEqual => a || b,
+                        _ => unreachable!(),
+                    })),
+                    _ => Err(mismatched_type_error),
+                },
+
+                _ => Err(mismatched_type_error),
+            },
+
+            BinaryOperation::LogicalAnd | BinaryOperation::LogicalOr => match left_value {
+                CV::Bool(a) => match operation {
+                    BinaryOperation::LogicalAnd => {
+                        if !a {
+                            Ok(CV::Bool(false))
+                        } else if let CV::Bool(b) = right_gen(self)? {
+                            Ok(CV::Bool(b))
+                        } else {
+                            Err(mismatched_type_error)
+                        }
+                    }
+                    BinaryOperation::LogicalOr => {
+                        if a {
+                            Ok(CV::Bool(true))
+                        } else if let CV::Bool(b) = right_gen(self)? {
+                            Ok(CV::Bool(b))
+                        } else {
+                            Err(mismatched_type_error)
+                        }
+                    }
+                    _ => unreachable!(),
+                },
+
+                _ => Err(mismatched_type_error),
+            },
+        }
+    }
+
+    fn visit_variable_assignment_expression(
+        &mut self,
+        expression: &mut VariableAssignmentExpression,
+    ) -> Self::ExpressionOutput {
+        todo!()
+    }
+
+    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
+        todo!()
+    }
+
+    fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
+        todo!()
+    }
+
+    fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {
+        todo!()
+    }
+
+    fn visit_simple_type(&mut self, simple_type: &mut SimpleType) -> Self::TypeOutput {
+        todo!()
+    }
+
+    fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput {
+        todo!()
+    }
+
+    fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput {
+        todo!()
+    }
+
+    fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
+        todo!()
+    }
 }
 
 impl PassFactory for TypePropagator<'_> {
@@ -62,6 +1086,7 @@ impl PassFactory for TypePropagator<'_> {
         let referenced_variable = state.check_named()?;
         let referenced_function = state.check_named()?;
         let scope_data = state.check_named()?;
+        let comptime_deps = state.check_named()?;
 
         Ok(Self::Output {
             errors: errors.get_mut(state),
@@ -73,6 +1098,9 @@ impl PassFactory for TypePropagator<'_> {
             referenced_variable: referenced_variable.get(state),
             referenced_function: referenced_function.get(state),
             containing_scope: scope_data.get(state),
+            comptime_deps: comptime_deps.get(state),
+
+            execution_state: ExecutionState::default(),
 
             current_function: None,
             require_constant: false,
@@ -189,6 +1217,15 @@ impl<'a> TypePropagator<'a> {
 
     fn stringify_type_ptr(&self, ptr: UnionFindSetPtr<RuntimeType>) -> String {
         self.type_sets.get(ptr).stringify(&self.type_sets)
+    }
+
+    fn create_comptime_executor<'slf>(&'slf mut self) -> ComptimeExecutor<'slf> {
+        ComptimeExecutor {
+            state: &mut self.execution_state,
+            type_sets: &mut self.type_sets,
+            type_data: &mut self.node_types,
+            referenced_variable: &self.referenced_variable,
+        }
     }
 }
 
@@ -662,6 +1699,118 @@ impl AstVisitor for TypePropagator<'_> {
         );
     }
 
+    fn visit_expression(&mut self, expression: &mut Expression) -> Self::ExpressionOutput {
+        let res = match expression {
+            Expression::Literal(literal_expression) => {
+                self.visit_literal_expression(literal_expression)
+            }
+            Expression::SyntheticValue(synthetic_value_expression) => {
+                self.visit_synthetic_value_expression(synthetic_value_expression)
+            }
+            Expression::Array(array_expression) => self.visit_array_expression(array_expression),
+            Expression::FunctionCall(function_call_expression) => {
+                self.visit_function_call_expression(function_call_expression)
+            }
+            Expression::CompilerExpression(compiler_expression) => {
+                self.visit_compiler_expression(compiler_expression)
+            }
+            Expression::ArrayIndex(array_index_expression) => {
+                self.visit_array_index_expression(array_index_expression)
+            }
+            Expression::Grouping(grouping_expression) => {
+                self.visit_grouping_expression(grouping_expression)
+            }
+            Expression::VariableAccess(variable_access_expression) => {
+                self.visit_variable_access_expression(variable_access_expression)
+            }
+            Expression::Cast(cast_expression) => self.visit_cast_expression(cast_expression),
+            Expression::Unary(unary_expression) => self.visit_unary_expression(unary_expression),
+            Expression::Binary(binary_expression) => {
+                self.visit_binary_expression(binary_expression)
+            }
+            Expression::VariableAssignment(variable_assignment_expression) => {
+                self.visit_variable_assignment_expression(variable_assignment_expression)
+            }
+        };
+
+        if self.comptime_deps.get(&expression.get_id()).unwrap().0 == EvaluationTime::Comptime {
+            let mut exec = self.create_comptime_executor();
+            match exec.visit_expression(expression) {
+                Err(
+                    ComptimeEvalError::TypeMismatch { display_error }
+                    | ComptimeEvalError::OutOfRangeError { display_error }
+                    | ComptimeEvalError::LiteralOverflowError { display_error },
+                ) => {
+                    self.errors.push(display_error);
+                }
+                Err(ComptimeEvalError::InternalOverflowError { source }) => {
+                    self.errors.push(FleetError::from_node(
+                        expression,
+                        format!(
+                            "Comptime evaluation triggered an internal overflow: {}",
+                            source
+                        ),
+                        ErrorSeverity::Error,
+                    ));
+                }
+                Ok(output) => {
+                    let token = Token {
+                        type_: TokenType::Synthetic,
+                        range: find_node_bounds(expression),
+                        leading_trivia: vec![],
+                        trailing_trivia: vec![],
+                        file_name: first_token_of_node(expression).unwrap().file_name.clone(),
+                    };
+
+                    *expression = match output {
+                        ComptimeValue::Bool(v) => Expression::Literal(LiteralExpression {
+                            value: LiteralKind::Bool(v),
+                            token,
+                            id: expression.get_id(),
+                        }),
+                        ComptimeValue::Number(Number::Int(v)) => {
+                            Expression::Literal(LiteralExpression {
+                                value: LiteralKind::Number(v.value().unwrap()),
+                                token,
+                                id: expression.get_id(),
+                            })
+                        }
+                        ComptimeValue::Number(Number::UnsizedNumber(v)) => {
+                            Expression::Literal(LiteralExpression {
+                                value: LiteralKind::Number(v),
+                                token,
+                                id: expression.get_id(),
+                            })
+                        }
+                        ComptimeValue::Number(Number::Float(v)) => {
+                            Expression::Literal(LiteralExpression {
+                                value: LiteralKind::Float(v.value().unwrap()),
+                                token,
+                                id: expression.get_id(),
+                            })
+                        }
+
+                        ComptimeValue::Array(comptime_values) => todo!(),
+                        ComptimeValue::Unit => {
+                            self.errors.push(FleetError::from_node(
+                                expression,
+                                "Comptime evaluation resulted in a Unit value",
+                                ErrorSeverity::Error,
+                            ));
+                            Expression::Literal(LiteralExpression {
+                                value: LiteralKind::Number(1234567890),
+                                token,
+                                id: self.id_generator.next_node_id(),
+                            })
+                        }
+                    };
+                }
+            }
+        }
+
+        res
+    }
+
     fn visit_literal_expression(
         &mut self,
         expression: &mut LiteralExpression,
@@ -676,6 +1825,55 @@ impl AstVisitor for TypePropagator<'_> {
             LiteralKind::Float(_) => RuntimeType::UnsizedFloat,
             LiteralKind::Bool(_) => RuntimeType::Boolean,
         });
+        self.node_types.insert(*id, type_);
+
+        type_
+    }
+
+    fn visit_synthetic_value_expression(
+        &mut self,
+        expression: &mut SyntheticValueExpression,
+    ) -> Self::ExpressionOutput {
+        let SyntheticValueExpression {
+            value,
+            token: _,
+            id,
+        } = expression;
+
+        fn comptime_value_to_type(value: &ComptimeValue, type_sets: &mut TypeSets) -> RuntimeType {
+            match value {
+                ComptimeValue::Bool(_) => RuntimeType::Boolean,
+                ComptimeValue::Number(number) => match number {
+                    Number::Float(float) => match float {
+                        Float::F32(_) => RuntimeType::F32,
+                        Float::F64(_) => RuntimeType::F64,
+                        Float::UnsizedFloat(_) => RuntimeType::UnsizedFloat,
+                    },
+                    Number::Int(int) => match int {
+                        Int::I8(_) => RuntimeType::I8,
+                        Int::I16(_) => RuntimeType::I16,
+                        Int::I32(_) => RuntimeType::I32,
+                        Int::I64(_) => RuntimeType::I64,
+                        Int::UnsizedInteger(_) => RuntimeType::UnsizedInteger,
+                    },
+                    Number::UnsizedNumber(_) => RuntimeType::Number,
+                },
+                ComptimeValue::Array(values) => {
+                    let subtype = values
+                        .first()
+                        .map(|value| comptime_value_to_type(value, type_sets))
+                        .unwrap_or(RuntimeType::Unknown);
+                    RuntimeType::ArrayOf {
+                        subtype: type_sets.insert_set(subtype),
+                        size: Some(values.len()),
+                    }
+                }
+                ComptimeValue::Unit => RuntimeType::Unit,
+            }
+        }
+
+        let type_ = comptime_value_to_type(value, &mut self.type_sets);
+        let type_ = self.type_sets.insert_set(type_);
         self.node_types.insert(*id, type_);
 
         type_
@@ -833,7 +2031,7 @@ impl AstVisitor for TypePropagator<'_> {
             name,
             name_token: _,
             open_paren_token: _,
-            arguments: _,
+            arguments,
             close_paren_token,
             id,
         } = expression;
@@ -854,7 +2052,7 @@ impl AstVisitor for TypePropagator<'_> {
                 ));
 
                 // still typecheck args, even though the function doesn't exist
-                for (arg, _comma) in &mut expression.arguments {
+                for (arg, _comma) in arguments {
                     self.visit_expression(arg);
                 }
 
@@ -864,8 +2062,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         let num_expected_arguments = parameter_types.len();
 
-        for (i, types) in expression
-            .arguments
+        for (i, types) in arguments
             .iter_mut()
             .map(|(arg, _comma)| (self.visit_expression(arg), arg))
             .collect_vec()
@@ -1303,7 +2500,6 @@ impl AstVisitor for TypePropagator<'_> {
         self.node_types.insert(*id, to_ptr);
         to_ptr
     }
-
     fn visit_binary_expression(
         &mut self,
         expression: &mut BinaryExpression,
@@ -1459,6 +2655,7 @@ impl AstVisitor for TypePropagator<'_> {
         self.node_types.insert(*id, this_type);
         this_type
     }
+
     fn visit_variable_assignment_expression(
         &mut self,
         expression: &mut VariableAssignmentExpression,
