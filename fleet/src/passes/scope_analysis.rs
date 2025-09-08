@@ -17,9 +17,9 @@ use crate::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
         IfStatement, LiteralExpression, NodeID, OnStatement, OnStatementIterator, PerNodeData,
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
-        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        StatementFunctionBody, ThreadExecutor, TopLevelStatement, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -385,6 +385,13 @@ impl Pass for ScopeAnalyzer<'_> {
 }
 
 impl<'a> ScopeAnalyzer<'a> {
+    fn register_top_level_statement(&mut self, tls: &mut TopLevelStatement) {
+        match tls {
+            TopLevelStatement::Function(function_definition) => {
+                self.register_function(function_definition)
+            }
+        }
+    }
     fn register_function(&mut self, function: &mut FunctionDefinition) {
         let function_clone = function.clone();
         let FunctionDefinition {
@@ -432,7 +439,7 @@ impl<'a> ScopeAnalyzer<'a> {
 
 impl AstVisitor for ScopeAnalyzer<'_> {
     type ProgramOutput = ();
-    type FunctionDefinitionOutput = ();
+    type TopLevelOutput = ();
     type FunctionBodyOutput = ();
     type SimpleBindingOutput = NodeID;
     type StatementOutput = NodeID;
@@ -443,18 +450,15 @@ impl AstVisitor for ScopeAnalyzer<'_> {
     type TypeOutput = NodeID;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
-        for f in &mut program.functions {
-            self.register_function(f);
+        for tls in &mut program.top_level_statements {
+            self.register_top_level_statement(tls);
         }
-        for f in &mut program.functions {
-            self.visit_function_definition(f);
+        for tls in &mut program.top_level_statements {
+            self.visit_top_level_statement(tls);
         }
     }
 
-    fn visit_function_definition(
-        &mut self,
-        fdef: &mut FunctionDefinition,
-    ) -> Self::FunctionDefinitionOutput {
+    fn visit_function_definition(&mut self, fdef: &mut FunctionDefinition) -> Self::TopLevelOutput {
         let FunctionDefinition {
             let_token: _,
             name,

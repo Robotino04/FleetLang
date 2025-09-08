@@ -13,8 +13,8 @@ use crate::{
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        SkipStatement, StatementFunctionBody, ThreadExecutor, TopLevelStatement, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
@@ -89,6 +89,14 @@ impl Pass for TypePropagator<'_> {
 }
 
 impl<'a> TypePropagator<'a> {
+    fn register_top_level_statements(&mut self, tls: &mut TopLevelStatement) {
+        match tls {
+            TopLevelStatement::Function(function_definition) => {
+                self.register_function(function_definition)
+            }
+        }
+    }
+
     fn register_function(&mut self, function: &mut FunctionDefinition) {
         let function_clone = function.clone();
         let FunctionDefinition {
@@ -194,7 +202,7 @@ impl<'a> TypePropagator<'a> {
 
 impl AstVisitor for TypePropagator<'_> {
     type ProgramOutput = ();
-    type FunctionDefinitionOutput = ();
+    type TopLevelOutput = ();
     type FunctionBodyOutput = ();
     type SimpleBindingOutput = UnionFindSetPtr<RuntimeType>;
     type StatementOutput = ();
@@ -205,11 +213,11 @@ impl AstVisitor for TypePropagator<'_> {
     type TypeOutput = UnionFindSetPtr<RuntimeType>;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
-        for f in &mut program.functions {
-            self.register_function(f);
+        for tls in &mut program.top_level_statements {
+            self.register_top_level_statements(tls);
         }
-        for f in &mut program.functions {
-            self.visit_function_definition(f);
+        for tls in &mut program.top_level_statements {
+            self.visit_top_level_statement(tls);
         }
 
         // specify all int sizes
@@ -218,10 +226,7 @@ impl AstVisitor for TypePropagator<'_> {
         }
     }
 
-    fn visit_function_definition(
-        &mut self,
-        fdef: &mut FunctionDefinition,
-    ) -> Self::FunctionDefinitionOutput {
+    fn visit_function_definition(&mut self, fdef: &mut FunctionDefinition) -> Self::TopLevelOutput {
         let fdef_clone = fdef.clone();
         let FunctionDefinition {
             let_token: _,

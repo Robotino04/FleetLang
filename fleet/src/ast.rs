@@ -151,7 +151,7 @@ macro_rules! generate_ast_requirements {
 
 pub trait AstVisitor {
     type ProgramOutput;
-    type FunctionDefinitionOutput;
+    type TopLevelOutput;
     type FunctionBodyOutput;
     type SimpleBindingOutput;
     type StatementOutput;
@@ -162,10 +162,18 @@ pub trait AstVisitor {
     type TypeOutput;
 
     fn visit_program(self, program: &mut Program) -> Self::ProgramOutput;
+    fn visit_top_level_statement(&mut self, tls: &mut TopLevelStatement) -> Self::TopLevelOutput {
+        match tls {
+            TopLevelStatement::Function(function_definition) => {
+                self.visit_function_definition(function_definition)
+            }
+        }
+    }
+
     fn visit_function_definition(
         &mut self,
         function_definition: &mut FunctionDefinition,
-    ) -> Self::FunctionDefinitionOutput;
+    ) -> Self::TopLevelOutput;
 
     fn visit_function_body(
         &mut self,
@@ -374,12 +382,33 @@ pub trait AstVisitor {
 
 #[derive(Clone, Debug)]
 pub struct Program {
-    pub functions: Vec<FunctionDefinition>,
+    pub top_level_statements: Vec<TopLevelStatement>,
     pub id: NodeID,
 
     pub file_name: FileName,
 }
 generate_ast_requirements!(Program, unwrap_program);
+
+#[derive(Clone, Debug)]
+pub enum TopLevelStatement {
+    Function(FunctionDefinition),
+}
+
+impl From<TopLevelStatement> for AstNode {
+    fn from(value: TopLevelStatement) -> Self {
+        match value {
+            TopLevelStatement::Function(function_definition) => function_definition.into(),
+        }
+    }
+}
+
+impl HasID for TopLevelStatement {
+    fn get_id(&self) -> NodeID {
+        match self {
+            TopLevelStatement::Function(function) => function.get_id(),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct SimpleBinding {

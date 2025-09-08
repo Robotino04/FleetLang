@@ -15,7 +15,7 @@ use crate::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        ThreadExecutor, TopLevelStatement, UnaryExpression, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
@@ -232,7 +232,7 @@ impl Pass for StatTracker<'_> {
 
 impl AstVisitor for StatTracker<'_> {
     type ProgramOutput = ();
-    type FunctionDefinitionOutput = NodeStats;
+    type TopLevelOutput = NodeStats;
     type FunctionBodyOutput = NodeStats;
     type SimpleBindingOutput = NodeStats;
     type StatementOutput = NodeStats;
@@ -249,14 +249,16 @@ impl AstVisitor for StatTracker<'_> {
         loop {
             let err_backup = self.errors.clone();
 
-            for f in &mut program.functions {
+            for tls in &mut program.top_level_statements {
                 let NodeStats {
                     terminates_function,
                     uses_gpu,
                     accessed_items: _,
-                } = self.visit_function_definition(f);
+                } = self.visit_top_level_statement(tls);
 
-                if f.name == "main" {
+                if let TopLevelStatement::Function(FunctionDefinition { name, .. }) = tls
+                    && name == "main"
+                {
                     stats.terminates_function = terminates_function;
                 }
                 stats.uses_gpu = stats.uses_gpu.serial(uses_gpu);
@@ -271,7 +273,18 @@ impl AstVisitor for StatTracker<'_> {
             }
         }
 
-        if let Some(main_function) = program.functions.iter().find(|f| f.name == "main") {
+        if let Some(main_function) = program
+            .top_level_statements
+            .iter()
+            .find_map(|tls| match tls {
+                TopLevelStatement::Function(function_definition)
+                    if function_definition.name == "main" =>
+                {
+                    Some(function_definition)
+                }
+                _ => None,
+            })
+        {
             let main_stat = self
                 .stats
                 .get(&main_function.id)
@@ -282,9 +295,9 @@ impl AstVisitor for StatTracker<'_> {
             self.errors.push(FleetError::from_range(
                 SourceLocation::start().until(
                     program
-                        .functions
+                        .top_level_statements
                         .first()
-                        .map_or(SourceLocation::start(), |f| f.close_paren_token.range.end),
+                        .map_or(SourceLocation::start(), |tls| find_node_bounds(tls).end),
                 ),
                 "No main function was found.".to_string(),
                 ErrorSeverity::Error,
@@ -308,7 +321,7 @@ impl AstVisitor for StatTracker<'_> {
             body,
             id,
         }: &mut FunctionDefinition,
-    ) -> Self::FunctionDefinitionOutput {
+    ) -> Self::TopLevelOutput {
         let referenced_function = self
             .function_data
             .get(id)

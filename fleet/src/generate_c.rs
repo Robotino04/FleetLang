@@ -239,7 +239,7 @@ pub struct PreStatementValue {
 
 impl AstVisitor for CCodeGenerator<'_> {
     type ProgramOutput = String;
-    type FunctionDefinitionOutput = String;
+    type TopLevelOutput = String;
     type FunctionBodyOutput = String;
     type SimpleBindingOutput = String;
     type StatementOutput = String;
@@ -251,13 +251,13 @@ impl AstVisitor for CCodeGenerator<'_> {
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         let function_definitions = program
-            .functions
+            .top_level_statements
             .iter_mut()
-            .map(|f| self.visit_function_definition(f))
+            .map(|tls| self.visit_top_level_statement(tls))
             .join("\n");
 
         let function_declarations = program
-            .functions
+            .top_level_statements
             .iter()
             .map(|f| {
                 self.generate_function_declaration(
@@ -339,7 +339,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             body,
             id,
         }: &mut FunctionDefinition,
-    ) -> Self::FunctionDefinitionOutput {
+    ) -> Self::TopLevelOutput {
         let function = self
             .function_data
             .get(id)

@@ -30,14 +30,15 @@ use crate::{
         FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
-        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        StatementFunctionBody, ThreadExecutor, TopLevelStatement, UnaryExpression, UnaryOperation,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     escape::unescape,
     generate_glsl::GLSLCodeGenerator,
     infra::{ErrorSeverity, FleetError},
     passes::{
+        find_node_bounds::find_node_bounds,
         pass_manager::{
             Errors, FunctionData, GlobalState, Pass, PassError, PassFactory, PassResult,
             PrecompiledGlslFunctions, ScopeData, StatData, TypeData, TypeSets, VariableData,
@@ -434,6 +435,13 @@ impl<'a> IrGenerator<'_> {
         format!("fleet_{name}")
     }
 
+    fn register_top_level_statement(&mut self, tls: &mut TopLevelStatement) -> Result<()> {
+        match tls {
+            TopLevelStatement::Function(function_definition) => {
+                self.register_function(function_definition)
+            }
+        }
+    }
     fn register_function(&mut self, function: &mut FunctionDefinition) -> Result<()> {
         let return_type = function
             .return_type
@@ -522,7 +530,7 @@ impl<'a> IrGenerator<'_> {
 
 impl<'state> AstVisitor for IrGenerator<'state> {
     type ProgramOutput = Result<()>;
-    type FunctionDefinitionOutput = Result<FunctionValue<'state>>;
+    type TopLevelOutput = Result<FunctionValue<'state>>;
     type FunctionBodyOutput = Result<()>;
     type SimpleBindingOutput = Result<PointerValue<'state>>;
     type StatementOutput = Result<()>;
@@ -552,9 +560,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 self.errors.push(FleetError::from_range(
                     SourceLocation::start().until(
                         program
-                            .functions
+                            .top_level_statements
                             .first()
-                            .map_or(SourceLocation::start(), |f| f.close_paren_token.range.end),
+                            .map_or(SourceLocation::start(), |tls| find_node_bounds(tls).end),
                     ),
                     format!(
                         "Linking with runtime library declarations failed: {}\nModule dump:\n{}",
@@ -567,12 +575,12 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             }
         }
 
-        for f in &mut program.functions {
-            self.register_function(f)?;
+        for tls in &mut program.top_level_statements {
+            self.register_top_level_statement(tls)?;
         }
 
-        for f in &mut program.functions {
-            self.visit_function_definition(f)?;
+        for tls in &mut program.top_level_statements {
+            self.visit_top_level_statement(tls)?;
         }
 
         {
@@ -676,9 +684,16 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
                 Some(other_type) => self.report_error(FleetError::from_node(
                     program
-                        .functions
+                        .top_level_statements
                         .iter()
-                        .find(|f| f.name == "main")
+                        .find_map(|tls| match tls {
+                            TopLevelStatement::Function(function_definition)
+                                if function_definition.name == "main" =>
+                            {
+                                Some(function_definition)
+                            }
+                            _ => None,
+                        })
                         .expect("Main function must exist"),
                     format!("Main function returns unsupported type {other_type}"),
                     ErrorSeverity::Error,
@@ -695,9 +710,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             self.errors.push(FleetError::from_range(
                 SourceLocation::start().until(
                     program
-                        .functions
+                        .top_level_statements
                         .first()
-                        .map_or(SourceLocation::start(), |f| f.close_paren_token.range.end),
+                        .map_or(SourceLocation::start(), |tls| find_node_bounds(tls).end),
                 ),
                 format!(
                     "LLVM module is invalid: {}\nModule dump:\n{}",
@@ -715,7 +730,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
     fn visit_function_definition(
         &mut self,
         function: &mut FunctionDefinition,
-    ) -> Self::FunctionDefinitionOutput {
+    ) -> Self::TopLevelOutput {
         let return_type = function
             .return_type
             .as_mut()

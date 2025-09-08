@@ -41,7 +41,7 @@ type ResultRange = Result<SourceRange, ()>;
 
 impl AstVisitor for FindContainingNodePass {
     type ProgramOutput = Result<(Vec<AstNode>, Option<Token>), ()>;
-    type FunctionDefinitionOutput = ResultRange;
+    type TopLevelOutput = ResultRange;
     type FunctionBodyOutput = ResultRange;
     type SimpleBindingOutput = ResultRange;
     type StatementOutput = ResultRange;
@@ -54,8 +54,8 @@ impl AstVisitor for FindContainingNodePass {
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         self.node_hierarchy.push(program.clone().into());
 
-        for f in &mut program.functions {
-            if let Err(()) = self.visit_function_definition(f) {
+        for tls in &mut program.top_level_statements {
+            if let Err(()) = self.visit_top_level_statement(tls) {
                 return Ok((self.node_hierarchy, self.token));
             }
         }
@@ -67,7 +67,7 @@ impl AstVisitor for FindContainingNodePass {
     fn visit_function_definition(
         &mut self,
         function: &mut FunctionDefinition,
-    ) -> Self::FunctionDefinitionOutput {
+    ) -> Self::TopLevelOutput {
         self.node_hierarchy.push(function.clone().into());
 
         let FunctionDefinition {

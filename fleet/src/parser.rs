@@ -14,9 +14,9 @@ use crate::{
         GroupingExpression, GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression,
         LiteralKind, NodeID, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement,
-        StatementFunctionBody, ThreadExecutor, Type, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        StatementFunctionBody, ThreadExecutor, TopLevelStatement, Type, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
@@ -119,7 +119,7 @@ impl PassFactory for Parser<'_> {
         let mut id_generator = IdGenerator::default();
         let file_name = state.get_named::<InputSource>()?.file_name.clone();
         let program = state.insert(Program {
-            functions: vec![],
+            top_level_statements: vec![],
             id: id_generator.next_node_id(),
             file_name,
         });
@@ -280,7 +280,9 @@ impl<'state> Parser<'state> {
         while !self.is_done() {
             let recovery_start = self.current_token();
             if let Ok(function) = self.parse_function_definition() {
-                self.program.functions.push(function);
+                self.program
+                    .top_level_statements
+                    .push(TopLevelStatement::Function(function));
             } else {
                 recover_until!(self, recovery_start, TokenType::Keyword(Keyword::Let));
             }

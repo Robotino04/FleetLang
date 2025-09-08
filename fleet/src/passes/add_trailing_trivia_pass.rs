@@ -29,7 +29,7 @@ impl AddTrailingTriviaPass {
 
 impl AstVisitor for AddTrailingTriviaPass {
     type ProgramOutput = ();
-    type FunctionDefinitionOutput = ();
+    type TopLevelOutput = ();
     type FunctionBodyOutput = ();
     type SimpleBindingOutput = ();
     type StatementOutput = ();
@@ -39,8 +39,8 @@ impl AstVisitor for AddTrailingTriviaPass {
     type LValueOutput = ();
     type TypeOutput = ();
     fn visit_program(mut self, program: &mut Program) {
-        if let Some(f) = program.functions.last_mut() {
-            self.visit_function_definition(f);
+        if let Some(tls) = program.top_level_statements.first_mut() {
+            self.visit_top_level_statement(tls);
         }
     }
 

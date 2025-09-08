@@ -124,7 +124,7 @@ impl<'inputs> ExtractSemanticTokensPass<'inputs> {
 
 impl AstVisitor for ExtractSemanticTokensPass<'_> {
     type ProgramOutput = Vec<SemanticToken>;
-    type FunctionDefinitionOutput = ();
+    type TopLevelOutput = ();
     type FunctionBodyOutput = ();
     type SimpleBindingOutput = ();
     type StatementOutput = ();
@@ -135,8 +135,8 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
     type TypeOutput = ();
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
-        for f in &mut program.functions {
-            self.visit_function_definition(f);
+        for tls in &mut program.top_level_statements {
+            self.visit_top_level_statement(tls);
         }
         self.semantic_tokens
     }

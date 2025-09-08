@@ -312,7 +312,7 @@ impl AstToDocumentModelConverter<'_> {
 
 impl AstVisitor for AstToDocumentModelConverter<'_> {
     type ProgramOutput = DocumentElement;
-    type FunctionDefinitionOutput = DocumentElement;
+    type TopLevelOutput = DocumentElement;
     type FunctionBodyOutput = DocumentElement;
     type SimpleBindingOutput = DocumentElement;
     type StatementOutput = DocumentElement;
@@ -328,9 +328,9 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             DocumentElement::spaced_concatentation(
                 DocumentElement::single_collapsable_linebreak(),
                 program
-                    .functions
+                    .top_level_statements
                     .iter_mut()
-                    .map(|f| self.visit_function_definition(f))
+                    .map(|tls| self.visit_top_level_statement(tls))
                     .collect(),
             ),
             DocumentElement::ReverseLineBreakEater,
@@ -352,7 +352,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             body,
             id: _,
         }: &mut FunctionDefinition,
-    ) -> Self::FunctionDefinitionOutput {
+    ) -> Self::TopLevelOutput {
         self.is_first_in_statement = true;
         DocumentElement::spaced_concatentation(
             DocumentElement::single_collapsable_space(),

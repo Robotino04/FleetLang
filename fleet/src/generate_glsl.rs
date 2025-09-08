@@ -585,7 +585,7 @@ pub struct PreStatementValue {
 
 impl AstVisitor for GLSLCodeGenerator<'_> {
     type ProgramOutput = Result<HashMap<FunctionID, (String, String)>>;
-    type FunctionDefinitionOutput = Result<Option<(String, String)>>;
+    type TopLevelOutput = Result<Option<(String, String)>>;
     type FunctionBodyOutput = Result<String>;
     type SimpleBindingOutput = String;
     type StatementOutput = Result<String>;
@@ -597,11 +597,11 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         program
-            .functions
+            .top_level_statements
             .iter_mut()
-            .map(|f| {
-                let id = self.function_data.get(&f.id).unwrap().borrow().id;
-                Ok((id, self.visit_function_definition(f)?))
+            .map(|tls| {
+                let id = self.function_data.get(&tls.get_id()).unwrap().borrow().id;
+                Ok((id, self.visit_top_level_statement(tls)?))
             })
             .filter_map(|res| {
                 let (fid, opt) = match res {
@@ -629,7 +629,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             body,
             id,
         }: &mut FunctionDefinition,
-    ) -> Self::FunctionDefinitionOutput {
+    ) -> Self::TopLevelOutput {
         let function = self
             .function_data
             .get(id)

@@ -5,24 +5,24 @@ use crate::ast::{
     FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
     GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression, OnStatement,
     OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-    SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, Type, UnaryExpression,
-    UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-    VariableLValue, WhileLoopStatement,
+    SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, TopLevelStatement, Type,
+    UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+    VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
 };
 
 pub trait PartialAstVisitor {
     fn partial_visit_program(
         mut self,
         Program {
-            functions,
+            top_level_statements,
             id: _,
             file_name: _,
         }: &mut Program,
     ) where
         Self: Sized,
     {
-        for f in functions {
-            self.partial_visit_function_definition(f);
+        for tls in top_level_statements {
+            self.partial_visit_top_level_statement(tls);
         }
     }
     fn partial_visit_simple_binding(
@@ -36,6 +36,14 @@ pub trait PartialAstVisitor {
     ) {
         if let Some((_colon, type_)) = type_ {
             self.partial_visit_type(type_);
+        }
+    }
+
+    fn partial_visit_top_level_statement(&mut self, tls: &mut TopLevelStatement) {
+        match tls {
+            TopLevelStatement::Function(function_definition) => {
+                self.partial_visit_function_definition(function_definition)
+            }
         }
     }
 
@@ -609,7 +617,7 @@ where
     T: PartialAstVisitor,
 {
     type ProgramOutput = ();
-    type FunctionDefinitionOutput = ();
+    type TopLevelOutput = ();
     type FunctionBodyOutput = ();
     type SimpleBindingOutput = ();
     type StatementOutput = ();
@@ -627,7 +635,7 @@ where
         &mut self,
 
         function_definition: &mut FunctionDefinition,
-    ) -> Self::FunctionDefinitionOutput {
+    ) -> Self::TopLevelOutput {
         self.partial_visit_function_definition(function_definition);
     }
 

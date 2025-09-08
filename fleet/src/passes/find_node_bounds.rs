@@ -18,7 +18,7 @@ where
 {
     match &node.clone().into() {
         AstNode::Program(Program {
-            functions,
+            top_level_statements: functions,
             id: _,
             file_name: _,
         }) => functions
