@@ -16,7 +16,6 @@
 
 ## TODOs
 - if expressions
-- allow single manual newlines. Maybe add newline eaters after {\n and before \n} and print trivia newlines as long as they are inside a statement
 - add quick fix system for e.g. non-block as if body
 - maybe make non-block-statement fixes a code action instead of formatting. Replace `assert_compile_error_no_formatting` after
 - tuple types
@@ -32,7 +31,6 @@
 - real mutability/constant system
 - array-to-array assignments in glsl (maybe c as well)
 - test bigger-than-float float literals with c and glsl backend
-- remove "test.fl" as fallback in fleetc
 - remove lvalues maybe?
 - special-case small 2D and 3D GPU dispatches that fit in the size limits
 - heap allocations

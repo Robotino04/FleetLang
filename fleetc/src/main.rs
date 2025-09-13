@@ -23,6 +23,10 @@ use fleet::passes::store_pass::StorePass;
 use fleet::passes::swap_pass::SwapPass;
 use fleet::tokenizer::Token;
 
+use crate::ast_json_dump::{AstJsonDumpPass, AstJsonOutput};
+
+mod ast_json_dump;
+
 #[allow(unused)]
 fn generate_header(text: impl AsRef<str>, length: usize) -> String {
     format!("{:-^length$}", "|".to_string() + text.as_ref() + "|")
@@ -64,6 +68,8 @@ struct Cli {
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 enum DumpOption {
+    /// Dump the AST as JSON arrays
+    AstJson,
     /// Dump the generated C code
     CCode,
     /// Dump the document model before flattening
@@ -192,6 +198,13 @@ fn main() {
                 DumpOption::AstFull => {
                     pm.insert_params::<SingleFunctionPass<_, _>>(|program: &Program| {
                         std::fs::write(output_file_name, format!("{program:#?}\n")).unwrap();
+                        Ok(())
+                    });
+                }
+                DumpOption::AstJson => {
+                    pm.insert::<AstJsonDumpPass>();
+                    pm.insert_params::<SingleFunctionPass<_, _>>(|out: &AstJsonOutput| {
+                        std::fs::write(output_file_name, out.0.clone()).unwrap();
                         Ok(())
                     });
                 }
