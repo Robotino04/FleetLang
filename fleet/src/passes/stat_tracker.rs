@@ -143,14 +143,16 @@ impl MergableStat for AccessRecord {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NodeStats {
     pub terminates_function: YesNoMaybe,
+    pub non_terminating_ranges: Vec<SourceRange>,
     pub uses_gpu: YesNoMaybe,
     pub accessed_items: AccessRecord,
 }
 
 impl NodeStats {
-    pub fn nothing() -> Self {
+    pub fn default_with_range(ntr: Vec<SourceRange>) -> Self {
         Self {
             terminates_function: YesNoMaybe::No,
+            non_terminating_ranges: ntr,
             uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord::default(),
         }
@@ -161,13 +163,25 @@ impl MergableStat for NodeStats {
     fn serial(self, other: Self) -> Self {
         Self {
             terminates_function: self.terminates_function.serial(other.terminates_function),
+            non_terminating_ranges: if other.terminates_function == YesNoMaybe::Yes
+                || self.terminates_function == YesNoMaybe::Yes
+            {
+                vec![]
+            } else if other.non_terminating_ranges.is_empty() {
+                self.non_terminating_ranges
+            } else {
+                other.non_terminating_ranges
+            },
             uses_gpu: self.uses_gpu.serial(other.uses_gpu),
             accessed_items: self.accessed_items.serial(other.accessed_items),
         }
     }
-    fn parallel(self, other: Self) -> Self {
+    fn parallel(mut self, mut other: Self) -> Self {
+        self.non_terminating_ranges
+            .append(&mut other.non_terminating_ranges);
         Self {
             terminates_function: self.terminates_function.parallel(other.terminates_function),
+            non_terminating_ranges: self.non_terminating_ranges,
             uses_gpu: self.uses_gpu.parallel(other.uses_gpu),
             accessed_items: self.accessed_items.parallel(other.accessed_items),
         }
@@ -243,7 +257,12 @@ impl AstVisitor for StatTracker<'_> {
     type TypeOutput = NodeStats;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
-        let mut stats = NodeStats::nothing();
+        let mut stats = NodeStats {
+            terminates_function: YesNoMaybe::No,
+            non_terminating_ranges: vec![],
+            uses_gpu: YesNoMaybe::No,
+            accessed_items: AccessRecord::default(),
+        };
         let mut prev_stats = self.stats.clone();
 
         loop {
@@ -252,6 +271,7 @@ impl AstVisitor for StatTracker<'_> {
             for tls in &mut program.top_level_statements {
                 let NodeStats {
                     terminates_function,
+                    non_terminating_ranges: _,
                     uses_gpu,
                     accessed_items: _,
                 } = self.visit_top_level_statement(tls);
@@ -354,7 +374,12 @@ impl AstVisitor for StatTracker<'_> {
         let StatementFunctionBody { statement, id } = body;
         let stat = self.visit_statement(statement);
 
-        if stat.terminates_function != YesNoMaybe::Yes {
+        assert_eq!(
+            (stat.terminates_function == YesNoMaybe::Yes),
+            stat.non_terminating_ranges.is_empty(),
+            "non_terminating_ranges must be in agreement about termination with terminates_function"
+        );
+        if !stat.non_terminating_ranges.is_empty() {
             let current_function = self
                 .current_function
                 .as_ref()
@@ -365,11 +390,17 @@ impl AstVisitor for StatTracker<'_> {
                 .get(current_function.borrow().return_type.unwrap())
                 != RuntimeType::Unit
             {
-                self.errors.push(FleetError::from_node(
-                    &body_clone,
-                    "All code paths must return.",
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push({
+                    FleetError::try_new(
+                        stat.non_terminating_ranges.clone(),
+                        "All code paths must return.",
+                        ErrorSeverity::Error,
+                        first_token_of_node(&body_clone)
+                            .expect("Cannot create FleetError from empty node")
+                            .file_name,
+                    )
+                    .unwrap()
+                });
             }
         }
 
@@ -392,6 +423,7 @@ impl AstVisitor for StatTracker<'_> {
 
         let stat = NodeStats {
             terminates_function: YesNoMaybe::Maybe,
+            non_terminating_ranges: vec![],
             uses_gpu: YesNoMaybe::Maybe,
             accessed_items: AccessRecord::default(),
         };
@@ -399,22 +431,23 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_simple_binding(
-        &mut self,
-        SimpleBinding {
+    fn visit_simple_binding(&mut self, binding: &mut SimpleBinding) -> Self::SimpleBindingOutput {
+        let bounds = find_node_bounds(binding);
+        let SimpleBinding {
             name_token: _,
             name: _,
             type_,
             id,
-        }: &mut SimpleBinding,
-    ) -> Self::SimpleBindingOutput {
+        } = binding;
+
         let stat = if let Some((_colon, type_)) = type_ {
             self.visit_type(type_)
         } else {
-            NodeStats::nothing()
+            NodeStats::default_with_range(vec![])
         }
         .serial(NodeStats {
             terminates_function: YesNoMaybe::No,
+            non_terminating_ranges: vec![bounds],
             uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord {
                 functions: vec![],
@@ -427,13 +460,17 @@ impl AstVisitor for StatTracker<'_> {
 
     fn visit_expression_statement(
         &mut self,
-        ExpressionStatement {
+        stmt: &mut ExpressionStatement,
+    ) -> Self::StatementOutput {
+        let bounds = find_node_bounds(stmt);
+        let ExpressionStatement {
             expression,
             semicolon_token: _,
             id,
-        }: &mut ExpressionStatement,
-    ) -> Self::StatementOutput {
-        let exp_stat = self.visit_expression(expression);
+        } = stmt;
+        let exp_stat = self
+            .visit_expression(expression)
+            .serial(NodeStats::default_with_range(vec![bounds]));
         self.stats.insert(*id, exp_stat.clone());
         exp_stat
     }
@@ -453,7 +490,7 @@ impl AstVisitor for StatTracker<'_> {
     ) -> Self::StatementOutput {
         let exec_stats = self.visit_executor(executor);
 
-        let mut it_stats = NodeStats::nothing();
+        let mut it_stats = NodeStats::default_with_range(vec![]);
 
         for OnStatementIterator {
             open_bracket_token: _,
@@ -468,7 +505,7 @@ impl AstVisitor for StatTracker<'_> {
                 .serial(self.visit_expression(max_value));
         }
 
-        let mut binding_stats = NodeStats::nothing();
+        let mut binding_stats = NodeStats::default_with_range(vec![]);
         for (binding, _comma) in bindings {
             binding_stats = binding_stats.serial(self.visit_lvalue(binding));
         }
@@ -493,16 +530,16 @@ impl AstVisitor for StatTracker<'_> {
         stats
     }
 
-    fn visit_block_statement(
-        &mut self,
-        BlockStatement {
+    fn visit_block_statement(&mut self, stmt: &mut BlockStatement) -> Self::StatementOutput {
+        let bounds = find_node_bounds(stmt);
+        let BlockStatement {
             open_brace_token: _,
             body,
-            close_brace_token: _,
+            close_brace_token,
             id,
-        }: &mut BlockStatement,
-    ) -> Self::StatementOutput {
-        let mut body_stat = NodeStats::nothing();
+        } = stmt;
+
+        let mut body_stat = NodeStats::default_with_range(vec![bounds]);
         let mut unreachable_range: Option<(SourceRange, FileName)> = None;
         for stmt in body {
             if body_stat.terminates_function == YesNoMaybe::Yes {
@@ -518,6 +555,12 @@ impl AstVisitor for StatTracker<'_> {
             }
             body_stat = body_stat.serial(self.visit_statement(stmt));
         }
+        if body_stat.non_terminating_ranges.is_empty()
+            && body_stat.terminates_function != YesNoMaybe::Yes
+        {
+            body_stat =
+                body_stat.serial(NodeStats::default_with_range(vec![close_brace_token.range]));
+        }
         if let Some((range, file_name)) = unreachable_range {
             self.errors.push(FleetError::from_range(
                 range,
@@ -530,21 +573,22 @@ impl AstVisitor for StatTracker<'_> {
         body_stat
     }
 
-    fn visit_return_statement(
-        &mut self,
-        ReturnStatement {
+    fn visit_return_statement(&mut self, stmt: &mut ReturnStatement) -> Self::StatementOutput {
+        let bounds = find_node_bounds(stmt);
+        let ReturnStatement {
             return_token: _,
             value,
             semicolon_token: _,
             id,
-        }: &mut ReturnStatement,
-    ) -> Self::StatementOutput {
+        } = stmt;
+
         let stat = match value {
             Some(retvalue) => self.visit_expression(retvalue),
-            None => NodeStats::nothing(),
+            None => NodeStats::default_with_range(vec![]),
         }
         .serial(NodeStats {
             terminates_function: YesNoMaybe::Yes,
+            non_terminating_ranges: vec![bounds],
             uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord::default(),
         });
@@ -554,48 +598,61 @@ impl AstVisitor for StatTracker<'_> {
 
     fn visit_variable_definition_statement(
         &mut self,
-        VariableDefinitionStatement {
+        stmt: &mut VariableDefinitionStatement,
+    ) -> Self::StatementOutput {
+        let bounds = find_node_bounds(stmt);
+        let VariableDefinitionStatement {
             let_token: _,
             binding,
             equals_token: _,
             value,
             semicolon_token: _,
             id,
-        }: &mut VariableDefinitionStatement,
-    ) -> Self::StatementOutput {
+        } = stmt;
         self.visit_simple_binding(binding);
-        let stat = self.visit_expression(value);
+        let stat = self
+            .visit_expression(value)
+            .serial(NodeStats::default_with_range(vec![bounds]));
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_if_statement(
-        &mut self,
-        IfStatement {
+    fn visit_if_statement(&mut self, stmt: &mut IfStatement) -> Self::StatementOutput {
+        let bounds = find_node_bounds(stmt);
+        let IfStatement {
             if_token: _,
             condition,
             if_body,
             elifs,
             else_,
             id,
-        }: &mut IfStatement,
-    ) -> Self::StatementOutput {
-        let if_stat = self.visit_expression(condition);
-        let mut substats = self.visit_statement(if_body);
+        } = stmt;
+
+        let mut if_stats = self.visit_expression(condition);
+        if_stats = if_stats.serial(self.visit_statement(if_body));
         for (_elif_token, elif_condition, elif_body) in elifs {
-            substats = substats.parallel(
+            if_stats = if_stats.parallel(
                 self.visit_expression(elif_condition)
                     .serial(self.visit_statement(elif_body)),
             );
         }
-        substats = if let Some((_else_token, else_body)) = else_ {
-            substats.parallel(self.visit_statement(else_body))
+
+        if let Some((_else_token, else_body)) = else_ {
+            if_stats = if_stats.parallel(self.visit_statement(else_body));
         } else {
-            substats.parallel(NodeStats::nothing())
-        };
-        let stat = if_stat.serial(substats);
-        self.stats.insert(*id, stat.clone());
-        stat
+            // always merge with empty to indicate that this if statement isn't complete
+            if_stats = if_stats.parallel(NodeStats::default_with_range(vec![
+                bounds.end.prev_inline().until(bounds.end),
+            ]));
+        }
+
+        if if_stats.terminates_function == YesNoMaybe::No {
+            // if non of the branches return, this if-statement takes all the blame
+            if_stats = if_stats.serial(NodeStats::default_with_range(vec![bounds]))
+        }
+
+        self.stats.insert(*id, if_stats.clone());
+        if_stats
     }
 
     fn visit_while_loop_statement(
@@ -623,9 +680,9 @@ impl AstVisitor for StatTracker<'_> {
             open_paren_token: _,
             initializer,
             condition,
-            second_semicolon_token: _,
+            second_semicolon_token,
             incrementer,
-            close_paren_token: _,
+            close_paren_token,
             body,
             id,
         }: &mut ForLoopStatement,
@@ -635,11 +692,13 @@ impl AstVisitor for StatTracker<'_> {
         let con_stat = condition
             .as_mut()
             .map(|condition| self.visit_expression(condition))
-            .unwrap_or(NodeStats::nothing());
+            .unwrap_or(NodeStats::default_with_range(vec![
+                second_semicolon_token.range,
+            ]));
         let inc_stat = incrementer
             .as_mut()
             .map(|incrementer| self.visit_expression(incrementer))
-            .unwrap_or(NodeStats::nothing());
+            .unwrap_or(NodeStats::default_with_range(vec![close_paren_token.range]));
 
         self.loop_count += 1;
         let body_stat = self.visit_statement(body);
@@ -653,7 +712,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
-        let stat = NodeStats::nothing();
+        let stat = NodeStats::default_with_range(vec![find_node_bounds(break_stmt)]);
         self.stats.insert(break_stmt.id, stat.clone());
         if self.loop_count == 0 {
             self.errors.push(FleetError::from_node(
@@ -667,7 +726,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
-        let stat = NodeStats::nothing();
+        let stat = NodeStats::default_with_range(vec![find_node_bounds(skip_stmt)]);
         self.stats.insert(skip_stmt.id, stat.clone());
         if self.loop_count == 0 {
             self.errors.push(FleetError::from_node(
@@ -684,7 +743,7 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         executor_host: &mut SelfExecutorHost,
     ) -> Self::ExecutorHostOutput {
-        let stat = NodeStats::nothing();
+        let stat = NodeStats::default_with_range(vec![find_node_bounds(executor_host)]);
         self.stats.insert(executor_host.id, stat.clone());
         stat
     }
@@ -708,9 +767,9 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_gpu_executor(
-        &mut self,
-        GPUExecutor {
+    fn visit_gpu_executor(&mut self, executor: &mut GPUExecutor) -> Self::ExecutorOutput {
+        let bounds = find_node_bounds(executor);
+        let GPUExecutor {
             host,
             dot_token: _,
             gpus_token: _,
@@ -718,10 +777,10 @@ impl AstVisitor for StatTracker<'_> {
             gpu_index,
             close_bracket_token: _,
             id,
-        }: &mut GPUExecutor,
-    ) -> Self::ExecutorOutput {
+        } = executor;
         let stat = NodeStats {
             terminates_function: YesNoMaybe::No,
+            non_terminating_ranges: vec![bounds],
             uses_gpu: YesNoMaybe::Yes,
             accessed_items: AccessRecord::default(),
         }
@@ -731,29 +790,28 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_literal_expression(
-        &mut self,
-        LiteralExpression {
+    fn visit_literal_expression(&mut self, expr: &mut LiteralExpression) -> Self::ExpressionOutput {
+        let bounds = find_node_bounds(expr);
+        let LiteralExpression {
             value: _,
             token: _,
             id,
-        }: &mut LiteralExpression,
-    ) -> Self::ExpressionOutput {
-        let stat = NodeStats::nothing();
+        } = expr;
+
+        let stat = NodeStats::default_with_range(vec![bounds]);
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_array_expression(
-        &mut self,
-        ArrayExpression {
+    fn visit_array_expression(&mut self, expr: &mut ArrayExpression) -> Self::ExpressionOutput {
+        let bounds = find_node_bounds(expr);
+        let ArrayExpression {
             open_bracket_token: _,
             elements,
             close_bracket_token: _,
             id,
-        }: &mut ArrayExpression,
-    ) -> Self::ExpressionOutput {
-        let mut stat = NodeStats::nothing();
+        } = expr;
+        let mut stat = NodeStats::default_with_range(vec![bounds]);
         for (item, _comma) in elements {
             stat = stat.serial(self.visit_expression(item));
         }
@@ -764,17 +822,20 @@ impl AstVisitor for StatTracker<'_> {
 
     fn visit_function_call_expression(
         &mut self,
-        FunctionCallExpression {
+        function_call: &mut FunctionCallExpression,
+    ) -> Self::ExpressionOutput {
+        let bounds = find_node_bounds(function_call);
+        let FunctionCallExpression {
             name: _,
             name_token: _,
             open_paren_token: _,
             arguments,
             close_paren_token: _,
             id,
-        }: &mut FunctionCallExpression,
-    ) -> Self::ExpressionOutput {
+        } = function_call;
         let mut stat = NodeStats {
             terminates_function: YesNoMaybe::No,
+            non_terminating_ranges: vec![bounds],
             uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord {
                 functions: self
@@ -800,7 +861,10 @@ impl AstVisitor for StatTracker<'_> {
 
     fn visit_compiler_expression(
         &mut self,
-        CompilerExpression {
+        expr: &mut CompilerExpression,
+    ) -> Self::ExpressionOutput {
+        let bounds = find_node_bounds(expr);
+        let CompilerExpression {
             at_token: _,
             name: _,
             name_token: _,
@@ -808,9 +872,9 @@ impl AstVisitor for StatTracker<'_> {
             arguments,
             close_paren_token: _,
             id,
-        }: &mut CompilerExpression,
-    ) -> Self::ExpressionOutput {
-        let mut stat = NodeStats::nothing();
+        } = expr;
+
+        let mut stat = NodeStats::default_with_range(vec![bounds]);
         for (arg, _comma) in arguments {
             stat = stat.serial(self.visit_expression(arg));
         }
@@ -851,14 +915,17 @@ impl AstVisitor for StatTracker<'_> {
 
     fn visit_variable_access_expression(
         &mut self,
-        VariableAccessExpression {
+        expr: &mut VariableAccessExpression,
+    ) -> Self::ExpressionOutput {
+        let bounds = find_node_bounds(expr);
+        let VariableAccessExpression {
             name: _,
             name_token: _,
             id,
-        }: &mut VariableAccessExpression,
-    ) -> Self::ExpressionOutput {
+        } = expr;
         let stat = NodeStats {
             terminates_function: YesNoMaybe::No,
+            non_terminating_ranges: vec![bounds],
             uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord {
                 functions: vec![],
@@ -935,16 +1002,16 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_variable_lvalue(
-        &mut self,
-        VariableLValue {
+    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
+        let bounds = find_node_bounds(lvalue);
+        let VariableLValue {
             name: _,
             name_token: _,
             id,
-        }: &mut VariableLValue,
-    ) -> Self::LValueOutput {
+        } = lvalue;
         let stat = NodeStats {
             terminates_function: YesNoMaybe::No,
+            non_terminating_ranges: vec![bounds],
             uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord {
                 functions: vec![],
@@ -989,34 +1056,34 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_simple_type(
-        &mut self,
-        SimpleType {
+    fn visit_simple_type(&mut self, type_: &mut SimpleType) -> Self::TypeOutput {
+        let bounds = find_node_bounds(type_);
+        let SimpleType {
             token: _,
             type_: _,
             id,
-        }: &mut SimpleType,
-    ) -> Self::TypeOutput {
-        let stat = NodeStats::nothing();
+        } = type_;
+        let stat = NodeStats::default_with_range(vec![bounds]);
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_unit_type(
-        &mut self,
-        UnitType {
+    fn visit_unit_type(&mut self, type_: &mut UnitType) -> Self::TypeOutput {
+        let bounds = find_node_bounds(type_);
+        let UnitType {
             open_paren_token: _,
             close_paren_token: _,
             id,
-        }: &mut UnitType,
-    ) -> Self::TypeOutput {
-        let stat = NodeStats::nothing();
+        } = type_;
+        let stat = NodeStats::default_with_range(vec![bounds]);
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> Self::TypeOutput {
-        let stat = NodeStats::nothing();
+    fn visit_idk_type(&mut self, type_: &mut IdkType) -> Self::TypeOutput {
+        let bounds = find_node_bounds(type_);
+        let IdkType { token: _, id } = type_;
+        let stat = NodeStats::default_with_range(vec![bounds]);
         self.stats.insert(*id, stat.clone());
         stat
     }

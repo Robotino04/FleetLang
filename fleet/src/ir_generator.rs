@@ -13,6 +13,7 @@ use inkwell::{
     memory_buffer::MemoryBuffer,
     module::{Linkage, Module},
     passes::PassBuilderOptions,
+    support::enable_llvm_pretty_stack_trace,
     targets::TargetMachine,
     types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, FunctionType},
     values::{
@@ -216,6 +217,8 @@ impl PassFactory for IrGenerator<'_> {
     where
         Self: Sized,
     {
+        enable_llvm_pretty_stack_trace();
+
         let program = state.check_named()?;
         let errors = state.check_named()?;
         let node_stats = state.check_named()?;

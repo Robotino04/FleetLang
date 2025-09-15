@@ -82,9 +82,9 @@ fn not_all_paths_return_if() {
         }
     "##},
         SourceLocation {
-            index: 21,
-            line: 1,
-            column: 21,
+            index: 60,
+            line: 4,
+            column: 4,
         },
     );
 }
@@ -103,9 +103,9 @@ fn not_all_paths_return_elif() {
         }
     "##},
         SourceLocation {
-            index: 21,
-            line: 1,
-            column: 21,
+            index: 100,
+            line: 7,
+            column: 4,
         },
     );
 }

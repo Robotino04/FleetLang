@@ -162,6 +162,13 @@ impl SourceLocation {
             end: other,
         }
     }
+    pub fn prev_inline(self) -> SourceLocation {
+        SourceLocation {
+            index: self.index - 1,
+            line: self.line,
+            column: self.column.saturating_sub(1),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

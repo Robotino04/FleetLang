@@ -178,6 +178,10 @@ impl FleetError {
                 } in &self.highlight_groups
                 {
                     assert!(hl_start < hl_end);
+                    if line > hl_end.line || line < hl_start.line {
+                        continue;
+                    }
+
                     let start_col = if line == hl_start.line {
                         hl_start.column + offset
                     } else {
