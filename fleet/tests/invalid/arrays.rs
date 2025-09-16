@@ -138,3 +138,20 @@ fn float_index() {
         },
     );
 }
+
+#[test]
+fn signed_index() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = [1, 2, 3];
+                return a[2 as i16];
+            }
+        "##},
+        SourceLocation {
+            index: 59,
+            line: 3,
+            column: 13,
+        },
+    );
+}

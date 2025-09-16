@@ -298,7 +298,13 @@ fn compile_or_panic(src: &str) -> PassManager {
     insert_c_passes(&mut pm);
     pm.insert::<IrGenerator>();
 
-    pm.run().unwrap();
+    match pm.run() {
+        Ok(_) => (),
+        err @ Err(_) => {
+            eprintln!("Errors: {:#?}", pm.state.get::<Errors>());
+            err.unwrap();
+        }
+    }
 
     assert_no_fatal_errors(&errors.get(&pm.state).0);
     pm.state.get::<Module>().unwrap().verify().unwrap();

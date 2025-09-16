@@ -100,7 +100,8 @@ fn any_type_to_basic_type<'a>(any: AnyTypeEnum<'a>) -> Option<BasicTypeEnum<'a>>
 #[derive(Debug, Clone, Copy)]
 pub enum RuntimeValueIR<'a> {
     Bool(IntValue<'a>),
-    Int(IntValue<'a>),
+    SignedInt(IntValue<'a>),
+    UnsignedInt(IntValue<'a>),
     Float(FloatValue<'a>),
     Array(PointerValue<'a>, RuntimeType),
     Unit,
@@ -110,7 +111,8 @@ impl<'a> RuntimeValueIR<'a> {
     pub fn as_basic_value(&'a self) -> Option<&'a dyn BasicValue<'a>> {
         match self {
             RuntimeValueIR::Bool(int_value) => Some(int_value),
-            RuntimeValueIR::Int(int_value) => Some(int_value),
+            RuntimeValueIR::SignedInt(int_value) => Some(int_value),
+            RuntimeValueIR::UnsignedInt(int_value) => Some(int_value),
             RuntimeValueIR::Float(float_value) => Some(float_value),
             RuntimeValueIR::Array(pointer_value, _) => Some(pointer_value),
             RuntimeValueIR::Unit => None,
@@ -119,7 +121,8 @@ impl<'a> RuntimeValueIR<'a> {
     pub fn as_basic_value_enum(self) -> Option<BasicValueEnum<'a>> {
         match self {
             RuntimeValueIR::Bool(int_value) => Some(int_value.as_basic_value_enum()),
-            RuntimeValueIR::Int(int_value) => Some(int_value.as_basic_value_enum()),
+            RuntimeValueIR::SignedInt(int_value) => Some(int_value.as_basic_value_enum()),
+            RuntimeValueIR::UnsignedInt(int_value) => Some(int_value.as_basic_value_enum()),
             RuntimeValueIR::Float(float_value) => Some(float_value.as_basic_value_enum()),
             RuntimeValueIR::Array(pointer_value, _) => Some(pointer_value.as_basic_value_enum()),
             RuntimeValueIR::Unit => None,
@@ -128,7 +131,8 @@ impl<'a> RuntimeValueIR<'a> {
     pub fn as_basic_value_no_unit(self) -> BasicValueEnum<'a> {
         match self {
             RuntimeValueIR::Bool(int_value) => int_value.as_basic_value_enum(),
-            RuntimeValueIR::Int(int_value) => int_value.as_basic_value_enum(),
+            RuntimeValueIR::SignedInt(int_value) => int_value.as_basic_value_enum(),
+            RuntimeValueIR::UnsignedInt(int_value) => int_value.as_basic_value_enum(),
             RuntimeValueIR::Float(float_value) => float_value.as_basic_value_enum(),
             RuntimeValueIR::Array(pointer_value, _) => pointer_value.as_basic_value_enum(),
             RuntimeValueIR::Unit => panic!("Expected this to not be a RuntimeValueIR::Unit"),
@@ -142,11 +146,18 @@ impl<'a> RuntimeValueIR<'a> {
             panic!("Expected RuntimeValueIR::Bool, got {self:#?}")
         }
     }
-    pub fn unwrap_int(self) -> IntValue<'a> {
-        if let RuntimeValueIR::Int(x) = self {
+    pub fn unwrap_signed_int(self) -> IntValue<'a> {
+        if let RuntimeValueIR::SignedInt(x) = self {
             x
         } else {
-            panic!("Expected RuntimeValueIR::Int, got {self:#?}")
+            panic!("Expected RuntimeValueIR::SignedInt, got {self:#?}")
+        }
+    }
+    pub fn unwrap_unsigned_int(self) -> IntValue<'a> {
+        if let RuntimeValueIR::UnsignedInt(x) = self {
+            x
+        } else {
+            panic!("Expected RuntimeValueIR::UnsignedInt, got {self:#?}")
         }
     }
     pub fn unwrap_float(self) -> FloatValue<'a> {
@@ -171,10 +182,13 @@ impl<'a> RuntimeValueIR<'a> {
     }
 
     pub fn unwrap_int_or_bool(self) -> IntValue<'a> {
-        if let RuntimeValueIR::Bool(x) | RuntimeValueIR::Int(x) = self {
+        if let RuntimeValueIR::Bool(x)
+        | RuntimeValueIR::UnsignedInt(x)
+        | RuntimeValueIR::SignedInt(x) = self
+        {
             x
         } else {
-            panic!("Expected RuntimeValueIR::Int or RuntimeValueIR::Bool, got {self:#?}")
+            panic!("Expected UnsignedInt, SignedInt or Bool, got {self:#?}")
         }
     }
 }
@@ -316,7 +330,10 @@ impl<'a> IrGenerator<'_> {
     ) -> Result<RuntimeValueIR<'a>> {
         Ok(match expected_type {
             RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64 => {
-                RuntimeValueIR::Int(value.unwrap().into_int_value())
+                RuntimeValueIR::SignedInt(value.unwrap().into_int_value())
+            }
+            RuntimeType::U8 | RuntimeType::U16 | RuntimeType::U32 | RuntimeType::U64 => {
+                RuntimeValueIR::UnsignedInt(value.unwrap().into_int_value())
             }
             RuntimeType::F32 | RuntimeType::F64 => {
                 RuntimeValueIR::Float(value.unwrap().into_float_value())
@@ -330,18 +347,15 @@ impl<'a> IrGenerator<'_> {
             type_ @ RuntimeType::ArrayOf { .. } => {
                 RuntimeValueIR::Array(value.unwrap().into_pointer_value(), type_)
             }
-            RuntimeType::Number
-            | RuntimeType::UnsizedInteger
-            | RuntimeType::UnsizedFloat
-            | RuntimeType::Unknown
-            | RuntimeType::Error => self.report_error(FleetError::from_node(
-                error_node,
-                format!(
-                    "this has unknown or error type: {}",
-                    expected_type.stringify(&self.type_sets)
-                ),
-                ErrorSeverity::Error,
-            ))?,
+            RuntimeType::Number { .. } | RuntimeType::Unknown | RuntimeType::Error => self
+                .report_error(FleetError::from_node(
+                    error_node,
+                    format!(
+                        "this has unknown or error type: {}",
+                        expected_type.stringify(&self.type_sets)
+                    ),
+                    ErrorSeverity::Error,
+                ))?,
         })
     }
 
@@ -351,30 +365,16 @@ impl<'a> IrGenerator<'_> {
         error_node: &I,
     ) -> Result<AnyTypeEnum<'a>> {
         Ok(match type_ {
-            RuntimeType::I8 => self.context.i8_type().into(),
-            RuntimeType::I16 => self.context.i16_type().into(),
-            RuntimeType::I32 => self.context.i32_type().into(),
-            RuntimeType::I64 => self.context.i64_type().into(),
+            RuntimeType::I8 | RuntimeType::U8 => self.context.i8_type().into(),
+            RuntimeType::I16 | RuntimeType::U16 => self.context.i16_type().into(),
+            RuntimeType::I32 | RuntimeType::U32 => self.context.i32_type().into(),
+            RuntimeType::I64 | RuntimeType::U64 => self.context.i64_type().into(),
             RuntimeType::F32 => self.context.f32_type().into(),
             RuntimeType::F64 => self.context.f64_type().into(),
-            RuntimeType::Number => {
+            RuntimeType::Number { .. } => {
                 return self.report_error(FleetError::from_node(
                     error_node,
                     "Undetermined numbers should have caused errors earlier",
-                    ErrorSeverity::Error,
-                ));
-            }
-            RuntimeType::UnsizedInteger => {
-                return self.report_error(FleetError::from_node(
-                    error_node,
-                    "Unsized ints should have caused errors earlier",
-                    ErrorSeverity::Error,
-                ));
-            }
-            RuntimeType::UnsizedFloat => {
-                return self.report_error(FleetError::from_node(
-                    error_node,
-                    "Unsized floats should have caused errors earlier",
                     ErrorSeverity::Error,
                 ));
             }
@@ -1133,7 +1133,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         .builder
                         .build_insert_value(
                             array,
-                            it.unwrap_int(),
+                            it.unwrap_unsigned_int(),
                             n as u32,
                             "iterator_size_buffer",
                         )?
@@ -1264,7 +1264,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 .iter()
                 .map(|it| {
                     self.builder.build_int_z_extend_or_bit_cast(
-                        it.unwrap_int(),
+                        it.unwrap_unsigned_int(),
                         self.context.i64_type(),
                         "iterator upcast",
                     )
@@ -1554,8 +1554,8 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let cond_value = condition
             .as_mut()
             .map(|cond| self.visit_expression(cond))
-            .unwrap_or(Ok(RuntimeValueIR::Int(
-                self.context.i32_type().const_int(1, false),
+            .unwrap_or(Ok(RuntimeValueIR::Bool(
+                self.context.bool_type().const_int(1, false),
             )))?
             .unwrap_bool();
 
@@ -1654,20 +1654,28 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             token: _,
             id,
         } = literal;
-        let type_ = *self
+        let rt_type = *self
             .type_data
             .get(id)
             .expect("type data should exist before running ir_generator");
 
+        let rt_type = *self.type_sets.get(rt_type);
+
         Ok(match value {
             LiteralKind::Number(value) => {
-                match self.runtime_type_to_llvm(*self.type_sets.get(type_), &literal_clone)? {
+                match self.runtime_type_to_llvm(rt_type, &literal_clone)? {
                     AnyTypeEnum::FloatType(type_) => {
                         RuntimeValueIR::Float(type_.const_float(*value as f64))
                     }
 
-                    AnyTypeEnum::IntType(type_) => {
-                        RuntimeValueIR::Int(type_.const_int(*value, false))
+                    AnyTypeEnum::IntType(type_) if rt_type.is_signed() => {
+                        RuntimeValueIR::SignedInt(type_.const_int(*value, true))
+                    }
+                    AnyTypeEnum::IntType(type_) if rt_type.is_unsigned() => {
+                        RuntimeValueIR::UnsignedInt(type_.const_int(*value, false))
+                    }
+                    AnyTypeEnum::IntType(_type) => {
+                        unreachable!("all ints should either be signed or unsigned")
                     }
 
                     _ => self.report_error(FleetError::from_node(
@@ -1678,7 +1686,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 }
             }
             LiteralKind::Float(value) => RuntimeValueIR::Float(
-                self.runtime_type_to_llvm(*self.type_sets.get(type_), &literal_clone)?
+                self.runtime_type_to_llvm(rt_type, &literal_clone)?
                     .into_float_type()
                     .const_float(*value),
             ),
@@ -1835,7 +1843,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
                 Ok(match expected_type {
                     RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64 => {
-                        RuntimeValueIR::Int(expected_type_ir.into_int_type().const_zero())
+                        RuntimeValueIR::SignedInt(expected_type_ir.into_int_type().const_zero())
+                    }
+                    RuntimeType::U8 | RuntimeType::U16 | RuntimeType::U32 | RuntimeType::U64 => {
+                        RuntimeValueIR::UnsignedInt(expected_type_ir.into_int_type().const_zero())
                     }
                     RuntimeType::F32 | RuntimeType::F64 => {
                         RuntimeValueIR::Float(expected_type_ir.into_float_type().const_zero())
@@ -1863,18 +1874,15 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
                         RuntimeValueIR::Array(ptr, expected_type)
                     }
-                    RuntimeType::Number
-                    | RuntimeType::UnsizedInteger
-                    | RuntimeType::UnsizedFloat
-                    | RuntimeType::Unknown
-                    | RuntimeType::Error => self.report_error(FleetError::from_node(
-                        &expr_clone,
-                        format!(
-                            "@zero compiler function has unknown or error type: {}",
-                            expected_type.stringify(&self.type_sets)
-                        ),
-                        ErrorSeverity::Error,
-                    ))?,
+                    RuntimeType::Number { .. } | RuntimeType::Unknown | RuntimeType::Error => self
+                        .report_error(FleetError::from_node(
+                            &expr_clone,
+                            format!(
+                                "@zero compiler function has unknown or error type: {}",
+                                expected_type.stringify(&self.type_sets)
+                            ),
+                            ErrorSeverity::Error,
+                        ))?,
                 })
             }
             "comptime" => Ok(*args.first().unwrap()),
@@ -1898,7 +1906,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             id: _,
         } = expr;
         let (array_ptr, array_type) = self.visit_expression(array)?.unwrap_array();
-        let index_ir = self.visit_expression(index)?.unwrap_int();
+        let index_ir = self.visit_expression(index)?.unwrap_unsigned_int();
 
         let array_type_ir = self.runtime_type_to_llvm(array_type, &**array)?;
 
@@ -1997,19 +2005,29 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let value = self.visit_expression(operand)?;
 
         let result = match operation {
-            UnaryOperation::BitwiseNot => {
-                RuntimeValueIR::Int(self.builder.build_not(value.unwrap_int(), "bitwise_not")?)
-            }
+            UnaryOperation::BitwiseNot => match value {
+                RuntimeValueIR::SignedInt(value) => {
+                    RuntimeValueIR::SignedInt(self.builder.build_not(value, "bitwise_not")?)
+                }
+                RuntimeValueIR::UnsignedInt(value) => {
+                    RuntimeValueIR::UnsignedInt(self.builder.build_not(value, "bitwise_not")?)
+                }
+                _ => self.report_error(FleetError::from_node(
+                    expr,
+                    "This was not an int in llvm backend",
+                    ErrorSeverity::Error,
+                ))?,
+            },
 
             UnaryOperation::LogicalNot => RuntimeValueIR::Bool(match value {
-                RuntimeValueIR::Bool(value) | RuntimeValueIR::Int(value) => {
-                    self.builder.build_int_compare(
-                        IntPredicate::EQ,
-                        value,
-                        value.get_type().const_zero(),
-                        "logical_not",
-                    )?
-                }
+                RuntimeValueIR::Bool(value)
+                | RuntimeValueIR::SignedInt(value)
+                | RuntimeValueIR::UnsignedInt(value) => self.builder.build_int_compare(
+                    IntPredicate::EQ,
+                    value,
+                    value.get_type().const_zero(),
+                    "logical_not",
+                )?,
                 RuntimeValueIR::Float(value) => self.builder.build_float_compare(
                     FloatPredicate::OEQ, // OEQ because NaN is truthy
                     value,
@@ -2023,8 +2041,8 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 ))?,
             }),
             UnaryOperation::Negate => match value {
-                RuntimeValueIR::Int(value) => {
-                    RuntimeValueIR::Int(self.builder.build_int_neg(value, "negate")?)
+                RuntimeValueIR::SignedInt(value) => {
+                    RuntimeValueIR::SignedInt(self.builder.build_int_neg(value, "negate")?)
                 }
                 RuntimeValueIR::Float(value) => {
                     RuntimeValueIR::Float(self.builder.build_float_neg(value, "negate")?)
@@ -2032,7 +2050,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
                 _ => self.report_error(FleetError::from_node(
                     expr,
-                    "This was neither a float nor int in llvm backend",
+                    "This was neither a float nor signed int in llvm backend",
                     ErrorSeverity::Error,
                 ))?,
             },
@@ -2072,32 +2090,45 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 | RuntimeType::I16
                 | RuntimeType::I32
                 | RuntimeType::I64
+                | RuntimeType::U8
+                | RuntimeType::U16
+                | RuntimeType::U32
+                | RuntimeType::U64
                 | RuntimeType::Boolean,
-                RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64,
+                RuntimeType::I8
+                | RuntimeType::I16
+                | RuntimeType::I32
+                | RuntimeType::I64
+                | RuntimeType::U8
+                | RuntimeType::U16
+                | RuntimeType::U32
+                | RuntimeType::U64,
             ) => {
                 let expected_type = self.visit_type(type_)?;
-                let expected_type = self
+                let expected_type_ir = self
                     .runtime_type_to_llvm(expected_type, &expr_clone)?
                     .into_int_type();
 
-                Ok(RuntimeValueIR::Int(match value {
-                    RuntimeValueIR::Bool(value) | RuntimeValueIR::Int(value)
-                        if expected_type.get_bit_width() <= value.get_type().get_bit_width() =>
+                let ir_value = match value {
+                    RuntimeValueIR::Bool(value) | RuntimeValueIR::SignedInt(value)
+                        if expected_type_ir.get_bit_width() <= value.get_type().get_bit_width() =>
                     {
                         self.builder.build_int_truncate_or_bit_cast(
                             value,
-                            expected_type,
+                            expected_type_ir,
                             &format!("as_{target_type_str}"),
                         )?
                     }
-                    RuntimeValueIR::Bool(value) => self.builder.build_int_z_extend(
+                    RuntimeValueIR::UnsignedInt(value) | RuntimeValueIR::Bool(value) => {
+                        self.builder.build_int_z_extend(
+                            value,
+                            expected_type_ir,
+                            &format!("as_{target_type_str}"),
+                        )?
+                    }
+                    RuntimeValueIR::SignedInt(value) => self.builder.build_int_s_extend(
                         value,
-                        expected_type,
-                        &format!("as_{target_type_str}"),
-                    )?,
-                    RuntimeValueIR::Int(value) => self.builder.build_int_s_extend(
-                        value,
-                        expected_type,
+                        expected_type_ir,
                         &format!("as_{target_type_str}"),
                     )?,
                     _ => self.report_error(FleetError::from_node(
@@ -2105,13 +2136,25 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         "Expected this to be an integer or bool",
                         ErrorSeverity::Error,
                     ))?,
-                }))
+                };
+
+                if expected_type.is_signed() {
+                    Ok(RuntimeValueIR::SignedInt(ir_value))
+                } else if expected_type.is_unsigned() {
+                    Ok(RuntimeValueIR::UnsignedInt(ir_value))
+                } else {
+                    unreachable!("casting target has to be signed or unsigned here")
+                }
             }
             (
                 RuntimeType::I8
                 | RuntimeType::I16
                 | RuntimeType::I32
                 | RuntimeType::I64
+                | RuntimeType::U8
+                | RuntimeType::U16
+                | RuntimeType::U32
+                | RuntimeType::U64
                 | RuntimeType::Boolean,
                 RuntimeType::F32 | RuntimeType::F64,
             ) => {
@@ -2121,12 +2164,14 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .into_float_type();
 
                 Ok(RuntimeValueIR::Float(match value {
-                    RuntimeValueIR::Bool(value) => self.builder.build_unsigned_int_to_float(
-                        value,
-                        expected_type,
-                        &format!("as_{target_type_str}"),
-                    )?,
-                    RuntimeValueIR::Int(value) => self.builder.build_signed_int_to_float(
+                    RuntimeValueIR::UnsignedInt(value) | RuntimeValueIR::Bool(value) => {
+                        self.builder.build_unsigned_int_to_float(
+                            value,
+                            expected_type,
+                            &format!("as_{target_type_str}"),
+                        )?
+                    }
+                    RuntimeValueIR::SignedInt(value) => self.builder.build_signed_int_to_float(
                         value,
                         expected_type,
                         &format!("as_{target_type_str}"),
@@ -2147,8 +2192,25 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .runtime_type_to_llvm(expected_type, expr)?
                     .into_int_type();
 
-                Ok(RuntimeValueIR::Int(
+                Ok(RuntimeValueIR::SignedInt(
                     self.builder.build_float_to_signed_int(
+                        value.unwrap_float(),
+                        expected_type,
+                        &format!("as_{target_type_str}"),
+                    )?,
+                ))
+            }
+            (
+                RuntimeType::F32 | RuntimeType::F64,
+                RuntimeType::U8 | RuntimeType::U16 | RuntimeType::U32 | RuntimeType::U64,
+            ) => {
+                let expected_type = self.visit_type(type_)?;
+                let expected_type = self
+                    .runtime_type_to_llvm(expected_type, expr)?
+                    .into_int_type();
+
+                Ok(RuntimeValueIR::UnsignedInt(
+                    self.builder.build_float_to_unsigned_int(
                         value.unwrap_float(),
                         expected_type,
                         &format!("as_{target_type_str}"),
@@ -2202,10 +2264,17 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 | RuntimeType::I16
                 | RuntimeType::I32
                 | RuntimeType::I64
+                | RuntimeType::U8
+                | RuntimeType::U16
+                | RuntimeType::U32
+                | RuntimeType::U64
                 | RuntimeType::Boolean,
                 RuntimeType::Boolean,
             ) => {
-                if let RuntimeValueIR::Bool(value) | RuntimeValueIR::Int(value) = value {
+                if let RuntimeValueIR::Bool(value)
+                | RuntimeValueIR::SignedInt(value)
+                | RuntimeValueIR::UnsignedInt(value) = value
+                {
                     Ok(RuntimeValueIR::Bool(self.builder.build_int_compare(
                         IntPredicate::NE,
                         value,
@@ -2251,23 +2320,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     ErrorSeverity::Error,
                 ))
             }
-            (_, RuntimeType::Number) | (RuntimeType::Number, _) => {
+            (_, RuntimeType::Number { .. }) | (RuntimeType::Number { .. }, _) => {
                 self.report_error(FleetError::from_node(
                     type_,
                     "ir_generator shouldn't run if there are undetermined number types",
-                    ErrorSeverity::Error,
-                ))
-            }
-            (_, RuntimeType::UnsizedInteger) | (RuntimeType::UnsizedInteger, _) => self
-                .report_error(FleetError::from_node(
-                    type_,
-                    "ir_generator shouldn't run if there are unsized int types",
-                    ErrorSeverity::Error,
-                )),
-            (_, RuntimeType::UnsizedFloat) | (RuntimeType::UnsizedFloat, _) => {
-                self.report_error(FleetError::from_node(
-                    type_,
-                    "ir_generator shouldn't run if there are unsized float types",
                     ErrorSeverity::Error,
                 ))
             }
@@ -2292,10 +2348,20 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             BinaryOperation::Add => {
                 let right_value = right_value_gen(self)?;
                 Ok(match right_value {
-                    RuntimeValueIR::Int(right_value) => RuntimeValueIR::Int(
-                        self.builder
-                            .build_int_add(left_value.unwrap_int(), right_value, "add")?,
-                    ),
+                    RuntimeValueIR::SignedInt(right_value) => {
+                        RuntimeValueIR::SignedInt(self.builder.build_int_add(
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "add",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::UnsignedInt(self.builder.build_int_add(
+                            left_value.unwrap_unsigned_int(),
+                            right_value,
+                            "add",
+                        )?)
+                    }
                     RuntimeValueIR::Float(right_value) => {
                         RuntimeValueIR::Float(self.builder.build_float_add(
                             left_value.unwrap_float(),
@@ -2314,10 +2380,20 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             BinaryOperation::Subtract => {
                 let right_value = right_value_gen(self)?;
                 Ok(match right_value {
-                    RuntimeValueIR::Int(right_value) => RuntimeValueIR::Int(
-                        self.builder
-                            .build_int_sub(left_value.unwrap_int(), right_value, "sub")?,
-                    ),
+                    RuntimeValueIR::SignedInt(right_value) => {
+                        RuntimeValueIR::SignedInt(self.builder.build_int_sub(
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "sub",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::UnsignedInt(self.builder.build_int_sub(
+                            left_value.unwrap_unsigned_int(),
+                            right_value,
+                            "sub",
+                        )?)
+                    }
                     RuntimeValueIR::Float(right_value) => {
                         RuntimeValueIR::Float(self.builder.build_float_sub(
                             left_value.unwrap_float(),
@@ -2337,10 +2413,20 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             BinaryOperation::Multiply => {
                 let right_value = right_value_gen(self)?;
                 Ok(match right_value {
-                    RuntimeValueIR::Int(right_value) => RuntimeValueIR::Int(
-                        self.builder
-                            .build_int_mul(left_value.unwrap_int(), right_value, "mul")?,
-                    ),
+                    RuntimeValueIR::SignedInt(right_value) => {
+                        RuntimeValueIR::SignedInt(self.builder.build_int_mul(
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "mul",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::UnsignedInt(self.builder.build_int_mul(
+                            left_value.unwrap_unsigned_int(),
+                            right_value,
+                            "mul",
+                        )?)
+                    }
                     RuntimeValueIR::Float(right_value) => {
                         RuntimeValueIR::Float(self.builder.build_float_mul(
                             left_value.unwrap_float(),
@@ -2359,9 +2445,16 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             BinaryOperation::Divide => {
                 let right_value = right_value_gen(self)?;
                 Ok(match right_value {
-                    RuntimeValueIR::Int(right_value) => {
-                        RuntimeValueIR::Int(self.builder.build_int_signed_div(
-                            left_value.unwrap_int(),
+                    RuntimeValueIR::SignedInt(right_value) => {
+                        RuntimeValueIR::SignedInt(self.builder.build_int_signed_div(
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "div",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::UnsignedInt(self.builder.build_int_unsigned_div(
+                            left_value.unwrap_unsigned_int(),
                             right_value,
                             "div",
                         )?)
@@ -2384,9 +2477,16 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             BinaryOperation::Modulo => {
                 let right_value = right_value_gen(self)?;
                 Ok(match right_value {
-                    RuntimeValueIR::Int(right_value) => {
-                        RuntimeValueIR::Int(self.builder.build_int_signed_rem(
-                            left_value.unwrap_int(),
+                    RuntimeValueIR::SignedInt(right_value) => {
+                        RuntimeValueIR::SignedInt(self.builder.build_int_signed_rem(
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "mod",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::UnsignedInt(self.builder.build_int_unsigned_rem(
+                            left_value.unwrap_unsigned_int(),
                             right_value,
                             "mod",
                         )?)
@@ -2410,10 +2510,18 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             BinaryOperation::LessThan => {
                 let right_value = right_value_gen(self)?;
                 Ok(match right_value {
-                    RuntimeValueIR::Int(right_value) => {
+                    RuntimeValueIR::SignedInt(right_value) => {
                         RuntimeValueIR::Bool(self.builder.build_int_compare(
                             IntPredicate::SLT,
-                            left_value.unwrap_int(),
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "less_than",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
+                            IntPredicate::ULT,
+                            left_value.unwrap_unsigned_int(),
                             right_value,
                             "less_than",
                         )?)
@@ -2437,10 +2545,18 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             BinaryOperation::LessThanOrEqual => {
                 let right_value = right_value_gen(self)?;
                 Ok(match right_value {
-                    RuntimeValueIR::Int(right_value) => {
+                    RuntimeValueIR::SignedInt(right_value) => {
                         RuntimeValueIR::Bool(self.builder.build_int_compare(
                             IntPredicate::SLE,
-                            left_value.unwrap_int(),
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "less_than_or_equal",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
+                            IntPredicate::ULE,
+                            left_value.unwrap_unsigned_int(),
                             right_value,
                             "less_than_or_equal",
                         )?)
@@ -2464,10 +2580,18 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             BinaryOperation::GreaterThan => {
                 let right_value = right_value_gen(self)?;
                 Ok(match right_value {
-                    RuntimeValueIR::Int(right_value) => {
+                    RuntimeValueIR::SignedInt(right_value) => {
                         RuntimeValueIR::Bool(self.builder.build_int_compare(
                             IntPredicate::SGT,
-                            left_value.unwrap_int(),
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "greater_than",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
+                            IntPredicate::UGT,
+                            left_value.unwrap_unsigned_int(),
                             right_value,
                             "greater_than",
                         )?)
@@ -2491,10 +2615,18 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             BinaryOperation::GreaterThanOrEqual => {
                 let right_value = right_value_gen(self)?;
                 Ok(match right_value {
-                    RuntimeValueIR::Int(right_value) => {
+                    RuntimeValueIR::SignedInt(right_value) => {
                         RuntimeValueIR::Bool(self.builder.build_int_compare(
                             IntPredicate::SGE,
-                            left_value.unwrap_int(),
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "greater_than_or_equal",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
+                            IntPredicate::UGE,
+                            left_value.unwrap_unsigned_int(),
                             right_value,
                             "greater_than_or_equal",
                         )?)
@@ -2518,7 +2650,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             BinaryOperation::Equal => {
                 let right_value = right_value_gen(self)?;
                 Ok(match right_value {
-                    RuntimeValueIR::Bool(right_value) | RuntimeValueIR::Int(right_value) => {
+                    RuntimeValueIR::Bool(right_value)
+                    | RuntimeValueIR::SignedInt(right_value)
+                    | RuntimeValueIR::UnsignedInt(right_value) => {
                         RuntimeValueIR::Bool(self.builder.build_int_compare(
                             IntPredicate::EQ,
                             left_value.unwrap_int_or_bool(),
@@ -2545,7 +2679,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             BinaryOperation::NotEqual => {
                 let right_value = right_value_gen(self)?;
                 Ok(match right_value {
-                    RuntimeValueIR::Bool(right_value) | RuntimeValueIR::Int(right_value) => {
+                    RuntimeValueIR::Bool(right_value)
+                    | RuntimeValueIR::SignedInt(right_value)
+                    | RuntimeValueIR::UnsignedInt(right_value) => {
                         RuntimeValueIR::Bool(self.builder.build_int_compare(
                             IntPredicate::NE,
                             left_value.unwrap_int_or_bool(),
@@ -2732,7 +2868,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         }: &mut ArrayIndexLValue,
     ) -> Self::LValueOutput {
         let array_ptr = self.visit_lvalue(array)?;
-        let index_ir = self.visit_expression(index)?.unwrap_int();
+        let index_ir = self.visit_expression(index)?.unwrap_unsigned_int();
 
         let array_type = *self
             .type_sets
@@ -2764,6 +2900,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
     }
 
     fn visit_simple_type(&mut self, type_: &mut SimpleType) -> Self::TypeOutput {
+        let type_clone = type_.clone();
         let SimpleType {
             token: _,
             type_: runtime_type,
@@ -2773,12 +2910,20 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .type_data
             .get(id)
             .expect("type data should exist before calling ir_generator");
+        let infered_type = self.type_sets.get(*infered_type);
 
-        assert_eq!(
-            *runtime_type,
-            *self.type_sets.get(*infered_type),
-            "Inferred type (right) of SimpleType doesn't match its actual type (left)"
-        );
+        if *runtime_type != *infered_type {
+            return self.report_error(FleetError::from_node(
+                &type_clone,
+                format!(
+                    "[INTERNAL ERROR] Inferred type {} of SimpleType doesn't match its actual type {}",
+                    infered_type.stringify(&self.type_sets),
+                    runtime_type.stringify(&self.type_sets),
+                ),
+                ErrorSeverity::Error,
+            ));
+        }
+
         Ok(*runtime_type)
     }
 

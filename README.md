@@ -17,7 +17,6 @@
 ## TODOs
 
 ### Priority
-- unsigned ints
 - char literals
 - structs
 - if expressions

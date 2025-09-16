@@ -121,20 +121,18 @@ impl CCodeGenerator<'_> {
             RuntimeType::I16 => ("int16_t".to_string(), "".to_string()),
             RuntimeType::I32 => ("int32_t".to_string(), "".to_string()),
             RuntimeType::I64 => ("int64_t".to_string(), "".to_string()),
+            RuntimeType::U8 => ("uint8_t".to_string(), "".to_string()),
+            RuntimeType::U16 => ("uint16_t".to_string(), "".to_string()),
+            RuntimeType::U32 => ("uint32_t".to_string(), "".to_string()),
+            RuntimeType::U64 => ("uint64_t".to_string(), "".to_string()),
             RuntimeType::F32 => ("float".to_string(), "".to_string()),
             RuntimeType::F64 => ("double".to_string(), "".to_string()),
             RuntimeType::Boolean => ("bool".to_string(), "".to_string()),
             RuntimeType::Unit => ("void".to_string(), "".to_string()),
-            RuntimeType::Number => {
+            RuntimeType::Number { .. } => {
                 unreachable!(
                     "undetermined numbers should have caused errors before calling c_generator"
                 )
-            }
-            RuntimeType::UnsizedInteger => {
-                unreachable!("unsized ints should have caused errors before calling c_generator")
-            }
-            RuntimeType::UnsizedFloat => {
-                unreachable!("unsized ints should have caused errors before calling c_generator")
             }
             RuntimeType::Unknown => {
                 unreachable!("unknown types should have caused errors before calling c_generator")
@@ -153,22 +151,16 @@ impl CCodeGenerator<'_> {
     }
     fn runtime_type_to_byte_size(&self, type_: RuntimeType) -> usize {
         match type_ {
-            RuntimeType::I8 => 1,
-            RuntimeType::I16 => 2,
-            RuntimeType::I32 => 4,
-            RuntimeType::I64 => 8,
+            RuntimeType::I8 | RuntimeType::U8 => 1,
+            RuntimeType::I16 | RuntimeType::U16 => 2,
+            RuntimeType::I32 | RuntimeType::U32 => 4,
+            RuntimeType::I64 | RuntimeType::U64 => 8,
             RuntimeType::F32 => 4,
             RuntimeType::F64 => 8,
-            RuntimeType::Number => {
+            RuntimeType::Number { .. } => {
                 unreachable!(
                     "undetermined numbers should have caused errors before calling c_generator"
                 )
-            }
-            RuntimeType::UnsizedInteger => {
-                unreachable!("unsized ints should have caused errors before calling c_generator")
-            }
-            RuntimeType::UnsizedFloat => {
-                unreachable!("unsized ints should have caused errors before calling c_generator")
             }
             RuntimeType::Boolean => 1,
             RuntimeType::Unit => 0,

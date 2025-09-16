@@ -1,16 +1,23 @@
+use core::panic;
+
 use crate::passes::union_find_set::{UnionFindSet, UnionFindSetMergeResult, UnionFindSetPtr};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeType {
-    Number,
+    Number {
+        signed: Option<bool>,
+        integer: Option<bool>,
+    },
     I8,
     I16,
     I32,
     I64,
-    UnsizedInteger,
+    U8,
+    U16,
+    U32,
+    U64,
     F32,
     F64,
-    UnsizedFloat,
     Boolean,
     Unit,
     Unknown,
@@ -32,15 +39,29 @@ impl RuntimeType {
 
     pub fn stringify(&self, types: &UnionFindSet<RuntimeType>) -> String {
         match *self {
-            RuntimeType::Number => "{number}".to_string(),
+            RuntimeType::Number { signed, integer } => format!(
+                "{{{}{}}}",
+                match signed {
+                    Some(true) => "signed ",
+                    Some(false) => "unsigned ",
+                    None => "",
+                },
+                match integer {
+                    Some(true) => "integer",
+                    Some(false) => "float",
+                    None => "number",
+                }
+            ),
             RuntimeType::I8 => "i8".to_string(),
             RuntimeType::I16 => "i16".to_string(),
             RuntimeType::I32 => "i32".to_string(),
             RuntimeType::I64 => "i64".to_string(),
-            RuntimeType::UnsizedInteger => "{unsized integer}".to_string(),
+            RuntimeType::U8 => "u8".to_string(),
+            RuntimeType::U16 => "u16".to_string(),
+            RuntimeType::U32 => "u32".to_string(),
+            RuntimeType::U64 => "u64".to_string(),
             RuntimeType::F32 => "f32".to_string(),
             RuntimeType::F64 => "f64".to_string(),
-            RuntimeType::UnsizedFloat => "{unsized float}".to_string(),
             RuntimeType::Unit => "()".to_string(),
             RuntimeType::Boolean => "bool".to_string(),
             RuntimeType::Unknown => "{unknown}".to_string(),
@@ -55,17 +76,35 @@ impl RuntimeType {
             } => format!("{}[{}]", types.get(subtype).stringify(types), size),
         }
     }
+    pub fn could_be_float(&self) -> bool {
+        match self {
+            RuntimeType::Number {
+                integer: None,
+                signed: None | Some(true),
+            } => true,
+            _ => self.is_float(),
+        }
+    }
     pub fn is_float(&self) -> bool {
         match self {
-            RuntimeType::Number => true,
+            RuntimeType::Number {
+                integer: None | Some(false),
+                signed: None | Some(true),
+            } => true,
+            RuntimeType::Number {
+                integer: _,
+                signed: _,
+            } => false,
             RuntimeType::I8 => false,
             RuntimeType::I16 => false,
             RuntimeType::I32 => false,
             RuntimeType::I64 => false,
-            RuntimeType::UnsizedInteger => false,
+            RuntimeType::U8 => false,
+            RuntimeType::U16 => false,
+            RuntimeType::U32 => false,
+            RuntimeType::U64 => false,
             RuntimeType::F32 => true,
             RuntimeType::F64 => true,
-            RuntimeType::UnsizedFloat => false,
             RuntimeType::Unit => false,
             RuntimeType::Boolean => false,
             RuntimeType::Unknown => false,
@@ -76,17 +115,113 @@ impl RuntimeType {
             } => false,
         }
     }
-    pub fn is_integer(&self) -> bool {
+    pub fn could_be_signed(&self) -> bool {
         match self {
-            RuntimeType::Number => true,
+            RuntimeType::Number {
+                integer: _,
+                signed: None,
+            } => true,
+            _ => self.is_signed(),
+        }
+    }
+    pub fn is_signed(&self) -> bool {
+        match self {
+            RuntimeType::Number {
+                signed: None | Some(true),
+                integer: _,
+            } => true,
+            RuntimeType::Number {
+                integer: _,
+                signed: _,
+            } => false,
             RuntimeType::I8 => true,
             RuntimeType::I16 => true,
             RuntimeType::I32 => true,
             RuntimeType::I64 => true,
-            RuntimeType::UnsizedInteger => true,
+            RuntimeType::U8 => false,
+            RuntimeType::U16 => false,
+            RuntimeType::U32 => false,
+            RuntimeType::U64 => false,
+            RuntimeType::F32 => true,
+            RuntimeType::F64 => true,
+            RuntimeType::Unit => false,
+            RuntimeType::Boolean => false,
+            RuntimeType::Unknown => false,
+            RuntimeType::Error => false,
+            RuntimeType::ArrayOf {
+                subtype: _,
+                size: _,
+            } => false,
+        }
+    }
+    pub fn could_be_unsigned(&self) -> bool {
+        match self {
+            RuntimeType::Number {
+                integer: None | Some(true), // only ints can be unsigned
+                signed: None,
+            } => true,
+            _ => self.is_unsigned(),
+        }
+    }
+    pub fn is_unsigned(&self) -> bool {
+        match self {
+            RuntimeType::Number {
+                signed: None | Some(false),
+                integer: _,
+            } => true,
+            RuntimeType::Number {
+                integer: _,
+                signed: _,
+            } => false,
+            RuntimeType::I8 => false,
+            RuntimeType::I16 => false,
+            RuntimeType::I32 => false,
+            RuntimeType::I64 => false,
+            RuntimeType::U8 => true,
+            RuntimeType::U16 => true,
+            RuntimeType::U32 => true,
+            RuntimeType::U64 => true,
             RuntimeType::F32 => false,
             RuntimeType::F64 => false,
-            RuntimeType::UnsizedFloat => false,
+            RuntimeType::Unit => false,
+            RuntimeType::Boolean => false,
+            RuntimeType::Unknown => false,
+            RuntimeType::Error => false,
+            RuntimeType::ArrayOf {
+                subtype: _,
+                size: _,
+            } => false,
+        }
+    }
+    pub fn could_be_integer(&self) -> bool {
+        match self {
+            RuntimeType::Number {
+                integer: None,
+                signed: _,
+            } => true,
+            _ => self.is_integer(),
+        }
+    }
+    pub fn is_integer(&self) -> bool {
+        match self {
+            RuntimeType::Number {
+                integer: Some(true),
+                signed: _,
+            } => true,
+            RuntimeType::Number {
+                integer: _,
+                signed: _,
+            } => false,
+            RuntimeType::I8 => true,
+            RuntimeType::I16 => true,
+            RuntimeType::I32 => true,
+            RuntimeType::I64 => true,
+            RuntimeType::U8 => true,
+            RuntimeType::U16 => true,
+            RuntimeType::U32 => true,
+            RuntimeType::U64 => true,
+            RuntimeType::F32 => false,
+            RuntimeType::F64 => false,
             RuntimeType::Unit => false,
             RuntimeType::Boolean => false,
             RuntimeType::Unknown => false,
@@ -99,15 +234,20 @@ impl RuntimeType {
     }
     pub fn is_numeric(&self) -> bool {
         match self {
-            RuntimeType::Number => true,
+            RuntimeType::Number {
+                integer: _,
+                signed: _,
+            } => true,
             RuntimeType::I8 => true,
             RuntimeType::I16 => true,
             RuntimeType::I32 => true,
             RuntimeType::I64 => true,
-            RuntimeType::UnsizedInteger => true,
+            RuntimeType::U8 => true,
+            RuntimeType::U16 => true,
+            RuntimeType::U32 => true,
+            RuntimeType::U64 => true,
             RuntimeType::F32 => true,
             RuntimeType::F64 => true,
-            RuntimeType::UnsizedFloat => true,
             RuntimeType::Unit => false,
             RuntimeType::Boolean => false,
             RuntimeType::Unknown => false,
@@ -120,15 +260,20 @@ impl RuntimeType {
     }
     pub fn is_boolean(&self) -> bool {
         match self {
-            RuntimeType::Number => false,
+            RuntimeType::Number {
+                signed: _,
+                integer: _,
+            } => false,
             RuntimeType::I8 => false,
             RuntimeType::I16 => false,
             RuntimeType::I32 => false,
             RuntimeType::I64 => false,
-            RuntimeType::UnsizedInteger => false,
+            RuntimeType::U8 => false,
+            RuntimeType::U16 => false,
+            RuntimeType::U32 => false,
+            RuntimeType::U64 => false,
             RuntimeType::F32 => false,
             RuntimeType::F64 => false,
-            RuntimeType::UnsizedFloat => false,
             RuntimeType::Boolean => true,
             RuntimeType::Unit => false,
             RuntimeType::Unknown => false,
@@ -141,17 +286,34 @@ impl RuntimeType {
     }
 
     /// true means the specialization succeeded
-    pub fn specialize_int_size(&mut self) -> bool {
-        match *self {
-            RuntimeType::Number => *self = RuntimeType::I32,
-            RuntimeType::UnsizedInteger => *self = RuntimeType::I32,
-            RuntimeType::UnsizedFloat => *self = RuntimeType::F32,
-            _ => return false,
+    pub fn specialize_number_size(&mut self) -> bool {
+        if let RuntimeType::Number { .. } = self {
+            match *self {
+                RuntimeType::Number {
+                    signed: None | Some(true),
+                    integer: None | Some(true),
+                } => *self = RuntimeType::I32,
+                RuntimeType::Number {
+                    signed: Some(false),
+                    integer: None | Some(true),
+                } => *self = RuntimeType::U32,
+                RuntimeType::Number {
+                    signed: Some(true),
+                    integer: Some(false),
+                } => *self = RuntimeType::F32,
+                RuntimeType::Number {
+                    signed: Some(false),
+                    integer: Some(false),
+                } => panic!("Unsigned floats shouldn't ever exist"),
+                _ => unreachable!("All Number cases should be covered"),
+            }
+            true
+        } else {
+            false
         }
-
-        true
     }
 
+    /// Returns true on successful merge
     #[must_use = "Failed merges usually indicate a compile error"]
     pub fn merge_types(
         a: UnionFindSetPtr<RuntimeType>,
@@ -166,52 +328,86 @@ impl RuntimeType {
             match a {
                 _ if a == b => Merged(a),
 
-                RuntimeType::Number => {
-                    if b.is_numeric() {
-                        Merged(b)
-                    } else {
-                        NotMerged { a, b }
+                RuntimeType::Number { signed, integer } => {
+                    if !match signed {
+                        Some(true) => b.could_be_signed(),
+                        Some(false) => b.could_be_unsigned(),
+                        None => true,
+                    } {
+                        return NotMerged { a, b };
                     }
-                }
-                RuntimeType::UnsizedInteger => {
-                    if b.is_integer() {
-                        if b == RuntimeType::Number {
-                            Merged(a)
-                        } else {
-                            Merged(b)
-                        }
-                    } else {
-                        NotMerged { a, b }
+
+                    if !match integer {
+                        Some(true) => b.could_be_integer(),
+                        Some(false) => b.could_be_float(),
+                        None => b.is_numeric(),
+                    } {
+                        return NotMerged { a, b };
+                    }
+
+                    match b {
+                        RuntimeType::Number {
+                            signed: b_signed,
+                            integer: b_integer,
+                        } => Merged(RuntimeType::Number {
+                            signed: match (signed, b_signed) {
+                                (None, None) => None,
+                                (None, Some(x)) => Some(x),
+                                (Some(x), None) => Some(x),
+                                (Some(x), Some(y)) => {
+                                    assert_eq!(x, y);
+                                    Some(x)
+                                }
+                            },
+                            integer: match (integer, b_integer) {
+                                (None, None) => None,
+                                (None, Some(x)) => Some(x),
+                                (Some(x), None) => Some(x),
+                                (Some(x), Some(y)) => {
+                                    assert_eq!(x, y);
+                                    Some(x)
+                                }
+                            },
+                        }),
+                        // we already checked that signedness and int/float are compatible, so
+                        // this has to be a number. It also has to be a fully specialized one
+                        // because partially specialized ones are handled above.
+                        _ => Merged(b),
                     }
                 }
 
-                RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64
-                    if b == RuntimeType::Number || b == RuntimeType::UnsizedInteger =>
-                {
-                    Merged(a)
-                }
                 RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64 => {
-                    NotMerged { a, b }
+                    if let RuntimeType::Number { .. } = b
+                        && b.could_be_integer()
+                        && b.could_be_signed()
+                    {
+                        Merged(a)
+                    } else if a == b {
+                        Merged(a)
+                    } else {
+                        NotMerged { a, b }
+                    }
                 }
-
-                RuntimeType::UnsizedFloat => {
-                    if b.is_float() {
-                        if b == RuntimeType::Number {
-                            Merged(a)
-                        } else {
-                            Merged(b)
-                        }
+                RuntimeType::U8 | RuntimeType::U16 | RuntimeType::U32 | RuntimeType::U64 => {
+                    if let RuntimeType::Number { .. } = b
+                        && b.could_be_integer()
+                        && b.could_be_unsigned()
+                    {
+                        Merged(a)
+                    } else if a == b {
+                        Merged(a)
                     } else {
                         NotMerged { a, b }
                     }
                 }
 
-                RuntimeType::F32 | RuntimeType::F64
-                    if b == RuntimeType::Number || b == RuntimeType::UnsizedFloat =>
-                {
-                    Merged(a)
+                RuntimeType::F32 | RuntimeType::F64 => {
+                    if b.could_be_float() {
+                        Merged(a)
+                    } else {
+                        NotMerged { a, b }
+                    }
                 }
-                RuntimeType::F32 | RuntimeType::F64 => NotMerged { a, b },
 
                 RuntimeType::Boolean => {
                     if b.is_boolean() {

@@ -174,15 +174,13 @@ impl<'a> TypePropagator<'a> {
 
         for (name, variable) in &scope.variable_map {
             let actual_type = self.type_sets.get_mut(variable.borrow().type_.unwrap());
-            actual_type.specialize_int_size();
+            actual_type.specialize_number_size();
 
             // release the borrow
             let actual_type = *actual_type;
 
             // TODO: once we track variable definitions, use that here
-            if let RuntimeType::Unknown | RuntimeType::UnsizedFloat | RuntimeType::UnsizedInteger =
-                actual_type
-            {
+            if let RuntimeType::Unknown | RuntimeType::Number { .. } = actual_type {
                 self.errors.push(FleetError::from_node(
                     error_node,
                     format!(
@@ -222,7 +220,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         // specify all int sizes
         for type_ in self.type_sets.data.values_mut() {
-            type_.specialize_int_size();
+            type_.specialize_number_size();
         }
     }
 
@@ -393,6 +391,20 @@ impl AstVisitor for TypePropagator<'_> {
                 self.errors.push(FleetError::from_node(
                     binding,
                     "The iterator of an on-statement cannot be mutable",
+                    ErrorSeverity::Error,
+                ));
+            }
+            if !RuntimeType::merge_types(
+                self.type_sets.insert_set(RuntimeType::Number {
+                    signed: Some(false),
+                    integer: Some(true),
+                }),
+                iterator_type,
+                &mut self.type_sets,
+            ) {
+                self.errors.push(FleetError::from_node(
+                    binding,
+                    "Iterators can only be unsigned integers for now",
                     ErrorSeverity::Error,
                 ));
             }
@@ -677,8 +689,14 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         } = expression;
         let type_ = self.type_sets.insert_set(match value {
-            LiteralKind::Number(_) => RuntimeType::Number,
-            LiteralKind::Float(_) => RuntimeType::UnsizedFloat,
+            LiteralKind::Number(_) => RuntimeType::Number {
+                signed: None,
+                integer: None,
+            },
+            LiteralKind::Float(_) => RuntimeType::Number {
+                signed: Some(true),
+                integer: Some(false),
+            },
             LiteralKind::Bool(_) => RuntimeType::Boolean,
         });
         self.node_types.insert(*id, type_);
@@ -950,14 +968,17 @@ impl AstVisitor for TypePropagator<'_> {
 
         if !RuntimeType::merge_types(
             index_type,
-            self.type_sets.insert_set(RuntimeType::UnsizedInteger),
+            self.type_sets.insert_set(RuntimeType::Number {
+                signed: Some(false),
+                integer: Some(true),
+            }),
             &mut self.type_sets,
         ) {
             let index_type_str = self.stringify_type_ptr(index_type);
 
             self.errors.push(FleetError::from_node(
                 &**index,
-                format!("Cannot index into array using index of type {index_type_str}"),
+                format!("Cannot index into array using index of type {index_type_str}. Expected an unsigned integer"),
                 ErrorSeverity::Error,
             ));
         }
@@ -1028,13 +1049,19 @@ impl AstVisitor for TypePropagator<'_> {
         let is_ok = match operation {
             UnaryOperation::BitwiseNot => RuntimeType::merge_types(
                 type_,
-                self.type_sets.insert_set(RuntimeType::UnsizedInteger),
+                self.type_sets.insert_set(RuntimeType::Number {
+                    signed: None,
+                    integer: Some(true),
+                }),
                 &mut self.type_sets,
             ),
             UnaryOperation::LogicalNot => {
                 RuntimeType::merge_types(
                     type_,
-                    self.type_sets.insert_set(RuntimeType::Number),
+                    self.type_sets.insert_set(RuntimeType::Number {
+                        signed: None,
+                        integer: None,
+                    }),
                     &mut self.type_sets,
                 ) || RuntimeType::merge_types(
                     type_,
@@ -1044,7 +1071,10 @@ impl AstVisitor for TypePropagator<'_> {
             }
             UnaryOperation::Negate => RuntimeType::merge_types(
                 type_,
-                self.type_sets.insert_set(RuntimeType::Number),
+                self.type_sets.insert_set(RuntimeType::Number {
+                    signed: Some(true),
+                    integer: None,
+                }),
                 &mut self.type_sets,
             ),
         };
@@ -1052,9 +1082,9 @@ impl AstVisitor for TypePropagator<'_> {
         if !is_ok {
             let type_str = self.stringify_type_ptr(type_);
             let (verb, expected) = match operation {
-                UnaryOperation::BitwiseNot => ("bitwise negate", "a number"),
+                UnaryOperation::BitwiseNot => ("bitwise negate", "an integer"),
                 UnaryOperation::LogicalNot => ("logically negate", "a number or boolean"),
-                UnaryOperation::Negate => ("arithmetically negate", "a number"),
+                UnaryOperation::Negate => ("arithmetically negate", "a signed number"),
             };
             self.errors.push(FleetError::from_node(
                 &expression_clone,
@@ -1108,6 +1138,10 @@ impl AstVisitor for TypePropagator<'_> {
                 | (I16, I16)
                 | (I32, I32)
                 | (I64, I64)
+                | (U8, U8)
+                | (U16, U16)
+                | (U32, U32)
+                | (U64, U64)
                 | (F32, F32)
                 | (F64, F64)
                 | (Boolean, Boolean)
@@ -1120,20 +1154,20 @@ impl AstVisitor for TypePropagator<'_> {
                     CastResult::Redundant
                 }
                 (
-                    Number | I8 | I16 | I32 | I64 | UnsizedInteger | F32 | F64 | UnsizedFloat,
-                    Number | I8 | I16 | I32 | I64 | UnsizedInteger | F32 | F64 | UnsizedFloat,
+                    Number { .. } | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64,
+                    Number { .. } | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64,
                 ) => {
                     let _ = RuntimeType::merge_types(from_ptr, to_ptr, types);
                     CastResult::Possible
                 }
 
                 (
-                    Number | I8 | I16 | I32 | I64 | UnsizedInteger | F32 | F64 | UnsizedFloat,
+                    Number { .. } | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64,
                     Boolean,
                 ) => CastResult::Possible,
                 (
                     Boolean,
-                    Number | I8 | I16 | I32 | I64 | UnsizedInteger | F32 | F64 | UnsizedFloat,
+                    Number { .. } | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64,
                 ) => CastResult::Possible,
 
                 (_, Unit) | (Unit, _) => {
@@ -1335,13 +1369,19 @@ impl AstVisitor for TypePropagator<'_> {
             | BinaryOperation::LessThan
             | BinaryOperation::LessThanOrEqual => RuntimeType::merge_types(
                 left_type,
-                self.type_sets.insert_set(RuntimeType::Number),
+                self.type_sets.insert_set(RuntimeType::Number {
+                    signed: None,
+                    integer: None,
+                }),
                 &mut self.type_sets,
             ),
             BinaryOperation::Equal | BinaryOperation::NotEqual => {
                 RuntimeType::merge_types(
                     left_type,
-                    self.type_sets.insert_set(RuntimeType::Number),
+                    self.type_sets.insert_set(RuntimeType::Number {
+                        signed: None,
+                        integer: None,
+                    }),
                     &mut self.type_sets,
                 ) || RuntimeType::merge_types(
                     left_type,
@@ -1368,13 +1408,19 @@ impl AstVisitor for TypePropagator<'_> {
             | BinaryOperation::LessThan
             | BinaryOperation::LessThanOrEqual => RuntimeType::merge_types(
                 right_type,
-                self.type_sets.insert_set(RuntimeType::Number),
+                self.type_sets.insert_set(RuntimeType::Number {
+                    signed: None,
+                    integer: None,
+                }),
                 &mut self.type_sets,
             ),
             BinaryOperation::Equal | BinaryOperation::NotEqual => {
                 RuntimeType::merge_types(
                     right_type,
-                    self.type_sets.insert_set(RuntimeType::Number),
+                    self.type_sets.insert_set(RuntimeType::Number {
+                        signed: None,
+                        integer: None,
+                    }),
                     &mut self.type_sets,
                 ) || RuntimeType::merge_types(
                     right_type,
@@ -1549,14 +1595,17 @@ impl AstVisitor for TypePropagator<'_> {
 
         if !RuntimeType::merge_types(
             index_type,
-            self.type_sets.insert_set(RuntimeType::UnsizedInteger),
+            self.type_sets.insert_set(RuntimeType::Number {
+                signed: Some(false),
+                integer: Some(true),
+            }),
             &mut self.type_sets,
         ) {
             let index_type_str = self.stringify_type_ptr(index_type);
 
             self.errors.push(FleetError::from_node(
                 &**index,
-                format!("Cannot index into array using index of type {index_type_str}"),
+                format!("Cannot index into array using index of type {index_type_str}. Expected an unsigned integer"),
                 ErrorSeverity::Error,
             ));
         }

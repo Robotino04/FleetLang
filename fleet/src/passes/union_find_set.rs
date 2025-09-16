@@ -78,6 +78,8 @@ impl<T> UnionFindSet<T> {
     pub fn get_mut(&mut self, ptr: UnionFindSetPtr<T>) -> &mut T {
         self.data.get_mut(&self.get_repr(ptr)).unwrap()
     }
+
+    /// Returns true on successful merge
     pub fn try_merge<Combiner: FnOnce(T, T, &mut Self) -> UnionFindSetMergeResult<T>>(
         &mut self,
         a: UnionFindSetPtr<T>,

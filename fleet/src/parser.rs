@@ -1157,6 +1157,26 @@ impl<'state> Parser<'state> {
                 type_: RuntimeType::I64,
                 id: self.id_generator.next_node_id(),
             })),
+            Some(TokenType::Keyword(Keyword::U8)) => Ok(Type::Simple(SimpleType {
+                token: expect!(self, TokenType::Keyword(Keyword::U8))?,
+                type_: RuntimeType::U8,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::Keyword(Keyword::U16)) => Ok(Type::Simple(SimpleType {
+                token: expect!(self, TokenType::Keyword(Keyword::U16))?,
+                type_: RuntimeType::U16,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::Keyword(Keyword::U32)) => Ok(Type::Simple(SimpleType {
+                token: expect!(self, TokenType::Keyword(Keyword::U32))?,
+                type_: RuntimeType::U32,
+                id: self.id_generator.next_node_id(),
+            })),
+            Some(TokenType::Keyword(Keyword::U64)) => Ok(Type::Simple(SimpleType {
+                token: expect!(self, TokenType::Keyword(Keyword::U64))?,
+                type_: RuntimeType::U64,
+                id: self.id_generator.next_node_id(),
+            })),
             Some(TokenType::Keyword(Keyword::F32)) => Ok(Type::Simple(SimpleType {
                 token: expect!(self, TokenType::Keyword(Keyword::F32))?,
                 type_: RuntimeType::F32,

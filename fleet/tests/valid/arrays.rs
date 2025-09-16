@@ -238,7 +238,7 @@ fn hello_world_array() {
             let putchar = (char: i32) -> i32 @extern "putchar";
             let main = () -> i32 {
                 let text = [72, 101, 108, 108, 111, 44, 32, 87, 111, 114, 108, 100, 33, 10];
-                for (let i: i32 = 0; i < 14; i = i + 1) {
+                for (let i: u32 = 0; i < 14; i = i + 1) {
                     putchar(text[i]);
                 }
                 return 0;

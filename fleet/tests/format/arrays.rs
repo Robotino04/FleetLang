@@ -147,13 +147,13 @@ fn remove_parens_index() {
         indoc! {r##"
             let main = () -> i32 {
                 let a = [1, 2, 3, 4, 5];
-                return a[((((33 / 2) + 9) > 2) as i32)];
+                return a[((((33 / 2) + 9) > 2) as u32)];
             }"##
         },
         indoc! {r##"
             let main = () -> i32 {
                 let a = [1, 2, 3, 4, 5];
-                return a[(33 / 2 + 9 > 2) as i32];
+                return a[(33 / 2 + 9 > 2) as u32];
             }"##
         },
         "main",
@@ -165,14 +165,14 @@ fn remove_parens_lvalue() {
         indoc! {r##"
             let main = () -> i32 {
                 let a = [1, 2, 3, 4, 5];
-                a[((((33 / 2) + 9) > 2) as i32)] = 99;
+                a[((((33 / 2) + 9) > 2) as u32)] = 99;
                 return a[1];
             }"##
         },
         indoc! {r##"
             let main = () -> i32 {
                 let a = [1, 2, 3, 4, 5];
-                a[(33 / 2 + 9 > 2) as i32] = 99;
+                a[(33 / 2 + 9 > 2) as u32] = 99;
                 return a[1];
             }"##
         },
