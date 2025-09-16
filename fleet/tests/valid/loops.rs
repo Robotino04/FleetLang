@@ -236,3 +236,21 @@ fn while_multi_statement() {
         6,
     );
 }
+
+#[test]
+fn for_no_condition() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                // this previously broke the llvm backend because it generated an int instead of
+                // bool for the missing condition
+                for (let i = 0;;) {
+                    break;
+                }
+                return 2;
+            }
+        "##},
+        "main",
+        2,
+    );
+}
