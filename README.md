@@ -39,9 +39,11 @@
 - add different errors for missing Pass dependencies and for failed check_empty calls
 - allow variable redefinition
 - move runtime_type_to_byte_size somewhere common
-
 - track definitions and references of variables
 - make from_node into from_range
+- struct alignment and padding
+- unsigned ints
+- char literals
 
 ## Building
 ### LLVM
@@ -49,7 +51,7 @@
 > There is a Nix shell available which includes the Rust tooling, Clang, libllvm and some other libraries and automatically sets the correct environment variables for Cargo to find libllvm. This lets you skip straight to [Compiling the Runtime](#compiling-the-runtime).
 
 
-FleetC uses LLVM as a backend and it is therefore required to have a static build of libllvm 18. If this isn't found, Cargo should detect it and give instructions on how to acquire libllvm.
+FleetC uses LLVM as a backend, and it is therefore required to have a static build of libllvm 18. If this isn't found, Cargo should detect it and give instructions on how to acquire libllvm.
 Some other libraries are also linked by `inkwell` (the LLVM crate) and may need to be installed as well.
 
 ### Compiling the Runtime
@@ -58,7 +60,7 @@ Compiling parts of the fl runtime is required for building fleet. Assuming you a
 cd fl_runtime/ && make -j
 ```
 
-Without nix, you need to have the vulkan headers (or the whole SDK) installed. You can then either try if the Makefile works or adjust it to the point where you can compile and run the example. FleetC also needs the `fl_runtime_declarations.bc` file so make sure to also build that.
+Without nix, you need to have the Vulkan headers (or the whole SDK) installed. You can then either try if the Makefile works or adjust it to the point where you can compile and run the example. FleetC also needs the `fl_runtime_declarations.bc` file so make sure to also build that.
 
 
 ### FleetC and FleetLS
@@ -72,7 +74,7 @@ This should compile FleetC (the compiler) to `target/debug/fleetc` and FleetLS (
 
 ### Tests
 Tests can only be run on Linux for now as they rely on loading `libvulkan` and `libstdc++` at runtime.
-If you aren't using using nix, you need to ensure those libraries are installed and can be found by dlopen.
+If you aren't using nix, you need to ensure those libraries are installed and can be found by dlopen.
 Make sure to also compile `fl_runtime.so` and `testhook.so` in case you aren't using the Makefile.
 
 
