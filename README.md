@@ -15,35 +15,42 @@
 
 
 ## TODOs
-- if expressions
-- add quick fix system for e.g. non-block as if body
-- maybe make non-block-statement fixes a code action instead of formatting. Replace `assert_compile_error_no_formatting` after
-- tuple types
-- structs
-- sum types
-- strings
-- comptime evaluation
-- comptime type eval for generics (similar to zig/hblang)
-- simplify `get_precedence` and `get_associativity` using impl or a trait
-- add way to get length of array
-- consistent error language style
-- add tests for on-statement bindings that modify state. make sure order is correct in llvm backend specifically (also make sure assignment operator is disallowed)
-- real mutability/constant system
-- array-to-array assignments in glsl (maybe c as well)
-- test bigger-than-float float literals with c and glsl backend
-- remove lvalues maybe?
-- special-case small 2D and 3D GPU dispatches that fit in the size limits
-- heap allocations
-- warnings for unused functions/variables
-- disallow returning arrays
-- add different errors for missing Pass dependencies and for failed check_empty calls
-- allow variable redefinition
-- move runtime_type_to_byte_size somewhere common
-- track definitions and references of variables
-- make from_node into from_range
-- struct alignment and padding
+
+### Priority
 - unsigned ints
 - char literals
+- structs
+- if expressions
+- track definitions and references of variables
+- tied to ^this^ warnings for unused functions/variables
+
+
+### easy
+- add way to get length of array
+- consistent error language style
+- test array-to-array assignments in glsl (maybe c as well)
+- test bigger-than-float float literals with c and glsl backend
+- disallow returning arrays
+- add different errors for missing Pass dependencies and for failed check_empty calls
+- move runtime_type_to_byte_size somewhere common
+
+### medium
+- real mutability/constant system
+- allow variable redefinition
+- add quick fix system for e.g. non-block as if body
+- maybe make non-block-statement fixes a code action instead of formatting. Replace `assert_compile_error_no_formatting` after
+- strings
+- remove lvalues maybe?
+- special-case small 2D and 3D GPU dispatches that fit in the size limits
+
+### hard
+- tuple types
+- struct alignment and padding
+- sum types
+- comptime evaluation
+- comptime type eval for generics (similar to zig/hblang)
+- heap allocations
+
 
 ## Building
 ### LLVM
