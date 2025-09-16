@@ -201,7 +201,6 @@ impl AstVisitor for FindContainingNodePass {
         self.node_hierarchy.push(on_stmt.clone().into());
 
         let left_bound = self.visit_token(&on_stmt.on_token)?.start;
-        self.visit_token(&on_stmt.open_paren_token)?;
         self.visit_executor(&mut on_stmt.executor)?;
         for OnStatementIterator {
             open_bracket_token,
@@ -216,6 +215,13 @@ impl AstVisitor for FindContainingNodePass {
             self.visit_token(equal_token)?;
             self.visit_expression(max_value)?;
             self.visit_token(close_bracket_token)?;
+        }
+        self.visit_token(&on_stmt.open_paren_token)?;
+        for (binding, comma) in &mut on_stmt.bindings {
+            self.visit_lvalue(binding)?;
+            if let Some(comma) = comma {
+                self.visit_token(comma)?;
+            }
         }
         self.visit_token(&on_stmt.close_paren_token)?;
         let right_bound = self.visit_statement(&mut on_stmt.body)?.end;
