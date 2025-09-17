@@ -820,6 +820,7 @@ pub enum Associativity {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LiteralKind {
     Number(u64),
+    Char(char),
     Float(f64),
     Bool(bool),
 }

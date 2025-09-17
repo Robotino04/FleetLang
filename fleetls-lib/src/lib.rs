@@ -10,6 +10,7 @@ use fleet::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
+    escape::{QuoteType, escape},
     infra::{
         self, ErrorSeverity, insert_c_passes, insert_compile_passes, insert_fix_passes,
         insert_minimal_pipeline,
@@ -420,6 +421,9 @@ impl Backend {
             }) => (
                 match value {
                     LiteralKind::Number(value) => value.to_string(),
+                    LiteralKind::Char(value) => {
+                        format!("'{}'", escape(value.to_string(), QuoteType::Single))
+                    }
                     LiteralKind::Float(value) => value.to_string(),
                     LiteralKind::Bool(value) => value.to_string(),
                 },

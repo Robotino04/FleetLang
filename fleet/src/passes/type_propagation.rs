@@ -693,6 +693,7 @@ impl AstVisitor for TypePropagator<'_> {
                 signed: None,
                 integer: None,
             },
+            LiteralKind::Char(_) => RuntimeType::U8,
             LiteralKind::Float(_) => RuntimeType::Number {
                 signed: Some(true),
                 integer: Some(false),

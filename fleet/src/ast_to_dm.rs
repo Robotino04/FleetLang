@@ -15,6 +15,7 @@ use crate::{
         WhileLoopStatement,
     },
     document_model::DocumentElement,
+    escape::{QuoteType, escape},
     passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
     tokenizer::{Keyword, Token, TokenType, Trivia, TriviaKind},
 };
@@ -232,7 +233,8 @@ impl AstToDocumentModelConverter<'_> {
 
             TokenType::Integer(_, ref str) => str,
             TokenType::Float(_, ref str) => str,
-            TokenType::StringLiteral(ref str) => &('"'.to_string() + str + "\""),
+            TokenType::StringLiteral(ref str) => &('"'.to_string() + &escape(str, QuoteType::Double) + "\""),
+            TokenType::CharLiteral(ref str) => &("'".to_string() + &escape(str, QuoteType::Single) + "'"),
 
             TokenType::UnknownCharacters(ref chars) => chars,
 

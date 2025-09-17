@@ -992,6 +992,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             pre_statements: "".to_string(),
             out_value: match value {
                 LiteralKind::Number(value) => value.to_string(),
+                LiteralKind::Char(value) => (*value as u8).to_string(),
                 LiteralKind::Float(value) => value.to_string(),
                 LiteralKind::Bool(value) => value.to_string(),
             },

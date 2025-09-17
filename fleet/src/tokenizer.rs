@@ -1,9 +1,11 @@
-use std::{cell::RefMut, cmp::Ordering, rc::Rc};
+use std::{cell::RefMut, cmp::Ordering, ops::Index, rc::Rc};
 
+use itertools::Itertools;
 use log::{error, info};
 
 use crate::{
     NewtypeDeref,
+    escape::{QuoteType, unescape},
     infra::{ErrorSeverity, FleetError},
     passes::pass_manager::{Errors, GlobalState, InputSource, Pass, PassFactory, PassResult},
 };
@@ -63,6 +65,7 @@ pub enum TokenType {
     Integer(u64, String),
     Float(f64, String),
     StringLiteral(String),
+    CharLiteral(String),
 
     ExclamationMark,
     Tilde,
@@ -172,6 +175,22 @@ impl SourceLocation {
             line: self.line,
             column: self.column.saturating_sub(1),
         }
+    }
+    pub fn offset(
+        mut self,
+        mut offset: usize,
+        src: &impl Index<usize, Output = char>,
+    ) -> SourceLocation {
+        while offset > 0 {
+            self.index += 1;
+            self.column += 1;
+            offset -= 1;
+            if *src.index(self.index) == '\n' {
+                self.column = 0;
+                self.line += 1;
+            }
+        }
+        self
     }
 }
 
@@ -678,7 +697,12 @@ impl<'errors> Tokenizer<'errors> {
                     let start_location = self.current_location;
 
                     self.advance(); // "
-                    while !matches!(self.chars[self.current_location.index], '"') && !self.done() {
+                    let mut is_escape = false;
+                    while (!matches!(self.chars[self.current_location.index], '"') || is_escape)
+                        && !self.done()
+                    {
+                        is_escape = self.chars[self.current_location.index] == '\\';
+
                         self.advance();
 
                         if self.current_location.index >= self.chars.len() {
@@ -687,14 +711,94 @@ impl<'errors> Tokenizer<'errors> {
                     }
                     self.advance(); // "
 
-                    let lexeme = self.chars
+                    let raw_lexeme = self.chars
                         [start_location.index + 1..self.current_location.index - 1]
                         .iter()
                         .collect::<String>();
 
+                    let (lexeme, unknown_escape_sequences) =
+                        unescape(&raw_lexeme, QuoteType::Double)
+                            .map(|ok| (ok, vec![]))
+                            .unwrap_or_else(|err| (raw_lexeme.clone(), err));
+
+                    let range = start_location.until(self.current_location);
+
+                    for esc_error_offset in unknown_escape_sequences {
+                        let start = range.start.offset(esc_error_offset + 1, &self.chars);
+                        let end = start.offset(2, &self.chars);
+                        self.errors.push(FleetError::from_range(
+                            start.until(end),
+                            "Unknown escape sequence ".to_string()
+                                + &raw_lexeme.chars().skip(esc_error_offset).take(2).join(""),
+                            ErrorSeverity::Error,
+                            self.file_name.clone(),
+                        ));
+                    }
+
                     self.tokens.push(Token {
-                        range: start_location.until(self.current_location),
+                        range,
                         type_: TokenType::StringLiteral(lexeme),
+
+                        leading_trivia: self.trivia_accumulator.clone(),
+                        trailing_trivia: vec![],
+                        file_name: self.file_name.clone(),
+                    });
+                    self.trivia_accumulator.clear();
+                }
+                '\'' => {
+                    let start_location = self.current_location;
+
+                    self.advance(); // '
+                    let mut is_escape = false;
+                    while (!matches!(self.chars[self.current_location.index], '\'') || is_escape)
+                        && !self.done()
+                    {
+                        is_escape = self.chars[self.current_location.index] == '\\';
+
+                        self.advance();
+
+                        if self.current_location.index >= self.chars.len() {
+                            break;
+                        }
+                    }
+                    self.advance(); // '
+
+                    let raw_lexeme = self.chars
+                        [start_location.index + 1..self.current_location.index - 1]
+                        .iter()
+                        .collect::<String>();
+
+                    let (lexeme, unknown_escape_sequences) =
+                        unescape(&raw_lexeme, QuoteType::Single)
+                            .map(|ok| (ok, vec![]))
+                            .unwrap_or_else(|err| (raw_lexeme.clone(), err));
+
+                    let range = start_location.until(self.current_location);
+
+                    for esc_error_offset in unknown_escape_sequences {
+                        let start = range.start.offset(esc_error_offset + 1, &self.chars);
+                        let end = start.offset(2, &self.chars);
+                        self.errors.push(FleetError::from_range(
+                            start.until(end),
+                            "Unknown escape sequence ".to_string()
+                                + &raw_lexeme.chars().skip(esc_error_offset).take(2).join(""),
+                            ErrorSeverity::Error,
+                            self.file_name.clone(),
+                        ));
+                    }
+
+                    if lexeme.len() != 1 {
+                        self.errors.push(FleetError::from_range(
+                            range,
+                            "Character literals may only contain a single character",
+                            ErrorSeverity::Error,
+                            self.file_name.clone(),
+                        ));
+                    }
+
+                    self.tokens.push(Token {
+                        range,
+                        type_: TokenType::CharLiteral(lexeme),
 
                         leading_trivia: self.trivia_accumulator.clone(),
                         trailing_trivia: vec![],

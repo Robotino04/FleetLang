@@ -12,6 +12,7 @@ use fleet::{
         UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
+    escape::{QuoteType, escape},
     passes::pass_manager::{Pass, PassFactory, PassResult},
 };
 
@@ -399,6 +400,9 @@ impl AstVisitor for AstJsonDumpPass<'_> {
     ) -> Self::ExpressionOutput {
         match value {
             fleet::ast::LiteralKind::Number(n) => format!("\"Number ${}$\"", n),
+            fleet::ast::LiteralKind::Char(c) => {
+                format!("\"Char `'{}'`\"", escape(c.to_string(), QuoteType::Single))
+            }
             fleet::ast::LiteralKind::Float(f) => format!("\"Float ${}$\"", f),
             fleet::ast::LiteralKind::Bool(b) => format!("\"Bool {}\"", b),
         }

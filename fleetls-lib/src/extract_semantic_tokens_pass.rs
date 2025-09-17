@@ -455,6 +455,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             token,
             match value {
                 LiteralKind::Number(_) => SemanticTokenType::NUMBER,
+                LiteralKind::Char(_) => SemanticTokenType::STRING,
                 LiteralKind::Float(_) => SemanticTokenType::NUMBER,
                 LiteralKind::Bool(_) => SemanticTokenType::KEYWORD,
             },

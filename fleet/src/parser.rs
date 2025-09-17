@@ -590,6 +590,11 @@ impl<'state> Parser<'state> {
                 token: expect!(self, TokenType::Integer(_, _))?,
                 id: self.id_generator.next_node_id(),
             })),
+            Some(TokenType::CharLiteral(value)) => Ok(Expression::Literal(LiteralExpression {
+                value: LiteralKind::Char(value.chars().next().unwrap_or('X')),
+                token: expect!(self, TokenType::CharLiteral(_))?,
+                id: self.id_generator.next_node_id(),
+            })),
             Some(TokenType::Float(value, _)) => Ok(Expression::Literal(LiteralExpression {
                 value: LiteralKind::Float(value),
                 token: expect!(self, TokenType::Float(_, _))?,

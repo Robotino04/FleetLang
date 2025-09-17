@@ -984,6 +984,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                         value.to_string()
                     }
                 }
+                LiteralKind::Char(value) => (*value as u8).to_string(),
                 LiteralKind::Float(value) => format_float(*value),
                 LiteralKind::Bool(value) => value.to_string(),
             },

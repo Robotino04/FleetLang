@@ -35,7 +35,7 @@ use crate::{
         UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
-    escape::unescape,
+    escape::{QuoteType, unescape},
     generate_glsl::GLSLCodeGenerator,
     infra::{ErrorSeverity, FleetError},
     passes::{
@@ -569,7 +569,8 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     ),
                     format!(
                         "Linking with runtime library declarations failed: {}\nModule dump:\n{}",
-                        unescape(err.to_str().unwrap()),
+                        unescape(err.to_str().unwrap(), QuoteType::Double)
+                            .unwrap_or_else(|_| err.to_str().unwrap().to_string()),
                         self.module.print_to_string().to_str().unwrap()
                     ),
                     ErrorSeverity::Error,
@@ -719,7 +720,8 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 ),
                 format!(
                     "LLVM module is invalid: {}\nModule dump:\n{}",
-                    unescape(err.to_str().unwrap()),
+                    unescape(err.to_str().unwrap(), QuoteType::Double)
+                        .unwrap_or_else(|_| err.to_str().unwrap().to_string()),
                     self.module.print_to_string().to_str().unwrap()
                 ),
                 ErrorSeverity::Error,
@@ -1685,6 +1687,11 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     ))?,
                 }
             }
+            LiteralKind::Char(value) => RuntimeValueIR::UnsignedInt(
+                self.runtime_type_to_llvm(rt_type, &literal_clone)?
+                    .into_int_type()
+                    .const_int(*value as u64, false),
+            ),
             LiteralKind::Float(value) => RuntimeValueIR::Float(
                 self.runtime_type_to_llvm(rt_type, &literal_clone)?
                     .into_float_type()
