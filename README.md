@@ -17,7 +17,6 @@
 ## TODOs
 
 ### Priority
-- char literals
 - structs
 - if expressions
 - track definitions and references of variables
