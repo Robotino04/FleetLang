@@ -155,12 +155,13 @@ fn main() {
         if cli.dump.is_empty() {
             if cli.format {
                 let output_file_name = output_file_name.clone();
-                pm.insert_params::<SingleFunctionPass<_, _>>(|dm: &DocumentElement| {
-                    std::fs::write(
-                        output_file_name,
-                        stringify_document(fully_flatten_document(dm.clone())),
-                    )
-                    .unwrap();
+                let src = src.clone();
+                pm.insert_params::<SingleFunctionPass<_, _>>(move |dm: &DocumentElement| {
+                    let formatted = stringify_document(fully_flatten_document(dm.clone()));
+                    std::fs::write(output_file_name, &formatted).unwrap();
+                    if formatted != src {
+                        exit(1)
+                    }
                     Ok(())
                 });
             } else {
