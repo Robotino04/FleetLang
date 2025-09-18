@@ -1,8 +1,8 @@
-use core::panic;
+use itertools::Itertools;
 
 use crate::passes::union_find_set::{UnionFindSet, UnionFindSetMergeResult, UnionFindSetPtr};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeType {
     Number {
         signed: Option<bool>,
@@ -29,16 +29,16 @@ pub enum RuntimeType {
 }
 
 impl RuntimeType {
-    pub fn unwrap_arrayof(self, types: &UnionFindSet<RuntimeType>) -> (RuntimeType, Option<usize>) {
+    pub fn unwrap_arrayof(&self) -> (UnionFindSetPtr<RuntimeType>, Option<usize>) {
         if let Self::ArrayOf { subtype, size } = self {
-            (*types.get(subtype), size)
+            (*subtype, *size)
         } else {
             panic!("Expected RuntimeType::ArrayOf, but got {self:?}");
         }
     }
 
     pub fn stringify(&self, types: &UnionFindSet<RuntimeType>) -> String {
-        match *self {
+        match self {
             RuntimeType::Number { signed, integer } => format!(
                 "{{{}{}}}",
                 match signed {
@@ -69,11 +69,11 @@ impl RuntimeType {
             RuntimeType::ArrayOf {
                 subtype,
                 size: None,
-            } => format!("{}[]", types.get(subtype).stringify(types)),
+            } => format!("{}[]", types.get(*subtype).stringify(types)),
             RuntimeType::ArrayOf {
                 subtype,
                 size: Some(size),
-            } => format!("{}[{}]", types.get(subtype).stringify(types), size),
+            } => format!("{}[{}]", types.get(*subtype).stringify(types), size),
         }
     }
     pub fn could_be_float(&self) -> bool {

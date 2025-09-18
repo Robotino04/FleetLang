@@ -177,7 +177,7 @@ impl<'a> TypePropagator<'a> {
             actual_type.specialize_number_size();
 
             // release the borrow
-            let actual_type = *actual_type;
+            let actual_type = actual_type.clone();
 
             // TODO: once we track variable definitions, use that here
             if let RuntimeType::Unknown | RuntimeType::Number { .. } = actual_type {
@@ -529,7 +529,7 @@ impl AstVisitor for TypePropagator<'_> {
             condition,
             "if condition",
             "of type bool",
-            *self.type_sets.get(cond_type),
+            self.type_sets.get(cond_type).clone(),
         );
 
         self.visit_statement(if_body);
@@ -540,7 +540,7 @@ impl AstVisitor for TypePropagator<'_> {
                 elif_condition,
                 "elif condition",
                 "of type bool",
-                *self.type_sets.get(elif_type),
+                self.type_sets.get(elif_type).clone(),
             );
 
             self.visit_statement(elif_body);
@@ -566,7 +566,7 @@ impl AstVisitor for TypePropagator<'_> {
             condition,
             "while condition",
             "of type bool",
-            *self.type_sets.get(cond_type),
+            self.type_sets.get(cond_type).clone(),
         );
         self.visit_statement(body);
     }
@@ -594,7 +594,7 @@ impl AstVisitor for TypePropagator<'_> {
                 con,
                 "for condition",
                 "of type bool",
-                *self.type_sets.get(cond_type),
+                self.type_sets.get(cond_type).clone(),
             );
         }
         if let Some(inc) = incrementer {
@@ -651,7 +651,7 @@ impl AstVisitor for TypePropagator<'_> {
             index,
             "thread index",
             "numeric",
-            *self.type_sets.get(index_type),
+            self.type_sets.get(index_type).clone(),
         );
     }
 
@@ -675,7 +675,7 @@ impl AstVisitor for TypePropagator<'_> {
             gpu_index,
             "gpu index",
             "numeric",
-            *self.type_sets.get(index_type),
+            self.type_sets.get(index_type).clone(),
         );
     }
 
@@ -1115,8 +1115,6 @@ impl AstVisitor for TypePropagator<'_> {
         let from_ptr = self.visit_expression(operand);
         let to_ptr = self.visit_type(type_);
 
-        let from = *self.type_sets.get(from_ptr);
-        let to = *self.type_sets.get(to_ptr);
         use RuntimeType::*;
         enum CastResult {
             Possible,
@@ -1124,15 +1122,15 @@ impl AstVisitor for TypePropagator<'_> {
             Impossible,
         }
         fn perform_cast(
-            from: RuntimeType,
-            to: RuntimeType,
             expression_clone: CastExpression,
             from_ptr: UnionFindSetPtr<RuntimeType>,
             to_ptr: UnionFindSetPtr<RuntimeType>,
             self_errors: &mut Vec<FleetError>,
             types: &mut UnionFindSet<RuntimeType>,
         ) -> CastResult {
-            match (from, to) {
+            let from_clone = types.get(from_ptr).clone();
+            let to_clone = types.get(to_ptr).clone();
+            match (&from_clone, &to_clone) {
                 (_, Error) | (Error, _) => CastResult::Possible,
 
                 (I8, I8)
@@ -1149,7 +1147,10 @@ impl AstVisitor for TypePropagator<'_> {
                 | (Unit, Unit) => {
                     self_errors.push(FleetError::from_node(
                         &expression_clone,
-                        format!("Casting {} to itself is redundant", from.stringify(types)),
+                        format!(
+                            "Casting {} to itself is redundant",
+                            from_clone.stringify(types)
+                        ),
                         ErrorSeverity::Warning,
                     ));
                     CastResult::Redundant
@@ -1181,18 +1182,16 @@ impl AstVisitor for TypePropagator<'_> {
                 }
                 (
                     ArrayOf {
-                        subtype: a,
+                        subtype: _,
                         size: a_size,
                     },
                     ArrayOf {
-                        subtype: b,
+                        subtype: _,
                         size: b_size,
                     },
                 ) if a_size == b_size || a_size.is_none() || b_size.is_none() => {
                     let _ = RuntimeType::merge_types(from_ptr, to_ptr, types);
                     let res = perform_cast(
-                        *types.get(a),
-                        *types.get(b),
                         expression_clone.clone(),
                         from_ptr,
                         to_ptr,
@@ -1207,8 +1206,8 @@ impl AstVisitor for TypePropagator<'_> {
                                 format!(
                                     "Casting array of type {} to array of type {} is \
                                     redundant because the element types are equal",
-                                    from.stringify(types),
-                                    to.stringify(types)
+                                    from_clone.stringify(types),
+                                    to_clone.stringify(types)
                                 ),
                                 ErrorSeverity::Warning,
                             ));
@@ -1220,8 +1219,8 @@ impl AstVisitor for TypePropagator<'_> {
                                 format!(
                                     "Casting array of type {} to array of type {} is \
                                     impossible because the element types can't be cast",
-                                    from.stringify(types),
-                                    to.stringify(types)
+                                    from_clone.stringify(types),
+                                    to_clone.stringify(types)
                                 ),
                                 ErrorSeverity::Error,
                             ));
@@ -1265,8 +1264,8 @@ impl AstVisitor for TypePropagator<'_> {
                         &expression_clone,
                         format!(
                             "Casting non-array of type {} to array of type {} is impossible",
-                            from.stringify(types),
-                            to.stringify(types)
+                            from_clone.stringify(types),
+                            to_clone.stringify(types)
                         ),
                         ErrorSeverity::Error,
                     ));
@@ -1283,8 +1282,8 @@ impl AstVisitor for TypePropagator<'_> {
                         &expression_clone,
                         format!(
                             "Casting array of type {} to non-array of type {} is impossible",
-                            from.stringify(types),
-                            to.stringify(types)
+                            from_clone.stringify(types),
+                            to_clone.stringify(types)
                         ),
                         ErrorSeverity::Error,
                     ));
@@ -1296,8 +1295,8 @@ impl AstVisitor for TypePropagator<'_> {
                             &expression_clone,
                             format!(
                                 "Casting value of type {} to value of type {} is impossible",
-                                from.stringify(types),
-                                to.stringify(types)
+                                from_clone.stringify(types),
+                                to_clone.stringify(types)
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -1306,8 +1305,8 @@ impl AstVisitor for TypePropagator<'_> {
                         &expression_clone,
                         format!(
                             "Casting value of type {} to value of type {} is redundant",
-                            from.stringify(types),
-                            to.stringify(types)
+                            from_clone.stringify(types),
+                            to_clone.stringify(types)
                         ),
                         ErrorSeverity::Warning,
                     ));
@@ -1320,8 +1319,8 @@ impl AstVisitor for TypePropagator<'_> {
                             &expression_clone,
                             format!(
                                 "Casting value of type {} to value of type {} is impossible",
-                                from.stringify(types),
-                                to.stringify(types)
+                                from_clone.stringify(types),
+                                to_clone.stringify(types)
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -1331,8 +1330,6 @@ impl AstVisitor for TypePropagator<'_> {
             }
         }
         perform_cast(
-            from,
-            to,
             expression_clone,
             from_ptr,
             to_ptr,
@@ -1642,7 +1639,7 @@ impl AstVisitor for TypePropagator<'_> {
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
         }
-        let t = self.type_sets.insert_set(*type_);
+        let t = self.type_sets.insert_set(type_.clone());
         self.node_types.insert(*id, t);
         t
     }

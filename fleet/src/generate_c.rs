@@ -27,6 +27,7 @@ use crate::{
         runtime_type::RuntimeType,
         scope_analysis::Function,
         top_level_binding_finder::TopLevelBindingFinder,
+        union_find_set::UnionFindSetPtr,
     },
 };
 
@@ -45,7 +46,7 @@ pub struct CCodeGenerator<'state> {
     scope_data: Ref<'state, ScopeData>,
     glsl_functions: Ref<'state, PrecompiledGlslFunctions>,
 
-    temporary_counter: u64,
+    temporary_counter: RefCell<u64>,
 }
 
 impl PassFactory for CCodeGenerator<'_> {
@@ -88,7 +89,7 @@ impl PassFactory for CCodeGenerator<'_> {
             scope_data: scope_data.get(state),
             glsl_functions: glsl_functions.get(state),
 
-            temporary_counter: 0,
+            temporary_counter: RefCell::new(0),
         })
     }
 }
@@ -115,7 +116,7 @@ impl Pass for CCodeGenerator<'_> {
 }
 
 impl CCodeGenerator<'_> {
-    fn runtime_type_to_c(&self, type_: RuntimeType) -> (String, String) {
+    fn runtime_type_to_c_impl(&self, type_: &RuntimeType) -> (String, String) {
         match type_ {
             RuntimeType::I8 => ("int8_t".to_string(), "".to_string()),
             RuntimeType::I16 => ("int16_t".to_string(), "".to_string()),
@@ -141,7 +142,7 @@ impl CCodeGenerator<'_> {
                 unreachable!("unknown types should have caused errors before calling c_generator")
             }
             RuntimeType::ArrayOf { subtype, size } => {
-                let (type_, after_id) = self.runtime_type_to_c(*self.type_sets.get(subtype));
+                let (type_, after_id) = self.runtime_type_to_c(*subtype);
                 let Some(size) = size else {
                     unreachable!("arrays should all have a size before calling c_generator");
                 };
@@ -149,7 +150,10 @@ impl CCodeGenerator<'_> {
             }
         }
     }
-    fn runtime_type_to_byte_size(&self, type_: RuntimeType) -> usize {
+    fn runtime_type_to_c(&self, type_: UnionFindSetPtr<RuntimeType>) -> (String, String) {
+        self.runtime_type_to_c_impl(self.type_sets.get(type_))
+    }
+    fn runtime_type_to_byte_size_impl(&self, type_: &RuntimeType) -> usize {
         match type_ {
             RuntimeType::I8 | RuntimeType::U8 => 1,
             RuntimeType::I16 | RuntimeType::U16 => 2,
@@ -171,11 +175,14 @@ impl CCodeGenerator<'_> {
                 unreachable!("unknown types should have caused errors before calling c_generator")
             }
             RuntimeType::ArrayOf { subtype, size } => {
-                let subtype_size = self.runtime_type_to_byte_size(*self.type_sets.get(subtype));
+                let subtype_size = self.runtime_type_to_byte_size(*subtype);
                 let size = size.expect("arrays should all have a size before calling c_generator");
                 size * subtype_size
             }
         }
+    }
+    fn runtime_type_to_byte_size(&self, type_: UnionFindSetPtr<RuntimeType>) -> usize {
+        self.runtime_type_to_byte_size_impl(self.type_sets.get(type_))
     }
 
     fn generate_function_declaration(&self, function: &Function, mangle: bool) -> String {
@@ -185,13 +192,12 @@ impl CCodeGenerator<'_> {
             .unwrap()
             .iter()
             .map(|(param, name)| {
-                let (type_, after_id) = self.runtime_type_to_c(*self.type_sets.get(*param));
+                let (type_, after_id) = self.runtime_type_to_c(*param);
                 type_ + " " + &self.mangle_variable(name) + &after_id
             })
             .join(", ");
 
-        let (type_, after_id) =
-            self.runtime_type_to_c(*self.type_sets.get(function.return_type.unwrap()));
+        let (type_, after_id) = self.runtime_type_to_c(function.return_type.unwrap());
         type_
             + &after_id
             + " "
@@ -216,9 +222,9 @@ impl CCodeGenerator<'_> {
     fn mangle_function(&self, name: &str) -> String {
         format!("fleet_{name}")
     }
-    fn unique_temporary(&mut self, name: &str) -> String {
-        let count = self.temporary_counter;
-        self.temporary_counter += 1;
+    fn unique_temporary(&self, name: &str) -> String {
+        let count = *self.temporary_counter.borrow();
+        *self.temporary_counter.borrow_mut() += 1;
         format!("temporary_{name}_{count}")
     }
 }
@@ -392,12 +398,10 @@ impl AstVisitor for CCodeGenerator<'_> {
             id,
         }: &mut SimpleBinding,
     ) -> Self::SimpleBindingOutput {
-        let inferred_type = *self.type_sets.get(
-            *self
-                .type_data
-                .get(id)
-                .expect("Bindings should have types before calling c_generator"),
-        );
+        let inferred_type = *self
+            .type_data
+            .get(id)
+            .expect("Bindings should have types before calling c_generator");
 
         let (type_, after_id) = self.runtime_type_to_c(inferred_type);
 
@@ -465,7 +469,6 @@ impl AstVisitor for CCodeGenerator<'_> {
         let mut bindings = GLSLCodeGenerator::get_on_statement_bindings(
             &self.variable_data,
             &self.scope_data,
-            &self.type_sets,
             &self.type_data,
             bindings,
             iterators
@@ -536,7 +539,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             })
             .chain(Some((
                 iterator_size_buffer,
-                iterator_end_values.len() * self.runtime_type_to_byte_size(RuntimeType::I32),
+                iterator_end_values.len() * self.runtime_type_to_byte_size_impl(&RuntimeType::I32),
             )))
             .collect_vec()
             .into_iter()
@@ -729,12 +732,12 @@ impl AstVisitor for CCodeGenerator<'_> {
             .expect("var data must exist before calling c_generator")
             .clone();
 
-        let type_ = *self.type_sets.get(ref_var.borrow().type_.unwrap());
+        let type_ = ref_var.borrow().type_.unwrap();
 
         if let RuntimeType::ArrayOf {
             subtype: _,
             size: _,
-        } = type_
+        } = self.type_sets.get(type_)
         {
             let num_bytes = self.runtime_type_to_byte_size(type_);
 
@@ -1000,21 +1003,18 @@ impl AstVisitor for CCodeGenerator<'_> {
             id,
         }: &mut ArrayExpression,
     ) -> Self::ExpressionOutput {
-        let inferred_type = *self.type_sets.get(
-            *self
-                .type_data
-                .get(id)
-                .expect("Array expressions should have types before calling c_generator"),
-        );
+        let inferred_type = *self
+            .type_data
+            .get(id)
+            .expect("Array expressions should have types before calling c_generator");
 
         let (type_, after_id) = self.runtime_type_to_c(inferred_type);
 
-        let RuntimeType::ArrayOf { subtype, size: _ } = inferred_type else {
+        let RuntimeType::ArrayOf { subtype, size: _ } = *self.type_sets.get(inferred_type) else {
             unreachable!("array expressions must have type ArrayOf(_)")
         };
 
         if let RuntimeType::ArrayOf { .. } = self.type_sets.get(subtype) {
-            let mut subtype = *self.type_sets.get(subtype);
             let (pre_statements, definitions, mut temporaries): (Vec<_>, Vec<_>, Vec<_>) = elements
                 .iter_mut()
                 .map(|(element, _comma)| {
@@ -1033,12 +1033,14 @@ impl AstVisitor for CCodeGenerator<'_> {
                 })
                 .multiunzip();
 
+            let mut subtype = subtype;
+
             while let RuntimeType::ArrayOf {
                 subtype: next_subtype,
                 size,
-            } = subtype
+            } = self.type_sets.get(subtype)
             {
-                subtype = *self.type_sets.get(next_subtype);
+                subtype = *next_subtype;
                 let size =
                     size.expect("arrays must have their size set before calling c_generator");
                 temporaries = temporaries
@@ -1153,13 +1155,13 @@ impl AstVisitor for CCodeGenerator<'_> {
 
         match name.as_str() {
             "zero" => {
-                let expected_type = *self.type_sets.get(
-                    *self
-                        .type_data
-                        .get(id)
-                        .expect("type data must exist before calling c_generator"),
-                );
+                let expected_type = *self
+                    .type_data
+                    .get(id)
+                    .expect("type data must exist before calling c_generator");
                 let (type_, after_id) = self.runtime_type_to_c(expected_type);
+
+                let expected_type = self.type_sets.get(expected_type);
 
                 if expected_type.is_numeric() {
                     PreStatementValue {
@@ -1173,7 +1175,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                     }
                 } else if let RuntimeType::ArrayOf { .. } = expected_type {
                     let tmp = self.unique_temporary("zero");
-                    let size = self.runtime_type_to_byte_size(expected_type);
+                    let size = self.runtime_type_to_byte_size_impl(expected_type);
                     PreStatementValue {
                         pre_statements: formatdoc!(
                             "
@@ -1347,12 +1349,10 @@ impl AstVisitor for CCodeGenerator<'_> {
         }: &mut CastExpression,
     ) -> Self::ExpressionOutput {
         let (type_, after_id) = self.runtime_type_to_c(
-            *self.type_sets.get(
-                *self
-                    .type_data
-                    .get(id)
-                    .expect("types should be inferred before calling c_generator"),
-            ),
+            *self
+                .type_data
+                .get(id)
+                .expect("types should be inferred before calling c_generator"),
         );
 
         let PreStatementValue {
@@ -1453,16 +1453,14 @@ impl AstVisitor for CCodeGenerator<'_> {
             id,
         }: &mut VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
-        let type_ = *self.type_sets.get(
-            *self
-                .type_data
-                .get(id)
-                .expect("Types must exist before calling c_generator"),
-        );
+        let type_ = *self
+            .type_data
+            .get(id)
+            .expect("Types must exist before calling c_generator");
         if let RuntimeType::ArrayOf {
             subtype: _,
             size: _,
-        } = type_
+        } = self.type_sets.get(type_)
         {
             let num_bytes = self.runtime_type_to_byte_size(type_);
 
@@ -1592,12 +1590,10 @@ impl AstVisitor for CCodeGenerator<'_> {
         }: &mut SimpleType,
     ) -> Self::TypeOutput {
         let (type_, after_id) = self.runtime_type_to_c(
-            *self.type_sets.get(
-                *self
-                    .type_data
-                    .get(id)
-                    .expect("type data should exist before calling c_generator"),
-            ),
+            *self
+                .type_data
+                .get(id)
+                .expect("type data should exist before calling c_generator"),
         );
         type_ + &after_id
     }
@@ -1611,24 +1607,20 @@ impl AstVisitor for CCodeGenerator<'_> {
         }: &mut UnitType,
     ) -> Self::TypeOutput {
         let (type_, after_id) = self.runtime_type_to_c(
-            *self.type_sets.get(
-                *self
-                    .type_data
-                    .get(id)
-                    .expect("type data should exist before calling c_generator"),
-            ),
+            *self
+                .type_data
+                .get(id)
+                .expect("type data should exist before calling c_generator"),
         );
         type_ + &after_id
     }
 
     fn visit_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> Self::TypeOutput {
         let (type_, after_id) = self.runtime_type_to_c(
-            *self.type_sets.get(
-                *self
-                    .type_data
-                    .get(id)
-                    .expect("type data should exist before calling c_generator"),
-            ),
+            *self
+                .type_data
+                .get(id)
+                .expect("type data should exist before calling c_generator"),
         );
         type_ + &after_id
     }
@@ -1644,12 +1636,10 @@ impl AstVisitor for CCodeGenerator<'_> {
         }: &mut ArrayType,
     ) -> Self::TypeOutput {
         let (type_, after_id) = self.runtime_type_to_c(
-            *self.type_sets.get(
-                *self
-                    .type_data
-                    .get(id)
-                    .expect("type data should exist before calling c_generator"),
-            ),
+            *self
+                .type_data
+                .get(id)
+                .expect("type data should exist before calling c_generator"),
         );
         type_ + &after_id
     }
