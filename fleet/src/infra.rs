@@ -12,7 +12,7 @@ use crate::{
         err_missing_type_in_parameter::ErrMissingTypeInParam,
         err_too_few_iterators::ErrTooFewIterators,
         find_node_bounds::find_node_bounds,
-        first_token_of_node::first_token_of_node,
+        first_token_mapper::FirstTokenMapper,
         fix_non_block_statements::FixNonBlockStatements,
         fix_trailing_comma::FixTrailingComma,
         lvalue_reducer::LValueReducer,
@@ -95,13 +95,16 @@ impl FleetError {
         msg: impl ToString,
         severity: ErrorSeverity,
     ) -> Self {
+        let mut filename_mapper = FirstTokenMapper::new(|token| token.file_name.clone());
+        node.clone().into().visit(&mut filename_mapper);
+
         Self {
             highlight_groups: vec![find_node_bounds(node)],
             message: msg.to_string(),
             severity,
-            file_name: first_token_of_node(node)
-                .expect("Cannot create FleetError from empty node")
-                .file_name,
+            file_name: filename_mapper
+                .result()
+                .expect("Cannot create FleetError from empty node"),
         }
     }
 

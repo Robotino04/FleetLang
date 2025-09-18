@@ -21,7 +21,7 @@ use crate::{
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
-        first_token_of_node::first_token_of_node,
+        first_token_mapper::FirstTokenMapper,
         pass_manager::{
             Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, StatData, TypeSets,
             VariableData,
@@ -370,7 +370,7 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         body: &mut StatementFunctionBody,
     ) -> Self::FunctionBodyOutput {
-        let body_clone = body.clone();
+        let mut body_clone = body.clone();
         let StatementFunctionBody { statement, id } = body;
         let stat = self.visit_statement(statement);
 
@@ -390,14 +390,17 @@ impl AstVisitor for StatTracker<'_> {
                 .get(current_function.borrow().return_type.unwrap())
                 != RuntimeType::Unit
             {
+                let mut filename_mapper = FirstTokenMapper::new(|token| token.file_name.clone());
+                filename_mapper.visit_statement_function_body(&mut body_clone);
+
                 self.errors.push({
                     FleetError::try_new(
                         stat.non_terminating_ranges.clone(),
                         "All code paths must return.",
                         ErrorSeverity::Error,
-                        first_token_of_node(&body_clone)
-                            .expect("Cannot create FleetError from empty node")
-                            .file_name,
+                        filename_mapper
+                            .result()
+                            .expect("Cannot create FleetError from empty node"),
                     )
                     .unwrap()
                 });
@@ -547,10 +550,11 @@ impl AstVisitor for StatTracker<'_> {
                     unreachable_range =
                         Some((prev_range.extend_with(find_node_bounds(stmt)), file_name));
                 } else {
-                    unreachable_range = Some((
-                        find_node_bounds(stmt),
-                        first_token_of_node(stmt).unwrap().file_name,
-                    ));
+                    let mut filename_mapper =
+                        FirstTokenMapper::new(|token| token.file_name.clone());
+                    filename_mapper.visit_statement(stmt);
+                    unreachable_range =
+                        Some((find_node_bounds(stmt), filename_mapper.result().unwrap()));
                 }
             }
             body_stat = body_stat.serial(self.visit_statement(stmt));

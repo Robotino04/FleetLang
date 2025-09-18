@@ -2,10 +2,13 @@ use std::cell::RefMut;
 
 use crate::{
     ast::{ArrayExpression, AstVisitor, FunctionCallExpression, Program},
-    passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+    passes::{
+        last_token_mapper::LastTokenMapper,
+        pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+    },
 };
 
-use super::{add_trailing_trivia_pass::AddTrailingTriviaPass, partial_visitor::PartialAstVisitor};
+use super::partial_visitor::PartialAstVisitor;
 
 pub struct FixTrailingComma<'state> {
     program: Option<RefMut<'state, Program>>,
@@ -49,9 +52,12 @@ impl PartialAstVisitor for FixTrailingComma<'_> {
         }
 
         if let Some((arg, comma)) = arguments.last_mut() {
-            if let Some(mut token) = comma.clone() {
-                token.leading_trivia.append(&mut token.trailing_trivia);
-                AddTrailingTriviaPass::new(token.leading_trivia).visit_expression(arg);
+            if let Some(mut comma) = comma.clone() {
+                LastTokenMapper::new(|token| {
+                    token.trailing_trivia.append(&mut comma.leading_trivia);
+                    token.trailing_trivia.append(&mut comma.trailing_trivia);
+                })
+                .visit_expression(arg);
             }
             *comma = None;
         }
@@ -70,9 +76,12 @@ impl PartialAstVisitor for FixTrailingComma<'_> {
         }
 
         if let Some((item, comma)) = elements.last_mut() {
-            if let Some(mut token) = comma.clone() {
-                token.leading_trivia.append(&mut token.trailing_trivia);
-                AddTrailingTriviaPass::new(token.leading_trivia).visit_expression(item);
+            if let Some(mut comma) = comma.clone() {
+                LastTokenMapper::new(|token| {
+                    token.trailing_trivia.append(&mut comma.leading_trivia);
+                    token.trailing_trivia.append(&mut comma.trailing_trivia);
+                })
+                .visit_expression(item);
             }
             *comma = None;
         }

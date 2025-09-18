@@ -1,3 +1,5 @@
+use either::Either;
+
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
@@ -9,27 +11,46 @@ use crate::{
         UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
-    tokenizer::{Token, Trivia},
+    tokenizer::Token,
 };
 
-pub struct AddLeadingTriviaPass {
-    new_trivia: Vec<Trivia>,
+type Callback<'a, R> = Box<dyn FnOnce(&mut Token) -> R + 'a>;
+
+pub struct FirstTokenMapper<'slf, R> {
+    callback: Either<Callback<'slf, R>, R>,
 }
 
-impl AddLeadingTriviaPass {
-    pub fn new(new_trivia: Vec<Trivia>) -> Self {
-        Self { new_trivia }
+impl<'slf, R> FirstTokenMapper<'slf, R> {
+    pub fn new(callback: impl FnOnce(&mut Token) -> R + 'slf) -> Self {
+        Self {
+            callback: Either::Left(Box::new(callback)),
+        }
     }
 
     pub fn visit_token(&mut self, token: &mut Token) {
-        self.new_trivia.extend(token.leading_trivia.clone());
-        token.leading_trivia = self.new_trivia.clone();
-        self.new_trivia.clear();
+        let callback = std::mem::replace(
+            &mut self.callback,
+            Either::Left(Box::new(|_| {
+                unreachable!("Callback result wasn't placed back after visiting")
+            })),
+        );
+
+        self.callback = match callback {
+            Either::Left(callback_fn) => {
+                let result = callback_fn(token);
+                Either::Right(result)
+            }
+            Either::Right(value) => Either::Right(value),
+        };
+    }
+
+    pub fn result(self) -> Option<R> {
+        self.callback.right()
     }
 }
 
-impl AstVisitor for AddLeadingTriviaPass {
-    type ProgramOutput = ();
+impl<R> AstVisitor for FirstTokenMapper<'_, R> {
+    type ProgramOutput = Option<R>;
     type TopLevelOutput = ();
     type FunctionBodyOutput = ();
     type SimpleBindingOutput = ();
@@ -40,10 +61,12 @@ impl AstVisitor for AddLeadingTriviaPass {
     type LValueOutput = ();
     type TypeOutput = ();
 
-    fn visit_program(mut self, program: &mut Program) {
+    fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
         if let Some(tls) = program.top_level_statements.first_mut() {
             self.visit_top_level_statement(tls);
         }
+
+        self.callback.right()
     }
 
     fn visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {

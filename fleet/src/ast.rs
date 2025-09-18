@@ -57,6 +57,121 @@ pub enum AstNode {
     ArrayType(ArrayType),
 }
 
+impl AstNode {
+    pub fn visit(&mut self, visitor: &mut impl AstVisitor) {
+        match self {
+            AstNode::Program(_program) => {
+                unimplemented!("AstNode::visit isn't implemented for AstNode::Program")
+            }
+            AstNode::FunctionDefinition(function_definition) => {
+                visitor.visit_function_definition(function_definition);
+            }
+            AstNode::ExternFunctionBody(extern_function_body) => {
+                visitor.visit_extern_function_body(extern_function_body);
+            }
+            AstNode::StatementFunctionBody(statement_function_body) => {
+                visitor.visit_statement_function_body(statement_function_body);
+            }
+            AstNode::SimpleBinding(simple_binding) => {
+                visitor.visit_simple_binding(simple_binding);
+            }
+            AstNode::ExpressionStatement(expression_statement) => {
+                visitor.visit_expression_statement(expression_statement);
+            }
+            AstNode::OnStatement(on_statement) => {
+                visitor.visit_on_statement(on_statement);
+            }
+            AstNode::BlockStatement(block_statement) => {
+                visitor.visit_block_statement(block_statement);
+            }
+            AstNode::ReturnStatement(return_statement) => {
+                visitor.visit_return_statement(return_statement);
+            }
+            AstNode::VariableDefinitionStatement(variable_definition_statement) => {
+                visitor.visit_variable_definition_statement(variable_definition_statement);
+            }
+            AstNode::IfStatement(if_statement) => {
+                visitor.visit_if_statement(if_statement);
+            }
+            AstNode::WhileLoopStatement(while_loop_statement) => {
+                visitor.visit_while_loop_statement(while_loop_statement);
+            }
+            AstNode::ForLoopStatement(for_loop_statement) => {
+                visitor.visit_for_loop_statement(for_loop_statement);
+            }
+            AstNode::BreakStatement(break_statement) => {
+                visitor.visit_break_statement(break_statement);
+            }
+            AstNode::SkipStatement(skip_statement) => {
+                visitor.visit_skip_statement(skip_statement);
+            }
+            AstNode::SelfExecutorHost(self_executor_host) => {
+                visitor.visit_self_executor_host(self_executor_host);
+            }
+            AstNode::ThreadExecutor(thread_executor) => {
+                visitor.visit_thread_executor(thread_executor);
+            }
+            AstNode::GPUExecutor(gpuexecutor) => {
+                visitor.visit_gpu_executor(gpuexecutor);
+            }
+            AstNode::LiteralExpression(literal_expression) => {
+                visitor.visit_literal_expression(literal_expression);
+            }
+            AstNode::ArrayExpression(array_expression) => {
+                visitor.visit_array_expression(array_expression);
+            }
+            AstNode::FunctionCallExpression(function_call_expression) => {
+                visitor.visit_function_call_expression(function_call_expression);
+            }
+            AstNode::CompilerExpression(compiler_expression) => {
+                visitor.visit_compiler_expression(compiler_expression);
+            }
+            AstNode::ArrayIndexExpression(array_index_expression) => {
+                visitor.visit_array_index_expression(array_index_expression);
+            }
+            AstNode::GroupingExpression(grouping_expression) => {
+                visitor.visit_grouping_expression(grouping_expression);
+            }
+            AstNode::VariableAccessExpression(variable_access_expression) => {
+                visitor.visit_variable_access_expression(variable_access_expression);
+            }
+            AstNode::UnaryExpression(unary_expression) => {
+                visitor.visit_unary_expression(unary_expression);
+            }
+            AstNode::CastExpression(cast_expression) => {
+                visitor.visit_cast_expression(cast_expression);
+            }
+            AstNode::BinaryExpression(binary_expression) => {
+                visitor.visit_binary_expression(binary_expression);
+            }
+            AstNode::VariableAssignmentExpression(variable_assignment_expression) => {
+                visitor.visit_variable_assignment_expression(variable_assignment_expression);
+            }
+            AstNode::VariableLValue(variable_lvalue) => {
+                visitor.visit_variable_lvalue(variable_lvalue);
+            }
+            AstNode::ArrayIndexLValue(array_index_lvalue) => {
+                visitor.visit_array_index_lvalue(array_index_lvalue);
+            }
+            AstNode::GroupingLValue(grouping_lvalue) => {
+                visitor.visit_grouping_lvalue(grouping_lvalue);
+            }
+            AstNode::SimpleType(simple_type) => {
+                visitor.visit_simple_type(simple_type);
+            }
+            AstNode::UnitType(unit_type) => {
+                visitor.visit_unit_type(unit_type);
+            }
+            AstNode::IdkType(idk_type) => {
+                visitor.visit_idk_type(idk_type);
+            }
+            AstNode::ArrayType(array_type) => {
+                visitor.visit_array_type(array_type);
+            }
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct NodeID(pub u64);
 

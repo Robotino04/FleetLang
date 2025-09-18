@@ -1,12 +1,11 @@
-pub mod add_leading_trivia_pass;
-pub mod add_trailing_trivia_pass;
 pub mod err_missing_type_in_parameter;
 pub mod err_too_few_iterators;
 pub mod find_containing_node;
 pub mod find_node_bounds;
-pub mod first_token_of_node;
+pub mod first_token_mapper;
 pub mod fix_non_block_statements;
 pub mod fix_trailing_comma;
+pub mod last_token_mapper;
 pub mod lvalue_reducer;
 pub mod partial_visitor;
 pub mod pass_manager;

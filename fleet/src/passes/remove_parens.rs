@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    add_leading_trivia_pass::AddLeadingTriviaPass, add_trailing_trivia_pass::AddTrailingTriviaPass,
+    first_token_mapper::FirstTokenMapper, last_token_mapper::LastTokenMapper,
     partial_visitor::PartialAstVisitor,
 };
 
@@ -204,12 +204,12 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                     subexpression.get_precedence(),
                     subexpression.get_associativity(),
                 ) {
-                    let leading_trivia = [
+                    let mut leading_trivia = [
                         open_paren_token.leading_trivia.clone(),
                         open_paren_token.trailing_trivia.clone(),
                     ]
                     .concat();
-                    let trailing_trivia = [
+                    let mut trailing_trivia = [
                         close_paren_token.leading_trivia.clone(),
                         close_paren_token.trailing_trivia.clone(),
                     ]
@@ -225,10 +225,14 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                         .unwrap()
                     });
 
-                    let mut leading_pass = AddLeadingTriviaPass::new(leading_trivia);
-                    leading_pass.visit_expression(&mut *subexpression);
-                    let mut trailing_pass = AddTrailingTriviaPass::new(trailing_trivia);
-                    trailing_pass.visit_expression(&mut *subexpression);
+                    FirstTokenMapper::new(move |token| {
+                        token.leading_trivia.append(&mut leading_trivia)
+                    })
+                    .visit_expression(&mut *subexpression);
+                    LastTokenMapper::new(move |token| {
+                        token.trailing_trivia.append(&mut trailing_trivia)
+                    })
+                    .visit_expression(&mut *subexpression);
                     *expression = *subexpression.clone();
                 }
             }
@@ -359,12 +363,12 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                     sublvalue.get_precedence(),
                     sublvalue.get_associativity(),
                 ) {
-                    let leading_trivia = [
+                    let mut leading_trivia = [
                         open_paren_token.leading_trivia.clone(),
                         open_paren_token.trailing_trivia.clone(),
                     ]
                     .concat();
-                    let trailing_trivia = [
+                    let mut trailing_trivia = [
                         close_paren_token.leading_trivia.clone(),
                         close_paren_token.trailing_trivia.clone(),
                     ]
@@ -380,10 +384,14 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                         .unwrap()
                     });
 
-                    let mut leading_pass = AddLeadingTriviaPass::new(leading_trivia);
-                    leading_pass.visit_lvalue(&mut *sublvalue);
-                    let mut trailing_pass = AddTrailingTriviaPass::new(trailing_trivia);
-                    trailing_pass.visit_lvalue(&mut *sublvalue);
+                    FirstTokenMapper::new(move |token| {
+                        token.leading_trivia.append(&mut leading_trivia)
+                    })
+                    .visit_lvalue(&mut *sublvalue);
+                    LastTokenMapper::new(move |token| {
+                        token.trailing_trivia.append(&mut trailing_trivia)
+                    })
+                    .visit_lvalue(&mut *sublvalue);
                     *lvalue = *sublvalue.clone();
                 }
             }

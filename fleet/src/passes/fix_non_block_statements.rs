@@ -8,7 +8,7 @@ use crate::{
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
     passes::{
-        first_token_of_node::first_token_of_node,
+        first_token_mapper::FirstTokenMapper,
         pass_manager::{Errors, GlobalState, Pass, PassFactory, PassResult},
     },
     tokenizer::{Token, TokenType},
@@ -47,10 +47,12 @@ impl Pass for FixNonBlockStatements<'_> {
 }
 
 impl FixNonBlockStatements<'_> {
-    fn create_fake_block_arround(&mut self, node: &Statement) -> Statement {
+    fn create_fake_block_arround(&mut self, node: &mut Statement) -> Statement {
         let range = find_node_bounds(node);
 
-        let file_name = first_token_of_node(node).unwrap().file_name;
+        let mut find_pass = FirstTokenMapper::new(|token| token.file_name.clone());
+        find_pass.visit_statement(node);
+        let file_name = find_pass.result().unwrap();
 
         Statement::Block(BlockStatement {
             open_brace_token: Token {
@@ -113,7 +115,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                 ErrorSeverity::Note,
             ));
 
-            stmt_body.statement = self.create_fake_block_arround(&stmt_body.statement);
+            stmt_body.statement = self.create_fake_block_arround(&mut stmt_body.statement);
         }
 
         self.visit_function_body(body);
@@ -142,7 +144,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                 ErrorSeverity::Note,
             ));
 
-            **if_body = self.create_fake_block_arround(if_body);
+            **if_body = self.create_fake_block_arround(&mut *if_body);
         }
 
         self.visit_expression(condition);
@@ -180,7 +182,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                     ErrorSeverity::Note,
                 ));
 
-                **else_body = self.create_fake_block_arround(else_body);
+                **else_body = self.create_fake_block_arround(&mut *else_body);
             }
 
             self.visit_statement(else_body);
@@ -208,7 +210,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                 ErrorSeverity::Note,
             ));
 
-            **body = self.create_fake_block_arround(body);
+            **body = self.create_fake_block_arround(&mut *body);
         }
 
         self.visit_expression(condition);
@@ -241,7 +243,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                 ErrorSeverity::Note,
             ));
 
-            **body = self.create_fake_block_arround(body);
+            **body = self.create_fake_block_arround(&mut *body);
         }
 
         self.visit_statement(initializer);
