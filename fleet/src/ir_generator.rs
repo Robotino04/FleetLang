@@ -5,11 +5,25 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+use either::Either;
 use inkwell::{
-    basic_block::BasicBlock, builder::Builder, context::Context, memory_buffer::MemoryBuffer, module::{Linkage, Module}, passes::PassBuilderOptions, support::enable_llvm_pretty_stack_trace, targets::TargetMachine, types::{AnyType, AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType}, values::{
+    AddressSpace, FloatPredicate, IntPredicate,
+    basic_block::BasicBlock,
+    builder::Builder,
+    context::Context,
+    memory_buffer::MemoryBuffer,
+    module::{Linkage, Module},
+    passes::PassBuilderOptions,
+    support::enable_llvm_pretty_stack_trace,
+    targets::TargetMachine,
+    types::{
+        AnyType, AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType,
+        VoidType,
+    },
+    values::{
         BasicMetadataValueEnum, BasicValue, BasicValueEnum, FloatValue, FunctionValue, IntValue,
         PointerValue,
-    }, AddressSpace, FloatPredicate, IntPredicate
+    },
 };
 use itertools::Itertools;
 
@@ -64,28 +78,34 @@ impl DerefMut for VariableStorage<'_> {
     }
 }
 
-macro_rules! match_any_type_enum_as_basic_type {
-    ($enum_val:expr, $inner_var:pat => $code:block, function($func_id:pat) => $func:block, unit($unit_id:pat) => $unit:block) => {
-        match $enum_val {
-            AnyTypeEnum::ArrayType($inner_var) => $code,
-            AnyTypeEnum::FloatType($inner_var) => $code,
-            AnyTypeEnum::FunctionType($func_id) => $func,
-            AnyTypeEnum::IntType($inner_var) => $code,
-            AnyTypeEnum::PointerType($inner_var) => $code,
-            AnyTypeEnum::StructType($inner_var) => $code,
-            AnyTypeEnum::VectorType($inner_var) => $code,
-            AnyTypeEnum::VoidType($unit_id) => $unit,
-        }
-    };
+trait IntoBasicType<'b> {
+    fn into_basic_type<'a>(
+        self,
+    ) -> ::core::result::Result<BasicTypeEnum<'a>, Either<FunctionType<'a>, VoidType<'a>>>
+    where
+        Self: Sized,
+        'b: 'a;
 }
 
-fn any_type_to_basic_type<'a>(any: AnyTypeEnum<'a>) -> Option<BasicTypeEnum<'a>> {
-    match_any_type_enum_as_basic_type!(
-        any,
-        type_ => { Some(type_.into()) },
-        function(_) => { None },
-        unit(_) => { None }
-    )
+impl<'b> IntoBasicType<'b> for AnyTypeEnum<'b> {
+    fn into_basic_type<'a>(
+        self,
+    ) -> ::core::result::Result<BasicTypeEnum<'a>, Either<FunctionType<'a>, VoidType<'a>>>
+    where
+        Self: Sized,
+        'b: 'a,
+    {
+        Ok(match self {
+            AnyTypeEnum::ArrayType(array_type) => array_type.into(),
+            AnyTypeEnum::FloatType(float_type) => float_type.into(),
+            AnyTypeEnum::FunctionType(function_type) => return Err(Either::Left(function_type)),
+            AnyTypeEnum::IntType(int_type) => int_type.into(),
+            AnyTypeEnum::PointerType(pointer_type) => pointer_type.into(),
+            AnyTypeEnum::StructType(struct_type) => struct_type.into(),
+            AnyTypeEnum::VectorType(vector_type) => vector_type.into(),
+            AnyTypeEnum::VoidType(void_type) => return Err(Either::Right(void_type)),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -303,18 +323,11 @@ impl<'a> IrGenerator<'_> {
         param_types: &[BasicMetadataTypeEnum<'c>],
         is_var_args: bool,
     ) -> Result<FunctionType<'c>> {
-        match_any_type_enum_as_basic_type!(
-            type_,
-            type_ => {
-                Ok(type_.fn_type(param_types, is_var_args))
-            },
-            function(_) => {
-                Err("Tried to make a function type into a function type again".into())
-            },
-            unit(void_type) => {
-                Ok(void_type.fn_type(param_types, is_var_args))
-            }
-        )
+        match type_.into_basic_type() {
+            Ok(type_) => Ok(type_.fn_type(param_types, is_var_args)),
+            Err(Either::Left(_func)) => Err("Tried to make a function returning function".into()),
+            Err(Either::Right(void)) => Ok(void.fn_type(param_types, is_var_args)),
+        }
     }
 
     fn package_llvm_in_runtime_value<I: Into<AstNode> + Clone>(
@@ -407,26 +420,23 @@ impl<'a> IrGenerator<'_> {
                     ));
                 };
 
-                match_any_type_enum_as_basic_type!(
-                    inner_type_ir?,
-                    type_ => {
-                        type_.array_type(*size as u32).as_any_type_enum()
-                    },
-                    function(_) => {
+                match inner_type_ir?.into_basic_type() {
+                    Ok(type_) => type_.array_type(*size as u32).as_any_type_enum(),
+                    Err(Either::Left(_func)) => {
                         return Err(FleetError::from_node(
                             error_node,
                             "Cannot have array of functions",
                             ErrorSeverity::Error,
                         ));
-                    },
-                    unit(_) => {
+                    }
+                    Err(Either::Right(_void)) => {
                         return Err(FleetError::from_node(
                             error_node,
                             "Cannot have array of Unit",
                             ErrorSeverity::Error,
                         ));
                     }
-                )
+                }
             }
             RuntimeType::Struct {
                 members,
@@ -438,26 +448,30 @@ impl<'a> IrGenerator<'_> {
                         .clone()
                         .into_iter()
                         .map(|(_name, type_)| {
-                            Ok(match_any_type_enum_as_basic_type!(
-                                self.runtime_type_to_llvm_impl(self.type_sets.get(type_), error_node)?,
-                                type_ => {
-                                    type_.as_basic_type_enum()
+                            Ok(
+                                match (self.runtime_type_to_llvm_impl(
+                                    self.type_sets.get(type_),
+                                    error_node,
+                                )?)
+                                .into_basic_type()
+                                {
+                                    Ok(type_) => type_.as_basic_type_enum(),
+                                    Err(Either::Left(_)) => {
+                                        return Err(FleetError::from_node(
+                                            error_node,
+                                            "Cannot have struct containing function",
+                                            ErrorSeverity::Error,
+                                        ));
+                                    }
+                                    Err(Either::Right(_)) => {
+                                        return Err(FleetError::from_node(
+                                            error_node,
+                                            "Cannot have struct containing Unit",
+                                            ErrorSeverity::Error,
+                                        ));
+                                    }
                                 },
-                                function(_) => {
-                                    return Err(FleetError::from_node(
-                                        error_node,
-                                        "Cannot have struct containing function",
-                                        ErrorSeverity::Error,
-                                    ));
-                                },
-                                unit(_) => {
-                                    return Err(FleetError::from_node(
-                                        error_node,
-                                        "Cannot have struct containing Unit",
-                                        ErrorSeverity::Error,
-                                    ));
-                                }
-                            ))
+                            )
                         })
                         .collect::<::core::result::Result<Vec<_>, _>>()?,
                     false,
@@ -530,26 +544,27 @@ impl<'a> IrGenerator<'_> {
             .collect_vec()
             .iter()
             .flat_map(|(param, var)| -> Result<_> {
-                Ok(match_any_type_enum_as_basic_type!(
-                    self.runtime_type_to_llvm(var.borrow().type_.unwrap(), param)?,
-                    type_ => {
-                        type_.into()
+                Ok(
+                    match (self.runtime_type_to_llvm(var.borrow().type_.unwrap(), param)?)
+                        .into_basic_type()
+                    {
+                        Ok(type_) => type_.into(),
+                        Err(Either::Left(_)) => {
+                            return self.report_error(FleetError::from_node(
+                                param,
+                                "cannot have function types as parameter",
+                                ErrorSeverity::Error,
+                            ));
+                        }
+                        Err(Either::Right(_)) => {
+                            return self.report_error(FleetError::from_node(
+                                param,
+                                "cannot have unit type as parameter",
+                                ErrorSeverity::Error,
+                            ));
+                        }
                     },
-                    function(_) => {
-                        return self.report_error(FleetError::from_node(
-                            param,
-                            "cannot have function types as parameter",
-                            ErrorSeverity::Error,
-                        ));
-                    },
-                    unit(_) => {
-                        return self.report_error(FleetError::from_node(
-                            param,
-                            "cannot have unit type as parameter",
-                            ErrorSeverity::Error,
-                        ));
-                    }
-                ))
+                )
             })
             .collect_vec();
 
@@ -842,19 +857,17 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
                 if block.get_terminator().is_none() {
                     self.builder.position_at_end(block);
-                    match_any_type_enum_as_basic_type!(
-                        return_type_ir,
-                        type_ => {
-                            self.builder
-                                .build_return(Some(&type_.const_zero()))?;
-                        },
-                        function(_) => {
+                    match return_type_ir.into_basic_type() {
+                        Ok(type_) => {
+                            self.builder.build_return(Some(&type_.const_zero()))?;
+                        }
+                        Err(Either::Left(_)) => {
                             todo!();
-                        },
-                        unit(_) => {
+                        }
+                        Err(Either::Right(_)) => {
                             self.builder.build_return(None)?;
                         }
-                    );
+                    };
                 }
             }
         } else if matches!(return_type_ir, AnyTypeEnum::VoidType(_)) {
@@ -936,28 +949,23 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         let type_ = self.runtime_type_to_llvm(type_, simple_binding)?;
 
-        let ptr = match_any_type_enum_as_basic_type!(
-            type_,
-            type_ => {
-                self
-                    .builder
-                    .build_alloca(type_, &simple_binding.name)?
-            },
-            function(_) => {
+        let ptr = match type_.into_basic_type() {
+            Ok(type_) => self.builder.build_alloca(type_, &simple_binding.name)?,
+            Err(Either::Left(_)) => {
                 return self.report_error(FleetError::from_node(
                     simple_binding,
                     "Somehow tried to bind a function type",
                     ErrorSeverity::Error,
                 ));
-            },
-            unit(_) => {
+            }
+            Err(Either::Right(_)) => {
                 return self.report_error(FleetError::from_node(
                     simple_binding,
                     "Somehow tried to bind a void type",
                     ErrorSeverity::Error,
                 ));
             }
-        );
+        };
 
         let ref_variable = self
             .variable_data
@@ -2047,7 +2055,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             Some(storage.0.into())
         } else {
             Some(self.builder.build_load(
-                any_type_to_basic_type(result_type_ir).unwrap(),
+                result_type_ir.into_basic_type().unwrap(),
                 storage.0,
                 name,
             )?)
