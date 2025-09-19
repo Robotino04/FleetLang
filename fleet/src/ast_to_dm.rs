@@ -10,9 +10,9 @@ use crate::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        StructMember, StructType, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     document_model::DocumentElement,
     escape::{QuoteType, escape},
@@ -24,6 +24,7 @@ pub struct AstToDocumentModelConverter<'state> {
     program: Option<RefMut<'state, Program>>,
     output_de: Option<RefMut<'state, DocumentElement>>,
 
+    /// Stores if newlines in the trivia are currently allowed at the start
     is_first_in_statement: bool,
 }
 
@@ -210,6 +211,7 @@ impl AstToDocumentModelConverter<'_> {
             Keyword::Bool => "bool",
             Keyword::Idk => "idk",
             Keyword::As => "as",
+            Keyword::Struct => "struct",
             Keyword::True => "true",
             Keyword::False => "false",
             Keyword::Return => "return",
@@ -313,6 +315,50 @@ impl AstToDocumentModelConverter<'_> {
         }
 
         DocumentElement::Concatenation(elements)
+    }
+
+    fn braced_broken_block(
+        &mut self,
+        open_paren: &Token,
+        body: Vec<DocumentElement>,
+        close_paren: &Token,
+    ) -> DocumentElement {
+        self.is_first_in_statement = true;
+        if body.is_empty() {
+            DocumentElement::Concatenation(vec![
+                self.token_to_element(open_paren),
+                DocumentElement::ReverseLineBreakEater,
+                DocumentElement::LineBreakEater,
+                self.token_to_element(close_paren),
+            ])
+        } else {
+            DocumentElement::spaced_concatentation(
+                DocumentElement::single_collapsable_linebreak(),
+                vec![
+                    self.token_to_element_config(open_paren, TokenToElementConfig::open_brace()),
+                    DocumentElement::LineBreakEater,
+                    DocumentElement::Indentation(Box::new(DocumentElement::spaced_concatentation(
+                        DocumentElement::single_collapsable_linebreak(),
+                        vec![
+                            DocumentElement::spaced_concatentation(
+                                DocumentElement::single_collapsable_linebreak(),
+                                body,
+                            ),
+                            self.trivia_to_element(&close_paren.leading_trivia, true),
+                        ],
+                    ))),
+                    DocumentElement::ReverseLineBreakEater,
+                    DocumentElement::spaced_concatentation(
+                        DocumentElement::single_collapsable_space(),
+                        vec![
+                            // valid use of token_type_to_element because we break the trivia across indentation boundaries
+                            self.token_type_to_element(close_paren),
+                            self.trivia_to_element(&close_paren.trailing_trivia, true),
+                        ],
+                    ),
+                ],
+            )
+        }
     }
 }
 
@@ -548,45 +594,11 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             id: _,
         }: &mut BlockStatement,
     ) -> Self::StatementOutput {
-        self.is_first_in_statement = true;
-        if body.is_empty() {
-            DocumentElement::Concatenation(vec![
-                self.token_to_element(open_brace_token),
-                DocumentElement::ReverseLineBreakEater,
-                DocumentElement::LineBreakEater,
-                self.token_to_element(close_brace_token),
-            ])
-        } else {
-            DocumentElement::spaced_concatentation(
-                DocumentElement::single_collapsable_linebreak(),
-                vec![
-                    self.token_to_element_config(
-                        open_brace_token,
-                        TokenToElementConfig::open_brace(),
-                    ),
-                    DocumentElement::LineBreakEater,
-                    DocumentElement::Indentation(Box::new(DocumentElement::spaced_concatentation(
-                        DocumentElement::single_collapsable_linebreak(),
-                        vec![
-                            DocumentElement::spaced_concatentation(
-                                DocumentElement::single_collapsable_linebreak(),
-                                body.iter_mut().map(|s| self.visit_statement(s)).collect(),
-                            ),
-                            self.trivia_to_element(&close_brace_token.leading_trivia, true),
-                        ],
-                    ))),
-                    DocumentElement::ReverseLineBreakEater,
-                    DocumentElement::spaced_concatentation(
-                        DocumentElement::single_collapsable_space(),
-                        vec![
-                            // valid use of token_type_to_element because we break the trivia across indentation boundaries
-                            self.token_type_to_element(close_brace_token),
-                            self.trivia_to_element(&close_brace_token.trailing_trivia, true),
-                        ],
-                    ),
-                ],
-            )
-        }
+        let body = body
+            .iter_mut()
+            .map(|stmt| self.visit_statement(stmt))
+            .collect();
+        self.braced_broken_block(open_brace_token, body, close_brace_token)
     }
 
     fn visit_return_statement(
@@ -1143,6 +1155,49 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
                 DocumentElement::empty()
             },
             self.token_to_element(close_bracket_token),
+        ])
+    }
+
+    fn visit_struct_type(
+        &mut self,
+        StructType {
+            struct_token,
+            open_brace_token,
+            members,
+            close_brace_token,
+            id: _,
+        }: &mut StructType,
+    ) -> Self::TypeOutput {
+        let members = members
+            .iter_mut()
+            .map(
+                |(
+                    StructMember {
+                        name: _,
+                        name_token,
+                        colon_token,
+                        type_,
+                    },
+                    comma,
+                )| {
+                    DocumentElement::Concatenation(vec![
+                        self.token_to_element(name_token),
+                        self.token_to_element(colon_token),
+                        DocumentElement::single_collapsable_space(),
+                        self.visit_type(type_),
+                        comma
+                            .as_mut()
+                            .map(|comma| self.token_to_element(comma))
+                            .unwrap_or_else(DocumentElement::empty),
+                    ])
+                },
+            )
+            .collect();
+
+        DocumentElement::Concatenation(vec![
+            self.token_to_element(struct_token),
+            DocumentElement::single_collapsable_space(),
+            self.braced_broken_block(open_brace_token, members, close_brace_token),
         ])
     }
 }

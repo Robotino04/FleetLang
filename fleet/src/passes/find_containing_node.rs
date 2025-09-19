@@ -5,7 +5,7 @@ use crate::ast::{
     FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
     LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
     SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-    ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+    StructMember, StructType, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
     VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
 };
 use crate::tokenizer::{SourceLocation, SourceRange, Token};
@@ -807,6 +807,39 @@ impl AstVisitor for FindContainingNodePass {
             self.visit_expression(size)?;
         }
         let right_bound = self.visit_token(&array_type.close_bracket_token)?.end;
+
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        Ok(range)
+    }
+
+    fn visit_struct_type(&mut self, struct_type: &mut StructType) -> Self::TypeOutput {
+        self.node_hierarchy.push(struct_type.clone().into());
+
+        let left_bound = self.visit_token(&struct_type.struct_token)?.start;
+        self.visit_token(&struct_type.open_brace_token)?;
+        for (
+            StructMember {
+                name: _,
+                name_token,
+                colon_token,
+                type_,
+            },
+            comma,
+        ) in &mut struct_type.members
+        {
+            self.visit_token(name_token)?;
+            self.visit_token(colon_token)?;
+            self.visit_type(type_)?;
+            if let Some(comma) = comma {
+                self.visit_token(comma)?;
+            }
+        }
+        let right_bound = self.visit_token(&struct_type.close_brace_token)?.end;
 
         let range = left_bound.until(right_bound);
         if range.contains(self.search_position) {

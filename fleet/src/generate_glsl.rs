@@ -15,15 +15,7 @@ use log::warn;
 use crate::ast::AstNode;
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
-        CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
-        OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression, CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement, StatementFunctionBody, StructMember, StructType, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
@@ -478,6 +470,23 @@ impl<'state> GLSLCodeGenerator<'state> {
                 };
                 (type_, format!("[{size}]{after_id}"))
             }
+            RuntimeType::Struct {
+                members,
+                source_hash,
+            } => (
+                format!(
+                    "struct {} {{\n{}\n}}",
+                    self.unique_temporary(&format!("Struct_hash_{source_hash}")),
+                    members
+                        .iter()
+                        .map(|(member, type_)| {
+                            let (type_, after_id) = self.runtime_type_to_glsl(*type_);
+                            format!("{type_} {member}{after_id}")
+                        })
+                        .join(";\n")
+                ),
+                "".to_string(),
+            ),
         }
     }
     #[allow(unused)]
@@ -512,6 +521,13 @@ impl<'state> GLSLCodeGenerator<'state> {
                     size.expect("arrays should all have a size before calling glsl_generator");
                 size * subtype_size
             }
+            RuntimeType::Struct {
+                members,
+                source_hash: _,
+            } => members
+                .iter()
+                .map(|(_member, type_)| self.runtime_type_to_byte_size(self.type_sets.get(*type_)))
+                .sum(),
         }
     }
 
@@ -1603,5 +1619,44 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                 .expect("type data should exist before calling glsl_generator"),
         );
         type_ + &after_id
+    }
+
+    fn visit_struct_type(
+        &mut self,
+        StructType {
+            struct_token: _,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id: _,
+        }: &mut StructType,
+    ) -> Self::TypeOutput {
+        format!(
+            "struct {} {{ {} }}",
+            self.unique_temporary("StructType"),
+            members
+                .iter_mut()
+                .map(
+                    |(
+                        StructMember {
+                            name,
+                            name_token: _,
+                            colon_token: _,
+                            type_,
+                        },
+                        _comma,
+                    )| {
+                        self.visit_type(type_);
+                        let inferred_type = *self
+                            .type_data
+                            .get(&type_.get_id())
+                            .expect("Bindings should have types before calling c_generator");
+
+                        let (type_, after_id) = self.runtime_type_to_glsl(inferred_type);
+                        format!("{type_} {name}{after_id}")
+                    }
+                )
+                .join("\n")
+        )
     }
 }

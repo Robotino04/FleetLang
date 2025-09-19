@@ -8,8 +8,8 @@ use fleet::{
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        SimpleType, SkipStatement, StatementFunctionBody, StructMember, StructType, ThreadExecutor,
+        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     escape::{QuoteType, escape},
@@ -660,5 +660,37 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             None => String::from("\"None\""),
         };
         format!("[\"ArrayType\",\n{},\n{}]", subtype_str, size_str)
+    }
+
+    fn visit_struct_type(
+        &mut self,
+        StructType {
+            struct_token: _,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id: _,
+        }: &mut StructType,
+    ) -> Self::TypeOutput {
+        let member_str = members
+            .iter_mut()
+            .map(
+                |(
+                    StructMember {
+                        name,
+                        name_token: _,
+                        colon_token: _,
+                        type_,
+                    },
+                    _comma,
+                )| format!("[\"Member `{name}`\", {}]", self.visit_type(type_)),
+            )
+            .collect::<Vec<_>>()
+            .join(", ");
+        if member_str.is_empty() {
+            "\"Struct Type\"".to_string()
+        } else {
+            format!("[\"Struct Type\", {member_str}]")
+        }
     }
 }

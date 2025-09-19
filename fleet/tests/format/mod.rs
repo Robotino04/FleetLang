@@ -5,6 +5,7 @@ mod comments;
 mod conditional_statements;
 mod function;
 mod loops;
+mod structs;
 mod type_inference;
 mod unary_op;
 mod variables;

@@ -1,4 +1,4 @@
-use itertools::Itertools;
+use itertools::{EitherOrBoth, Itertools};
 
 use crate::passes::union_find_set::{UnionFindSet, UnionFindSetMergeResult, UnionFindSetPtr};
 
@@ -25,6 +25,11 @@ pub enum RuntimeType {
     ArrayOf {
         subtype: UnionFindSetPtr<RuntimeType>,
         size: Option<usize>,
+    },
+    Struct {
+        members: Vec<(String, UnionFindSetPtr<RuntimeType>)>,
+        /// indicates which struct{} type definition this one originated from
+        source_hash: u64,
     },
 }
 
@@ -74,6 +79,22 @@ impl RuntimeType {
                 subtype,
                 size: Some(size),
             } => format!("{}[{}]", types.get(*subtype).stringify(types), size),
+            RuntimeType::Struct {
+                members,
+                source_hash: _,
+            } => format!(
+                "struct {{\n{}\n}}",
+                indent::indent_all_by(
+                    4,
+                    members
+                        .iter()
+                        .map(|(name, type_)| format!(
+                            "{name}: {},",
+                            types.get(*type_).stringify(types)
+                        ))
+                        .join("\n")
+                )
+            ),
         }
     }
     pub fn could_be_float(&self) -> bool {
@@ -112,6 +133,10 @@ impl RuntimeType {
             RuntimeType::ArrayOf {
                 subtype: _,
                 size: _,
+            } => false,
+            RuntimeType::Struct {
+                members: _,
+                source_hash: _,
             } => false,
         }
     }
@@ -152,6 +177,10 @@ impl RuntimeType {
                 subtype: _,
                 size: _,
             } => false,
+            RuntimeType::Struct {
+                members: _,
+                source_hash: _,
+            } => false,
         }
     }
     pub fn could_be_unsigned(&self) -> bool {
@@ -190,6 +219,10 @@ impl RuntimeType {
             RuntimeType::ArrayOf {
                 subtype: _,
                 size: _,
+            } => false,
+            RuntimeType::Struct {
+                members: _,
+                source_hash: _,
             } => false,
         }
     }
@@ -230,6 +263,10 @@ impl RuntimeType {
                 subtype: _,
                 size: _,
             } => false,
+            RuntimeType::Struct {
+                members: _,
+                source_hash: _,
+            } => false,
         }
     }
     pub fn is_numeric(&self) -> bool {
@@ -256,6 +293,10 @@ impl RuntimeType {
                 subtype: _,
                 size: _,
             } => false,
+            RuntimeType::Struct {
+                members: _,
+                source_hash: _,
+            } => false,
         }
     }
     pub fn is_boolean(&self) -> bool {
@@ -281,6 +322,10 @@ impl RuntimeType {
             RuntimeType::ArrayOf {
                 subtype: _,
                 size: _,
+            } => false,
+            RuntimeType::Struct {
+                members: _,
+                source_hash: _,
             } => false,
         }
     }
@@ -450,6 +495,42 @@ impl RuntimeType {
                             }
                         }
 
+                        Merged(a)
+                    } else {
+                        NotMerged { a, b }
+                    }
+                }
+                RuntimeType::Struct {
+                    ref members,
+                    source_hash,
+                } => {
+                    if let RuntimeType::Struct {
+                        members: ref members_2,
+                        source_hash: source_hash_2,
+                    } = b
+                        && source_hash == source_hash_2
+                    {
+                        for member_pair in members.iter().zip_longest(members_2) {
+                            match member_pair {
+                                EitherOrBoth::Both(
+                                    (member1_name, member1_type),
+                                    (member2_name, member2_type),
+                                ) => {
+                                    if !RuntimeType::merge_types(
+                                        *member1_type,
+                                        *member2_type,
+                                        types,
+                                    ) {
+                                        return NotMerged { a, b };
+                                    }
+                                    if member1_name != member2_name {
+                                        return NotMerged { a, b };
+                                    }
+                                }
+                                EitherOrBoth::Left(_) => return NotMerged { a, b },
+                                EitherOrBoth::Right(_) => return NotMerged { a, b },
+                            }
+                        }
                         Merged(a)
                     } else {
                         NotMerged { a, b }

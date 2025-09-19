@@ -14,9 +14,10 @@ use crate::{
         GroupingExpression, GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression,
         LiteralKind, NodeID, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement,
-        StatementFunctionBody, ThreadExecutor, TopLevelStatement, Type, UnaryExpression,
-        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        StatementFunctionBody, StructMember, StructType, ThreadExecutor, TopLevelStatement, Type,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
@@ -1201,6 +1202,42 @@ impl<'state> Parser<'state> {
                 token: expect!(self, TokenType::Keyword(Keyword::Idk))?,
                 id: self.id_generator.next_node_id(),
             })),
+            Some(TokenType::Keyword(Keyword::Struct)) => {
+                let struct_token = expect!(self, TokenType::Keyword(Keyword::Struct))?;
+                let open_brace_token = expect!(self, TokenType::OpenBrace)?;
+
+                let mut members = vec![];
+                while self.current_token_type() != Some(TokenType::CloseBrace) {
+                    let (name_token, name) = expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
+                    let colon_token = expect!(self, TokenType::Colon)?;
+                    let type_ = self.parse_type()?;
+
+                    let member = StructMember {
+                        name,
+                        name_token,
+                        colon_token,
+                        type_,
+                    };
+
+                    match self.current_token_type() {
+                        Some(TokenType::Comma) => {
+                            members.push((member, Some(expect!(self, TokenType::Comma)?)))
+                        }
+                        _ => {
+                            members.push((member, None));
+                            break;
+                        }
+                    }
+                }
+                let close_brace_token = expect!(self, TokenType::CloseBrace)?;
+                Ok(Type::Struct(StructType {
+                    struct_token,
+                    open_brace_token,
+                    members,
+                    close_brace_token,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
             Some(TokenType::OpenParen) => Ok(Type::Unit(UnitType {
                 open_paren_token: expect!(self, TokenType::OpenParen)?,
                 close_paren_token: expect!(self, TokenType::CloseParen)?,

@@ -107,6 +107,7 @@ pub enum Keyword {
     Bool,
     Idk,
     As,
+    Struct,
 
     True,
     False,
@@ -124,7 +125,7 @@ pub enum Keyword {
     Extern,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SourceLocation {
     pub index: usize,
     pub line: usize,
@@ -194,7 +195,7 @@ impl SourceLocation {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SourceRange {
     /// inclusive
     pub start: SourceLocation,
@@ -615,6 +616,7 @@ impl<'errors> Tokenizer<'errors> {
                             "bool" => TokenType::Keyword(Keyword::Bool),
                             "idk" => TokenType::Keyword(Keyword::Idk),
                             "as" => TokenType::Keyword(Keyword::As),
+                            "struct" => TokenType::Keyword(Keyword::Struct),
 
                             "true" => TokenType::Keyword(Keyword::True),
                             "false" => TokenType::Keyword(Keyword::False),

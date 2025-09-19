@@ -6,20 +6,10 @@ use std::{
 };
 
 use inkwell::{
-    AddressSpace, FloatPredicate, IntPredicate,
-    basic_block::BasicBlock,
-    builder::Builder,
-    context::Context,
-    memory_buffer::MemoryBuffer,
-    module::{Linkage, Module},
-    passes::PassBuilderOptions,
-    support::enable_llvm_pretty_stack_trace,
-    targets::TargetMachine,
-    types::{AnyType, AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, FunctionType},
-    values::{
+    basic_block::BasicBlock, builder::Builder, context::Context, memory_buffer::MemoryBuffer, module::{Linkage, Module}, passes::PassBuilderOptions, support::enable_llvm_pretty_stack_trace, targets::TargetMachine, types::{AnyType, AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType}, values::{
         BasicMetadataValueEnum, BasicValue, BasicValueEnum, FloatValue, FunctionValue, IntValue,
         PointerValue,
-    },
+    }, AddressSpace, FloatPredicate, IntPredicate
 };
 use itertools::Itertools;
 
@@ -31,8 +21,8 @@ use crate::{
         FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
-        StatementFunctionBody, ThreadExecutor, TopLevelStatement, UnaryExpression, UnaryOperation,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        StatementFunctionBody, StructType, ThreadExecutor, TopLevelStatement, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     escape::{QuoteType, unescape},
@@ -105,6 +95,7 @@ pub enum RuntimeValueIR<'a> {
     UnsignedInt(IntValue<'a>),
     Float(FloatValue<'a>),
     Array(PointerValue<'a>),
+    Struct(PointerValue<'a>),
     Unit,
 }
 
@@ -116,6 +107,7 @@ impl<'a> RuntimeValueIR<'a> {
             RuntimeValueIR::UnsignedInt(int_value) => Some(int_value),
             RuntimeValueIR::Float(float_value) => Some(float_value),
             RuntimeValueIR::Array(pointer_value) => Some(pointer_value),
+            RuntimeValueIR::Struct(pointer_value) => Some(pointer_value),
             RuntimeValueIR::Unit => None,
         }
     }
@@ -126,6 +118,7 @@ impl<'a> RuntimeValueIR<'a> {
             RuntimeValueIR::UnsignedInt(int_value) => Some(int_value.as_basic_value_enum()),
             RuntimeValueIR::Float(float_value) => Some(float_value.as_basic_value_enum()),
             RuntimeValueIR::Array(pointer_value) => Some(pointer_value.as_basic_value_enum()),
+            RuntimeValueIR::Struct(pointer_value) => Some(pointer_value.as_basic_value_enum()),
             RuntimeValueIR::Unit => None,
         }
     }
@@ -136,6 +129,7 @@ impl<'a> RuntimeValueIR<'a> {
             RuntimeValueIR::UnsignedInt(int_value) => int_value.as_basic_value_enum(),
             RuntimeValueIR::Float(float_value) => float_value.as_basic_value_enum(),
             RuntimeValueIR::Array(pointer_value) => pointer_value.as_basic_value_enum(),
+            RuntimeValueIR::Struct(pointer_value) => pointer_value.as_basic_value_enum(),
             RuntimeValueIR::Unit => panic!("Expected this to not be a RuntimeValueIR::Unit"),
         }
     }
@@ -348,6 +342,9 @@ impl<'a> IrGenerator<'_> {
             RuntimeType::ArrayOf { .. } => {
                 RuntimeValueIR::Array(value.unwrap().into_pointer_value())
             }
+            RuntimeType::Struct { .. } => {
+                RuntimeValueIR::Struct(value.unwrap().into_pointer_value())
+            }
             RuntimeType::Number { .. } | RuntimeType::Unknown | RuntimeType::Error => self
                 .report_error(FleetError::from_node(
                     error_node,
@@ -431,6 +428,41 @@ impl<'a> IrGenerator<'_> {
                     }
                 )
             }
+            RuntimeType::Struct {
+                members,
+                source_hash: _,
+            } => self
+                .context
+                .struct_type(
+                    &members
+                        .clone()
+                        .into_iter()
+                        .map(|(_name, type_)| {
+                            Ok(match_any_type_enum_as_basic_type!(
+                                self.runtime_type_to_llvm_impl(self.type_sets.get(type_), error_node)?,
+                                type_ => {
+                                    type_.as_basic_type_enum()
+                                },
+                                function(_) => {
+                                    return Err(FleetError::from_node(
+                                        error_node,
+                                        "Cannot have struct containing function",
+                                        ErrorSeverity::Error,
+                                    ));
+                                },
+                                unit(_) => {
+                                    return Err(FleetError::from_node(
+                                        error_node,
+                                        "Cannot have struct containing Unit",
+                                        ErrorSeverity::Error,
+                                    ));
+                                }
+                            ))
+                        })
+                        .collect::<::core::result::Result<Vec<_>, _>>()?,
+                    false,
+                )
+                .into(),
         })
     }
     fn runtime_type_to_llvm<I: Into<AstNode> + Clone>(
@@ -1886,6 +1918,20 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
                         RuntimeValueIR::Array(ptr)
                     }
+                    RuntimeType::Struct { .. } => {
+                        let ptr = self
+                            .builder
+                            .build_alloca(expected_type_ir.into_struct_type(), "zero_temporary")?;
+
+                        self.builder.build_memset(
+                            ptr,
+                            1, // alignment gets read from the pointer itself in LLVM 7 and above
+                            self.context.i8_type().const_zero(),
+                            expected_type_ir.into_array_type().size_of().unwrap(),
+                        )?;
+
+                        RuntimeValueIR::Struct(ptr)
+                    }
                     RuntimeType::Number { .. } | RuntimeType::Unknown | RuntimeType::Error => self
                         .report_error(FleetError::from_node(
                             &expr_clone,
@@ -2275,6 +2321,24 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             ) => self.report_error(FleetError::from_node(
                 type_,
                 "cannot cast to or from array currently",
+                ErrorSeverity::Error,
+            )),
+            (
+                _,
+                RuntimeType::Struct {
+                    members: _,
+                    source_hash: _,
+                },
+            )
+            | (
+                RuntimeType::Struct {
+                    members: _,
+                    source_hash: _,
+                },
+                _,
+            ) => self.report_error(FleetError::from_node(
+                type_,
+                "cannot cast to or from struct currently",
                 ErrorSeverity::Error,
             )),
             (
@@ -2984,6 +3048,23 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             close_bracket_token: _,
             id,
         } = array_type;
+
+        let infered_type = *self
+            .type_data
+            .get(id)
+            .expect("type data should exist before calling ir_generator");
+
+        Ok(infered_type)
+    }
+
+    fn visit_struct_type(&mut self, struct_type: &mut crate::ast::StructType) -> Self::TypeOutput {
+        let StructType {
+            struct_token: _,
+            open_brace_token: _,
+            members: _,
+            close_brace_token: _,
+            id,
+        } = struct_type;
 
         let infered_type = *self
             .type_data

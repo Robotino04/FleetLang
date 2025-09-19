@@ -6,9 +6,9 @@ use fleet::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        StructMember, StructType, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     tokenizer::{SourceLocation, SourceRange, Token, Trivia, TriviaKind},
 };
@@ -718,5 +718,41 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             self.visit_expression(&mut *size);
         }
         self.build_comment_tokens_only(close_bracket_token);
+    }
+
+    fn visit_struct_type(
+        &mut self,
+        StructType {
+            struct_token,
+            open_brace_token,
+            members,
+            close_brace_token,
+            id: _,
+        }: &mut StructType,
+    ) -> Self::TypeOutput {
+        self.build_semantic_token(struct_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_comment_tokens_only(open_brace_token);
+        for (
+            StructMember {
+                name: _,
+                name_token,
+                colon_token,
+                type_,
+            },
+            comma,
+        ) in members
+        {
+            self.build_semantic_token(
+                name_token,
+                SemanticTokenType::PROPERTY,
+                vec![SemanticTokenModifier::DEFINITION],
+            );
+            self.build_comment_tokens_only(colon_token);
+            self.visit_type(type_);
+            if let Some(comma) = comma {
+                self.build_comment_tokens_only(comma);
+            }
+        }
+        self.build_comment_tokens_only(close_brace_token);
     }
 }

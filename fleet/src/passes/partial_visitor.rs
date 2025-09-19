@@ -5,9 +5,9 @@ use crate::ast::{
     FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
     GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression, OnStatement,
     OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-    SkipStatement, Statement, StatementFunctionBody, ThreadExecutor, TopLevelStatement, Type,
-    UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-    VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+    SkipStatement, Statement, StatementFunctionBody, StructMember, StructType, ThreadExecutor,
+    TopLevelStatement, Type, UnaryExpression, UnitType, VariableAccessExpression,
+    VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
 };
 
 pub trait PartialAstVisitor {
@@ -574,6 +574,7 @@ pub trait PartialAstVisitor {
             Type::Unit(unit_type) => self.partial_visit_unit_type(unit_type),
             Type::Idk(idk_type) => self.partial_visit_idk_type(idk_type),
             Type::Array(array_type) => self.partial_visit_array_type(array_type),
+            Type::Struct(struct_type) => self.partial_visit_struct_type(struct_type),
         }
     }
     fn partial_visit_int_type(
@@ -608,6 +609,29 @@ pub trait PartialAstVisitor {
         self.partial_visit_type(subtype);
         if let Some(size) = size {
             self.partial_visit_expression(size);
+        }
+    }
+    fn partial_visit_struct_type(
+        &mut self,
+        StructType {
+            struct_token: _,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id: _,
+        }: &mut StructType,
+    ) {
+        for (
+            StructMember {
+                name: _,
+                name_token: _,
+                colon_token: _,
+                type_,
+            },
+            _comma,
+        ) in members
+        {
+            self.partial_visit_type(type_);
         }
     }
 }
@@ -842,5 +866,9 @@ where
 
     fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
         self.partial_visit_array_type(array_type);
+    }
+
+    fn visit_struct_type(&mut self, struct_type: &mut StructType) -> Self::TypeOutput {
+        self.partial_visit_struct_type(struct_type);
     }
 }

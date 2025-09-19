@@ -5,8 +5,8 @@ use fleet::{
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
         IfStatement, LiteralExpression, LiteralKind, NodeID, OnStatement, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody, ThreadExecutor,
-        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody, StructType,
+        ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
@@ -706,6 +706,16 @@ impl Backend {
             }) => {
                 let type_ = self.get_type_as_hover(id, analysis_data);
                 (type_.to_string(), "array type".to_string())
+            }
+            AstNode::StructType(StructType {
+                struct_token: _,
+                open_brace_token: _,
+                members: _,
+                close_brace_token: _,
+                id,
+            }) => {
+                let type_ = self.get_type_as_hover(id, analysis_data);
+                (type_.to_string(), "struct type".to_string())
             }
         }
     }

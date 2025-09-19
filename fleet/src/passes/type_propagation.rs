@@ -1,5 +1,6 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
+    hash::{DefaultHasher, Hash, Hasher},
     rc::Rc,
 };
 
@@ -13,9 +14,10 @@ use crate::{
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, ThreadExecutor, TopLevelStatement, UnaryExpression,
-        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        SkipStatement, StatementFunctionBody, StructMember, StructType, ThreadExecutor,
+        TopLevelStatement, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -1289,6 +1291,88 @@ impl AstVisitor for TypePropagator<'_> {
                     ));
                     CastResult::Impossible
                 }
+                (
+                    a @ Struct {
+                        members: a_members,
+                        source_hash: a_hash,
+                    },
+                    b @ Struct {
+                        members: b_members,
+                        source_hash: b_hash,
+                    },
+                ) => {
+                    let members_equal = a_members == b_members;
+                    let hash_equal = a_hash == b_hash;
+
+                    match (hash_equal, members_equal) {
+                        (true, true) => {
+                            self_errors.push(FleetError::from_node(
+                                &expression_clone,
+                                format!(
+                                    "Casting struct of type {} to itself is redundant",
+                                    from_clone.stringify(types),
+                                ),
+                                ErrorSeverity::Warning,
+                            ));
+                            CastResult::Redundant
+                        }
+                        (true, false) => {
+                            unreachable!(
+                                "Two struct types have different members but same source hash:\na: {a:#?}\nb: {b:#?}"
+                            )
+                        }
+                        (false, true) => {
+                            self_errors.push(FleetError::from_node(
+                            &expression_clone,
+                            format!(
+                                "Casting between structs with equal members that stem from different places is forbidden.\n\
+                                From {} (source_hash: {a_hash}) to {} (source_hash: {b_hash})",
+                                from_clone.stringify(types),
+                                to_clone.stringify(types),
+                            ),
+                            ErrorSeverity::Error,
+                        ));
+                            CastResult::Impossible
+                        }
+                        (false, false) => {
+                            self_errors.push(FleetError::from_node(
+                                &expression_clone,
+                                format!(
+                                    "Cannot cast between unrelated structs {} and {}",
+                                    from_clone.stringify(types),
+                                    to_clone.stringify(types),
+                                ),
+                                ErrorSeverity::Error,
+                            ));
+                            CastResult::Impossible
+                        }
+                    }
+                }
+                (
+                    Struct {
+                        members: _,
+                        source_hash: _,
+                    },
+                    _,
+                )
+                | (
+                    _,
+                    Struct {
+                        members: _,
+                        source_hash: _,
+                    },
+                ) => {
+                    self_errors.push(FleetError::from_node(
+                        &expression_clone,
+                        format!(
+                            "Cannot cast from or to struct type: trying to cast from {} to {}",
+                            from_clone.stringify(types),
+                            to_clone.stringify(types),
+                        ),
+                        ErrorSeverity::Error,
+                    ));
+                    CastResult::Impossible
+                }
                 (Unknown, Unknown) => {
                     if !RuntimeType::merge_types(from_ptr, to_ptr, types) {
                         self_errors.push(FleetError::from_node(
@@ -1716,5 +1800,53 @@ impl AstVisitor for TypePropagator<'_> {
         });
         self.node_types.insert(*id, t);
         t
+    }
+
+    fn visit_struct_type(
+        &mut self,
+        StructType {
+            struct_token,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id,
+        }: &mut StructType,
+    ) -> Self::TypeOutput {
+        if let Some(type_) = self.node_types.get(id) {
+            return *type_;
+        }
+        let mut rt_members = vec![];
+        for (
+            StructMember {
+                name,
+                name_token: _,
+                colon_token: _,
+                type_,
+            },
+            _comma,
+        ) in members
+        {
+            let subtype = self.visit_type(type_);
+
+            if matches!(self.type_sets.get(subtype), RuntimeType::Unit) {
+                self.errors.push(FleetError::from_node(
+                    type_,
+                    "Structs cannot contain Unit".to_string(),
+                    ErrorSeverity::Error,
+                ));
+            }
+
+            rt_members.push((name.clone(), subtype));
+        }
+
+        let mut hash = DefaultHasher::new();
+        struct_token.range.hash(&mut hash);
+        struct_token.file_name.hash(&mut hash);
+        let struct_t = self.type_sets.insert_set(RuntimeType::Struct {
+            members: rt_members,
+            source_hash: hash.finish(),
+        });
+        self.node_types.insert(*id, struct_t);
+        struct_t
     }
 }

@@ -17,9 +17,9 @@ use crate::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
         IfStatement, LiteralExpression, NodeID, OnStatement, OnStatementIterator, PerNodeData,
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
-        StatementFunctionBody, ThreadExecutor, TopLevelStatement, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        StatementFunctionBody, StructMember, StructType, ThreadExecutor, TopLevelStatement,
+        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -1333,6 +1333,36 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             let size_dep = self.visit_expression(size);
             self.comptime_deps.add_dependency(*id, size_dep);
             self.comptime_deps.mark_comptime_required(*id);
+        }
+
+        *id
+    }
+
+    fn visit_struct_type(
+        &mut self,
+        StructType {
+            struct_token: _,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id,
+        }: &mut StructType,
+    ) -> Self::TypeOutput {
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
+        for (
+            StructMember {
+                name: _,
+                name_token: _,
+                colon_token: _,
+                type_,
+            },
+            _comma,
+        ) in members
+        {
+            let member_dep = self.visit_type(type_);
+            self.comptime_deps.add_dependency(*id, member_dep);
         }
 
         *id

@@ -55,6 +55,7 @@ pub enum AstNode {
     UnitType(UnitType),
     IdkType(IdkType),
     ArrayType(ArrayType),
+    StructType(StructType),
 }
 
 impl AstNode {
@@ -168,6 +169,9 @@ impl AstNode {
             AstNode::ArrayType(array_type) => {
                 visitor.visit_array_type(array_type);
             }
+            AstNode::StructType(struct_type) => {
+                visitor.visit_struct_type(struct_type);
+            }
         }
     }
 }
@@ -235,6 +239,7 @@ impl HasID for AstNode {
             AstNode::UnitType(unit_type) => unit_type.get_id(),
             AstNode::IdkType(idk_type) => idk_type.get_id(),
             AstNode::ArrayType(array_type) => array_type.get_id(),
+            AstNode::StructType(struct_type) => struct_type.get_id(),
         }
     }
 }
@@ -486,6 +491,7 @@ pub trait AstVisitor {
             Type::Unit(unit_type) => self.visit_unit_type(unit_type),
             Type::Idk(idk_type) => self.visit_idk_type(idk_type),
             Type::Array(array_type) => self.visit_array_type(array_type),
+            Type::Struct(struct_type) => self.visit_struct_type(struct_type),
         }
     }
 
@@ -493,6 +499,7 @@ pub trait AstVisitor {
     fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput;
     fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput;
     fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput;
+    fn visit_struct_type(&mut self, struct_type: &mut StructType) -> Self::TypeOutput;
 }
 
 #[derive(Clone, Debug)]
@@ -633,11 +640,31 @@ pub struct ArrayType {
 generate_ast_requirements!(ArrayType, unwrap_array_type);
 
 #[derive(Clone, Debug)]
+pub struct StructMember {
+    pub name: String,
+    pub name_token: Token,
+    pub colon_token: Token,
+    pub type_: Type,
+}
+
+#[derive(Clone, Debug)]
+pub struct StructType {
+    pub struct_token: Token,
+    pub open_brace_token: Token,
+    pub members: Vec<(StructMember, Option<Token>)>,
+    pub close_brace_token: Token,
+    pub id: NodeID,
+}
+
+generate_ast_requirements!(StructType, unwrap_struct_type);
+
+#[derive(Clone, Debug)]
 pub enum Type {
     Simple(SimpleType),
     Unit(UnitType),
     Idk(IdkType),
     Array(ArrayType),
+    Struct(StructType),
 }
 
 impl From<Type> for AstNode {
@@ -647,6 +674,7 @@ impl From<Type> for AstNode {
             Type::Unit(unit_type) => unit_type.into(),
             Type::Idk(idk_type) => idk_type.into(),
             Type::Array(array_type) => array_type.into(),
+            Type::Struct(struct_type) => struct_type.into(),
         }
     }
 }
@@ -658,6 +686,7 @@ impl HasID for Type {
             Type::Unit(unit_type) => unit_type.get_id(),
             Type::Idk(idk_type) => idk_type.get_id(),
             Type::Array(array_type) => array_type.get_id(),
+            Type::Struct(struct_type) => struct_type.get_id(),
         }
     }
 }

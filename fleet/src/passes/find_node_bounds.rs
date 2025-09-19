@@ -5,8 +5,8 @@ use crate::{
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        SimpleType, SkipStatement, StatementFunctionBody, StructType, ThreadExecutor,
+        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     tokenizer::{SourceLocation, SourceRange},
@@ -272,5 +272,12 @@ where
             close_bracket_token,
             id: _,
         }) => find_node_bounds(&**subtype).extend_with(close_bracket_token.range),
+        AstNode::StructType(StructType {
+            struct_token,
+            open_brace_token: _,
+            members: _,
+            close_brace_token,
+            id: _,
+        }) => struct_token.range.extend_with(close_brace_token.range),
     }
 }

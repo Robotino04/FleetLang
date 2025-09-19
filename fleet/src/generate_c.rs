@@ -12,9 +12,9 @@ use crate::{
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
-        StatementFunctionBody, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        StatementFunctionBody, StructMember, StructType, ThreadExecutor, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     generate_glsl::GLSLCodeGenerator,
     infra::{ErrorSeverity, FleetError},
@@ -148,6 +148,22 @@ impl CCodeGenerator<'_> {
                 };
                 (type_, format!("[{size}]{after_id}"))
             }
+            RuntimeType::Struct {
+                members,
+                source_hash: _,
+            } => (
+                format!(
+                    "struct {{\n{}\n}}",
+                    members
+                        .iter()
+                        .map(|(member, type_)| {
+                            let (type_, after_id) = self.runtime_type_to_c(*type_);
+                            format!("{type_} {member}{after_id}")
+                        })
+                        .join(";\n")
+                ),
+                "".to_string(),
+            ),
         }
     }
     fn runtime_type_to_c(&self, type_: UnionFindSetPtr<RuntimeType>) -> (String, String) {
@@ -179,6 +195,13 @@ impl CCodeGenerator<'_> {
                 let size = size.expect("arrays should all have a size before calling c_generator");
                 size * subtype_size
             }
+            RuntimeType::Struct {
+                members,
+                source_hash: _,
+            } => members
+                .iter()
+                .map(|(_member, type_)| self.runtime_type_to_byte_size(*type_))
+                .sum(),
         }
     }
     fn runtime_type_to_byte_size(&self, type_: UnionFindSetPtr<RuntimeType>) -> usize {
@@ -1642,5 +1665,43 @@ impl AstVisitor for CCodeGenerator<'_> {
                 .expect("type data should exist before calling c_generator"),
         );
         type_ + &after_id
+    }
+
+    fn visit_struct_type(
+        &mut self,
+        StructType {
+            struct_token: _,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id: _,
+        }: &mut StructType,
+    ) -> Self::TypeOutput {
+        format!(
+            "struct {{ {} }}",
+            members
+                .iter_mut()
+                .map(
+                    |(
+                        StructMember {
+                            name,
+                            name_token: _,
+                            colon_token: _,
+                            type_,
+                        },
+                        _comma,
+                    )| {
+                        self.visit_type(type_);
+                        let inferred_type = *self
+                            .type_data
+                            .get(&type_.get_id())
+                            .expect("Bindings should have types before calling c_generator");
+
+                        let (type_, after_id) = self.runtime_type_to_c(inferred_type);
+                        format!("{type_} {name}{after_id}")
+                    }
+                )
+                .join("\n")
+        )
     }
 }

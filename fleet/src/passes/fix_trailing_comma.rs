@@ -1,11 +1,12 @@
 use std::cell::RefMut;
 
 use crate::{
-    ast::{ArrayExpression, AstVisitor, FunctionCallExpression, Program},
+    ast::{ArrayExpression, AstVisitor, FunctionCallExpression, Program, StructMember},
     passes::{
         last_token_mapper::LastTokenMapper,
         pass_manager::{GlobalState, Pass, PassFactory, PassResult},
     },
+    tokenizer::{Token, TokenType},
 };
 
 use super::partial_visitor::PartialAstVisitor;
@@ -84,6 +85,58 @@ impl PartialAstVisitor for FixTrailingComma<'_> {
                 .visit_expression(item);
             }
             *comma = None;
+        }
+    }
+    fn partial_visit_struct_type(
+        &mut self,
+        crate::ast::StructType {
+            struct_token: _,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id: _,
+        }: &mut crate::ast::StructType,
+    ) {
+        for (
+            StructMember {
+                name: _,
+                name_token: _,
+                colon_token: _,
+                type_,
+            },
+            _comma,
+        ) in &mut *members
+        {
+            self.visit_type(type_);
+        }
+
+        if let Some((
+            StructMember {
+                name: _,
+                name_token: _,
+                colon_token: _,
+                type_,
+            },
+            comma @ None,
+        )) = members.last_mut()
+        {
+            let mut replace_pass = LastTokenMapper::new(|token| {
+                (
+                    std::mem::take(&mut token.trailing_trivia),
+                    token.range.end,
+                    token.file_name.clone(),
+                )
+            });
+            replace_pass.visit_type(type_);
+            let (trivia, token_end, file_name) = replace_pass.result().unwrap();
+
+            *comma = Some(Token {
+                type_: TokenType::Comma,
+                range: token_end.until(token_end),
+                leading_trivia: vec![],
+                trailing_trivia: trivia,
+                file_name,
+            });
         }
     }
 }
