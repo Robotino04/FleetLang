@@ -12,9 +12,10 @@ use crate::{
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
-        StatementFunctionBody, StructMember, StructType, ThreadExecutor, UnaryExpression,
-        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        StatementFunctionBody, StructExpression, StructMemberDefinition, StructMemberValue,
+        StructType, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     generate_glsl::GLSLCodeGenerator,
     infra::{ErrorSeverity, FleetError},
@@ -158,9 +159,9 @@ impl CCodeGenerator<'_> {
                         .iter()
                         .map(|(member, type_)| {
                             let (type_, after_id) = self.runtime_type_to_c(*type_);
-                            format!("{type_} {member}{after_id}")
+                            format!("{type_} {member}{after_id};")
                         })
-                        .join(";\n")
+                        .join("\n")
                 ),
                 "".to_string(),
             ),
@@ -760,6 +761,10 @@ impl AstVisitor for CCodeGenerator<'_> {
         if let RuntimeType::ArrayOf {
             subtype: _,
             size: _,
+        }
+        | RuntimeType::Struct {
+            members: _,
+            source_hash: _,
         } = self.type_sets.get(type_)
         {
             let num_bytes = self.runtime_type_to_byte_size(type_);
@@ -1116,6 +1121,59 @@ impl AstVisitor for CCodeGenerator<'_> {
                 pre_statements: pre_statements.concat(),
                 out_value: format!("(&(({type_}{after_id}){{ {} }}))", elements.join(", ")),
             }
+        }
+    }
+
+    fn visit_struct_expression(
+        &mut self,
+        StructExpression {
+            type_: _,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id,
+        }: &mut StructExpression,
+    ) -> Self::ExpressionOutput {
+        let inferred_type = *self
+            .type_data
+            .get(id)
+            .expect("Struct expressions should have types before calling c_generator");
+
+        let (type_, after_id) = self.runtime_type_to_c(inferred_type);
+
+        let RuntimeType::Struct {
+            members: _,
+            source_hash: _,
+        } = *self.type_sets.get(inferred_type)
+        else {
+            unreachable!("struct expressions must have type Struct(_)")
+        };
+
+        let (pre_statements, values): (Vec<_>, Vec<_>) = members
+            .iter_mut()
+            .map(
+                |(
+                    StructMemberValue {
+                        name,
+                        name_token: _,
+                        colon_token: _,
+                        value,
+                    },
+                    _comma,
+                )| {
+                    let PreStatementValue {
+                        pre_statements,
+                        out_value,
+                    } = self.visit_expression(value);
+
+                    (pre_statements, format!(".{name} = {},", out_value))
+                },
+            )
+            .unzip();
+
+        PreStatementValue {
+            pre_statements: pre_statements.join("\n"),
+            out_value: format!("(&(({type_}{after_id}){{ {} }}))", values.join("\n")),
         }
     }
 
@@ -1483,6 +1541,10 @@ impl AstVisitor for CCodeGenerator<'_> {
         if let RuntimeType::ArrayOf {
             subtype: _,
             size: _,
+        }
+        | RuntimeType::Struct {
+            members: _,
+            source_hash: _,
         } = self.type_sets.get(type_)
         {
             let num_bytes = self.runtime_type_to_byte_size(type_);
@@ -1683,7 +1745,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                 .iter_mut()
                 .map(
                     |(
-                        StructMember {
+                        StructMemberDefinition {
                             name,
                             name_token: _,
                             colon_token: _,

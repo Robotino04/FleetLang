@@ -242,6 +242,9 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
             Expression::Array(array_expression) => {
                 self.partial_visit_array_expression(array_expression)
             }
+            Expression::Struct(struct_expression) => {
+                self.partial_visit_struct_expression(struct_expression)
+            }
             Expression::FunctionCall(function_call_expression) => {
                 self.partial_visit_function_call_expression(function_call_expression)
             }

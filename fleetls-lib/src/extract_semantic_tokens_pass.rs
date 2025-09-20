@@ -6,9 +6,9 @@ use fleet::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-        StructMember, StructType, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        StructExpression, StructMemberDefinition, StructType, ThreadExecutor, UnaryExpression,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     tokenizer::{SourceLocation, SourceRange, Token, Trivia, TriviaKind},
 };
@@ -482,6 +482,38 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
         self.build_comment_tokens_only(close_bracket_token);
     }
 
+    fn visit_struct_expression(
+        &mut self,
+        StructExpression {
+            type_,
+            open_brace_token,
+            members,
+            close_brace_token,
+            id: _,
+        }: &mut StructExpression,
+    ) -> Self::ExpressionOutput {
+        self.visit_type(type_);
+        self.build_comment_tokens_only(open_brace_token);
+        for (
+            fleet::ast::StructMemberValue {
+                name: _,
+                name_token,
+                colon_token,
+                value,
+            },
+            comma,
+        ) in members
+        {
+            self.build_semantic_token(name_token, SemanticTokenType::PROPERTY, vec![]);
+            self.build_comment_tokens_only(colon_token);
+            self.visit_expression(value);
+            if let Some(comma) = comma {
+                self.build_comment_tokens_only(comma);
+            }
+        }
+        self.build_comment_tokens_only(close_brace_token);
+    }
+
     fn visit_function_call_expression(
         &mut self,
         FunctionCallExpression {
@@ -733,7 +765,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
         self.build_semantic_token(struct_token, SemanticTokenType::KEYWORD, vec![]);
         self.build_comment_tokens_only(open_brace_token);
         for (
-            StructMember {
+            StructMemberDefinition {
                 name: _,
                 name_token,
                 colon_token,

@@ -14,10 +14,10 @@ use crate::{
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, StructMember, StructType, ThreadExecutor,
-        TopLevelStatement, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        SkipStatement, StatementFunctionBody, StructExpression, StructMemberDefinition,
+        StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -745,6 +745,113 @@ impl AstVisitor for TypePropagator<'_> {
         type_
     }
 
+    fn visit_struct_expression(
+        &mut self,
+        expression: &mut StructExpression,
+    ) -> Self::ExpressionOutput {
+        let expression_clone = expression.clone();
+        let StructExpression {
+            type_,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id,
+        } = expression;
+
+        let defined_type = self.visit_type(type_);
+
+        let mut member_types = vec![];
+
+        let defined_members = match self.type_sets.get(defined_type) {
+            RuntimeType::Struct {
+                members,
+                source_hash: _,
+            } => Some(members.clone()),
+            RuntimeType::Unknown => None,
+            _ => {
+                let defined_type_str = self.stringify_type_ptr(defined_type);
+
+                self.errors.push(FleetError::from_node(
+                    &expression_clone,
+                    format!("Cannot struct-initialize value of type {defined_type_str}",),
+                    ErrorSeverity::Error,
+                ));
+
+                None
+            }
+        };
+
+        for (
+            i,
+            (
+                StructMemberValue {
+                    name,
+                    name_token: _,
+                    colon_token: _,
+                    value,
+                },
+                _comma,
+            ),
+        ) in members.iter_mut().enumerate()
+        {
+            let this_type = self.visit_expression(value);
+            member_types.push((name.clone(), this_type));
+
+            // TODO: allow reordering
+            if let Some(defined_members) = defined_members.as_ref()
+                && let Some((this_defined_name, this_defined_type)) =
+                    defined_members.get(i).cloned()
+            {
+                if *name != this_defined_name {
+                    self.errors.push(FleetError::from_node(
+                        value,
+                        format!(
+                            "Member {} has name {name:?}, but was expected \
+                            to have name {this_defined_type:?}.",
+                            i + 1
+                        ),
+                        ErrorSeverity::Error,
+                    ));
+                }
+                if !RuntimeType::merge_types(this_type, this_defined_type, &mut self.type_sets) {
+                    let this_type_str = self.stringify_type_ptr(this_type);
+                    let this_defined_type_str = self.stringify_type_ptr(this_defined_type);
+
+                    self.errors.push(FleetError::from_node(
+                        value,
+                        format!(
+                            "Member {name:?} has type {this_type_str}, but was expected \
+                            to have type {this_defined_type_str}.",
+                        ),
+                        ErrorSeverity::Error,
+                    ));
+                }
+            }
+        }
+
+        let constructed_type = self.type_sets.insert_set(RuntimeType::Struct {
+            members: member_types,
+            source_hash: None,
+        });
+
+        if !RuntimeType::merge_types(defined_type, constructed_type, &mut self.type_sets) {
+            let defined_type_str = self.stringify_type_ptr(defined_type);
+            let constructed_type = self.stringify_type_ptr(constructed_type);
+
+            self.errors.push(FleetError::from_node(
+                &expression_clone,
+                format!(
+                    "This struct initializer has type {defined_type_str}, but has fields \
+                        for type {constructed_type}.",
+                ),
+                ErrorSeverity::Error,
+            ));
+        }
+
+        self.node_types.insert(*id, constructed_type);
+        constructed_type
+    }
+
     fn visit_function_call_expression(
         &mut self,
         expression: &mut FunctionCallExpression,
@@ -1326,7 +1433,7 @@ impl AstVisitor for TypePropagator<'_> {
                             &expression_clone,
                             format!(
                                 "Casting between structs with equal members that stem from different places is forbidden.\n\
-                                From {} (source_hash: {a_hash}) to {} (source_hash: {b_hash})",
+                                From {} (source_hash: {a_hash:x?}) to {} (source_hash: {b_hash:x?})",
                                 from_clone.stringify(types),
                                 to_clone.stringify(types),
                             ),
@@ -1424,7 +1531,6 @@ impl AstVisitor for TypePropagator<'_> {
         self.node_types.insert(*id, to_ptr);
         to_ptr
     }
-
     fn visit_binary_expression(
         &mut self,
         expression: &mut BinaryExpression,
@@ -1592,6 +1698,7 @@ impl AstVisitor for TypePropagator<'_> {
         self.node_types.insert(*id, this_type);
         this_type
     }
+
     fn visit_variable_assignment_expression(
         &mut self,
         expression: &mut VariableAssignmentExpression,
@@ -1817,7 +1924,7 @@ impl AstVisitor for TypePropagator<'_> {
         }
         let mut rt_members = vec![];
         for (
-            StructMember {
+            StructMemberDefinition {
                 name,
                 name_token: _,
                 colon_token: _,
@@ -1844,7 +1951,7 @@ impl AstVisitor for TypePropagator<'_> {
         struct_token.file_name.hash(&mut hash);
         let struct_t = self.type_sets.insert_set(RuntimeType::Struct {
             members: rt_members,
-            source_hash: hash.finish(),
+            source_hash: Some(hash.finish()),
         });
         self.node_types.insert(*id, struct_t);
         struct_t

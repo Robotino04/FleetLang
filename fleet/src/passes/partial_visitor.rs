@@ -5,9 +5,10 @@ use crate::ast::{
     FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
     GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression, OnStatement,
     OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-    SkipStatement, Statement, StatementFunctionBody, StructMember, StructType, ThreadExecutor,
-    TopLevelStatement, Type, UnaryExpression, UnitType, VariableAccessExpression,
-    VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+    SkipStatement, Statement, StatementFunctionBody, StructExpression, StructMemberDefinition,
+    StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, Type, UnaryExpression,
+    UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+    VariableLValue, WhileLoopStatement,
 };
 
 pub trait PartialAstVisitor {
@@ -357,6 +358,9 @@ pub trait PartialAstVisitor {
             Expression::Array(array_expression) => {
                 self.partial_visit_array_expression(array_expression)
             }
+            Expression::Struct(struct_expression) => {
+                self.partial_visit_struct_expression(struct_expression)
+            }
             Expression::FunctionCall(function_call_expression) => {
                 self.partial_visit_function_call_expression(function_call_expression)
             }
@@ -406,6 +410,30 @@ pub trait PartialAstVisitor {
     ) {
         for (item, _comma) in elements {
             self.partial_visit_expression(item);
+        }
+    }
+    fn partial_visit_struct_expression(
+        &mut self,
+        StructExpression {
+            type_,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id: _,
+        }: &mut StructExpression,
+    ) {
+        self.partial_visit_type(type_);
+        for (
+            StructMemberValue {
+                name: _,
+                name_token: _,
+                colon_token: _,
+                value,
+            },
+            _comma,
+        ) in members
+        {
+            self.partial_visit_expression(value);
         }
     }
     fn partial_visit_function_call_expression(
@@ -622,7 +650,7 @@ pub trait PartialAstVisitor {
         }: &mut StructType,
     ) {
         for (
-            StructMember {
+            StructMemberDefinition {
                 name: _,
                 name_token: _,
                 colon_token: _,
@@ -772,6 +800,13 @@ where
         self.partial_visit_array_expression(expression);
     }
 
+    fn visit_struct_expression(
+        &mut self,
+        expression: &mut StructExpression,
+    ) -> Self::ExpressionOutput {
+        self.partial_visit_struct_expression(expression);
+    }
+
     fn visit_function_call_expression(
         &mut self,
         expression: &mut FunctionCallExpression,
@@ -792,13 +827,13 @@ where
     ) -> Self::ExpressionOutput {
         self.partial_visit_array_index_expression(expression);
     }
-
     fn visit_grouping_expression(
         &mut self,
         expression: &mut GroupingExpression,
     ) -> Self::ExpressionOutput {
         self.partial_visit_grouping_expression(expression);
     }
+
     fn visit_variable_access_expression(
         &mut self,
         expression: &mut VariableAccessExpression,

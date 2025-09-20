@@ -10,9 +10,9 @@ use crate::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-        StructMember, StructType, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
+        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     document_model::DocumentElement,
     escape::{QuoteType, escape},
@@ -890,6 +890,49 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
         ])
     }
 
+    fn visit_struct_expression(
+        &mut self,
+        StructExpression {
+            type_,
+            open_brace_token,
+            members,
+            close_brace_token,
+            id: _,
+        }: &mut StructExpression,
+    ) -> Self::ExpressionOutput {
+        let members = members
+            .iter_mut()
+            .map(
+                |(
+                    StructMemberValue {
+                        name: _,
+                        name_token,
+                        colon_token,
+                        value,
+                    },
+                    comma,
+                )| {
+                    DocumentElement::Concatenation(vec![
+                        self.token_to_element(name_token),
+                        self.token_to_element(colon_token),
+                        DocumentElement::single_collapsable_space(),
+                        self.visit_expression(value),
+                        comma
+                            .as_mut()
+                            .map(|comma| self.token_to_element(comma))
+                            .unwrap_or_else(DocumentElement::empty),
+                    ])
+                },
+            )
+            .collect();
+
+        DocumentElement::Concatenation(vec![
+            self.visit_type(type_),
+            DocumentElement::single_collapsable_space(),
+            self.braced_broken_block(open_brace_token, members, close_brace_token),
+        ])
+    }
+
     fn visit_function_call_expression(
         &mut self,
         FunctionCallExpression {
@@ -1172,7 +1215,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             .iter_mut()
             .map(
                 |(
-                    StructMember {
+                    StructMemberDefinition {
                         name: _,
                         name_token,
                         colon_token,

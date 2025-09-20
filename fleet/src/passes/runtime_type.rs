@@ -29,7 +29,7 @@ pub enum RuntimeType {
     Struct {
         members: Vec<(String, UnionFindSetPtr<RuntimeType>)>,
         /// indicates which struct{} type definition this one originated from
-        source_hash: u64,
+        source_hash: Option<u64>,
     },
 }
 
@@ -81,9 +81,9 @@ impl RuntimeType {
             } => format!("{}[{}]", types.get(*subtype).stringify(types), size),
             RuntimeType::Struct {
                 members,
-                source_hash: _,
+                source_hash,
             } => format!(
-                "struct {{\n{}\n}}",
+                "struct (hash: {source_hash:x?}) {{\n{}\n}}",
                 indent::indent_all_by(
                     4,
                     members
@@ -508,7 +508,9 @@ impl RuntimeType {
                         members: ref members_2,
                         source_hash: source_hash_2,
                     } = b
-                        && source_hash == source_hash_2
+                        && (source_hash == source_hash_2
+                            || source_hash.is_none()
+                            || source_hash_2.is_none())
                     {
                         for member_pair in members.iter().zip_longest(members_2) {
                             match member_pair {
@@ -531,7 +533,12 @@ impl RuntimeType {
                                 EitherOrBoth::Right(_) => return NotMerged { a, b },
                             }
                         }
-                        Merged(a)
+
+                        if source_hash.is_some() {
+                            Merged(a)
+                        } else {
+                            Merged(b)
+                        }
                     } else {
                         NotMerged { a, b }
                     }

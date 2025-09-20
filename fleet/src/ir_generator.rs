@@ -35,9 +35,10 @@ use crate::{
         FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
-        StatementFunctionBody, StructType, ThreadExecutor, TopLevelStatement, UnaryExpression,
-        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        StatementFunctionBody, StructExpression, StructMemberValue, StructType, ThreadExecutor,
+        TopLevelStatement, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     escape::{QuoteType, unescape},
     generate_glsl::GLSLCodeGenerator,
@@ -1815,6 +1816,98 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         self.builder.build_store(ptr, array_ir)?;
 
         Ok(RuntimeValueIR::Array(ptr))
+    }
+
+    fn visit_struct_expression(
+        &mut self,
+        expression: &mut crate::ast::StructExpression,
+    ) -> Self::ExpressionOutput {
+        let expression_clone = expression.clone();
+        let StructExpression {
+            type_,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id: _,
+        } = expression;
+
+        let type_ = self.visit_type(type_)?;
+        let RuntimeType::Struct { .. } = *self.type_sets.get(type_) else {
+            return self.report_error(FleetError::from_node(
+                &expression_clone,
+                "This struct doesn't have a Struct(_) type",
+                ErrorSeverity::Error,
+            ));
+        };
+
+        let struct_type = self
+            .runtime_type_to_llvm(type_, &expression_clone)?
+            .into_struct_type();
+
+        let mut struct_ir = struct_type.get_undef();
+
+        for (
+            i,
+            (
+                StructMemberValue {
+                    name: _,
+                    name_token: _,
+                    colon_token: _,
+                    value,
+                },
+                _comma,
+            ),
+        ) in members.iter_mut().enumerate()
+        {
+            let item_ir = self.visit_expression(value)?;
+            let item_type = self.type_data.get(&value.get_id()).unwrap();
+            let item_type = match self
+                .runtime_type_to_llvm(*item_type, value)?
+                .into_basic_type()
+            {
+                Ok(ok) => ok,
+                Err(Either::Left(_fn_type)) => {
+                    return self.report_error(FleetError::from_node(
+                        value,
+                        "Struct cannot contain functions",
+                        ErrorSeverity::Error,
+                    ));
+                }
+                Err(Either::Right(_void_type)) => {
+                    return self.report_error(FleetError::from_node(
+                        value,
+                        "Struct cannot contain unti values",
+                        ErrorSeverity::Error,
+                    ));
+                }
+            };
+            if let RuntimeValueIR::Array(item_ir) = item_ir {
+                let item = self
+                    .builder
+                    .build_load(item_type, item_ir, "load_subarray")?;
+                struct_ir = self
+                    .builder
+                    .build_insert_value(struct_ir, item, i as u32, "init_struct")?
+                    .into_struct_value();
+            } else {
+                struct_ir = self
+                    .builder
+                    .build_insert_value(
+                        struct_ir,
+                        item_ir.as_basic_value_no_unit(),
+                        i as u32,
+                        "init_struct",
+                    )?
+                    .into_struct_value();
+            }
+        }
+
+        let ptr = self
+            .builder
+            .build_alloca(struct_ir.get_type(), "struct_expression")?;
+        self.builder.build_store(ptr, struct_ir)?;
+
+        Ok(RuntimeValueIR::Struct(ptr))
     }
 
     fn visit_function_call_expression(

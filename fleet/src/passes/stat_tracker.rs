@@ -15,9 +15,10 @@ use crate::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-        StructMember, StructType, ThreadExecutor, TopLevelStatement, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
+        TopLevelStatement, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
@@ -824,6 +825,34 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
+    fn visit_struct_expression(&mut self, expr: &mut StructExpression) -> Self::ExpressionOutput {
+        let bounds = find_node_bounds(expr);
+        let StructExpression {
+            type_,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id,
+        } = expr;
+        let mut stat = NodeStats::default_with_range(vec![bounds]);
+        stat = stat.serial(self.visit_type(type_));
+        for (
+            StructMemberValue {
+                name: _,
+                name_token: _,
+                colon_token: _,
+                value,
+            },
+            _comma,
+        ) in members
+        {
+            stat = stat.serial(self.visit_expression(value));
+        }
+
+        self.stats.insert(*id, stat.clone());
+        stat
+    }
+
     fn visit_function_call_expression(
         &mut self,
         function_call: &mut FunctionCallExpression,
@@ -1122,7 +1151,7 @@ impl AstVisitor for StatTracker<'_> {
     ) -> Self::TypeOutput {
         let mut stat = NodeStats::default_with_range(vec![struct_token.range]);
         for (
-            StructMember {
+            StructMemberDefinition {
                 name: _,
                 name_token: _,
                 colon_token: _,

@@ -5,8 +5,9 @@ use crate::ast::{
     FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
     LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
     SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-    StructMember, StructType, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
-    VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+    StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
+    UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+    VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
 };
 use crate::tokenizer::{SourceLocation, SourceRange, Token};
 
@@ -517,6 +518,51 @@ impl AstVisitor for FindContainingNodePass {
         Ok(range)
     }
 
+    fn visit_struct_expression(
+        &mut self,
+        expression: &mut StructExpression,
+    ) -> Self::ExpressionOutput {
+        self.node_hierarchy.push(expression.clone().into());
+
+        let StructExpression {
+            type_,
+            open_brace_token,
+            members,
+            close_brace_token,
+            id: _,
+        } = expression;
+
+        let left_bound = self.visit_type(type_)?.start;
+        self.visit_token(open_brace_token)?;
+        for (
+            StructMemberValue {
+                name: _,
+                name_token,
+                colon_token,
+                value,
+            },
+            comma,
+        ) in members
+        {
+            self.visit_token(name_token)?;
+            self.visit_token(colon_token)?;
+            self.visit_expression(value)?;
+            if let Some(comma) = comma {
+                self.visit_token(comma)?;
+            }
+        }
+
+        let right_bound = self.visit_token(close_brace_token)?.end;
+
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        Ok(range)
+    }
+
     fn visit_function_call_expression(
         &mut self,
         expression: &mut FunctionCallExpression,
@@ -823,7 +869,7 @@ impl AstVisitor for FindContainingNodePass {
         let left_bound = self.visit_token(&struct_type.struct_token)?.start;
         self.visit_token(&struct_type.open_brace_token)?;
         for (
-            StructMember {
+            StructMemberDefinition {
                 name: _,
                 name_token,
                 colon_token,

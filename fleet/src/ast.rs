@@ -37,6 +37,7 @@ pub enum AstNode {
 
     LiteralExpression(LiteralExpression),
     ArrayExpression(ArrayExpression),
+    StructExpression(StructExpression),
     FunctionCallExpression(FunctionCallExpression),
     CompilerExpression(CompilerExpression),
     ArrayIndexExpression(ArrayIndexExpression),
@@ -120,6 +121,9 @@ impl AstNode {
             }
             AstNode::ArrayExpression(array_expression) => {
                 visitor.visit_array_expression(array_expression);
+            }
+            AstNode::StructExpression(struct_expression) => {
+                visitor.visit_struct_expression(struct_expression);
             }
             AstNode::FunctionCallExpression(function_call_expression) => {
                 visitor.visit_function_call_expression(function_call_expression);
@@ -213,6 +217,7 @@ impl HasID for AstNode {
 
             AstNode::LiteralExpression(literal_expression) => literal_expression.get_id(),
             AstNode::ArrayExpression(array_expression) => array_expression.get_id(),
+            AstNode::StructExpression(struct_expression) => struct_expression.get_id(),
             AstNode::FunctionCallExpression(function_call_expression) => {
                 function_call_expression.get_id()
             }
@@ -404,6 +409,9 @@ pub trait AstVisitor {
                 self.visit_literal_expression(literal_expression)
             }
             Expression::Array(array_expression) => self.visit_array_expression(array_expression),
+            Expression::Struct(struct_expression) => {
+                self.visit_struct_expression(struct_expression)
+            }
             Expression::FunctionCall(function_call_expression) => {
                 self.visit_function_call_expression(function_call_expression)
             }
@@ -436,6 +444,10 @@ pub trait AstVisitor {
     fn visit_array_expression(
         &mut self,
         expression: &mut ArrayExpression,
+    ) -> Self::ExpressionOutput;
+    fn visit_struct_expression(
+        &mut self,
+        expression: &mut StructExpression,
     ) -> Self::ExpressionOutput;
     fn visit_function_call_expression(
         &mut self,
@@ -640,7 +652,7 @@ pub struct ArrayType {
 generate_ast_requirements!(ArrayType, unwrap_array_type);
 
 #[derive(Clone, Debug)]
-pub struct StructMember {
+pub struct StructMemberDefinition {
     pub name: String,
     pub name_token: Token,
     pub colon_token: Token,
@@ -651,7 +663,7 @@ pub struct StructMember {
 pub struct StructType {
     pub struct_token: Token,
     pub open_brace_token: Token,
-    pub members: Vec<(StructMember, Option<Token>)>,
+    pub members: Vec<(StructMemberDefinition, Option<Token>)>,
     pub close_brace_token: Token,
     pub id: NodeID,
 }
@@ -986,6 +998,24 @@ pub struct ArrayExpression {
 generate_ast_requirements!(ArrayExpression, unwrap_array_expression);
 
 #[derive(Clone, Debug)]
+pub struct StructMemberValue {
+    pub name: String,
+    pub name_token: Token,
+    pub colon_token: Token,
+    pub value: Expression,
+}
+
+#[derive(Clone, Debug)]
+pub struct StructExpression {
+    pub type_: Type,
+    pub open_brace_token: Token,
+    pub members: Vec<(StructMemberValue, Option<Token>)>,
+    pub close_brace_token: Token,
+    pub id: NodeID,
+}
+generate_ast_requirements!(StructExpression, unwrap_struct_expression);
+
+#[derive(Clone, Debug)]
 pub struct FunctionCallExpression {
     pub name: String,
     pub name_token: Token,
@@ -1087,6 +1117,7 @@ generate_ast_requirements!(
 pub enum Expression {
     Literal(LiteralExpression),
     Array(ArrayExpression),
+    Struct(StructExpression),
     FunctionCall(FunctionCallExpression),
     CompilerExpression(CompilerExpression),
     ArrayIndex(ArrayIndexExpression),
@@ -1106,6 +1137,7 @@ impl Expression {
             Expression::Literal { .. } => 0,
             Expression::Array { .. } => 0,
             Expression::ArrayIndex { .. } => 0,
+            Expression::Struct { .. } => 0,
             Expression::FunctionCall { .. } => 0,
             Expression::CompilerExpression { .. } => 0,
             Expression::Grouping { .. } => 0,
@@ -1147,6 +1179,7 @@ impl Expression {
             Expression::Literal { .. } => Associativity::Both,
             Expression::Array { .. } => Associativity::Both,
             Expression::ArrayIndex { .. } => Associativity::Left,
+            Expression::Struct { .. } => Associativity::Left,
             Expression::FunctionCall { .. } => Associativity::Both,
             Expression::CompilerExpression { .. } => Associativity::Both,
             Expression::Grouping { .. } => Associativity::Both,
@@ -1175,6 +1208,7 @@ impl HasID for Expression {
         match self {
             Expression::Literal(expr) => expr.get_id(),
             Expression::Array(expr) => expr.get_id(),
+            Expression::Struct(expr) => expr.get_id(),
             Expression::FunctionCall(expr) => expr.get_id(),
             Expression::CompilerExpression(expr) => expr.get_id(),
             Expression::ArrayIndex(expr) => expr.get_id(),
@@ -1193,6 +1227,7 @@ impl From<Expression> for AstNode {
         match value {
             Expression::Literal(literal_expression) => literal_expression.into(),
             Expression::Array(array_expression) => array_expression.into(),
+            Expression::Struct(struct_expression) => struct_expression.into(),
             Expression::FunctionCall(function_call_expression) => function_call_expression.into(),
             Expression::CompilerExpression(compiler_expression) => compiler_expression.into(),
             Expression::ArrayIndex(array_index_expression) => array_index_expression.into(),

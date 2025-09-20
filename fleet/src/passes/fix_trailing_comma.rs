@@ -1,7 +1,10 @@
 use std::cell::RefMut;
 
 use crate::{
-    ast::{ArrayExpression, AstVisitor, FunctionCallExpression, Program, StructMember},
+    ast::{
+        ArrayExpression, AstVisitor, FunctionCallExpression, Program, StructMemberDefinition,
+        StructType,
+    },
     passes::{
         last_token_mapper::LastTokenMapper,
         pass_manager::{GlobalState, Pass, PassFactory, PassResult},
@@ -89,16 +92,16 @@ impl PartialAstVisitor for FixTrailingComma<'_> {
     }
     fn partial_visit_struct_type(
         &mut self,
-        crate::ast::StructType {
+        StructType {
             struct_token: _,
             open_brace_token: _,
             members,
             close_brace_token: _,
             id: _,
-        }: &mut crate::ast::StructType,
+        }: &mut StructType,
     ) {
         for (
-            StructMember {
+            StructMemberDefinition {
                 name: _,
                 name_token: _,
                 colon_token: _,
@@ -111,7 +114,7 @@ impl PartialAstVisitor for FixTrailingComma<'_> {
         }
 
         if let Some((
-            StructMember {
+            StructMemberDefinition {
                 name: _,
                 name_token: _,
                 colon_token: _,

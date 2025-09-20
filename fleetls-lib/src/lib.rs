@@ -5,10 +5,10 @@ use fleet::{
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
         IfStatement, LiteralExpression, LiteralKind, NodeID, OnStatement, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody, StructType,
-        ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody, StructExpression,
+        StructType, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     escape::{QuoteType, escape},
     infra::{
@@ -437,6 +437,16 @@ impl Backend {
             }) => (
                 self.get_type_as_hover(id, analysis_data).to_string(),
                 "array literal".to_string(),
+            ),
+            AstNode::StructExpression(StructExpression {
+                type_: _,
+                open_brace_token: _,
+                members: _,
+                close_brace_token: _,
+                id,
+            }) => (
+                self.get_type_as_hover(id, analysis_data).to_string(),
+                "struct literal".to_string(),
             ),
             AstNode::BinaryExpression(BinaryExpression {
                 left,

@@ -14,10 +14,10 @@ use crate::{
         GroupingExpression, GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression,
         LiteralKind, NodeID, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement,
-        StatementFunctionBody, StructMember, StructType, ThreadExecutor, TopLevelStatement, Type,
-        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        StatementFunctionBody, StructExpression, StructMemberDefinition, StructMemberValue,
+        StructType, ThreadExecutor, TopLevelStatement, Type, UnaryExpression, UnaryOperation,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
@@ -277,6 +277,34 @@ impl<'state> Parser<'state> {
         t
     }
 
+    fn try_parse<F, T>(
+        &mut self,
+        callback: F,
+    ) -> ::core::result::Result<T, (ParserError, Vec<FleetError>)>
+    where
+        F: FnOnce(&mut Self) -> Result<T>,
+    {
+        let mut tmp_errors = vec![];
+        let tmp_index = self.index;
+        std::mem::swap(&mut tmp_errors, &mut self.errors);
+        let result = callback(self);
+        std::mem::swap(&mut tmp_errors, &mut self.errors);
+
+        match result {
+            Ok(ok) => {
+                // don't silently drop errors
+                self.errors.append(&mut tmp_errors);
+
+                Ok(ok)
+            }
+            Err(err) => {
+                self.index = tmp_index;
+
+                Err((err, tmp_errors))
+            }
+        }
+    }
+
     pub fn parse_program(mut self) -> Result<()> {
         while !self.is_done() {
             let recovery_start = self.current_token();
@@ -317,10 +345,7 @@ impl<'state> Parser<'state> {
 
         let close_paren_token = expect!(self, TokenType::CloseParen)?;
         let right_arrow_token = expect!(self, TokenType::SingleRightArrow)?;
-        let mut moved_errors = vec![];
-        std::mem::swap(&mut moved_errors, &mut self.errors);
-        let return_type = self.parse_type().ok();
-        std::mem::swap(&mut moved_errors, &mut self.errors);
+        let return_type = self.try_parse(|this| this.parse_type()).ok();
         let body = self.parse_function_body()?;
 
         Ok(FunctionDefinition {
@@ -715,7 +740,45 @@ impl<'state> Parser<'state> {
         }
     }
     fn parse_postfix_expression(&mut self) -> Result<Expression> {
-        let mut lhs = self.parse_primary_expression()?;
+        let mut lhs = if let Ok(type_) = self.try_parse(|this| this.parse_type()) {
+            let open_brace_token = expect!(self, TokenType::OpenBrace)?;
+
+            let mut members = vec![];
+            while self.current_token_type() != Some(TokenType::CloseBrace) {
+                let (name_token, name) = expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
+                let colon_token = expect!(self, TokenType::Colon)?;
+                let value = self.parse_expression()?;
+
+                let member = StructMemberValue {
+                    name,
+                    name_token,
+                    colon_token,
+                    value,
+                };
+
+                match self.current_token_type() {
+                    Some(TokenType::Comma) => {
+                        members.push((member, Some(expect!(self, TokenType::Comma)?)))
+                    }
+                    _ => {
+                        members.push((member, None));
+                        break;
+                    }
+                }
+            }
+            let close_brace_token = expect!(self, TokenType::CloseBrace)?;
+
+            Expression::Struct(StructExpression {
+                type_,
+                open_brace_token,
+                members,
+                close_brace_token,
+                id: self.id_generator.next_node_id(),
+            })
+        } else {
+            self.parse_primary_expression()?
+        };
+
         while match self.current_token_type() {
             Some(TokenType::OpenBracket) => {
                 lhs = Expression::ArrayIndex(ArrayIndexExpression {
@@ -1121,10 +1184,7 @@ impl<'state> Parser<'state> {
             Some(TokenType::OpenBracket) => {
                 let open_bracket_token = expect!(self, TokenType::OpenBracket)?;
 
-                let mut moved_errors = vec![];
-                std::mem::swap(&mut moved_errors, &mut self.errors);
-                let size = self.parse_expression().ok();
-                std::mem::swap(&mut moved_errors, &mut self.errors);
+                let size = self.try_parse(|this| this.parse_expression()).ok();
 
                 let close_bracket_token = expect!(self, TokenType::CloseBracket)?;
                 type_ = Type::Array(ArrayType {
@@ -1212,7 +1272,7 @@ impl<'state> Parser<'state> {
                     let colon_token = expect!(self, TokenType::Colon)?;
                     let type_ = self.parse_type()?;
 
-                    let member = StructMember {
+                    let member = StructMemberDefinition {
                         name,
                         name_token,
                         colon_token,

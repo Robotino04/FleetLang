@@ -7,8 +7,9 @@ use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, AstVisitor, BinaryExpression,
         CastExpression, CompilerExpression, Expression, FunctionCallExpression, GroupingLValue,
-        HasID, LValue, LiteralExpression, OnStatement, OnStatementIterator, Program, Type,
-        UnaryExpression, VariableAccessExpression, VariableAssignmentExpression, VariableLValue,
+        HasID, LValue, LiteralExpression, OnStatement, OnStatementIterator, Program,
+        StructExpression, StructMemberValue, Type, UnaryExpression, VariableAccessExpression,
+        VariableAssignmentExpression, VariableLValue,
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
@@ -103,6 +104,7 @@ impl LValueReducer<'_> {
         match a {
             Expression::Literal(a) => self.is_literal_expression_equal(a, b),
             Expression::Array(a) => self.is_array_expression_equal(a, b),
+            Expression::Struct(a) => self.is_struct_expression_equal(a, b),
             Expression::FunctionCall(a) => self.is_function_call_expression_equal(a, b),
             Expression::CompilerExpression(a) => self.is_compiler_expression_equal(a, b),
             Expression::ArrayIndex(a) => self.is_array_index_expression_equal(a, b),
@@ -136,6 +138,39 @@ impl LValueReducer<'_> {
                         .all(|(a, b)| self.is_expression_equal(&a.0, &b.0).unwrap_or(false))
             }
             Expression::Grouping(b) => self.is_array_expression_equal(a, &b.subexpression)?,
+            _ => false,
+        })
+    }
+    fn is_struct_expression_equal(&self, a: &StructExpression, b: &Expression) -> Option<bool> {
+        Some(match b {
+            Expression::Struct(b) => {
+                a.members.len() == b.members.len()
+                    && a.members.iter().zip(&b.members).all(
+                        |(
+                            (
+                                StructMemberValue {
+                                    name: name1,
+                                    name_token: _,
+                                    colon_token: _,
+                                    value: v1,
+                                },
+                                _comma1,
+                            ),
+                            (
+                                StructMemberValue {
+                                    name: name2,
+                                    name_token: _,
+                                    colon_token: _,
+                                    value: v2,
+                                },
+                                _comma2,
+                            ),
+                        )| {
+                            name1 == name2 && self.is_expression_equal(v1, v2).unwrap_or(false)
+                        },
+                    )
+            }
+            Expression::Grouping(b) => self.is_struct_expression_equal(a, &b.subexpression)?,
             _ => false,
         })
     }

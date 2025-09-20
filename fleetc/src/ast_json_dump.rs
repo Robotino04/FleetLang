@@ -8,9 +8,10 @@ use fleet::{
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, StructMember, StructType, ThreadExecutor,
-        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        SimpleType, SkipStatement, StatementFunctionBody, StructExpression, StructMemberDefinition,
+        StructMemberValue, StructType, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     escape::{QuoteType, escape},
     passes::pass_manager::{Pass, PassFactory, PassResult},
@@ -425,6 +426,38 @@ impl AstVisitor for AstJsonDumpPass<'_> {
         format!("[\"Array\",\n{}\n]", elems_str)
     }
 
+    fn visit_struct_expression(
+        &mut self,
+        StructExpression {
+            type_,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id: _,
+        }: &mut StructExpression,
+    ) -> Self::ExpressionOutput {
+        let elems_str = members
+            .iter_mut()
+            .map(
+                |(
+                    StructMemberValue {
+                        name,
+                        name_token: _,
+                        colon_token: _,
+                        value,
+                    },
+                    _comma,
+                )| format!("[\"`{name}`\", {}]", self.visit_expression(value)),
+            )
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "[\"Struct\", {}, [\"Members\", {}]]",
+            self.visit_type(type_),
+            elems_str
+        )
+    }
+
     fn visit_function_call_expression(
         &mut self,
         FunctionCallExpression {
@@ -676,7 +709,7 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             .iter_mut()
             .map(
                 |(
-                    StructMember {
+                    StructMemberDefinition {
                         name,
                         name_token: _,
                         colon_token: _,

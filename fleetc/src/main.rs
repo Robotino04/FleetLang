@@ -91,6 +91,15 @@ enum DumpOption {
 }
 
 fn main() {
+    /*
+    let cli = Cli {
+        input_file: "./test.fl".parse().unwrap(),
+        output: None,
+        dump: vec![],
+        format: false,
+        verbosity: Default::default()
+    };
+    */
     let cli = Cli::parse();
     env_logger::Builder::new()
         .format(|fmt, record| {
@@ -131,7 +140,6 @@ fn main() {
     };
 
     Target::initialize_all(&inkwell::targets::InitializationConfig::default());
-
     let triple = TargetTriple::create("x86_64-pc-linux-gnu");
     let target = Target::from_triple(&triple).unwrap();
     let target_machine = target

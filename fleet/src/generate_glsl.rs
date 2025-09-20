@@ -15,7 +15,16 @@ use log::warn;
 use crate::ast::AstNode;
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression, CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement, StatementFunctionBody, StructMember, StructType, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
+        CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+        GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
+        OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
+        SkipStatement, Statement, StatementFunctionBody, StructExpression, StructMemberDefinition,
+        StructMemberValue, StructType, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
@@ -476,14 +485,14 @@ impl<'state> GLSLCodeGenerator<'state> {
             } => (
                 format!(
                     "struct {} {{\n{}\n}}",
-                    self.unique_temporary(&format!("Struct_hash_{source_hash}")),
+                    self.unique_temporary(&format!("Struct_hash_{source_hash:x?}")),
                     members
                         .iter()
                         .map(|(member, type_)| {
                             let (type_, after_id) = self.runtime_type_to_glsl(*type_);
-                            format!("{type_} {member}{after_id}")
+                            format!("{type_} {member}{after_id};")
                         })
-                        .join(";\n")
+                        .join("\n")
                 ),
                 "".to_string(),
             ),
@@ -1093,6 +1102,59 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
+    fn visit_struct_expression(
+        &mut self,
+        StructExpression {
+            type_: _,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id,
+        }: &mut StructExpression,
+    ) -> Self::ExpressionOutput {
+        let inferred_type = *self
+            .type_data
+            .get(id)
+            .expect("Struct expressions should have types before calling c_generator");
+
+        let (type_, after_id) = self.runtime_type_to_glsl(inferred_type);
+
+        let RuntimeType::Struct {
+            members: _,
+            source_hash: _,
+        } = *self.type_sets.get(inferred_type)
+        else {
+            unreachable!("struct expressions must have type Struct(_)")
+        };
+
+        let (pre_statements, values): (Vec<_>, Vec<_>) = members
+            .iter_mut()
+            .map(
+                |(
+                    StructMemberValue {
+                        name: _,
+                        name_token: _,
+                        colon_token: _,
+                        value,
+                    },
+                    _comma,
+                )| {
+                    let PreStatementValue {
+                        pre_statements,
+                        out_value,
+                    } = self.visit_expression(value);
+
+                    (pre_statements, out_value)
+                },
+            )
+            .unzip();
+
+        PreStatementValue {
+            pre_statements: pre_statements.join("\n"),
+            out_value: format!("({type_}{after_id}({}))", values.join(",\n")),
+        }
+    }
+
     fn visit_function_call_expression(
         &mut self,
         expr: &mut FunctionCallExpression,
@@ -1638,7 +1700,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                 .iter_mut()
                 .map(
                     |(
-                        StructMember {
+                        StructMemberDefinition {
                             name,
                             name_token: _,
                             colon_token: _,

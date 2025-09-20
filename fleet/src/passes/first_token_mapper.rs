@@ -7,9 +7,10 @@ use crate::{
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, StructType, ThreadExecutor,
-        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        SimpleType, SkipStatement, StatementFunctionBody, StructExpression, StructType,
+        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     tokenizer::Token,
 };
@@ -174,6 +175,13 @@ impl<R> AstVisitor for FirstTokenMapper<'_, R> {
         expression: &mut ArrayExpression,
     ) -> Self::ExpressionOutput {
         self.visit_token(&mut expression.open_bracket_token);
+    }
+
+    fn visit_struct_expression(
+        &mut self,
+        expression: &mut StructExpression,
+    ) -> Self::ExpressionOutput {
+        self.visit_type(&mut expression.type_);
     }
 
     fn visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {

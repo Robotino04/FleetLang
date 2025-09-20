@@ -17,9 +17,10 @@ use crate::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
         IfStatement, LiteralExpression, NodeID, OnStatement, OnStatementIterator, PerNodeData,
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
-        StatementFunctionBody, StructMember, StructType, ThreadExecutor, TopLevelStatement,
-        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        StatementFunctionBody, StructExpression, StructMemberDefinition, StructMemberValue,
+        StructType, ThreadExecutor, TopLevelStatement, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -941,6 +942,41 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
+    fn visit_struct_expression(
+        &mut self,
+        expression: &mut StructExpression,
+    ) -> Self::ExpressionOutput {
+        let StructExpression {
+            type_,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id,
+        } = expression;
+
+        let type_dep = self.visit_type(type_);
+        self.comptime_deps.add_dependency(*id, type_dep);
+
+        for (
+            StructMemberValue {
+                name: _,
+                name_token: _,
+                colon_token: _,
+                value,
+            },
+            _comma,
+        ) in members
+        {
+            let value_dep = self.visit_expression(value);
+            self.comptime_deps.add_dependency(*id, value_dep);
+        }
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+
+        *id
+    }
+
     fn visit_function_call_expression(
         &mut self,
         expression: &mut FunctionCallExpression,
@@ -1161,7 +1197,6 @@ impl AstVisitor for ScopeAnalyzer<'_> {
 
         *id
     }
-
     fn visit_binary_expression(
         &mut self,
         expression: &mut BinaryExpression,
@@ -1184,6 +1219,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
 
         *id
     }
+
     fn visit_variable_assignment_expression(
         &mut self,
         expression: &mut VariableAssignmentExpression,
@@ -1352,7 +1388,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             .insert(*id, self.variable_scopes.current.clone());
 
         for (
-            StructMember {
+            StructMemberDefinition {
                 name: _,
                 name_token: _,
                 colon_token: _,
