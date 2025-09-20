@@ -31,6 +31,7 @@
 - disallow returning arrays
 - add different errors for missing Pass dependencies and for failed check_empty calls
 - move runtime_type_to_byte_size somewhere common
+- allow on-statements without iterators again
 
 ### medium
 - real mutability/constant system
@@ -90,7 +91,7 @@ For VSCode users, there is no Fleet-specific extension (yet). However, there is 
 ```jsonc
 {
   "glspc.server.command": "<Path-to-FleetLang-repository>/target/debug/fleetls",
-  "glspc.server.commandArguments": ["--stdio"], // FleetLS serves on 0.0.0.0:1234 by default. This makes it use stdout
+  "glspc.server.commandArguments": ["stdio"], // FleetLS serves on 0.0.0.0:1234 by default. This makes it use stdout
   "glspc.server.languageId": ["plaintext"], // can also be changed to any other filetype
 }
 ```
