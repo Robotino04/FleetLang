@@ -1,7 +1,6 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
-    fmt::format,
 };
 
 use indent::indent_all_by;
@@ -794,14 +793,6 @@ impl AstVisitor for CCodeGenerator<'_> {
             id: _,
         }: &mut VariableDefinitionStatement,
     ) -> Self::StatementOutput {
-        let ref_var = self
-            .variable_data
-            .get(&binding.get_id())
-            .expect("var data must exist before calling c_generator")
-            .clone();
-
-        let type_ = ref_var.borrow().type_.unwrap();
-
         let PreStatementValue {
             pre_statements,
             out_value,
@@ -1042,7 +1033,11 @@ impl AstVisitor for CCodeGenerator<'_> {
 
         let (type_, after_id) = self.runtime_type_to_c(inferred_type);
 
-        let RuntimeType::ArrayOf { subtype, size: _ } = *self.type_sets.get(inferred_type) else {
+        let RuntimeType::ArrayOf {
+            subtype: _,
+            size: _,
+        } = *self.type_sets.get(inferred_type)
+        else {
             unreachable!("array expressions must have type ArrayOf(_)")
         };
 
@@ -1245,7 +1240,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             open_bracket_token: _,
             index,
             close_bracket_token: _,
-            id,
+            id: _,
         }: &mut ArrayIndexExpression,
     ) -> Self::ExpressionOutput {
         let PreStatementValue {
@@ -1270,7 +1265,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             dot_token: _,
             member_name,
             member_name_token: _,
-            id,
+            id: _,
         }: &mut StructAccessExpression,
     ) -> Self::ExpressionOutput {
         let PreStatementValue {
@@ -1309,17 +1304,9 @@ impl AstVisitor for CCodeGenerator<'_> {
         VariableAccessExpression {
             name,
             name_token: _,
-            id,
+            id: _,
         }: &mut VariableAccessExpression,
     ) -> Self::ExpressionOutput {
-        let ref_var = self
-            .variable_data
-            .get(id)
-            .expect("var data must exist before calling c_generator")
-            .clone();
-
-        let type_ = self.type_sets.get(ref_var.borrow().type_.unwrap());
-
         PreStatementValue {
             pre_statements: "".to_string(),
             out_value: self.mangle_variable(name),
@@ -1464,14 +1451,9 @@ impl AstVisitor for CCodeGenerator<'_> {
             lvalue,
             equal_token: _,
             right,
-            id,
+            id: _,
         }: &mut VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
-        let type_ = *self
-            .type_data
-            .get(id)
-            .expect("Types must exist before calling c_generator");
-
         let PreStatementValue {
             pre_statements: rpre_statements,
             out_value: out_rvalue,
