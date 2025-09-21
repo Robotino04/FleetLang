@@ -19,8 +19,9 @@ use crate::{
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
         StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
         StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor, TopLevelStatement,
-        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        TypeAlias, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -391,6 +392,9 @@ impl<'a> ScopeAnalyzer<'a> {
             TopLevelStatement::Function(function_definition) => {
                 self.register_function(function_definition)
             }
+            TopLevelStatement::TypeAlias(_type_alias) => {
+                // Type aliases are handled by type propagation.
+            }
         }
     }
     fn register_function(&mut self, function: &mut FunctionDefinition) {
@@ -499,6 +503,23 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             .insert(body.get_id(), this_function.clone());
 
         self.referenced_function.insert(*id, this_function);
+
+        self.contained_scope
+            .insert(*id, self.variable_scopes.current.clone());
+    }
+
+    fn visit_type_alias(&mut self, type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
+        let TypeAlias {
+            let_token: _,
+            name: _,
+            name_token: _,
+            equal_token: _,
+            type_,
+            semicolon_token: _,
+            id,
+        } = type_alias;
+
+        self.visit_type(type_);
 
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
@@ -1175,7 +1196,6 @@ impl AstVisitor for ScopeAnalyzer<'_> {
 
         *id
     }
-
     fn visit_unary_expression(
         &mut self,
         expression: &mut UnaryExpression,
@@ -1196,6 +1216,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
 
         *id
     }
+
     fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
         let CastExpression {
             operand,

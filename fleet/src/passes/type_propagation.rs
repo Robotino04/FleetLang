@@ -1,5 +1,6 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
     hash::{DefaultHasher, Hash, Hasher},
     rc::Rc,
 };
@@ -16,9 +17,9 @@ use crate::{
         OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
         SkipStatement, StatementFunctionBody, StructAccessExpression, StructAccessLValue,
         StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
-        TopLevelStatement, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        TopLevelStatement, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -43,6 +44,8 @@ pub struct TypePropagator<'state> {
     referenced_variable: Ref<'state, VariableData>,
     referenced_function: Ref<'state, FunctionData>,
     containing_scope: Ref<'state, ScopeData>,
+
+    type_aliases: HashMap<String, UnionFindSetPtr<RuntimeType>>,
 
     current_function: Option<Rc<RefCell<Function>>>,
     require_constant: bool,
@@ -77,6 +80,8 @@ impl PassFactory for TypePropagator<'_> {
             referenced_function: referenced_function.get(state),
             containing_scope: scope_data.get(state),
 
+            type_aliases: Default::default(),
+
             current_function: None,
             require_constant: false,
         })
@@ -97,6 +102,7 @@ impl<'a> TypePropagator<'a> {
             TopLevelStatement::Function(function_definition) => {
                 self.register_function(function_definition)
             }
+            TopLevelStatement::TypeAlias(type_alias) => self.register_type_alias(type_alias),
         }
     }
 
@@ -140,6 +146,28 @@ impl<'a> TypePropagator<'a> {
             id: self.id_generator.next_function_id(),
             definition_node_id: *id,
         };
+    }
+    fn register_type_alias(&mut self, type_alias: &mut TypeAlias) {
+        let type_alias_clone = type_alias.clone();
+        let TypeAlias {
+            let_token: _,
+            name,
+            name_token: _,
+            equal_token: _,
+            type_: _,
+            semicolon_token: _,
+            id: _,
+        } = type_alias;
+
+        let type_ = self.type_sets.insert_set(RuntimeType::Unknown);
+
+        if self.type_aliases.insert(name.clone(), type_).is_some() {
+            self.errors.push(FleetError::from_node(
+                &type_alias_clone,
+                format!("A type alias named {name:?} already exists"),
+                ErrorSeverity::Error,
+            ));
+        }
     }
 
     fn generate_mismatched_type_error_if<I: Into<AstNode> + Clone>(
@@ -262,6 +290,30 @@ impl AstVisitor for TypePropagator<'_> {
         self.visit_function_body(body);
 
         self.require_fully_specialized_scope(&fdef_clone, body);
+    }
+
+    fn visit_type_alias(&mut self, type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
+        let TypeAlias {
+            let_token: _,
+            name,
+            name_token: _,
+            equal_token: _,
+            type_,
+            semicolon_token: _,
+            id: _,
+        } = type_alias;
+
+        let type_ = self.visit_type(type_);
+
+        self.type_sets.get_mut(type_).specialize_number_size();
+
+        let aliased_type = *self.type_aliases.get(name).unwrap();
+
+        assert!(RuntimeType::merge_types(
+            type_,
+            aliased_type,
+            &mut self.type_sets
+        ))
     }
 
     fn visit_statement_function_body(
@@ -1185,7 +1237,6 @@ impl AstVisitor for TypePropagator<'_> {
         self.node_types.insert(*id, type_);
         type_
     }
-
     fn visit_unary_expression(
         &mut self,
         expression: &mut UnaryExpression,
@@ -1255,6 +1306,7 @@ impl AstVisitor for TypePropagator<'_> {
         self.node_types.insert(*id, this_type);
         this_type
     }
+
     fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
         let expression_clone = expression.clone();
         let CastExpression {

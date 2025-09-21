@@ -7,7 +7,7 @@ use fleet::{
         LiteralExpression, LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
         StructAccessExpression, StructAccessLValue, StructExpression, StructMemberDefinition,
-        StructType, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        StructType, ThreadExecutor, TypeAlias, UnaryExpression, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
@@ -182,6 +182,32 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             self.visit_type(return_type);
         }
         self.visit_function_body(body);
+    }
+
+    fn visit_type_alias(
+        &mut self,
+        TypeAlias {
+            let_token,
+            name: _,
+            name_token,
+            equal_token,
+            type_,
+            semicolon_token,
+            id: _,
+        }: &mut TypeAlias,
+    ) -> Self::TopLevelOutput {
+        self.build_semantic_token(let_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(
+            name_token,
+            SemanticTokenType::TYPE,
+            vec![
+                SemanticTokenModifier::DEFINITION,
+                SemanticTokenModifier::DECLARATION,
+            ],
+        );
+        self.build_comment_tokens_only(equal_token);
+        self.visit_type(type_);
+        self.build_comment_tokens_only(semicolon_token);
     }
 
     fn visit_statement_function_body(

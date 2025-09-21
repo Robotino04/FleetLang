@@ -18,9 +18,10 @@ use crate::{
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
         StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
-        StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor, UnaryExpression,
-        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor, TopLevelStatement,
+        TypeAlias, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     generate_glsl::GLSLCodeGenerator,
     infra::{ErrorSeverity, FleetError},
@@ -303,16 +304,22 @@ impl AstVisitor for CCodeGenerator<'_> {
         let function_declarations = program
             .top_level_statements
             .iter()
-            .map(|f| {
-                self.generate_function_declaration(
-                    &self
-                        .function_data
-                        .get(&f.get_id())
-                        .expect("Functions should be tracked before calling c_generator")
-                        .borrow()
-                        .clone(),
-                    true,
-                ) + ";"
+            .filter_map(|f| {
+                if let TopLevelStatement::Function(_) = f {
+                    Some(
+                        self.generate_function_declaration(
+                            &self
+                                .function_data
+                                .get(&f.get_id())
+                                .expect("Functions should be tracked before calling c_generator")
+                                .borrow()
+                                .clone(),
+                            true,
+                        ) + ";",
+                    )
+                } else {
+                    None
+                }
             })
             .join("\n");
 
@@ -402,6 +409,11 @@ impl AstVisitor for CCodeGenerator<'_> {
         let decl = self.generate_function_declaration(&function.borrow().clone(), true);
         let body = self.visit_function_body(body);
         decl + &body
+    }
+
+    fn visit_type_alias(&mut self, _type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
+        // type aliases get completely compiled out and aren't relevant after type propagation
+        "".to_string()
     }
 
     fn visit_statement_function_body(

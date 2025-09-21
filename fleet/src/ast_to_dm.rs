@@ -11,7 +11,7 @@ use crate::{
         LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
         StructAccessExpression, StructAccessLValue, StructExpression, StructMemberDefinition,
-        StructMemberValue, StructType, ThreadExecutor, UnaryExpression, UnitType,
+        StructMemberValue, StructType, ThreadExecutor, TypeAlias, UnaryExpression, UnitType,
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
         VariableLValue, WhileLoopStatement,
     },
@@ -448,6 +448,33 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
                 },
                 DocumentElement::LineBreakEater,
                 self.visit_function_body(body),
+            ],
+        )
+    }
+
+    fn visit_type_alias(
+        &mut self,
+        TypeAlias {
+            let_token,
+            name: _,
+            name_token,
+            equal_token,
+            type_,
+            semicolon_token,
+            id: _,
+        }: &mut TypeAlias,
+    ) -> Self::TopLevelOutput {
+        self.is_first_in_statement = true;
+        DocumentElement::spaced_concatentation(
+            DocumentElement::single_collapsable_space(),
+            vec![
+                self.token_to_element(let_token),
+                self.token_to_element(name_token),
+                self.token_to_element(equal_token),
+                DocumentElement::Concatenation(vec![
+                    self.visit_type(type_),
+                    self.token_to_element(semicolon_token),
+                ]),
             ],
         )
     }

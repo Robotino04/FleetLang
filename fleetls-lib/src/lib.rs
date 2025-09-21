@@ -6,9 +6,10 @@ use fleet::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
         IfStatement, LiteralExpression, LiteralKind, NodeID, OnStatement, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody, StructAccessExpression,
-        StructAccessLValue, StructExpression, StructType, ThreadExecutor, UnaryExpression,
-        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        StructAccessLValue, StructExpression, StructType, ThreadExecutor, TypeAlias,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     escape::{QuoteType, escape},
     infra::{
@@ -193,6 +194,21 @@ impl Backend {
                         })
                 ),
                 "function definition".to_string(),
+            ),
+            AstNode::TypeAlias(TypeAlias {
+                let_token: _,
+                name,
+                name_token: _,
+                equal_token: _,
+                type_,
+                semicolon_token: _,
+                id: _,
+            }) => (
+                format!(
+                    "let {name} = {};",
+                    self.generate_node_hover(type_, analysis_data).0
+                ),
+                "type alias".to_string(),
             ),
             AstNode::ExternFunctionBody(ExternFunctionBody {
                 at_token: _,

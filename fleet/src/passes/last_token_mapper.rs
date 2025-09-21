@@ -8,8 +8,8 @@ use crate::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
         SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression,
-        StructAccessLValue, StructExpression, StructType, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        StructAccessLValue, StructExpression, StructType, ThreadExecutor, TypeAlias,
+        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     tokenizer::Token,
@@ -71,6 +71,10 @@ impl<R> AstVisitor for LastTokenMapper<'_, R> {
 
     fn visit_function_definition(&mut self, function_definition: &mut FunctionDefinition) {
         self.visit_function_body(&mut function_definition.body);
+    }
+
+    fn visit_type_alias(&mut self, type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
+        self.visit_token(&mut type_alias.semicolon_token);
     }
 
     fn visit_statement_function_body(

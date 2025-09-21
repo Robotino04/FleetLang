@@ -6,7 +6,7 @@ use crate::ast::{
     LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
     SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
     StructAccessExpression, StructAccessLValue, StructExpression, StructMemberDefinition,
-    StructMemberValue, StructType, ThreadExecutor, UnaryExpression, UnitType,
+    StructMemberValue, StructType, ThreadExecutor, TypeAlias, UnaryExpression, UnitType,
     VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
     VariableLValue, WhileLoopStatement,
 };
@@ -102,6 +102,33 @@ impl AstVisitor for FindContainingNodePass {
             self.visit_type(return_type)?;
         }
         let right_bound = self.visit_function_body(body)?.end;
+
+        if left_bound <= self.search_position && self.search_position <= right_bound {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        Ok(left_bound.until(right_bound))
+    }
+
+    fn visit_type_alias(&mut self, type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
+        self.node_hierarchy.push(type_alias.clone().into());
+
+        let TypeAlias {
+            let_token,
+            name: _,
+            name_token,
+            equal_token,
+            type_,
+            semicolon_token,
+            id: _,
+        } = type_alias;
+
+        let left_bound = self.visit_token(let_token)?.start;
+        self.visit_token(name_token)?;
+        self.visit_token(equal_token)?;
+            self.visit_type(type_)?;
+        let right_bound = self.visit_token(semicolon_token)?.end;
 
         if left_bound <= self.search_position && self.search_position <= right_bound {
             return Err(());

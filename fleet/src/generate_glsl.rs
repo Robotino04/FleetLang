@@ -23,7 +23,7 @@ use crate::{
         OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
         SkipStatement, Statement, StatementFunctionBody, StructAccessExpression,
         StructAccessLValue, StructExpression, StructMemberDefinition, StructMemberValue,
-        StructType, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
+        StructType, ThreadExecutor, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
         VariableLValue, WhileLoopStatement,
     },
@@ -660,6 +660,11 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             declaration.clone() + ";",
             declaration + self.visit_function_body(body)?.as_str(),
         )))
+    }
+
+    fn visit_type_alias(&mut self, _type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
+        // type aliases get completely compiled out and aren't relevant after type propagation
+        Ok(None)
     }
 
     fn visit_statement_function_body(

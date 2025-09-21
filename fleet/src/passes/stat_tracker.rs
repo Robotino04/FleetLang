@@ -16,8 +16,8 @@ use crate::{
         LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
         StructAccessExpression, StructAccessLValue, StructExpression, StructMemberDefinition,
-        StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, TypeAlias,
+        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
@@ -365,6 +365,24 @@ impl AstVisitor for StatTracker<'_> {
         self.current_function = None;
 
         body_stat
+    }
+
+    fn visit_type_alias(
+        &mut self,
+        TypeAlias {
+            let_token: _,
+            name: _,
+            name_token: _,
+            equal_token: _,
+            type_,
+            semicolon_token: _,
+            id,
+        }: &mut TypeAlias,
+    ) -> Self::TopLevelOutput {
+        let stats = self.visit_type(type_);
+        self.stats.insert(*id, stats.clone());
+
+        stats
     }
 
     fn visit_statement_function_body(

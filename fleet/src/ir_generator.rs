@@ -36,9 +36,10 @@ use crate::{
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
         StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
-        StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, UnaryExpression,
-        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, TypeAlias,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     escape::{QuoteType, unescape},
     generate_glsl::GLSLCodeGenerator,
@@ -507,6 +508,10 @@ impl<'a> IrGenerator<'_> {
             TopLevelStatement::Function(function_definition) => {
                 self.register_function(function_definition)
             }
+            TopLevelStatement::TypeAlias(_type_alias) => {
+                // type aliases get completely compiled out and aren't relevant after type propagation
+                Ok(())
+            }
         }
     }
     fn register_function(&mut self, function: &mut FunctionDefinition) -> Result<()> {
@@ -597,7 +602,7 @@ impl<'a> IrGenerator<'_> {
 
 impl<'state> AstVisitor for IrGenerator<'state> {
     type ProgramOutput = Result<()>;
-    type TopLevelOutput = Result<FunctionValue<'state>>;
+    type TopLevelOutput = Result<Option<FunctionValue<'state>>>;
     type FunctionBodyOutput = Result<()>;
     type SimpleBindingOutput = Result<PointerValue<'state>>;
     type StatementOutput = Result<()>;
@@ -912,7 +917,12 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             ));
         }
 
-        Ok(ir_function)
+        Ok(Some(ir_function))
+    }
+
+    fn visit_type_alias(&mut self, _type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
+        // type aliases get completely compiled out and aren't relevant after type propagation
+        Ok(None)
     }
 
     fn visit_statement_function_body(
@@ -3206,7 +3216,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             ));
         };
 
-        let Some((member_index, (_, member_type))) =
+        let Some((member_index, (_, _member_type))) =
             members.iter().find_position(|m| m.0 == *member_name)
         else {
             return self.report_error(FleetError::from_node(
@@ -3222,21 +3232,6 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             member_index as u32,
             "struct_Access",
         )?;
-
-        let result = if let RuntimeType::ArrayOf { .. } | RuntimeType::Struct { .. } =
-            self.type_sets.get(*member_type)
-        {
-            index_ptr.into()
-        } else {
-            self.builder.build_load(
-                value_type_ir
-                    .into_struct_type()
-                    .get_field_type_at_index(member_index as u32)
-                    .unwrap(),
-                index_ptr,
-                "load_from_struct",
-            )?
-        };
 
         Ok(index_ptr)
     }

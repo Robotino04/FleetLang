@@ -2,15 +2,7 @@ use either::Either;
 
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
-        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-        LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression,
-        StructAccessLValue, StructExpression, StructType, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor, BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression, StructType, ThreadExecutor, TypeAlias, UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement
     },
     tokenizer::Token,
 };
@@ -74,19 +66,23 @@ impl<R> AstVisitor for FirstTokenMapper<'_, R> {
         self.visit_token(&mut function_definition.let_token);
     }
 
+    fn visit_type_alias(&mut self, type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
+        self.visit_token(&mut type_alias.let_token);
+    }
+
     fn visit_statement_function_body(
         &mut self,
         StatementFunctionBody { statement, .. }: &mut StatementFunctionBody,
     ) -> Self::FunctionBodyOutput {
         self.visit_statement(statement);
     }
-
     fn visit_extern_function_body(
         &mut self,
         ExternFunctionBody { at_token, .. }: &mut ExternFunctionBody,
     ) -> Self::FunctionBodyOutput {
         self.visit_token(at_token);
     }
+
     fn visit_simple_binding(
         &mut self,
         SimpleBinding { name_token, .. }: &mut SimpleBinding,

@@ -10,7 +10,7 @@ use fleet::{
         LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
         SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression,
         StructAccessLValue, StructExpression, StructMemberDefinition, StructMemberValue,
-        StructType, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        StructType, ThreadExecutor, TypeAlias, UnaryExpression, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
@@ -119,6 +119,21 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             "[\"Function `{}`\",\n{}, [\"Return Type\"{}], [\"Body\", {}]\n]",
             name, params_str, ret_type_str, body_str
         )
+    }
+
+    fn visit_type_alias(
+        &mut self,
+        TypeAlias {
+            let_token: _,
+            name,
+            name_token: _,
+            equal_token: _,
+            type_,
+            semicolon_token: _,
+            id: _,
+        }: &mut TypeAlias,
+    ) -> Self::TopLevelOutput {
+        format!("[\"TypeAlias `{}`\",{}]", name, self.visit_type(type_))
     }
 
     fn visit_statement_function_body(

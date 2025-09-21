@@ -7,7 +7,7 @@ use crate::ast::{
     OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
     SkipStatement, Statement, StatementFunctionBody, StructAccessExpression, StructAccessLValue,
     StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
-    TopLevelStatement, Type, UnaryExpression, UnitType, VariableAccessExpression,
+    TopLevelStatement, Type, TypeAlias, UnaryExpression, UnitType, VariableAccessExpression,
     VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
 };
 
@@ -45,6 +45,7 @@ pub trait PartialAstVisitor {
             TopLevelStatement::Function(function_definition) => {
                 self.partial_visit_function_definition(function_definition)
             }
+            TopLevelStatement::TypeAlias(type_alias) => self.partial_visit_type_alias(type_alias),
         }
     }
 
@@ -71,6 +72,20 @@ pub trait PartialAstVisitor {
             self.partial_visit_type(return_type);
         }
         self.partial_visit_function_body(body);
+    }
+    fn partial_visit_type_alias(
+        &mut self,
+        TypeAlias {
+            let_token: _,
+            name: _,
+            name_token: _,
+            equal_token: _,
+            type_,
+            semicolon_token: _,
+            id: _,
+        }: &mut TypeAlias,
+    ) {
+        self.partial_visit_type(type_);
     }
 
     fn partial_visit_function_body(&mut self, function_body: &mut FunctionBody) {
@@ -721,6 +736,10 @@ where
         self.partial_visit_function_definition(function_definition);
     }
 
+    fn visit_type_alias(&mut self, type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
+        self.partial_visit_type_alias(type_alias);
+    }
+
     fn visit_statement_function_body(
         &mut self,
         statement_function_body: &mut StatementFunctionBody,
@@ -850,13 +869,13 @@ where
     ) -> Self::ExpressionOutput {
         self.partial_visit_compiler_expression(expression);
     }
-
     fn visit_array_index_expression(
         &mut self,
         expression: &mut ArrayIndexExpression,
     ) -> Self::ExpressionOutput {
         self.partial_visit_array_index_expression(expression);
     }
+
     fn visit_struct_access_expression(
         &mut self,
         expression: &mut StructAccessExpression,

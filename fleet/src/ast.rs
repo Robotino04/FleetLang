@@ -13,6 +13,7 @@ use crate::{
 pub enum AstNode {
     Program(Program),
     FunctionDefinition(FunctionDefinition),
+    TypeAlias(TypeAlias),
 
     ExternFunctionBody(ExternFunctionBody),
     StatementFunctionBody(StatementFunctionBody),
@@ -69,6 +70,9 @@ impl AstNode {
             }
             AstNode::FunctionDefinition(function_definition) => {
                 visitor.visit_function_definition(function_definition);
+            }
+            AstNode::TypeAlias(type_alias) => {
+                visitor.visit_type_alias(type_alias);
             }
             AstNode::ExternFunctionBody(extern_function_body) => {
                 visitor.visit_extern_function_body(extern_function_body);
@@ -200,6 +204,7 @@ impl HasID for AstNode {
         match self {
             AstNode::Program(program) => program.get_id(),
             AstNode::FunctionDefinition(function_definition) => function_definition.get_id(),
+            AstNode::TypeAlias(type_alias) => type_alias.get_id(),
 
             AstNode::ExternFunctionBody(extern_function_body) => extern_function_body.get_id(),
             AstNode::StatementFunctionBody(statement_function_body) => {
@@ -304,6 +309,7 @@ pub trait AstVisitor {
             TopLevelStatement::Function(function_definition) => {
                 self.visit_function_definition(function_definition)
             }
+            TopLevelStatement::TypeAlias(type_alias) => self.visit_type_alias(type_alias),
         }
     }
 
@@ -311,6 +317,7 @@ pub trait AstVisitor {
         &mut self,
         function_definition: &mut FunctionDefinition,
     ) -> Self::TopLevelOutput;
+    fn visit_type_alias(&mut self, type_alias: &mut TypeAlias) -> Self::TopLevelOutput;
 
     fn visit_function_body(
         &mut self,
@@ -548,14 +555,17 @@ pub struct Program {
 generate_ast_requirements!(Program, unwrap_program);
 
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum TopLevelStatement {
     Function(FunctionDefinition),
+    TypeAlias(TypeAlias),
 }
 
 impl From<TopLevelStatement> for AstNode {
     fn from(value: TopLevelStatement) -> Self {
         match value {
             TopLevelStatement::Function(function_definition) => function_definition.into(),
+            TopLevelStatement::TypeAlias(type_alias) => type_alias.into(),
         }
     }
 }
@@ -564,6 +574,7 @@ impl HasID for TopLevelStatement {
     fn get_id(&self) -> NodeID {
         match self {
             TopLevelStatement::Function(function) => function.get_id(),
+            TopLevelStatement::TypeAlias(alias) => alias.get_id(),
         }
     }
 }
@@ -594,6 +605,18 @@ pub struct FunctionDefinition {
     pub id: NodeID,
 }
 generate_ast_requirements!(FunctionDefinition, unwrap_function_definition);
+
+#[derive(Clone, Debug)]
+pub struct TypeAlias {
+    pub let_token: Token,
+    pub name: String,
+    pub name_token: Token,
+    pub equal_token: Token,
+    pub type_: Type,
+    pub semicolon_token: Token,
+    pub id: NodeID,
+}
+generate_ast_requirements!(TypeAlias, unwrap_type_alias);
 
 #[derive(Clone, Debug)]
 pub struct ExternFunctionBody {

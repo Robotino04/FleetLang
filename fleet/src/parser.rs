@@ -16,7 +16,7 @@ use crate::{
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement,
         StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
         StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor, TopLevelStatement,
-        Type, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        Type, TypeAlias, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
@@ -309,7 +309,12 @@ impl<'state> Parser<'state> {
     pub fn parse_program(mut self) -> Result<()> {
         while !self.is_done() {
             let recovery_start = self.current_token();
-            if let Ok(function) = self.parse_function_definition() {
+
+            if let Ok(type_alias) = self.try_parse(|this| this.parse_type_alias()) {
+                self.program
+                    .top_level_statements
+                    .push(TopLevelStatement::TypeAlias(type_alias));
+            } else if let Ok(function) = self.parse_function_definition() {
                 self.program
                     .top_level_statements
                     .push(TopLevelStatement::Function(function));
@@ -360,6 +365,25 @@ impl<'state> Parser<'state> {
             right_arrow_token,
             return_type,
             body,
+            id: self.id_generator.next_node_id(),
+        })
+    }
+    pub fn parse_type_alias(&mut self) -> Result<TypeAlias> {
+        let let_token = expect!(self, TokenType::Keyword(Keyword::Let))?;
+        let (name_token, name) =
+            expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
+
+        let equal_token = expect!(self, TokenType::EqualSign)?;
+        let type_ = self.parse_type()?;
+        let semicolon_token = expect!(self, TokenType::Semicolon)?;
+
+        Ok(TypeAlias {
+            let_token,
+            name,
+            name_token,
+            equal_token,
+            type_,
+            semicolon_token,
             id: self.id_generator.next_node_id(),
         })
     }
