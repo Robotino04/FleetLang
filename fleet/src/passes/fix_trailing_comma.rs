@@ -2,8 +2,8 @@ use std::cell::RefMut;
 
 use crate::{
     ast::{
-        ArrayExpression, AstVisitor, FunctionCallExpression, Program, StructMemberDefinition,
-        StructType,
+        ArrayExpression, AstVisitor, FunctionCallExpression, Program, StructExpression,
+        StructMemberDefinition, StructMemberValue, StructType,
     },
     passes::{
         last_token_mapper::LastTokenMapper,
@@ -131,6 +131,59 @@ impl PartialAstVisitor for FixTrailingComma<'_> {
                 )
             });
             replace_pass.visit_type(type_);
+            let (trivia, token_end, file_name) = replace_pass.result().unwrap();
+
+            *comma = Some(Token {
+                type_: TokenType::Comma,
+                range: token_end.until(token_end),
+                leading_trivia: vec![],
+                trailing_trivia: trivia,
+                file_name,
+            });
+        }
+    }
+    fn partial_visit_struct_expression(
+        &mut self,
+        StructExpression {
+            type_,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id: _,
+        }: &mut StructExpression,
+    ) {
+        self.visit_type(type_);
+        for (
+            StructMemberValue {
+                name: _,
+                name_token: _,
+                colon_token: _,
+                value,
+            },
+            _comma,
+        ) in &mut *members
+        {
+            self.visit_expression(value);
+        }
+
+        if let Some((
+            StructMemberValue {
+                name: _,
+                name_token: _,
+                colon_token: _,
+                value,
+            },
+            comma @ None,
+        )) = members.last_mut()
+        {
+            let mut replace_pass = LastTokenMapper::new(|token| {
+                (
+                    std::mem::take(&mut token.trailing_trivia),
+                    token.range.end,
+                    token.file_name.clone(),
+                )
+            });
+            replace_pass.visit_expression(value);
             let (trivia, token_end, file_name) = replace_pass.result().unwrap();
 
             *comma = Some(Token {

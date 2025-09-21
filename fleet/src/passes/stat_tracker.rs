@@ -15,10 +15,10 @@ use crate::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-        StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
-        TopLevelStatement, UnaryExpression, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        StructAccessExpression, StructAccessLValue, StructExpression, StructMemberDefinition,
+        StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, UnaryExpression,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
@@ -932,6 +932,21 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
+    fn visit_struct_access_expression(
+        &mut self,
+        StructAccessExpression {
+            value,
+            dot_token: _,
+            member_name: _,
+            member_name_token: _,
+            id,
+        }: &mut StructAccessExpression,
+    ) -> Self::ExpressionOutput {
+        let stat = self.visit_expression(value);
+        self.stats.insert(*id, stat.clone());
+        stat
+    }
+
     fn visit_grouping_expression(
         &mut self,
         GroupingExpression {
@@ -1071,6 +1086,21 @@ impl AstVisitor for StatTracker<'_> {
         let stat = self
             .visit_lvalue(array)
             .serial(self.visit_expression(index));
+        self.stats.insert(*id, stat.clone());
+        stat
+    }
+
+    fn visit_struct_access_lvalue(
+        &mut self,
+        StructAccessLValue {
+            value,
+            dot_token: _,
+            member_name: _,
+            member_name_token: _,
+            id,
+        }: &mut StructAccessLValue,
+    ) -> Self::LValueOutput {
+        let stat = self.visit_lvalue(value);
         self.stats.insert(*id, stat.clone());
         stat
     }

@@ -35,10 +35,10 @@ use crate::{
         FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
-        StatementFunctionBody, StructExpression, StructMemberValue, StructType, ThreadExecutor,
-        TopLevelStatement, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
+        StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     escape::{QuoteType, unescape},
     generate_glsl::GLSLCodeGenerator,
@@ -188,6 +188,13 @@ impl<'a> RuntimeValueIR<'a> {
             x
         } else {
             panic!("Expected RuntimeValueIR::Array, got {self:#?}")
+        }
+    }
+    pub fn unwrap_struct(self) -> PointerValue<'a> {
+        if let RuntimeValueIR::Struct(x) = self {
+            x
+        } else {
+            panic!("Expected RuntimeValueIR::Struct, got {self:#?}")
         }
     }
     pub fn unwrap_unit(self) {
@@ -862,10 +869,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         Ok(type_) => {
                             self.builder.build_return(Some(&type_.const_zero()))?;
                         }
-                        Err(Either::Left(_)) => {
+                        Err(Either::Left(_fn_type)) => {
                             todo!();
                         }
-                        Err(Either::Right(_)) => {
+                        Err(Either::Right(_unit_type)) => {
                             self.builder.build_return(None)?;
                         }
                     };
@@ -2082,7 +2089,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         let result_type = array_type.unwrap_arrayof().0;
 
-        let result = if let RuntimeType::ArrayOf { .. } =
+        let result = if let RuntimeType::ArrayOf { .. } | RuntimeType::Struct { .. } =
             self.type_sets.get(array_type.unwrap_arrayof().0)
         {
             index_ptr.into()
@@ -2095,6 +2102,70 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         };
 
         self.package_llvm_in_runtime_value(Some(result), result_type, expr)
+    }
+
+    fn visit_struct_access_expression(
+        &mut self,
+        expr: &mut StructAccessExpression,
+    ) -> Self::ExpressionOutput {
+        let StructAccessExpression {
+            value,
+            dot_token: _,
+            member_name,
+            member_name_token: _,
+            id: _,
+        } = expr;
+        let value_ptr = self.visit_expression(value)?.unwrap_struct();
+        let value_type = *self.type_data.get(&value.get_id()).unwrap();
+
+        let value_type_ir = self.runtime_type_to_llvm(value_type, &**value)?;
+        let value_type = self.type_sets.get(value_type);
+
+        let RuntimeType::Struct {
+            members,
+            source_hash: _,
+        } = value_type
+        else {
+            return self.report_error(FleetError::from_node(
+                expr,
+                "Struct access used on non-struct",
+                ErrorSeverity::Error,
+            ));
+        };
+
+        let Some((member_index, (_, member_type))) =
+            members.iter().find_position(|m| m.0 == *member_name)
+        else {
+            return self.report_error(FleetError::from_node(
+                expr,
+                "Struct doesn't have member named {member_name:?}",
+                ErrorSeverity::Error,
+            ));
+        };
+
+        let index_ptr = self.builder.build_struct_gep(
+            value_type_ir.into_struct_type(),
+            value_ptr,
+            member_index as u32,
+            "struct_Access",
+        )?;
+
+        let result = if let RuntimeType::ArrayOf { .. } | RuntimeType::Struct { .. } =
+            self.type_sets.get(*member_type)
+        {
+            index_ptr.into()
+        } else {
+            self.builder.build_load(
+                value_type_ir
+                    .into_struct_type()
+                    .get_field_type_at_index(member_index as u32)
+                    .unwrap(),
+                index_ptr,
+                "load_from_struct",
+            )?
+        };
+
+        self.package_llvm_in_runtime_value(Some(result), *member_type, expr)
     }
 
     fn visit_grouping_expression(
@@ -2144,7 +2215,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let result_type_ir = self.runtime_type_to_llvm(result_type_ptr, &expr_clone)?;
         let result_type = self.type_sets.get(result_type_ptr);
 
-        let result = if let RuntimeType::ArrayOf { .. } = result_type {
+        let result = if let RuntimeType::ArrayOf { .. } | RuntimeType::Struct { .. } = result_type {
             Some(storage.0.into())
         } else {
             Some(self.builder.build_load(
@@ -3064,6 +3135,70 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 array_ptr,
                 &[index_ir],
                 "array_index",
+            )?
+        };
+
+        Ok(index_ptr)
+    }
+
+    fn visit_struct_access_lvalue(
+        &mut self,
+        lvalue: &mut StructAccessLValue,
+    ) -> Self::LValueOutput {
+        let StructAccessLValue {
+            value,
+            dot_token: _,
+            member_name,
+            member_name_token: _,
+            id: _,
+        } = lvalue;
+        let value_ptr = self.visit_lvalue(value)?;
+        let value_type = *self.type_data.get(&value.get_id()).unwrap();
+
+        let value_type_ir = self.runtime_type_to_llvm(value_type, &**value)?;
+        let value_type = self.type_sets.get(value_type);
+
+        let RuntimeType::Struct {
+            members,
+            source_hash: _,
+        } = value_type
+        else {
+            return self.report_error(FleetError::from_node(
+                lvalue,
+                "Struct access used on non-struct",
+                ErrorSeverity::Error,
+            ));
+        };
+
+        let Some((member_index, (_, member_type))) =
+            members.iter().find_position(|m| m.0 == *member_name)
+        else {
+            return self.report_error(FleetError::from_node(
+                lvalue,
+                "Struct doesn't have member named {member_name:?}",
+                ErrorSeverity::Error,
+            ));
+        };
+
+        let index_ptr = self.builder.build_struct_gep(
+            value_type_ir.into_struct_type(),
+            value_ptr,
+            member_index as u32,
+            "struct_Access",
+        )?;
+
+        let result = if let RuntimeType::ArrayOf { .. } | RuntimeType::Struct { .. } =
+            self.type_sets.get(*member_type)
+        {
+            index_ptr.into()
+        } else {
+            self.builder.build_load(
+                value_type_ir
+                    .into_struct_type()
+                    .get_field_type_at_index(member_index as u32)
+                    .unwrap(),
+                index_ptr,
+                "load_from_struct",
             )?
         };
 

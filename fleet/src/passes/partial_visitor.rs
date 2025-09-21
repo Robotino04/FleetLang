@@ -5,10 +5,10 @@ use crate::ast::{
     FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
     GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression, OnStatement,
     OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-    SkipStatement, Statement, StatementFunctionBody, StructExpression, StructMemberDefinition,
-    StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, Type, UnaryExpression,
-    UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-    VariableLValue, WhileLoopStatement,
+    SkipStatement, Statement, StatementFunctionBody, StructAccessExpression, StructAccessLValue,
+    StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
+    TopLevelStatement, Type, UnaryExpression, UnitType, VariableAccessExpression,
+    VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
 };
 
 pub trait PartialAstVisitor {
@@ -370,6 +370,9 @@ pub trait PartialAstVisitor {
             Expression::ArrayIndex(array_index_expression) => {
                 self.partial_visit_array_index_expression(array_index_expression)
             }
+            Expression::StructAccess(struct_access_expression) => {
+                self.partial_visit_struct_access_expression(struct_access_expression)
+            }
             Expression::Grouping(grouping_expression) => {
                 self.partial_visit_grouping_expression(grouping_expression)
             }
@@ -480,6 +483,18 @@ pub trait PartialAstVisitor {
         self.partial_visit_expression(array);
         self.partial_visit_expression(index);
     }
+    fn partial_visit_struct_access_expression(
+        &mut self,
+        StructAccessExpression {
+            value,
+            dot_token: _,
+            member_name: _,
+            member_name_token: _,
+            id: _,
+        }: &mut StructAccessExpression,
+    ) {
+        self.partial_visit_expression(&mut *value);
+    }
     fn partial_visit_grouping_expression(
         &mut self,
         GroupingExpression {
@@ -557,6 +572,9 @@ pub trait PartialAstVisitor {
             LValue::ArrayIndex(array_index_lvalue) => {
                 self.partial_visit_array_index_lvalue(array_index_lvalue)
             }
+            LValue::StructAccess(struct_access_lvalue) => {
+                self.partial_visit_struct_access_lvalue(struct_access_lvalue)
+            }
             LValue::Grouping(grouping_lvalue) => {
                 self.partial_visit_grouping_lvalue(grouping_lvalue)
             }
@@ -583,6 +601,18 @@ pub trait PartialAstVisitor {
     ) {
         self.partial_visit_lvalue(&mut *array);
         self.partial_visit_expression(&mut *index);
+    }
+    fn partial_visit_struct_access_lvalue(
+        &mut self,
+        StructAccessLValue {
+            value,
+            dot_token: _,
+            member_name: _,
+            member_name_token: _,
+            id: _,
+        }: &mut StructAccessLValue,
+    ) {
+        self.partial_visit_lvalue(&mut *value);
     }
     fn partial_visit_grouping_lvalue(
         &mut self,
@@ -827,6 +857,13 @@ where
     ) -> Self::ExpressionOutput {
         self.partial_visit_array_index_expression(expression);
     }
+    fn visit_struct_access_expression(
+        &mut self,
+        expression: &mut StructAccessExpression,
+    ) -> Self::ExpressionOutput {
+        self.partial_visit_struct_access_expression(expression);
+    }
+
     fn visit_grouping_expression(
         &mut self,
         expression: &mut GroupingExpression,
@@ -876,6 +913,13 @@ where
 
     fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
         self.partial_visit_array_index_lvalue(lvalue);
+    }
+
+    fn visit_struct_access_lvalue(
+        &mut self,
+        lvalue: &mut StructAccessLValue,
+    ) -> Self::LValueOutput {
+        self.partial_visit_struct_access_lvalue(lvalue);
     }
 
     fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {

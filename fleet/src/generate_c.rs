@@ -12,10 +12,10 @@ use crate::{
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
-        StatementFunctionBody, StructExpression, StructMemberDefinition, StructMemberValue,
-        StructType, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
+        StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     generate_glsl::GLSLCodeGenerator,
     infra::{ErrorSeverity, FleetError},
@@ -1340,6 +1340,42 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
+    fn visit_struct_access_expression(
+        &mut self,
+        StructAccessExpression {
+            value,
+            dot_token: _,
+            member_name,
+            member_name_token: _,
+            id,
+        }: &mut StructAccessExpression,
+    ) -> Self::ExpressionOutput {
+        let PreStatementValue {
+            pre_statements,
+            out_value,
+        } = self.visit_expression(&mut *value);
+
+        if let RuntimeType::ArrayOf {
+            subtype: _,
+            size: _,
+        } = self.type_sets.get(
+            *self
+                .type_data
+                .get(id)
+                .expect("type data must exist before calling c_generator"),
+        ) {
+            PreStatementValue {
+                pre_statements,
+                out_value: format!("(&((*({out_value})).{member_name}))"),
+            }
+        } else {
+            PreStatementValue {
+                pre_statements,
+                out_value: format!("((*({out_value})).{member_name})"),
+            }
+        }
+    }
+
     fn visit_grouping_expression(
         &mut self,
         GroupingExpression {
@@ -1643,6 +1679,27 @@ impl AstVisitor for CCodeGenerator<'_> {
         PreStatementValue {
             pre_statements: lpre_statements + &rpre_statements,
             out_value: format!("(({out_lvalue})[{out_rvalue}])",),
+        }
+    }
+
+    fn visit_struct_access_lvalue(
+        &mut self,
+        StructAccessLValue {
+            value,
+            dot_token: _,
+            member_name,
+            member_name_token: _,
+            id: _,
+        }: &mut StructAccessLValue,
+    ) -> Self::LValueOutput {
+        let PreStatementValue {
+            pre_statements,
+            out_value,
+        } = self.visit_lvalue(value);
+
+        PreStatementValue {
+            pre_statements,
+            out_value: format!("((*({out_value})).{member_name})"),
         }
     }
 

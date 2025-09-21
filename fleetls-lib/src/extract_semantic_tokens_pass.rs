@@ -6,9 +6,10 @@ use fleet::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-        StructExpression, StructMemberDefinition, StructType, ThreadExecutor, UnaryExpression,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        StructAccessExpression, StructAccessLValue, StructExpression, StructMemberDefinition,
+        StructType, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     tokenizer::{SourceLocation, SourceRange, Token, Trivia, TriviaKind},
 };
@@ -581,6 +582,21 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
         self.build_comment_tokens_only(close_bracket_token);
     }
 
+    fn visit_struct_access_expression(
+        &mut self,
+        StructAccessExpression {
+            value,
+            dot_token,
+            member_name: _,
+            member_name_token,
+            id: _,
+        }: &mut StructAccessExpression,
+    ) -> Self::ExpressionOutput {
+        self.visit_expression(value);
+        self.build_comment_tokens_only(dot_token);
+        self.build_semantic_token(member_name_token, SemanticTokenType::PROPERTY, vec![]);
+    }
+
     fn visit_grouping_expression(
         &mut self,
         GroupingExpression {
@@ -691,6 +707,25 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
         self.build_comment_tokens_only(open_bracket_token);
         self.visit_expression(index);
         self.build_comment_tokens_only(close_bracket_token);
+    }
+
+    fn visit_struct_access_lvalue(
+        &mut self,
+        StructAccessLValue {
+            value,
+            dot_token,
+            member_name: _,
+            member_name_token,
+            id: _,
+        }: &mut StructAccessLValue,
+    ) -> Self::LValueOutput {
+        self.visit_lvalue(value);
+        self.build_comment_tokens_only(dot_token);
+        self.build_semantic_token(
+            member_name_token,
+            SemanticTokenType::PROPERTY,
+            vec![SemanticTokenModifier::MODIFICATION],
+        );
     }
 
     fn visit_grouping_lvalue(

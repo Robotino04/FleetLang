@@ -14,9 +14,9 @@ use crate::{
         GroupingExpression, GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression,
         LiteralKind, NodeID, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement,
-        StatementFunctionBody, StructExpression, StructMemberDefinition, StructMemberValue,
-        StructType, ThreadExecutor, TopLevelStatement, Type, UnaryExpression, UnaryOperation,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        StatementFunctionBody, StructAccessExpression, StructExpression, StructMemberDefinition,
+        StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, Type, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
@@ -786,6 +786,18 @@ impl<'state> Parser<'state> {
                     open_bracket_token: expect!(self, TokenType::OpenBracket)?,
                     index: Box::new(self.parse_expression()?),
                     close_bracket_token: expect!(self, TokenType::CloseBracket)?,
+                    id: self.id_generator.next_node_id(),
+                });
+                true
+            }
+            Some(TokenType::Dot) => {
+                let dot_token = expect!(self, TokenType::Dot)?;
+                let (member_name_token, member_name) = expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
+                lhs = Expression::StructAccess(StructAccessExpression {
+                    value: Box::new(lhs),
+                    dot_token,
+                    member_name,
+                    member_name_token,
                     id: self.id_generator.next_node_id(),
                 });
                 true

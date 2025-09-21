@@ -263,3 +263,41 @@ fn empty_literal() {
         0,
     );
 }
+#[test]
+fn array_as_parameter() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let modify_element = (a: i32[2]) -> () {
+                a[0] = 5;
+            }
+
+            let main = () -> i32 {
+                let array = [1, 2];
+
+                modify_element(array);
+
+                return array[0];
+            }
+        "##},
+        "main",
+        1,
+    );
+}
+#[test]
+fn array_as_returnvalue() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let gen_array = () -> i32[3] {
+                return [3, 2, 1];
+            }
+
+            let main = () -> i32 {
+                let a = gen_array();
+
+                return a[1];
+            }
+        "##},
+        "main",
+        2,
+    );
+}

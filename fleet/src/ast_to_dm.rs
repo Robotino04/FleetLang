@@ -10,9 +10,10 @@ use crate::{
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-        StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
-        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        StructAccessExpression, StructAccessLValue, StructExpression, StructMemberDefinition,
+        StructMemberValue, StructType, ThreadExecutor, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     document_model::DocumentElement,
     escape::{QuoteType, escape},
@@ -929,7 +930,9 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
         DocumentElement::Concatenation(vec![
             self.visit_type(type_),
             DocumentElement::single_collapsable_space(),
+            DocumentElement::LineBreakEater,
             self.braced_broken_block(open_brace_token, members, close_brace_token),
+            DocumentElement::ReverseSpaceEater,
         ])
     }
 
@@ -1016,6 +1019,23 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             self.token_to_element(open_bracket_token),
             self.visit_expression(index),
             self.token_to_element(close_bracket_token),
+        ])
+    }
+
+    fn visit_struct_access_expression(
+        &mut self,
+        StructAccessExpression {
+            value,
+            dot_token,
+            member_name: _,
+            member_name_token,
+            id: _,
+        }: &mut StructAccessExpression,
+    ) -> Self::ExpressionOutput {
+        DocumentElement::Concatenation(vec![
+            self.visit_expression(value),
+            self.token_to_element(dot_token),
+            self.token_to_element(member_name_token),
         ])
     }
 
@@ -1148,6 +1168,23 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
         ])
     }
 
+    fn visit_struct_access_lvalue(
+        &mut self,
+        StructAccessLValue {
+            value,
+            dot_token,
+            member_name: _,
+            member_name_token,
+            id: _,
+        }: &mut StructAccessLValue,
+    ) -> Self::LValueOutput {
+        DocumentElement::Concatenation(vec![
+            self.visit_lvalue(value),
+            self.token_to_element(dot_token),
+            self.token_to_element(member_name_token),
+        ])
+    }
+
     fn visit_grouping_lvalue(
         &mut self,
         GroupingLValue {
@@ -1240,7 +1277,9 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
         DocumentElement::Concatenation(vec![
             self.token_to_element(struct_token),
             DocumentElement::single_collapsable_space(),
+            DocumentElement::LineBreakEater,
             self.braced_broken_block(open_brace_token, members, close_brace_token),
+            DocumentElement::ReverseSpaceEater,
         ])
     }
 }

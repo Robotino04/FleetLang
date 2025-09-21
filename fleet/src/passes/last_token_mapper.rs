@@ -7,10 +7,10 @@ use crate::{
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, StructExpression, StructType,
-        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression,
+        StructAccessLValue, StructExpression, StructType, ThreadExecutor, UnaryExpression,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     tokenizer::Token,
 };
@@ -230,6 +230,13 @@ impl<R> AstVisitor for LastTokenMapper<'_, R> {
         self.visit_token(&mut expression.close_bracket_token);
     }
 
+    fn visit_struct_access_expression(
+        &mut self,
+        expression: &mut StructAccessExpression,
+    ) -> Self::ExpressionOutput {
+        self.visit_token(&mut expression.member_name_token);
+    }
+
     fn visit_grouping_expression(&mut self, expression: &mut GroupingExpression) {
         self.visit_token(&mut expression.close_paren_token);
     }
@@ -263,6 +270,13 @@ impl<R> AstVisitor for LastTokenMapper<'_, R> {
 
     fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
         self.visit_token(&mut lvalue.close_bracket_token);
+    }
+
+    fn visit_struct_access_lvalue(
+        &mut self,
+        lvalue: &mut StructAccessLValue,
+    ) -> Self::LValueOutput {
+        self.visit_token(&mut lvalue.member_name_token);
     }
 
     fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {

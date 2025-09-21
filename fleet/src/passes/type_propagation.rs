@@ -14,10 +14,11 @@ use crate::{
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
         OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, StructExpression, StructMemberDefinition,
-        StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, UnaryExpression,
-        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        SkipStatement, StatementFunctionBody, StructAccessExpression, StructAccessLValue,
+        StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
+        TopLevelStatement, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -1097,6 +1098,49 @@ impl AstVisitor for TypePropagator<'_> {
         subtype
     }
 
+    fn visit_struct_access_expression(
+        &mut self,
+        StructAccessExpression {
+            value,
+            dot_token: _,
+            member_name,
+            member_name_token,
+            id,
+        }: &mut StructAccessExpression,
+    ) -> Self::ExpressionOutput {
+        let value_type = self.visit_expression(value);
+
+        let RuntimeType::Struct {
+            members,
+            source_hash: _,
+        } = self.type_sets.get(value_type)
+        else {
+            self.errors.push(FleetError::from_node(
+                &**value,
+                "Trying to use struct access on non-struct typed value",
+                ErrorSeverity::Error,
+            ));
+            let err_type = self.type_sets.insert_set(RuntimeType::Error);
+            self.node_types.insert(*id, err_type);
+            return err_type;
+        };
+
+        let type_ = if let Some((_, member_type)) = members.iter().find(|m| m.0 == *member_name) {
+            *member_type
+        } else {
+            self.errors.push(FleetError::from_token(
+                member_name_token,
+                "Struct doesn't have member named {member_name:?}",
+                ErrorSeverity::Error,
+            ));
+
+            self.type_sets.insert_set(RuntimeType::Error)
+        };
+
+        self.node_types.insert(*id, type_);
+        type_
+    }
+
     fn visit_grouping_expression(
         &mut self,
         GroupingExpression {
@@ -1211,7 +1255,6 @@ impl AstVisitor for TypePropagator<'_> {
         self.node_types.insert(*id, this_type);
         this_type
     }
-
     fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
         let expression_clone = expression.clone();
         let CastExpression {
@@ -1531,6 +1574,7 @@ impl AstVisitor for TypePropagator<'_> {
         self.node_types.insert(*id, to_ptr);
         to_ptr
     }
+
     fn visit_binary_expression(
         &mut self,
         expression: &mut BinaryExpression,
@@ -1801,6 +1845,49 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.node_types.insert(*id, subtype);
         subtype
+    }
+
+    fn visit_struct_access_lvalue(
+        &mut self,
+        StructAccessLValue {
+            value,
+            dot_token: _,
+            member_name,
+            member_name_token,
+            id,
+        }: &mut StructAccessLValue,
+    ) -> Self::LValueOutput {
+        let value_type = self.visit_lvalue(value);
+
+        let RuntimeType::Struct {
+            members,
+            source_hash: _,
+        } = self.type_sets.get(value_type)
+        else {
+            self.errors.push(FleetError::from_node(
+                &**value,
+                "Trying to use struct access on non-struct typed value",
+                ErrorSeverity::Error,
+            ));
+            let err_type = self.type_sets.insert_set(RuntimeType::Error);
+            self.node_types.insert(*id, err_type);
+            return err_type;
+        };
+
+        let type_ = if let Some((_, member_type)) = members.iter().find(|m| m.0 == *member_name) {
+            *member_type
+        } else {
+            self.errors.push(FleetError::from_token(
+                member_name_token,
+                "Struct doesn't have member named {member_name:?}",
+                ErrorSeverity::Error,
+            ));
+
+            self.type_sets.insert_set(RuntimeType::Error)
+        };
+
+        self.node_types.insert(*id, type_);
+        type_
     }
 
     fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {

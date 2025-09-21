@@ -5,9 +5,10 @@ use crate::ast::{
     FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
     LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
     SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-    StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
-    UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-    VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+    StructAccessExpression, StructAccessLValue, StructExpression, StructMemberDefinition,
+    StructMemberValue, StructType, ThreadExecutor, UnaryExpression, UnitType,
+    VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+    VariableLValue, WhileLoopStatement,
 };
 use crate::tokenizer::{SourceLocation, SourceRange, Token};
 
@@ -763,6 +764,33 @@ impl AstVisitor for FindContainingNodePass {
         Ok(range)
     }
 
+    fn visit_struct_access_expression(
+        &mut self,
+        expression: &mut StructAccessExpression,
+    ) -> Self::ExpressionOutput {
+        self.node_hierarchy.push(expression.clone().into());
+
+        let StructAccessExpression {
+            value,
+            dot_token,
+            member_name: _,
+            member_name_token,
+            id: _,
+        } = expression;
+
+        let left_bound = self.visit_expression(value)?.start;
+        self.visit_token(dot_token)?;
+        let right_bound = self.visit_token(member_name_token)?.end;
+
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        Ok(range)
+    }
+
     fn visit_grouping_expression(
         &mut self,
         expression: &mut GroupingExpression,
@@ -954,6 +982,33 @@ impl AstVisitor for FindContainingNodePass {
         self.visit_token(open_bracket_token)?;
         self.visit_expression(index)?;
         let right_bound = self.visit_token(close_bracket_token)?.end;
+
+        let range = left_bound.until(right_bound);
+        if range.contains(self.search_position) {
+            return Err(());
+        }
+
+        self.node_hierarchy.pop();
+        Ok(range)
+    }
+
+    fn visit_struct_access_lvalue(
+        &mut self,
+        lvalue: &mut StructAccessLValue,
+    ) -> Self::LValueOutput {
+        self.node_hierarchy.push(lvalue.clone().into());
+
+        let StructAccessLValue {
+            value,
+            dot_token,
+            member_name: _,
+            member_name_token,
+            id: _,
+        } = lvalue;
+
+        let left_bound = self.visit_lvalue(value)?.start;
+        self.visit_token(dot_token)?;
+        let right_bound = self.visit_token(member_name_token)?.end;
 
         let range = left_bound.until(right_bound);
         if range.contains(self.search_position) {

@@ -8,10 +8,11 @@ use fleet::{
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, StructExpression, StructMemberDefinition,
-        StructMemberValue, StructType, ThreadExecutor, UnaryExpression, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression,
+        StructAccessLValue, StructExpression, StructMemberDefinition, StructMemberValue,
+        StructType, ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     escape::{QuoteType, escape},
     passes::pass_manager::{Pass, PassFactory, PassResult},
@@ -512,6 +513,20 @@ impl AstVisitor for AstJsonDumpPass<'_> {
         format!("[\"ArrayIndex\",\n{},\n{}\n]", arr_str, idx_str)
     }
 
+    fn visit_struct_access_expression(
+        &mut self,
+        StructAccessExpression {
+            value,
+            dot_token: _,
+            member_name,
+            member_name_token: _,
+            id: _,
+        }: &mut StructAccessExpression,
+    ) -> Self::ExpressionOutput {
+        let value_str = self.visit_expression(value);
+        format!("[\"StructAccess\",\n{},\n\"{member_name}\"\n]", value_str)
+    }
+
     fn visit_grouping_expression(
         &mut self,
         GroupingExpression {
@@ -636,6 +651,23 @@ impl AstVisitor for AstJsonDumpPass<'_> {
         let arr_str = self.visit_lvalue(array);
         let idx_str = self.visit_expression(index);
         format!("[\"ArrayIndexLValue\",\n{},\n{}\n]", arr_str, idx_str)
+    }
+
+    fn visit_struct_access_lvalue(
+        &mut self,
+        StructAccessLValue {
+            value,
+            dot_token: _,
+            member_name,
+            member_name_token: _,
+            id: _,
+        }: &mut StructAccessLValue,
+    ) -> Self::LValueOutput {
+        let value_str = self.visit_lvalue(value);
+        format!(
+            "[\"StructAccessLValue\",\n{},\n\"{member_name}\"\n]",
+            value_str
+        )
     }
 
     fn visit_grouping_lvalue(

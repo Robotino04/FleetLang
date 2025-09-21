@@ -41,6 +41,7 @@ pub enum AstNode {
     FunctionCallExpression(FunctionCallExpression),
     CompilerExpression(CompilerExpression),
     ArrayIndexExpression(ArrayIndexExpression),
+    StructAccessExpression(StructAccessExpression),
     GroupingExpression(GroupingExpression),
     VariableAccessExpression(VariableAccessExpression),
     UnaryExpression(UnaryExpression),
@@ -50,6 +51,7 @@ pub enum AstNode {
 
     VariableLValue(VariableLValue),
     ArrayIndexLValue(ArrayIndexLValue),
+    StructAccessLValue(StructAccessLValue),
     GroupingLValue(GroupingLValue),
 
     SimpleType(SimpleType),
@@ -134,6 +136,9 @@ impl AstNode {
             AstNode::ArrayIndexExpression(array_index_expression) => {
                 visitor.visit_array_index_expression(array_index_expression);
             }
+            AstNode::StructAccessExpression(struct_access_expression) => {
+                visitor.visit_struct_access_expression(struct_access_expression);
+            }
             AstNode::GroupingExpression(grouping_expression) => {
                 visitor.visit_grouping_expression(grouping_expression);
             }
@@ -157,6 +162,9 @@ impl AstNode {
             }
             AstNode::ArrayIndexLValue(array_index_lvalue) => {
                 visitor.visit_array_index_lvalue(array_index_lvalue);
+            }
+            AstNode::StructAccessLValue(struct_access_lvalue) => {
+                visitor.visit_struct_access_lvalue(struct_access_lvalue);
             }
             AstNode::GroupingLValue(grouping_lvalue) => {
                 visitor.visit_grouping_lvalue(grouping_lvalue);
@@ -225,6 +233,9 @@ impl HasID for AstNode {
             AstNode::ArrayIndexExpression(array_index_expression) => {
                 array_index_expression.get_id()
             }
+            AstNode::StructAccessExpression(struct_access_expression) => {
+                struct_access_expression.get_id()
+            }
             AstNode::GroupingExpression(grouping_expression) => grouping_expression.get_id(),
             AstNode::VariableAccessExpression(variable_access_expression) => {
                 variable_access_expression.get_id()
@@ -238,6 +249,7 @@ impl HasID for AstNode {
 
             AstNode::VariableLValue(var_lvalue) => var_lvalue.get_id(),
             AstNode::ArrayIndexLValue(array_lvalue) => array_lvalue.get_id(),
+            AstNode::StructAccessLValue(struct_lvalue) => struct_lvalue.get_id(),
             AstNode::GroupingLValue(grouping_lvalue) => grouping_lvalue.get_id(),
 
             AstNode::SimpleType(simple_type) => simple_type.get_id(),
@@ -421,6 +433,9 @@ pub trait AstVisitor {
             Expression::ArrayIndex(array_index_expression) => {
                 self.visit_array_index_expression(array_index_expression)
             }
+            Expression::StructAccess(struct_access_expression) => {
+                self.visit_struct_access_expression(struct_access_expression)
+            }
             Expression::Grouping(grouping_expression) => {
                 self.visit_grouping_expression(grouping_expression)
             }
@@ -461,6 +476,10 @@ pub trait AstVisitor {
         &mut self,
         expression: &mut ArrayIndexExpression,
     ) -> Self::ExpressionOutput;
+    fn visit_struct_access_expression(
+        &mut self,
+        expression: &mut StructAccessExpression,
+    ) -> Self::ExpressionOutput;
     fn visit_grouping_expression(
         &mut self,
         expression: &mut GroupingExpression,
@@ -489,11 +508,16 @@ pub trait AstVisitor {
             LValue::ArrayIndex(array_index_lvalue) => {
                 self.visit_array_index_lvalue(array_index_lvalue)
             }
+            LValue::StructAccess(struct_access_lvalue) => {
+                self.visit_struct_access_lvalue(struct_access_lvalue)
+            }
             LValue::Grouping(grouping_lvalue) => self.visit_grouping_lvalue(grouping_lvalue),
         }
     }
     fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput;
     fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput;
+    fn visit_struct_access_lvalue(&mut self, lvalue: &mut StructAccessLValue)
+    -> Self::LValueOutput;
     fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput;
 
     // types
@@ -1052,6 +1076,17 @@ pub struct ArrayIndexExpression {
 generate_ast_requirements!(ArrayIndexExpression, unwrap_array_index_expression);
 
 #[derive(Clone, Debug)]
+pub struct StructAccessExpression {
+    pub value: Box<Expression>,
+    pub dot_token: Token,
+    pub member_name: String,
+    pub member_name_token: Token,
+    pub id: NodeID,
+}
+
+generate_ast_requirements!(StructAccessExpression, unwrap_struct_access_expression);
+
+#[derive(Clone, Debug)]
 pub struct GroupingExpression {
     pub open_paren_token: Token,
     pub subexpression: Box<Expression>,
@@ -1121,6 +1156,7 @@ pub enum Expression {
     FunctionCall(FunctionCallExpression),
     CompilerExpression(CompilerExpression),
     ArrayIndex(ArrayIndexExpression),
+    StructAccess(StructAccessExpression),
     Grouping(GroupingExpression),
     VariableAccess(VariableAccessExpression),
     Unary(UnaryExpression),
@@ -1137,6 +1173,7 @@ impl Expression {
             Expression::Literal { .. } => 0,
             Expression::Array { .. } => 0,
             Expression::ArrayIndex { .. } => 0,
+            Expression::StructAccess { .. } => 0,
             Expression::Struct { .. } => 0,
             Expression::FunctionCall { .. } => 0,
             Expression::CompilerExpression { .. } => 0,
@@ -1179,6 +1216,7 @@ impl Expression {
             Expression::Literal { .. } => Associativity::Both,
             Expression::Array { .. } => Associativity::Both,
             Expression::ArrayIndex { .. } => Associativity::Left,
+            Expression::StructAccess { .. } => Associativity::Left,
             Expression::Struct { .. } => Associativity::Left,
             Expression::FunctionCall { .. } => Associativity::Both,
             Expression::CompilerExpression { .. } => Associativity::Both,
@@ -1212,6 +1250,7 @@ impl HasID for Expression {
             Expression::FunctionCall(expr) => expr.get_id(),
             Expression::CompilerExpression(expr) => expr.get_id(),
             Expression::ArrayIndex(expr) => expr.get_id(),
+            Expression::StructAccess(expr) => expr.get_id(),
             Expression::Grouping(expr) => expr.get_id(),
             Expression::VariableAccess(expr) => expr.get_id(),
             Expression::Unary(expr) => expr.get_id(),
@@ -1231,6 +1270,7 @@ impl From<Expression> for AstNode {
             Expression::FunctionCall(function_call_expression) => function_call_expression.into(),
             Expression::CompilerExpression(compiler_expression) => compiler_expression.into(),
             Expression::ArrayIndex(array_index_expression) => array_index_expression.into(),
+            Expression::StructAccess(struct_access_expression) => struct_access_expression.into(),
             Expression::Grouping(grouping_expression) => grouping_expression.into(),
             Expression::VariableAccess(variable_access_expression) => {
                 variable_access_expression.into()
@@ -1266,6 +1306,17 @@ pub struct ArrayIndexLValue {
 generate_ast_requirements!(ArrayIndexLValue, unwrap_array_index_lvalue);
 
 #[derive(Clone, Debug)]
+pub struct StructAccessLValue {
+    pub value: Box<LValue>,
+    pub dot_token: Token,
+    pub member_name: String,
+    pub member_name_token: Token,
+    pub id: NodeID,
+}
+
+generate_ast_requirements!(StructAccessLValue, unwrap_struct_access_lvalue);
+
+#[derive(Clone, Debug)]
 pub struct GroupingLValue {
     pub open_paren_token: Token,
     pub sublvalue: Box<LValue>,
@@ -1279,6 +1330,7 @@ generate_ast_requirements!(GroupingLValue, unwrap_grouping_lvalue);
 pub enum LValue {
     Variable(VariableLValue),
     ArrayIndex(ArrayIndexLValue),
+    StructAccess(StructAccessLValue),
     Grouping(GroupingLValue),
 }
 
@@ -1288,6 +1340,7 @@ impl LValue {
         match self {
             LValue::Variable(..) => 0,
             LValue::ArrayIndex(..) => 0,
+            LValue::StructAccess(..) => 0,
             LValue::Grouping(..) => 0,
         }
     }
@@ -1295,6 +1348,7 @@ impl LValue {
         match self {
             LValue::Variable(..) => Associativity::Both,
             LValue::ArrayIndex(..) => Associativity::Left,
+            LValue::StructAccess(..) => Associativity::Left,
             LValue::Grouping(..) => Associativity::Both,
         }
     }
@@ -1304,6 +1358,7 @@ impl HasID for LValue {
         match self {
             LValue::Variable(variable_lvalue) => variable_lvalue.get_id(),
             LValue::ArrayIndex(array_index_lvalue) => array_index_lvalue.get_id(),
+            LValue::StructAccess(struct_access_lvalue) => struct_access_lvalue.get_id(),
             LValue::Grouping(grouping_lvalue) => grouping_lvalue.get_id(),
         }
     }
@@ -1314,6 +1369,7 @@ impl From<LValue> for AstNode {
         match value {
             LValue::Variable(variable_lvalue) => variable_lvalue.into(),
             LValue::ArrayIndex(array_index_lvalue) => array_index_lvalue.into(),
+            LValue::StructAccess(struct_access_lvalue) => struct_access_lvalue.into(),
             LValue::Grouping(grouping_lvalue) => grouping_lvalue.into(),
         }
     }

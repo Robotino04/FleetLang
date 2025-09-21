@@ -5,10 +5,10 @@ use fleet::{
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
         IfStatement, LiteralExpression, LiteralKind, NodeID, OnStatement, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody, StructExpression,
-        StructType, ThreadExecutor, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody, StructAccessExpression,
+        StructAccessLValue, StructExpression, StructType, ThreadExecutor, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     escape::{QuoteType, escape},
     infra::{
@@ -623,6 +623,20 @@ impl Backend {
                 ),
                 "array index".to_string(),
             ),
+            AstNode::StructAccessExpression(StructAccessExpression {
+                value,
+                dot_token: _,
+                member_name,
+                member_name_token: _,
+                id,
+            }) => (
+                format!(
+                    "{}.{member_name} => {}",
+                    self.get_type_as_hover(value.get_id(), analysis_data),
+                    self.get_type_as_hover(id, analysis_data)
+                ),
+                "struct access".to_string(),
+            ),
             AstNode::VariableAccessExpression(VariableAccessExpression {
                 name,
                 name_token: _,
@@ -676,6 +690,20 @@ impl Backend {
                     "array index lvalue".to_string(),
                 )
             }
+            AstNode::StructAccessLValue(StructAccessLValue {
+                value,
+                dot_token: _,
+                member_name,
+                member_name_token: _,
+                id,
+            }) => (
+                format!(
+                    "{}.{member_name} => {}",
+                    self.get_type_as_hover(value.get_id(), analysis_data),
+                    self.get_type_as_hover(id, analysis_data)
+                ),
+                "struct access lvalue".to_string(),
+            ),
             AstNode::GroupingLValue(GroupingLValue {
                 open_paren_token: _,
                 sublvalue,

@@ -8,8 +8,8 @@ use crate::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, AstVisitor, BinaryExpression,
         CastExpression, CompilerExpression, Expression, FunctionCallExpression, GroupingLValue,
         HasID, LValue, LiteralExpression, OnStatement, OnStatementIterator, Program,
-        StructExpression, StructMemberValue, Type, UnaryExpression, VariableAccessExpression,
-        VariableAssignmentExpression, VariableLValue,
+        StructAccessExpression, StructAccessLValue, StructExpression, StructMemberValue, Type,
+        UnaryExpression, VariableAccessExpression, VariableAssignmentExpression, VariableLValue,
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
@@ -91,11 +91,23 @@ impl LValueReducer<'_> {
             _ => false,
         })
     }
+    fn is_struct_access_lvalue_equal(&self, a: &StructAccessLValue, b: &LValue) -> Option<bool> {
+        Some(match b {
+            LValue::StructAccess(b) => {
+                self.is_lvalue_equal(&a.value, &b.value)? && a.member_name == b.member_name
+            }
+            LValue::Grouping(GroupingLValue { sublvalue: b, .. }) => {
+                self.is_struct_access_lvalue_equal(a, b)?
+            }
+            _ => false,
+        })
+    }
 
     fn is_lvalue_equal(&self, a: &LValue, b: &LValue) -> Option<bool> {
         match a {
             LValue::Variable(a) => self.is_variable_lvalue_equal(a, b),
             LValue::ArrayIndex(a) => self.is_array_index_lvalue_equal(a, b),
+            LValue::StructAccess(a) => self.is_struct_access_lvalue_equal(a, b),
             LValue::Grouping(a) => self.is_lvalue_equal(&a.sublvalue, b),
         }
     }
@@ -108,6 +120,7 @@ impl LValueReducer<'_> {
             Expression::FunctionCall(a) => self.is_function_call_expression_equal(a, b),
             Expression::CompilerExpression(a) => self.is_compiler_expression_equal(a, b),
             Expression::ArrayIndex(a) => self.is_array_index_expression_equal(a, b),
+            Expression::StructAccess(a) => self.is_struct_access_expression_equal(a, b),
             Expression::Grouping(a) => self.is_expression_equal(&a.subexpression, b),
             Expression::VariableAccess(a) => self.is_variable_access_expression_equal(a, b),
             Expression::Unary(a) => self.is_unary_expression_equal(a, b),
@@ -200,6 +213,21 @@ impl LValueReducer<'_> {
                     && self.is_expression_equal(&a.index, &b.index)?
             }
             Expression::Grouping(b) => self.is_array_index_expression_equal(a, &b.subexpression)?,
+            _ => false,
+        })
+    }
+    fn is_struct_access_expression_equal(
+        &self,
+        a: &StructAccessExpression,
+        b: &Expression,
+    ) -> Option<bool> {
+        Some(match b {
+            Expression::StructAccess(b) => {
+                self.is_expression_equal(&a.value, &b.value)? && a.member_name == b.member_name
+            }
+            Expression::Grouping(b) => {
+                self.is_struct_access_expression_equal(a, &b.subexpression)?
+            }
             _ => false,
         })
     }

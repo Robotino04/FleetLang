@@ -254,6 +254,9 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
             Expression::ArrayIndex(array_index_expression) => {
                 self.partial_visit_array_index_expression(array_index_expression)
             }
+            Expression::StructAccess(struct_expression) => {
+                self.partial_visit_struct_access_expression(struct_expression)
+            }
             Expression::VariableAccess(variable_access_expression) => {
                 self.partial_visit_variable_access_expression(variable_access_expression)
             }
@@ -403,6 +406,9 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
             }
             LValue::ArrayIndex(array_index_lvalue) => {
                 self.partial_visit_array_index_lvalue(array_index_lvalue);
+            }
+            LValue::StructAccess(struct_lvalue) => {
+                self.partial_visit_struct_access_lvalue(struct_lvalue);
             }
         }
     }

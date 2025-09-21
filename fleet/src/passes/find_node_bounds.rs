@@ -5,10 +5,10 @@ use crate::{
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
         LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, StructExpression, StructType,
-        ThreadExecutor, UnaryExpression, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression,
+        StructAccessLValue, StructExpression, StructType, ThreadExecutor, UnaryExpression,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     tokenizer::{SourceLocation, SourceRange},
 };
@@ -233,6 +233,13 @@ where
             close_bracket_token,
             id: _,
         }) => find_node_bounds(&**array).extend_with(close_bracket_token.range),
+        AstNode::StructAccessExpression(StructAccessExpression {
+            value,
+            dot_token: _,
+            member_name: _,
+            member_name_token,
+            id: _,
+        }) => find_node_bounds(&**value).extend_with(member_name_token.range),
         AstNode::VariableAccessExpression(VariableAccessExpression {
             name: _,
             name_token,
@@ -256,6 +263,13 @@ where
             close_bracket_token,
             id: _,
         }) => find_node_bounds(&**array).extend_with(close_bracket_token.range),
+        AstNode::StructAccessLValue(StructAccessLValue {
+            value,
+            dot_token: _,
+            member_name: _,
+            member_name_token,
+            id: _,
+        }) => find_node_bounds(&**value).extend_with(member_name_token.range),
         AstNode::GroupingLValue(GroupingLValue {
             open_paren_token,
             sublvalue: _,
