@@ -10,6 +10,7 @@ mod function;
 mod loops;
 mod on_gpu;
 mod sized_integers;
+mod structs;
 mod type_inference;
 mod unary_op;
 mod unary_op_float;

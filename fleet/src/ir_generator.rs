@@ -1385,8 +1385,20 @@ impl<'state> AstVisitor for IrGenerator<'state> {
     ) -> Self::StatementOutput {
         if let Some(retvalue) = &mut return_stmt.value {
             let ir_value = self.visit_expression(retvalue)?;
+            let value_type = *self.type_data.get(&retvalue.get_id()).unwrap();
+            let value_type = self
+                .runtime_type_to_llvm(value_type, retvalue)?
+                .into_basic_type()
+                .unwrap();
 
-            self.builder.build_return(ir_value.as_basic_value())?;
+            if let RuntimeValueIR::Array(ir_ptr) | RuntimeValueIR::Struct(ir_ptr) = ir_value {
+                let value = self
+                    .builder
+                    .build_load(value_type, ir_ptr, "load_retvalue")?;
+                self.builder.build_return(Some(&value))?;
+            } else {
+                self.builder.build_return(ir_value.as_basic_value())?;
+            };
         } else {
             self.builder.build_return(None)?;
         }
@@ -1408,7 +1420,8 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         let ptr = self.visit_simple_binding(&mut vardef_stmt.binding)?;
 
-        if let RuntimeValueIR::Array(right_value) = eval_value {
+        if let RuntimeValueIR::Array(right_value) | RuntimeValueIR::Struct(right_value) = eval_value
+        {
             let size = self
                 .runtime_type_to_llvm(
                     *self.type_data.get(&vardef_stmt.value.get_id()).unwrap(),
@@ -1796,10 +1809,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         for (i, (item, _comma)) in elements.iter_mut().enumerate() {
             let item_ir = self.visit_expression(item)?;
-            if let RuntimeValueIR::Array(item_ir) = item_ir {
-                let item = self
-                    .builder
-                    .build_load(item_type, item_ir, "load_subarray")?;
+            if let RuntimeValueIR::Array(item_ir) | RuntimeValueIR::Struct(item_ir) = item_ir {
+                let item =
+                    self.builder
+                        .build_load(item_type, item_ir, "load_subarray_or_substruct")?;
                 array_ir = self
                     .builder
                     .build_insert_value(array_ir, item, i as u32, "init_array")?
@@ -1888,10 +1901,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     ));
                 }
             };
-            if let RuntimeValueIR::Array(item_ir) = item_ir {
-                let item = self
-                    .builder
-                    .build_load(item_type, item_ir, "load_subarray")?;
+            if let RuntimeValueIR::Array(item_ir) | RuntimeValueIR::Struct(item_ir) = item_ir {
+                let item =
+                    self.builder
+                        .build_load(item_type, item_ir, "load_subarray_or_substruct")?;
                 struct_ir = self
                     .builder
                     .build_insert_value(struct_ir, item, i as u32, "init_struct")?
@@ -1933,7 +1946,21 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         let mut args: Vec<BasicMetadataValueEnum> = vec![];
         for (arg, _comma) in arguments {
-            args.push(self.visit_expression(arg)?.as_basic_value_no_unit().into());
+            let ir_value = self.visit_expression(arg)?;
+            let value_type = *self.type_data.get(&arg.get_id()).unwrap();
+            let value_type = self
+                .runtime_type_to_llvm(value_type, arg)?
+                .into_basic_type()
+                .unwrap();
+
+            if let RuntimeValueIR::Array(ir_ptr) | RuntimeValueIR::Struct(ir_ptr) = ir_value {
+                let value = self
+                    .builder
+                    .build_load(value_type, ir_ptr, "load_argument")?;
+                args.push(value.into());
+            } else {
+                args.push(ir_value.as_basic_value_enum().unwrap().into());
+            };
         }
 
         let ir_function = self
@@ -1955,14 +1982,21 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .get(id)
             .expect("type data must exist before calling ir_generator");
 
-        self.package_llvm_in_runtime_value(
-            self.builder
-                .build_call(ir_function, &args[..], name)?
-                .try_as_basic_value()
-                .left(),
-            return_type,
-            &expr_clone,
-        )
+        let mut retvalue = self
+            .builder
+            .build_call(ir_function, &args[..], name)?
+            .try_as_basic_value()
+            .left();
+
+        if let Some(BasicValueEnum::ArrayValue(_) | BasicValueEnum::StructValue(_)) = retvalue {
+            let ptr = self
+                .builder
+                .build_alloca(retvalue.unwrap().get_type(), "array_or_struct_retvalue")?;
+            self.builder.build_store(ptr, retvalue.unwrap())?;
+            retvalue = Some(ptr.into());
+        }
+
+        self.package_llvm_in_runtime_value(retvalue, return_type, &expr_clone)
     }
 
     fn visit_compiler_expression(
@@ -3065,7 +3099,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let storage = self.visit_lvalue(lvalue)?;
         let right_value = self.visit_expression(right)?;
 
-        if let RuntimeValueIR::Array(right_value) = right_value {
+        if let RuntimeValueIR::Array(right_value) | RuntimeValueIR::Struct(right_value) =
+            right_value
+        {
             let right_type = *self.type_data.get(&right.get_id()).unwrap();
 
             let size = self

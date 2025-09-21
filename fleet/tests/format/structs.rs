@@ -61,7 +61,7 @@ fn collapse_struct() {
                 }
                 ;
 
-                return 0;
+                return s.a;
             }"##
         },
         indoc! {r##"
@@ -74,7 +74,34 @@ fn collapse_struct() {
                     b: 3.1415,
                 };
 
-                return 0;
+                return s.a;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn expand_struct() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                let s=struct{a:i32,b:f32}{a:33,b:3.1415};
+
+                return s.a;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                let s = struct {
+                    a: i32,
+                    b: f32,
+                } {
+                    a: 33,
+                    b: 3.1415,
+                };
+
+                return s.a;
             }"##
         },
         "main",
