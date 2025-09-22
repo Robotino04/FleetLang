@@ -765,14 +765,14 @@ impl<'state> Parser<'state> {
         }
     }
     fn parse_postfix_expression(&mut self) -> Result<Expression> {
-        let mut lhs = if let Ok((type_, open_brace_token)) =
-            self.try_parse(|this| Ok((this.parse_type()?, expect!(this, TokenType::OpenBrace)?)))
-        {
+        let mut lhs = if let Ok(struct_expression) = self.try_parse(|this| {
+            let type_ = this.parse_type()?;
+            let open_brace_token = expect!(this, TokenType::OpenBrace)?;
             let mut members = vec![];
-            while self.current_token_type() != Some(TokenType::CloseBrace) {
-                let (name_token, name) = expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
-                let colon_token = expect!(self, TokenType::Colon)?;
-                let value = self.parse_expression()?;
+            while this.current_token_type() != Some(TokenType::CloseBrace) {
+                let (name_token, name) = expect!(this, TokenType::Identifier(name) => (this.current_token().unwrap(), name))?;
+                let colon_token = expect!(this, TokenType::Colon)?;
+                let value = this.parse_expression()?;
 
                 let member = StructMemberValue {
                     name,
@@ -781,9 +781,9 @@ impl<'state> Parser<'state> {
                     value,
                 };
 
-                match self.current_token_type() {
+                match this.current_token_type() {
                     Some(TokenType::Comma) => {
-                        members.push((member, Some(expect!(self, TokenType::Comma)?)))
+                        members.push((member, Some(expect!(this, TokenType::Comma)?)))
                     }
                     _ => {
                         members.push((member, None));
@@ -791,15 +791,17 @@ impl<'state> Parser<'state> {
                     }
                 }
             }
-            let close_brace_token = expect!(self, TokenType::CloseBrace)?;
+            let close_brace_token = expect!(this, TokenType::CloseBrace)?;
 
-            Expression::Struct(StructExpression {
+            Ok(Expression::Struct(StructExpression {
                 type_,
                 open_brace_token,
                 members,
                 close_brace_token,
-                id: self.id_generator.next_node_id(),
-            })
+                id: this.id_generator.next_node_id(),
+            }))
+        }) {
+            struct_expression
         } else {
             self.parse_primary_expression()?
         };

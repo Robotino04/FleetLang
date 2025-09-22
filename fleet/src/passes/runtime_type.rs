@@ -370,6 +370,9 @@ impl RuntimeType {
             if b == RuntimeType::Unknown {
                 return Merged(a);
             }
+            if b == RuntimeType::Error {
+                return Merged(b);
+            }
             match a {
                 _ if a == b => Merged(a),
 

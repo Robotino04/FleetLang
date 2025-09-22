@@ -1,6 +1,6 @@
 use std::{
     cell::{RefCell, RefMut},
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     hash::Hash,
     rc::Rc,
 };
@@ -1450,10 +1450,12 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
 
+        let mut member_unique_set = HashSet::new();
+
         for (
             StructMemberDefinition {
-                name: _,
-                name_token: _,
+                name,
+                name_token,
                 colon_token: _,
                 type_,
             },
@@ -1462,6 +1464,14 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         {
             let member_dep = self.visit_type(type_);
             self.comptime_deps.add_dependency(*id, member_dep);
+
+            if !member_unique_set.insert(name.clone()) {
+                self.errors.push(FleetError::from_token(
+                    name_token,
+                    format!("This struct already has a member named {name:?}"),
+                    ErrorSeverity::Error,
+                ));
+            }
         }
 
         *id

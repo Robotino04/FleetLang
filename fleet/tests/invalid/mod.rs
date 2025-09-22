@@ -12,3 +12,4 @@ mod type_inference;
 mod unary_op;
 mod unary_op_float;
 mod variables;
+mod structs;

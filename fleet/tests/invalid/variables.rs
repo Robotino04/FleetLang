@@ -22,7 +22,7 @@ fn no_initialize() {
 
 #[test]
 fn unknown_type() {
-    assert_parser_or_tokenizer_error(
+    assert_compile_error(
         indoc! {r##"
             let main = () -> i32 {
                 let a: i32asd = 0;

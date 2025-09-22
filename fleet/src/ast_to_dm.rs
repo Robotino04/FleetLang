@@ -465,18 +465,18 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
         }: &mut TypeAlias,
     ) -> Self::TopLevelOutput {
         self.is_first_in_statement = true;
-        DocumentElement::spaced_concatentation(
-            DocumentElement::single_collapsable_space(),
-            vec![
-                self.token_to_element(let_token),
-                self.token_to_element(name_token),
-                self.token_to_element(equal_token),
-                DocumentElement::Concatenation(vec![
+        DocumentElement::Concatenation(vec![
+            DocumentElement::spaced_concatentation(
+                DocumentElement::single_collapsable_space(),
+                vec![
+                    self.token_to_element(let_token),
+                    self.token_to_element(name_token),
+                    self.token_to_element(equal_token),
                     self.visit_type(type_),
-                    self.token_to_element(semicolon_token),
-                ]),
-            ],
-        )
+                ],
+            ),
+            self.token_to_element_config(semicolon_token, TokenToElementConfig::semicolon()),
+        ])
     }
 
     fn visit_statement_function_body(
