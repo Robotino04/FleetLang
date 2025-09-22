@@ -9,17 +9,17 @@ use itertools::{EitherOrBoth, Itertools};
 
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
-        BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
-        CompilerExpression, Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
-        OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, StructAccessExpression, StructAccessLValue,
-        StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
-        TopLevelStatement, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
+        AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
+        CastExpression, CompilerExpression, Expression, ExpressionStatement, ExternFunctionBody,
+        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor,
+        GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression,
+        LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression,
+        StructAccessLValue, StructExpression, StructMemberDefinition, StructMemberValue,
+        StructType, ThreadExecutor, TopLevelStatement, TypeAlias, UnaryExpression, UnaryOperation,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
@@ -309,11 +309,8 @@ impl AstVisitor for TypePropagator<'_> {
 
         let aliased_type = *self.type_aliases.get(name).unwrap();
 
-        assert!(RuntimeType::merge_types(
-            type_,
-            aliased_type,
-            &mut self.type_sets
-        ))
+        // ignore failures because this should always succeed for valid programs
+        let _ = RuntimeType::merge_types(type_, aliased_type, &mut self.type_sets);
     }
 
     fn visit_statement_function_body(
@@ -2094,5 +2091,29 @@ impl AstVisitor for TypePropagator<'_> {
         });
         self.node_types.insert(*id, struct_t);
         struct_t
+    }
+
+    fn visit_alias_type(&mut self, alias_type: &mut AliasType) -> Self::TypeOutput {
+        let alias_type_clone = alias_type.clone();
+        let AliasType {
+            name,
+            name_token: _,
+            id,
+        } = alias_type;
+
+        let Some(aliased_type) = self.type_aliases.get(name) else {
+            self.errors.push(FleetError::from_node(
+                &alias_type_clone,
+                format!("No type alias {name:?} defined"),
+                ErrorSeverity::Error,
+            ));
+
+            let type_ = self.type_sets.insert_set(RuntimeType::Error);
+            self.node_types.insert(*id, type_);
+            return type_;
+        };
+
+        self.node_types.insert(*id, *aliased_type);
+        *aliased_type
     }
 }

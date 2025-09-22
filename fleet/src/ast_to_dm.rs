@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
@@ -1308,5 +1308,16 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
             self.braced_broken_block(open_brace_token, members, close_brace_token),
             DocumentElement::ReverseSpaceEater,
         ])
+    }
+
+    fn visit_alias_type(
+        &mut self,
+        AliasType {
+            name: _,
+            name_token,
+            id: _,
+        }: &mut AliasType,
+    ) -> Self::TypeOutput {
+        self.token_to_element(name_token)
     }
 }

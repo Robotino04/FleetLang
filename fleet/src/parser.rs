@@ -7,13 +7,13 @@ use thiserror::Error;
 
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, BinaryExpression,
-        BinaryOperation, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
-        Executor, ExecutorHost, Expression, ExpressionStatement, ExternFunctionBody,
-        ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor,
-        GroupingExpression, GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression,
-        LiteralKind, NodeID, OnStatement, OnStatementIterator, Program, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType,
+        BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
+        CompilerExpression, Executor, ExecutorHost, Expression, ExpressionStatement,
+        ExternFunctionBody, ForLoopStatement, FunctionBody, FunctionCallExpression,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
+        LValue, LiteralExpression, LiteralKind, NodeID, OnStatement, OnStatementIterator, Program,
+        ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement,
         StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
         StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor, TopLevelStatement,
         Type, TypeAlias, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
@@ -765,9 +765,9 @@ impl<'state> Parser<'state> {
         }
     }
     fn parse_postfix_expression(&mut self) -> Result<Expression> {
-        let mut lhs = if let Ok(type_) = self.try_parse(|this| this.parse_type()) {
-            let open_brace_token = expect!(self, TokenType::OpenBrace)?;
-
+        let mut lhs = if let Ok((type_, open_brace_token)) =
+            self.try_parse(|this| Ok((this.parse_type()?, expect!(this, TokenType::OpenBrace)?)))
+        {
             let mut members = vec![];
             while self.current_token_type() != Some(TokenType::CloseBrace) {
                 let (name_token, name) = expect!(self, TokenType::Identifier(name) => (self.current_token().unwrap(), name))?;
@@ -1348,6 +1348,11 @@ impl<'state> Parser<'state> {
                     id: self.id_generator.next_node_id(),
                 }))
             }
+            Some(TokenType::Identifier(name)) => Ok(Type::Alias(AliasType {
+                name,
+                name_token: expect!(self, TokenType::Identifier(_))?,
+                id: self.id_generator.next_node_id(),
+            })),
             Some(TokenType::OpenParen) => Ok(Type::Unit(UnitType {
                 open_paren_token: expect!(self, TokenType::OpenParen)?,
                 close_paren_token: expect!(self, TokenType::CloseParen)?,

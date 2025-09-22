@@ -1,5 +1,5 @@
 use crate::ast::{
-    ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+    AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
     BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression, Executor,
     ExecutorHost, Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
     FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
@@ -648,6 +648,7 @@ pub trait PartialAstVisitor {
             Type::Idk(idk_type) => self.partial_visit_idk_type(idk_type),
             Type::Array(array_type) => self.partial_visit_array_type(array_type),
             Type::Struct(struct_type) => self.partial_visit_struct_type(struct_type),
+            Type::Alias(alias_type) => self.partial_visit_alias_type(alias_type),
         }
     }
     fn partial_visit_int_type(
@@ -706,6 +707,15 @@ pub trait PartialAstVisitor {
         {
             self.partial_visit_type(type_);
         }
+    }
+    fn partial_visit_alias_type(
+        &mut self,
+        AliasType {
+            name: _,
+            name_token: _,
+            id: _,
+        }: &mut AliasType,
+    ) {
     }
 }
 
@@ -968,5 +978,9 @@ where
 
     fn visit_struct_type(&mut self, struct_type: &mut StructType) -> Self::TypeOutput {
         self.partial_visit_struct_type(struct_type);
+    }
+
+    fn visit_alias_type(&mut self, alias_type: &mut AliasType) -> Self::TypeOutput {
+        self.partial_visit_alias_type(alias_type);
     }
 }

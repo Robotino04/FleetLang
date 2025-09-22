@@ -1,15 +1,15 @@
 use fleet::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
-        BinaryExpression, BinaryOperation, BlockStatement, CastExpression, CompilerExpression,
-        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
-        IfStatement, LiteralExpression, LiteralKind, NodeID, OnStatement, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SimpleType, StatementFunctionBody, StructAccessExpression,
-        StructAccessLValue, StructExpression, StructType, ThreadExecutor, TypeAlias,
-        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
+        AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, CastExpression,
+        CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+        GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, NodeID,
+        OnStatement, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
+        StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
+        StructType, ThreadExecutor, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     escape::{QuoteType, escape},
     infra::{
@@ -770,6 +770,14 @@ impl Backend {
             }) => {
                 let type_ = self.get_type_as_hover(id, analysis_data);
                 (type_.to_string(), "struct type".to_string())
+            }
+            AstNode::AliasType(AliasType {
+                name: _,
+                name_token: _,
+                id,
+            }) => {
+                let type_ = self.get_type_as_hover(id, analysis_data);
+                (type_.to_string(), "alias type".to_string())
             }
         }
     }

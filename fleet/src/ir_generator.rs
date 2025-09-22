@@ -29,17 +29,17 @@ use itertools::Itertools;
 
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode, AstVisitor,
-        BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
-        CompilerExpression, Executor, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
-        Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
-        StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
-        StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, TypeAlias,
-        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
+        AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
+        CastExpression, CompilerExpression, Executor, ExpressionStatement, ExternFunctionBody,
+        ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor,
+        GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression,
+        LiteralKind, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
+        SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression,
+        StructAccessLValue, StructExpression, StructMemberValue, StructType, ThreadExecutor,
+        TopLevelStatement, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     escape::{QuoteType, unescape},
     generate_glsl::GLSLCodeGenerator,
@@ -3333,6 +3333,20 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             id,
         } = struct_type;
 
+        let infered_type = *self
+            .type_data
+            .get(id)
+            .expect("type data should exist before calling ir_generator");
+
+        Ok(infered_type)
+    }
+
+    fn visit_alias_type(&mut self, alias_type: &mut AliasType) -> Self::TypeOutput {
+        let AliasType {
+            name: _,
+            name_token: _,
+            id,
+        } = alias_type;
         let infered_type = *self
             .type_data
             .get(id)

@@ -3,7 +3,7 @@ use std::cell::RefMut;
 use fleet::{
     NewtypeDeref,
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
@@ -772,5 +772,9 @@ impl AstVisitor for AstJsonDumpPass<'_> {
         } else {
             format!("[\"Struct Type\", {member_str}]")
         }
+    }
+
+    fn visit_alias_type(&mut self, _alias_type: &mut AliasType) -> Self::TypeOutput {
+        String::from("\"AliasType\"")
     }
 }

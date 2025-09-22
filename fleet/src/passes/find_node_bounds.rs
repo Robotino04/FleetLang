@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
@@ -310,5 +310,10 @@ where
             close_brace_token,
             id: _,
         }) => struct_token.range.extend_with(close_brace_token.range),
+        AstNode::AliasType(AliasType {
+            name: _,
+            name_token,
+            id: _,
+        }) => name_token.range,
     }
 }

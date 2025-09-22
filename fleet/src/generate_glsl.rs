@@ -15,7 +15,7 @@ use log::warn;
 use crate::ast::AstNode;
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
         CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
@@ -1783,5 +1783,22 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                 )
                 .join("\n")
         )
+    }
+
+    fn visit_alias_type(
+        &mut self,
+        AliasType {
+            name: _,
+            name_token: _,
+            id,
+        }: &mut AliasType,
+    ) -> Self::TypeOutput {
+        let (type_, after_id) = self.runtime_type_to_glsl(
+            *self
+                .type_data
+                .get(id)
+                .expect("type data should exist before calling glsl_generator"),
+        );
+        type_ + &after_id
     }
 }

@@ -9,7 +9,7 @@ use log::info;
 
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
@@ -1210,6 +1210,19 @@ impl AstVisitor for StatTracker<'_> {
         {
             stat = stat.serial(self.visit_type(type_));
         }
+        self.stats.insert(*id, stat.clone());
+        stat
+    }
+
+    fn visit_alias_type(
+        &mut self,
+        AliasType {
+            name: _,
+            name_token,
+            id,
+        }: &mut AliasType,
+    ) -> Self::TypeOutput {
+        let stat = NodeStats::default_with_range(vec![name_token.range]);
         self.stats.insert(*id, stat.clone());
         stat
     }

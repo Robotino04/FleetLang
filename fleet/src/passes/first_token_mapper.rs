@@ -2,7 +2,7 @@ use either::Either;
 
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor, BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression, StructType, ThreadExecutor, TypeAlias, UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor, BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement, LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression, StructType, ThreadExecutor, TypeAlias, UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue, WhileLoopStatement
     },
     tokenizer::Token,
 };
@@ -269,5 +269,161 @@ impl<R> AstVisitor for FirstTokenMapper<'_, R> {
 
     fn visit_struct_type(&mut self, struct_type: &mut StructType) -> Self::TypeOutput {
         self.visit_token(&mut struct_type.struct_token);
+    }
+
+    fn visit_alias_type(&mut self, alias_type: &mut AliasType) -> Self::TypeOutput {
+        self.visit_token(&mut alias_type.name_token);
+    }
+
+    fn visit_top_level_statement(
+        &mut self,
+        tls: &mut crate::ast::TopLevelStatement,
+    ) -> Self::TopLevelOutput {
+        match tls {
+            crate::ast::TopLevelStatement::Function(function_definition) => {
+                self.visit_function_definition(function_definition)
+            }
+            crate::ast::TopLevelStatement::TypeAlias(type_alias) => {
+                self.visit_type_alias(type_alias)
+            }
+        }
+    }
+
+    fn visit_function_body(
+        &mut self,
+        function_body: &mut crate::ast::FunctionBody,
+    ) -> Self::FunctionBodyOutput {
+        match function_body {
+            crate::ast::FunctionBody::Statement(statement_function_body) => {
+                self.visit_statement_function_body(statement_function_body)
+            }
+            crate::ast::FunctionBody::Extern(extern_function_body) => {
+                self.visit_extern_function_body(extern_function_body)
+            }
+        }
+    }
+
+    fn visit_statement(&mut self, statement: &mut crate::ast::Statement) -> Self::StatementOutput {
+        match statement {
+            crate::ast::Statement::Expression(expression_statement) => {
+                self.visit_expression_statement(expression_statement)
+            }
+            crate::ast::Statement::On(on_statement) => self.visit_on_statement(on_statement),
+            crate::ast::Statement::Block(block_statement) => {
+                self.visit_block_statement(block_statement)
+            }
+            crate::ast::Statement::Return(return_statement) => {
+                self.visit_return_statement(return_statement)
+            }
+            crate::ast::Statement::VariableDefinition(variable_definition_statement) => {
+                self.visit_variable_definition_statement(variable_definition_statement)
+            }
+            crate::ast::Statement::If(if_statement) => self.visit_if_statement(if_statement),
+            crate::ast::Statement::WhileLoop(while_loop_statement) => {
+                self.visit_while_loop_statement(while_loop_statement)
+            }
+            crate::ast::Statement::ForLoop(for_loop_statement) => {
+                self.visit_for_loop_statement(for_loop_statement)
+            }
+            crate::ast::Statement::Break(break_statement) => {
+                self.visit_break_statement(break_statement)
+            }
+            crate::ast::Statement::Skip(skip_statement) => {
+                self.visit_skip_statement(skip_statement)
+            }
+        }
+    }
+
+    fn visit_executor_host(
+        &mut self,
+        executor_host: &mut crate::ast::ExecutorHost,
+    ) -> Self::ExecutorHostOutput {
+        match executor_host {
+            crate::ast::ExecutorHost::Self_(self_executor_host) => {
+                self.visit_self_executor_host(self_executor_host)
+            }
+        }
+    }
+
+    fn visit_executor(&mut self, executor: &mut crate::ast::Executor) -> Self::ExecutorOutput {
+        match executor {
+            crate::ast::Executor::Thread(thread_executor) => {
+                self.visit_thread_executor(thread_executor)
+            }
+            crate::ast::Executor::GPU(gpu_executor) => self.visit_gpu_executor(gpu_executor),
+        }
+    }
+
+    fn visit_expression(
+        &mut self,
+        expression: &mut crate::ast::Expression,
+    ) -> Self::ExpressionOutput {
+        match expression {
+            crate::ast::Expression::Literal(literal_expression) => {
+                self.visit_literal_expression(literal_expression)
+            }
+            crate::ast::Expression::Array(array_expression) => {
+                self.visit_array_expression(array_expression)
+            }
+            crate::ast::Expression::Struct(struct_expression) => {
+                self.visit_struct_expression(struct_expression)
+            }
+            crate::ast::Expression::FunctionCall(function_call_expression) => {
+                self.visit_function_call_expression(function_call_expression)
+            }
+            crate::ast::Expression::CompilerExpression(compiler_expression) => {
+                self.visit_compiler_expression(compiler_expression)
+            }
+            crate::ast::Expression::ArrayIndex(array_index_expression) => {
+                self.visit_array_index_expression(array_index_expression)
+            }
+            crate::ast::Expression::StructAccess(struct_access_expression) => {
+                self.visit_struct_access_expression(struct_access_expression)
+            }
+            crate::ast::Expression::Grouping(grouping_expression) => {
+                self.visit_grouping_expression(grouping_expression)
+            }
+            crate::ast::Expression::VariableAccess(variable_access_expression) => {
+                self.visit_variable_access_expression(variable_access_expression)
+            }
+            crate::ast::Expression::Cast(cast_expression) => {
+                self.visit_cast_expression(cast_expression)
+            }
+            crate::ast::Expression::Unary(unary_expression) => {
+                self.visit_unary_expression(unary_expression)
+            }
+            crate::ast::Expression::Binary(binary_expression) => {
+                self.visit_binary_expression(binary_expression)
+            }
+            crate::ast::Expression::VariableAssignment(variable_assignment_expression) => {
+                self.visit_variable_assignment_expression(variable_assignment_expression)
+            }
+        }
+    }
+
+    fn visit_lvalue(&mut self, lvalue: &mut crate::ast::LValue) -> Self::LValueOutput {
+        match lvalue {
+            crate::ast::LValue::Variable(var_lvalue) => self.visit_variable_lvalue(var_lvalue),
+            crate::ast::LValue::ArrayIndex(array_index_lvalue) => {
+                self.visit_array_index_lvalue(array_index_lvalue)
+            }
+            crate::ast::LValue::StructAccess(struct_access_lvalue) => {
+                self.visit_struct_access_lvalue(struct_access_lvalue)
+            }
+            crate::ast::LValue::Grouping(grouping_lvalue) => {
+                self.visit_grouping_lvalue(grouping_lvalue)
+            }
+        }
+    }
+
+    fn visit_type(&mut self, type_: &mut crate::ast::Type) -> Self::TypeOutput {
+        match type_ {
+            crate::ast::Type::Simple(simple_type) => self.visit_simple_type(simple_type),
+            crate::ast::Type::Unit(unit_type) => self.visit_unit_type(unit_type),
+            crate::ast::Type::Idk(idk_type) => self.visit_idk_type(idk_type),
+            crate::ast::Type::Array(array_type) => self.visit_array_type(array_type),
+            crate::ast::Type::Struct(struct_type) => self.visit_struct_type(struct_type),
+            crate::ast::Type::Alias(alias_type) => self.visit_alias_type(alias_type),
+        }
     }
 }

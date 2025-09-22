@@ -60,6 +60,7 @@ pub enum AstNode {
     IdkType(IdkType),
     ArrayType(ArrayType),
     StructType(StructType),
+    AliasType(AliasType),
 }
 
 impl AstNode {
@@ -188,6 +189,9 @@ impl AstNode {
             AstNode::StructType(struct_type) => {
                 visitor.visit_struct_type(struct_type);
             }
+            AstNode::AliasType(alias_type) => {
+                visitor.visit_alias_type(alias_type);
+            }
         }
     }
 }
@@ -262,6 +266,7 @@ impl HasID for AstNode {
             AstNode::IdkType(idk_type) => idk_type.get_id(),
             AstNode::ArrayType(array_type) => array_type.get_id(),
             AstNode::StructType(struct_type) => struct_type.get_id(),
+            AstNode::AliasType(alias_type) => alias_type.get_id(),
         }
     }
 }
@@ -535,6 +540,7 @@ pub trait AstVisitor {
             Type::Idk(idk_type) => self.visit_idk_type(idk_type),
             Type::Array(array_type) => self.visit_array_type(array_type),
             Type::Struct(struct_type) => self.visit_struct_type(struct_type),
+            Type::Alias(alias_type) => self.visit_alias_type(alias_type),
         }
     }
 
@@ -543,6 +549,7 @@ pub trait AstVisitor {
     fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput;
     fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput;
     fn visit_struct_type(&mut self, struct_type: &mut StructType) -> Self::TypeOutput;
+    fn visit_alias_type(&mut self, alias_type: &mut AliasType) -> Self::TypeOutput;
 }
 
 #[derive(Clone, Debug)]
@@ -718,12 +725,22 @@ pub struct StructType {
 generate_ast_requirements!(StructType, unwrap_struct_type);
 
 #[derive(Clone, Debug)]
+pub struct AliasType {
+    pub name: String,
+    pub name_token: Token,
+    pub id: NodeID,
+}
+
+generate_ast_requirements!(AliasType, unwrap_alias_type);
+
+#[derive(Clone, Debug)]
 pub enum Type {
     Simple(SimpleType),
     Unit(UnitType),
     Idk(IdkType),
     Array(ArrayType),
     Struct(StructType),
+    Alias(AliasType),
 }
 
 impl From<Type> for AstNode {
@@ -734,6 +751,7 @@ impl From<Type> for AstNode {
             Type::Idk(idk_type) => idk_type.into(),
             Type::Array(array_type) => array_type.into(),
             Type::Struct(struct_type) => struct_type.into(),
+            Type::Alias(alias_type) => alias_type.into(),
         }
     }
 }
@@ -746,6 +764,7 @@ impl HasID for Type {
             Type::Idk(idk_type) => idk_type.get_id(),
             Type::Array(array_type) => array_type.get_id(),
             Type::Struct(struct_type) => struct_type.get_id(),
+            Type::Alias(alias_type) => alias_type.get_id(),
         }
     }
 }

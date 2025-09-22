@@ -91,7 +91,6 @@ enum DumpOption {
 }
 
 fn main() {
-    /*
     let cli = Cli {
         input_file: "./test.fl".parse().unwrap(),
         output: None,
@@ -99,8 +98,9 @@ fn main() {
         format: false,
         verbosity: Default::default()
     };
-    */
+    /*
     let cli = Cli::parse();
+    */
     env_logger::Builder::new()
         .format(|fmt, record| {
             let level = record.level();

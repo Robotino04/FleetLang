@@ -11,7 +11,7 @@ use thiserror::Error;
 use crate::{
     NewtypeDeref,
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
@@ -1463,6 +1463,19 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             let member_dep = self.visit_type(type_);
             self.comptime_deps.add_dependency(*id, member_dep);
         }
+
+        *id
+    }
+
+    fn visit_alias_type(
+        &mut self,
+        AliasType {
+            name: _,
+            name_token: _,
+            id,
+        }: &mut AliasType,
+    ) -> Self::TypeOutput {
+        // Type aliases are handled by type propagation.
 
         *id
     }

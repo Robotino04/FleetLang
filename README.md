@@ -17,10 +17,9 @@
 ## TODOs
 
 ### Priority
-- structs
 - if expressions
 - track definitions and references of variables
-- tied to ^this^ warnings for unused functions/variables
+- tied to ^this^: warnings for unused functions/variables
 
 
 ### easy

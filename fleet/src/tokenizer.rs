@@ -1,4 +1,4 @@
-use std::{cell::RefMut, cmp::Ordering, ops::Index, rc::Rc};
+use std::{cell::RefMut, cmp::Ordering, fmt::Debug, ops::Index, rc::Rc};
 
 use itertools::Itertools;
 use log::{error, info};
@@ -10,7 +10,7 @@ use crate::{
     passes::pass_manager::{Errors, GlobalState, InputSource, Pass, PassFactory, PassResult},
 };
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Token {
     pub type_: TokenType,
     pub range: SourceRange,
@@ -20,6 +20,12 @@ pub struct Token {
     pub trailing_trivia: Vec<Trivia>,
 
     pub file_name: FileName,
+}
+
+impl Debug for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Token { .. }")
+    }
 }
 
 NewtypeDeref!(pub FileName, Rc<String>, Clone, PartialEq, Eq);
