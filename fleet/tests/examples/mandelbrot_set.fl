@@ -1,20 +1,23 @@
-let putchar = (c: i32) -> i32 @extern "putchar";
+let putchar_impl = (c: i32) -> i32 @extern "putchar";
+let putchar = (c: u8) -> () {
+    putchar_impl(c as i32);
+}
 
 let put_number = (n: i32) -> () {
     if n < 0 {
-        putchar(45); // '-'
+        putchar('-');
         n = -n;
     }
 
     if n == 0 {
-        putchar(48); // '0'
+        putchar('0');
     }
     else {
-        let buf: i32[10] = @zero();
+        let buf: u8[10] = @zero();
         let i = 0;
 
         while n > 0 {
-            buf[i] = 48 + n % 10;
+            buf[i] = '0' + (n % 10) as u8;
             n = n / 10;
             i = i + 1;
         }
@@ -75,15 +78,15 @@ let main = () -> i32 {
     }
 
     // PPM P3 header
-    putchar(80);
-    put_number(3);
-    putchar(10);
+    putchar('P');
+    putchar('3');
+    putchar('\n');
     put_number(width as i32);
-    putchar(32);
+    putchar(' ');
     put_number(height as i32);
-    putchar(10);
+    putchar('\n');
     put_number(255);
-    putchar(10);
+    putchar('\n');
 
     for (let y = 0; y < height; y = y + 1) {
         for (let x = 0; x < width; x = x + 1) {
@@ -95,13 +98,13 @@ let main = () -> i32 {
             }
 
             put_number(brightness);
-            putchar(32);
+            putchar(' ');
             put_number(brightness);
-            putchar(32);
+            putchar(' ');
             put_number(brightness);
-            putchar(32);
+            putchar(' ');
         }
-        putchar(10);
+        putchar('\n');
     }
     return 0;
 }
