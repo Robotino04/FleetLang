@@ -23,9 +23,9 @@ use crate::{
         OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
         SkipStatement, Statement, StatementFunctionBody, StructAccessExpression,
         StructAccessLValue, StructExpression, StructMemberDefinition, StructMemberValue,
-        StructType, ThreadExecutor, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        StructType, ThreadExecutor, TopLevelStatement, TypeAlias, UnaryExpression, UnaryOperation,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
@@ -612,9 +612,17 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         program
             .top_level_statements
             .iter_mut()
-            .map(|tls| {
-                let id = self.function_data.get(&tls.get_id()).unwrap().borrow().id;
-                Ok((id, self.visit_top_level_statement(tls)?))
+            .filter_map(|tls| {
+                if let TopLevelStatement::Function(_) = tls {
+                    let id = self.function_data.get(&tls.get_id()).unwrap().borrow().id;
+                    let tls_generated = match self.visit_top_level_statement(tls) {
+                        Ok(x) => x,
+                        Err(err) => return Some(Err(err)),
+                    };
+                    Some(Ok((id, tls_generated)))
+                } else {
+                    None
+                }
             })
             .filter_map(|res| {
                 let (fid, opt) = match res {
