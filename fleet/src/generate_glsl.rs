@@ -486,7 +486,7 @@ impl<'state> GLSLCodeGenerator<'state> {
             } => (
                 format!(
                     "struct {} {{\n{}\n}}",
-                    self.unique_temporary(&format!("Struct_hash_{source_hash:x?}")),
+                    self.unique_temporary(&format!("Struct_hash_{:x?}", source_hash.unwrap())),
                     members
                         .iter()
                         .map(|(member, type_)| {

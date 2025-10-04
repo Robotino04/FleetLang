@@ -20,6 +20,8 @@
 - if expressions
 - track definitions and references of variables
 - tied to ^this^: warnings for unused functions/variables
+- fix nested structs in glsl (mostly copy-paste from c)
+- use byval attributes for arrays and structs
 
 
 ### easy
