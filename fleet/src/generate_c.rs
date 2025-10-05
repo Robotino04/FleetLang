@@ -1229,28 +1229,94 @@ impl AstVisitor for CCodeGenerator<'_> {
 
                 let expected_type = self.type_sets.get(expected_type);
 
-                if let RuntimeType::F32 = expected_type {
-                    PreStatementValue {
+                match expected_type {
+                    RuntimeType::F32 => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(sqrtf({}))", args.first().unwrap()),
-                    }
-                } else if let RuntimeType::F64 = expected_type {
-                    PreStatementValue {
+                    },
+                    RuntimeType::F64 => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(sqrt({}))", args.first().unwrap()),
+                    },
+                    _ => {
+                        self.errors.push(FleetError::from_node(
+                            &expr_clone,
+                            format!(
+                                "@sqrt isn't implemented for type {} in c backend",
+                                expected_type.stringify(&self.type_sets)
+                            ),
+                            ErrorSeverity::Error,
+                        ));
+                        PreStatementValue {
+                            pre_statements: "".to_string(),
+                            out_value: "\n#error unimplemented type for @sqrt\n".to_string(),
+                        }
                     }
-                } else {
-                    self.errors.push(FleetError::from_node(
-                        &expr_clone,
-                        format!(
-                            "@sqrt isn't implemented for type {} in c backend",
-                            expected_type.stringify(&self.type_sets)
-                        ),
-                        ErrorSeverity::Error,
-                    ));
-                    PreStatementValue {
+                }
+            }
+            "sin" => {
+                let expected_type = *self
+                    .type_data
+                    .get(id)
+                    .expect("type data must exist before calling c_generator");
+
+                let expected_type = self.type_sets.get(expected_type);
+
+                match expected_type {
+                    RuntimeType::F32 => PreStatementValue {
                         pre_statements: "".to_string(),
-                        out_value: "\n#error unimplemented type for @sqrt\n".to_string(),
+                        out_value: format!("(sinf({}))", args.first().unwrap()),
+                    },
+                    RuntimeType::F64 => PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: format!("(sin({}))", args.first().unwrap()),
+                    },
+                    _ => {
+                        self.errors.push(FleetError::from_node(
+                            &expr_clone,
+                            format!(
+                                "@sin isn't implemented for type {} in c backend",
+                                expected_type.stringify(&self.type_sets)
+                            ),
+                            ErrorSeverity::Error,
+                        ));
+                        PreStatementValue {
+                            pre_statements: "".to_string(),
+                            out_value: "\n#error unimplemented type for @sin\n".to_string(),
+                        }
+                    }
+                }
+            }
+            "cos" => {
+                let expected_type = *self
+                    .type_data
+                    .get(id)
+                    .expect("type data must exist before calling c_generator");
+
+                let expected_type = self.type_sets.get(expected_type);
+
+                match expected_type {
+                    RuntimeType::F32 => PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: format!("(cosf({}))", args.first().unwrap()),
+                    },
+                    RuntimeType::F64 => PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: format!("(cos({}))", args.first().unwrap()),
+                    },
+                    _ => {
+                        self.errors.push(FleetError::from_node(
+                            &expr_clone,
+                            format!(
+                                "@cos isn't implemented for type {} in c backend",
+                                expected_type.stringify(&self.type_sets)
+                            ),
+                            ErrorSeverity::Error,
+                        ));
+                        PreStatementValue {
+                            pre_statements: "".to_string(),
+                            out_value: "\n#error unimplemented type for @cos\n".to_string(),
+                        }
                     }
                 }
             }

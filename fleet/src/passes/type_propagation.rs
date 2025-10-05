@@ -1039,7 +1039,24 @@ impl AstVisitor for TypePropagator<'_> {
         ) = match name.as_str() {
             "zero" => (vec![], self.type_sets.insert_set(RuntimeType::Unknown)),
             "sqrt" => {
-                let type_ = self.type_sets.insert_set(RuntimeType::Unknown);
+                let type_ = self.type_sets.insert_set(RuntimeType::Number {
+                    signed: Some(true),
+                    integer: Some(false),
+                });
+                (vec![(type_, "value".to_string())], type_)
+            }
+            "sin" => {
+                let type_ = self.type_sets.insert_set(RuntimeType::Number {
+                    signed: Some(true),
+                    integer: Some(false),
+                });
+                (vec![(type_, "value".to_string())], type_)
+            }
+            "cos" => {
+                let type_ = self.type_sets.insert_set(RuntimeType::Number {
+                    signed: Some(true),
+                    integer: Some(false),
+                });
                 (vec![(type_, "value".to_string())], type_)
             }
             "comptime" => {

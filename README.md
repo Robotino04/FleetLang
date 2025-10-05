@@ -56,6 +56,7 @@
 - comptime evaluation
 - comptime type eval for generics (similar to zig/hblang)
 - heap allocations
+- after consteval, make math intrinsics a single compiler function
 
 
 ## Building
