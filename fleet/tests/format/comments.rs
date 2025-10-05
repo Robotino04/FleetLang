@@ -430,3 +430,26 @@ fn preserve_spacing_on_let() {
         "main",
     );
 }
+
+#[test]
+fn preserve_spacing_empty_function() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let foo = () -> () {}
+
+            // preserve ^this^
+            let main = () -> i32 {
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let foo = () -> () {}
+
+            // preserve ^this^
+            let main = () -> i32 {
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}

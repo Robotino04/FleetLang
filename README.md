@@ -17,7 +17,7 @@
 ## TODOs
 
 ### Priority
-- if expressions
+- add way to get length of array
 - track definitions and references of variables
 - tied to ^this^: warnings for unused functions/variables
 - fix nested structs in glsl (mostly copy-paste from c)
@@ -28,7 +28,7 @@
 - Make sure README is up-to-date and actually good.
 
 ### easy
-- add way to get length of array
+- if expressions
 - consistent error language style
 - test array-to-array assignments in glsl (maybe c as well)
 - test bigger-than-float float literals with c and glsl backend
@@ -36,6 +36,8 @@
 - add different errors for missing Pass dependencies and for failed check_empty calls
 - move runtime_type_to_byte_size somewhere common
 - allow on-statements without iterators again
+- add lint to make variables and functions snake_case and types CamelCase
+- allow struct initializers to have any order
 
 ### medium
 - real mutability/constant system
@@ -45,6 +47,7 @@
 - strings
 - remove lvalues maybe?
 - special-case small 2D and 3D GPU dispatches that fit in the size limits
+- parse statements even without semicolons (for lsp)
 
 ### hard
 - tuple types

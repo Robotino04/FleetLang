@@ -2187,6 +2187,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         &mut self,
         expr: &mut StructAccessExpression,
     ) -> Self::ExpressionOutput {
+        let expr_clone = expr.clone();
         let StructAccessExpression {
             value,
             dot_token: _,
@@ -2216,8 +2217,8 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             members.iter().find_position(|m| m.0 == *member_name)
         else {
             return self.report_error(FleetError::from_node(
-                expr,
-                "Struct doesn't have member named {member_name:?}",
+                &expr_clone,
+                format!("Struct doesn't have member named {member_name:?}"),
                 ErrorSeverity::Error,
             ));
         };
@@ -3226,6 +3227,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         &mut self,
         lvalue: &mut StructAccessLValue,
     ) -> Self::LValueOutput {
+        let lvalue_clone = lvalue.clone();
         let StructAccessLValue {
             value,
             dot_token: _,
@@ -3255,8 +3257,8 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             members.iter().find_position(|m| m.0 == *member_name)
         else {
             return self.report_error(FleetError::from_node(
-                lvalue,
-                "Struct doesn't have member named {member_name:?}",
+                &lvalue_clone,
+                format!("Struct doesn't have member named {member_name:?}"),
                 ErrorSeverity::Error,
             ));
         };

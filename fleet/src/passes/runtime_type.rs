@@ -365,13 +365,17 @@ impl RuntimeType {
         b: UnionFindSetPtr<RuntimeType>,
         types: &mut UnionFindSet<RuntimeType>,
     ) -> bool {
+        if *types.get(a) == RuntimeType::Error || *types.get(b) == RuntimeType::Error {
+            return false;
+        }
+
         types.try_merge(a, b, |mut a, b, types| {
             use UnionFindSetMergeResult::*;
             if b == RuntimeType::Unknown {
                 return Merged(a);
             }
             if b == RuntimeType::Error {
-                return Merged(b);
+                unreachable!("Should have been checked above")
             }
             match a {
                 _ if a == b => Merged(a),

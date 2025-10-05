@@ -1181,11 +1181,13 @@ impl AstVisitor for TypePropagator<'_> {
             source_hash: _,
         } = self.type_sets.get(value_type)
         else {
-            self.errors.push(FleetError::from_node(
-                &**value,
-                "Trying to use struct access on non-struct typed value",
-                ErrorSeverity::Error,
-            ));
+            if *self.type_sets.get(value_type) != RuntimeType::Error {
+                self.errors.push(FleetError::from_node(
+                    &**value,
+                    "Trying to use struct access on non-struct typed value",
+                    ErrorSeverity::Error,
+                ));
+            }
             let err_type = self.type_sets.insert_set(RuntimeType::Error);
             self.node_types.insert(*id, err_type);
             return err_type;
@@ -1196,7 +1198,7 @@ impl AstVisitor for TypePropagator<'_> {
         } else {
             self.errors.push(FleetError::from_token(
                 member_name_token,
-                "Struct doesn't have member named {member_name:?}",
+                format!("Struct doesn't have member named {member_name:?}"),
                 ErrorSeverity::Error,
             ));
 
@@ -1738,24 +1740,24 @@ impl AstVisitor for TypePropagator<'_> {
             || !is_left_ok
             || !is_right_ok
         {
-            let (verb, preposition, l_expected, r_expected) = match operation {
-                BinaryOperation::Add => ("add", "to", "number", "number"),
-                BinaryOperation::Subtract => ("subtract", "from", "number", "number"),
-                BinaryOperation::Multiply => ("multiply", "by", "number", "number"),
-                BinaryOperation::Divide => ("divide", "by", "number", "number"),
-                BinaryOperation::Modulo => ("modulo", "by", "number", "number"),
-                BinaryOperation::GreaterThan => ("compare", ">", "number", "number"),
-                BinaryOperation::GreaterThanOrEqual => ("compare", ">=", "number", "number"),
-                BinaryOperation::LessThan => ("compare", "<", "number", "number"),
-                BinaryOperation::LessThanOrEqual => ("compare", "<=", "number", "number"),
+            let (verb, l_expected, preposition, r_expected) = match operation {
+                BinaryOperation::Add => ("add", "number", "to", "number"),
+                BinaryOperation::Subtract => ("subtract", "number", "from", "number"),
+                BinaryOperation::Multiply => ("multiply", "number", "by", "number"),
+                BinaryOperation::Divide => ("divide", "number", "by", "number"),
+                BinaryOperation::Modulo => ("modulo", "number", "by", "number"),
+                BinaryOperation::GreaterThan => ("compare", "number", ">", "number"),
+                BinaryOperation::GreaterThanOrEqual => ("compare", "number", ">=", "number"),
+                BinaryOperation::LessThan => ("compare", "number", "<", "number"),
+                BinaryOperation::LessThanOrEqual => ("compare", "number", "<=", "number"),
                 BinaryOperation::Equal => {
-                    ("compare", "==", "number or boolean", "number or boolean")
+                    ("compare", "number or boolean", "==", "number or boolean")
                 }
                 BinaryOperation::NotEqual => {
-                    ("compare", "!=", "number or boolean", "number or boolean")
+                    ("compare", "number or boolean", "!=", "number or boolean")
                 }
-                BinaryOperation::LogicalAnd => ("logically AND", "with", "boolean", "boolean"),
-                BinaryOperation::LogicalOr => ("logically OR", "with", "boolean", "boolean"),
+                BinaryOperation::LogicalAnd => ("logically AND", "boolean", "with", "boolean"),
+                BinaryOperation::LogicalOr => ("logically OR", "boolean", "with", "boolean"),
             };
             if !is_left_ok {
                 let left_type_str = self.stringify_type_ptr(left_type);
@@ -1788,25 +1790,29 @@ impl AstVisitor for TypePropagator<'_> {
                     ErrorSeverity::Error,
                 ));
             }
-        }
 
-        let this_type = match operation {
-            BinaryOperation::Add
-            | BinaryOperation::Subtract
-            | BinaryOperation::Multiply
-            | BinaryOperation::Divide
-            | BinaryOperation::Modulo => left_type,
-            BinaryOperation::GreaterThan
-            | BinaryOperation::GreaterThanOrEqual
-            | BinaryOperation::LessThan
-            | BinaryOperation::LessThanOrEqual
-            | BinaryOperation::Equal
-            | BinaryOperation::NotEqual
-            | BinaryOperation::LogicalAnd
-            | BinaryOperation::LogicalOr => self.type_sets.insert_set(RuntimeType::Boolean),
-        };
-        self.node_types.insert(*id, this_type);
-        this_type
+            let this_type = self.type_sets.insert_set(RuntimeType::Error);
+            self.node_types.insert(*id, this_type);
+            this_type
+        } else {
+            let this_type = match operation {
+                BinaryOperation::Add
+                | BinaryOperation::Subtract
+                | BinaryOperation::Multiply
+                | BinaryOperation::Divide
+                | BinaryOperation::Modulo => left_type,
+                BinaryOperation::GreaterThan
+                | BinaryOperation::GreaterThanOrEqual
+                | BinaryOperation::LessThan
+                | BinaryOperation::LessThanOrEqual
+                | BinaryOperation::Equal
+                | BinaryOperation::NotEqual
+                | BinaryOperation::LogicalAnd
+                | BinaryOperation::LogicalOr => self.type_sets.insert_set(RuntimeType::Boolean),
+            };
+            self.node_types.insert(*id, this_type);
+            this_type
+        }
     }
 
     fn visit_variable_assignment_expression(
@@ -1930,11 +1936,13 @@ impl AstVisitor for TypePropagator<'_> {
             source_hash: _,
         } = self.type_sets.get(value_type)
         else {
-            self.errors.push(FleetError::from_node(
-                &**value,
-                "Trying to use struct access on non-struct typed value",
-                ErrorSeverity::Error,
-            ));
+            if *self.type_sets.get(value_type) != RuntimeType::Error {
+                self.errors.push(FleetError::from_node(
+                    &**value,
+                    "Trying to use struct access on non-struct typed value",
+                    ErrorSeverity::Error,
+                ));
+            }
             let err_type = self.type_sets.insert_set(RuntimeType::Error);
             self.node_types.insert(*id, err_type);
             return err_type;
@@ -1945,7 +1953,7 @@ impl AstVisitor for TypePropagator<'_> {
         } else {
             self.errors.push(FleetError::from_token(
                 member_name_token,
-                "Struct doesn't have member named {member_name:?}",
+                format!("Struct doesn't have member named {member_name:?}"),
                 ErrorSeverity::Error,
             ));
 
