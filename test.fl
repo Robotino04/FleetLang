@@ -1,18 +1,426 @@
-let putchar = (char: i32) -> i32 @extern "putchar";
+let putchar_impl = (c: i32) -> i32 @extern "putchar";
+let putchar = (c: u8) -> () {
+    putchar_impl(c as i32);
+}
+
+let put_number = (n: i32) -> () {
+    if n < 0 {
+        putchar('-');
+        n = -n;
+    }
+
+    if n == 0 {
+        putchar('0');
+    }
+    else {
+        let buf: u8[10] = @zero();
+        let i = 0;
+
+        while n > 0 {
+            buf[i] = '0' + (n % 10) as u8;
+            n = n / 10;
+            i = i + 1;
+        }
+        while i > 0 {
+            i = i - 1;
+            putchar(buf[i]);
+        }
+    }
+}
+let min_i32 = (a: i32, b: i32) -> i32 {
+    if a > b {
+        return b;
+    }
+    else {
+        return a;
+    }
+}
+let max_i32 = (a: i32, b: i32) -> i32 {
+    if b > a {
+        return b;
+    }
+    else {
+        return a;
+    }
+}
+let clamp_i32 = (x: i32, minv: i32, maxv: i32) -> i32 {
+    return min_i32(max_i32(x, minv), maxv);
+}
+let min_f32 = (a: f32, b: f32) -> f32 {
+    if a > b {
+        return b;
+    }
+    else {
+        return a;
+    }
+}
+let max_f32 = (a: f32, b: f32) -> f32 {
+    if b > a {
+        return b;
+    }
+    else {
+        return a;
+    }
+}
+let clamp_f32 = (x: f32, minv: f32, maxv: f32) -> f32 {
+    return min_f32(max_f32(x, minv), maxv);
+}
+
+let inf = () -> f32 {
+    return 1 / 0; // IEEE754 infinity
+}
+
+let Vec3 = struct {
+    x: f32,
+    y: f32,
+    z: f32,
+};
+
+let Color = struct {
+    r: f32,
+    g: f32,
+    b: f32,
+};
+
+let add3 = (a: Vec3, b: Vec3) -> Vec3 {
+    return Vec3 {
+        x: a.x + b.x,
+        y: a.y + b.y,
+        z: a.z + b.z,
+    };
+}
+let sub3 = (a: Vec3, b: Vec3) -> Vec3 {
+    return Vec3 {
+        x: a.x - b.x,
+        y: a.y - b.y,
+        z: a.z - b.z,
+    };
+}
+let mul1x3 = (a: f32, b: Vec3) -> Vec3 {
+    return Vec3 {
+        x: a * b.x,
+        y: a * b.y,
+        z: a * b.z,
+    };
+}
+let mul_color = (a: f32, b: Color) -> Color {
+    return Color {
+        r: a * b.r,
+        g: a * b.g,
+        b: a * b.b,
+    };
+}
+let mul3_color = (a: Color, b: Color) -> Color {
+    return Color {
+        r: a.r * b.r,
+        g: a.g * b.g,
+        b: a.b * b.b,
+    };
+}
+let add3_color = (a: Color, b: Color) -> Color {
+    return Color {
+        r: a.r + b.r,
+        g: a.g + b.g,
+        b: a.b + b.b,
+    };
+}
+let dot = (a: Vec3, b: Vec3) -> f32 {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+let length2 = (a: Vec3) -> f32 {
+    return dot(a, a);
+}
+let length = (a: Vec3) -> f32 {
+    return @sqrt(length2(a));
+}
+let normalized = (x: Vec3) -> Vec3 {
+    return mul1x3(1 / length(x), x);
+}
+let reflect = (x: Vec3, normal: Vec3) -> Vec3 {
+    return sub3(x, mul1x3(2 * dot(x, normal), normal));
+}
+
+let abs = (x: f32) -> f32 {
+    if x < 0 {
+        return -x;
+    }
+    else {
+        return x;
+    }
+}
+
+let random = (seed: Vec3) -> f32 {
+    let dot_seed = seed.x * 12.9898 + seed.y * 78.233 + seed.z * 37.719;
+
+    let s = @sin(dot_seed) * 43758.5453;
+
+    return abs(s % 1);
+}
+
+let random_in_sphere = (seed: Vec3) -> Vec3 {
+    let v = Vec3 {
+        x: 1,
+        y: 1,
+        z: 1,
+    };
+    while length2(v) > 1 {
+        let x = random(seed);
+        seed.x = seed.x + 1;
+        let y = random(seed);
+        seed.x = seed.x + 1;
+        let z = random(seed);
+        v = Vec3 {
+            x: x * 2 - 1,
+            y: y * 2 - 1,
+            z: z * 2 - 1,
+        };
+    }
+    return v;
+}
+
+let lerp = (t: f32, a: f32, b: f32) -> f32 {
+    return (1 - t) * a + t * b;
+}
+let lerp3 = (t: f32, a: Vec3, b: Vec3) -> Vec3 {
+    return Vec3 {
+        x: lerp(t, a.x, b.x),
+        y: lerp(t, a.y, b.y),
+        z: lerp(t, a.z, b.z),
+    };
+}
+
+let Ray = struct {
+    origin: Vec3,
+    direction: Vec3,
+};
+let Material = struct {
+    albedo: Color,
+    shinyness: f32,
+};
+let Sphere = struct {
+    center: Vec3,
+    radius: f32,
+    material: Material,
+};
+
+let HitInfo = struct {
+    t: f32,
+    normal: Vec3,
+    hit_point: Vec3,
+    material: Material,
+};
+
+let intersect_sphere = (sphere: Sphere, ray: Ray) -> f32 {
+    let oc = sub3(ray.origin, sphere.center);
+
+    let a = dot(ray.direction, ray.direction);
+    let b = 2 * dot(oc, ray.direction);
+    let c = dot(oc, oc) - sphere.radius * sphere.radius;
+
+    let delta = b * b - 4 * a * c;
+    if delta < 0 {
+        return -1;
+    }
+
+    let t1 = (-b - @sqrt(delta)) / (2 * a);
+    return t1;
+}
+
+let trace_ray = (ray: Ray, seed: Vec3) -> Color {
+    // idk[3] acts as a pseudo assert that makes sure things don't compile
+    // until I have to think about and update it. Hopefully, I also remember
+    // to change the for loop in the same go...
+    let scene: idk[3] = [Sphere {
+        center: Vec3 {
+            x: 0,
+            y: 0,
+            z: 5,
+        },
+        radius: 1,
+        material: Material {
+            albedo: Color {
+                r: 1,
+                g: 0,
+                b: 0,
+            },
+            shinyness: 0,
+        },
+    }, Sphere {
+        center: Vec3 {
+            x: 0,
+            y: -5001,
+            z: 5,
+        },
+        radius: 5000,
+        material: Material {
+            albedo: Color {
+                r: 0.5,
+                g: 1,
+                b: 0.2,
+            },
+            shinyness: 0,
+        },
+    }, Sphere {
+        center: Vec3 {
+            x: 0.2,
+            y: -0.75,
+            z: 4,
+        },
+        radius: 0.25,
+        material: Material {
+            albedo: Color {
+                r: 1,
+                g: 1,
+                b: 1,
+            },
+            shinyness: 1,
+        },
+    }];
+
+    let color = Color {
+        r: 1,
+        g: 1,
+        b: 1,
+    };
+
+    for (let depth = 0; depth < 8; depth = depth + 1) {
+        let hit = HitInfo {
+            t: inf(),
+            normal: Vec3 {
+                x: 0,
+                y: 0,
+                z: 0,
+            },
+            hit_point: Vec3 {
+                x: 0,
+                y: 0,
+                z: 0,
+            },
+            material: Material {
+                albedo: Color {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                },
+                shinyness: 0,
+            },
+        };
+        // TODO use len of array
+        for (let i = 0; i < 3; i = i + 1) {
+            let t = intersect_sphere(scene[i], ray);
+            if t < 0 {
+                skip;
+            }
+            if t < hit.t {
+                let hit_point = add3(ray.origin, mul1x3(t, ray.direction));
+
+                let normal = normalized(sub3(hit_point, scene[i].center));
+                hit_point = add3(hit_point, mul1x3(0.0001, normal));
+
+                hit = HitInfo {
+                    t: t,
+                    normal: normal,
+                    hit_point: hit_point,
+                    material: scene[i].material,
+                };
+            }
+        }
+
+        if hit.t == inf() {
+            let alignment = clamp_f32(dot(ray.direction, Vec3 {
+                x: 0,
+                y: 1,
+                z: 0,
+            }), 0, 1);
+            color = mul3_color(color, Color {
+                r: 1 - alignment,
+                g: 1 - alignment,
+                b: 1,
+            });
+            break;
+        }
+        else {
+            seed = add3(random_in_sphere(seed), ray.direction);
+
+            let diffuse_normal = normalized(add3(hit.normal, random_in_sphere(seed)));
+
+            hit.normal = lerp3(hit.material.shinyness, diffuse_normal, hit.normal);
+            ray = Ray {
+                origin: hit.hit_point,
+                direction: reflect(ray.direction, hit.normal),
+            };
+            color = mul3_color(hit.material.albedo, color);
+        }
+    }
+
+    return color;
+}
+
+// let write_ppm_p3_image = (image: Color[1080][1920]) -> () {}
 let main = () -> i32 {
-    putchar(72); // 'H'
-    putchar(101); // 'e'
-    putchar(108); // 'l'
-    putchar(108); // 'l'
-    putchar(111); // 'o'
-    putchar(44); // ','
-    putchar(32); // ' '
-    putchar(87); // 'W'
-    putchar(111); // 'o'
-    putchar(114); // 'r'
-    putchar(108); // 'l'
-    putchar(100); // 'd'
-    putchar(33); // '!'
-    putchar(10); // '\n'
+    let width: u32 = 1920;
+    let height: u32 = 1080;
+    let image: Color[1080][1920] = @zero();
+
+    let maxdim = max_i32(width as i32, height as i32) as f32;
+
+    for (let y = 0; y < height; y = y + 1) {
+        for (let x = 0; x < width; x = x + 1) {
+            let num_samples = 32;
+            for (let sample = 0; sample < num_samples; sample = sample + 1) {
+                let u = (x as f32 - width as f32 / 2) / maxdim;
+                let v = (y as f32 - height as f32 / 2) / maxdim;
+
+                let ray = Ray {
+                    origin: Vec3 {
+                        x: 0,
+                        y: 0,
+                        z: 0,
+                    },
+                    direction: normalized(Vec3 {
+                        x: u,
+                        y: v,
+                        z: 1,
+                    }),
+                };
+
+                let seed = Vec3 {
+                    x: x as f32 + y as f32,
+                    y: y as f32 * x as f32,
+                    z: (1 + sample) % (x + y + 1) as f32,
+                };
+
+                image[x][y] = add3_color(image[x][y], trace_ray(ray, seed));
+            }
+            image[x][y] = mul_color(1 / num_samples, image[x][y]);
+        }
+    }
+    {
+        // PPM P3 header
+        putchar('P');
+        putchar('3');
+        putchar('\n');
+        put_number(width as i32);
+        putchar(' ');
+        put_number(height as i32);
+        putchar('\n');
+        put_number(255);
+        putchar('\n');
+
+        for (let y = 0; y < height; y = y + 1) {
+            for (let x = 0; x < width; x = x + 1) {
+                let y = height - y - 1;
+
+                put_number(clamp_i32((image[x][y].r * 255) as i32, 0, 255));
+                putchar(' ');
+                put_number(clamp_i32((image[x][y].g * 255) as i32, 0, 255));
+                putchar(' ');
+                put_number(clamp_i32((image[x][y].b * 255) as i32, 0, 255));
+                putchar(' ');
+            }
+            putchar('\n');
+        }
+    }
+
     return 0;
 }

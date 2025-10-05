@@ -1319,11 +1319,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                 let expected_type = self.type_sets.get(expected_type);
 
                 match expected_type {
-                    RuntimeType::F32 => PreStatementValue {
-                        pre_statements: "".to_string(),
-                        out_value: format!("(sqrtf({}))", args.first().unwrap()),
-                    },
-                    RuntimeType::F64 => PreStatementValue {
+                    RuntimeType::F32 | RuntimeType::F64 => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(sqrt({}))", args.first().unwrap()),
                     },
@@ -1352,11 +1348,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                 let expected_type = self.type_sets.get(expected_type);
 
                 match expected_type {
-                    RuntimeType::F32 => PreStatementValue {
-                        pre_statements: "".to_string(),
-                        out_value: format!("(sinf({}))", args.first().unwrap()),
-                    },
-                    RuntimeType::F64 => PreStatementValue {
+                    RuntimeType::F32 | RuntimeType::F64 => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(sin({}))", args.first().unwrap()),
                     },
@@ -1385,11 +1377,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                 let expected_type = self.type_sets.get(expected_type);
 
                 match expected_type {
-                    RuntimeType::F32 => PreStatementValue {
-                        pre_statements: "".to_string(),
-                        out_value: format!("(cosf({}))", args.first().unwrap()),
-                    },
-                    RuntimeType::F64 => PreStatementValue {
+                    RuntimeType::F32 | RuntimeType::F64 => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(cos({}))", args.first().unwrap()),
                     },
@@ -1458,7 +1446,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             dot_token: _,
             member_name,
             member_name_token: _,
-            id,
+            id: _,
         }: &mut StructAccessExpression,
     ) -> Self::ExpressionOutput {
         let PreStatementValue {
@@ -1466,24 +1454,9 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             out_value,
         } = self.visit_expression(&mut *value);
 
-        if let RuntimeType::ArrayOf {
-            subtype: _,
-            size: _,
-        } = self.type_sets.get(
-            *self
-                .type_data
-                .get(id)
-                .expect("type data must exist before calling c_generator"),
-        ) {
-            PreStatementValue {
-                pre_statements,
-                out_value: format!("(&((*({out_value})).{member_name}))"),
-            }
-        } else {
-            PreStatementValue {
-                pre_statements,
-                out_value: format!("((*({out_value})).{member_name})"),
-            }
+        PreStatementValue {
+            pre_statements,
+            out_value: format!("(({out_value}).{member_name})"),
         }
     }
 
@@ -1614,26 +1587,24 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             out_value: right_out_value,
         } = self.visit_expression(&mut *right);
 
+        use BinaryOperation::*;
         PreStatementValue {
             pre_statements: left_pre_statements + &right_pre_statements,
-            out_value: format!(
-                "(({left_out_value}) {} ({right_out_value}))",
-                match operation {
-                    BinaryOperation::Add => "+",
-                    BinaryOperation::Subtract => "-",
-                    BinaryOperation::Multiply => "*",
-                    BinaryOperation::Divide => "/",
-                    BinaryOperation::Modulo => "%",
-                    BinaryOperation::GreaterThan => ">",
-                    BinaryOperation::GreaterThanOrEqual => ">=",
-                    BinaryOperation::LessThan => "<",
-                    BinaryOperation::LessThanOrEqual => "<=",
-                    BinaryOperation::Equal => "==",
-                    BinaryOperation::NotEqual => "!=",
-                    BinaryOperation::LogicalAnd => "&&",
-                    BinaryOperation::LogicalOr => "||",
-                },
-            ),
+            out_value: match operation {
+                Add => format!("(({left_out_value}) + ({right_out_value}))"),
+                Subtract => format!("(({left_out_value}) - ({right_out_value}))"),
+                Multiply => format!("(({left_out_value}) * ({right_out_value}))"),
+                Divide => format!("(({left_out_value}) / ({right_out_value}))"),
+                Modulo => format!("(mod(({left_out_value}), ({right_out_value})))"),
+                GreaterThan => format!("(({left_out_value}) > ({right_out_value}))"),
+                GreaterThanOrEqual => format!("(({left_out_value}) >= ({right_out_value}))"),
+                LessThan => format!("(({left_out_value}) < ({right_out_value}))"),
+                LessThanOrEqual => format!("(({left_out_value}) <= ({right_out_value}))"),
+                Equal => format!("(({left_out_value}) == ({right_out_value}))"),
+                NotEqual => format!("(({left_out_value}) != ({right_out_value}))"),
+                LogicalAnd => format!("(({left_out_value}) && ({right_out_value}))"),
+                LogicalOr => format!("(({left_out_value}) || ({right_out_value}))"),
+            },
         }
     }
 
@@ -1780,7 +1751,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
         PreStatementValue {
             pre_statements,
-            out_value: format!("((*({out_value})).{member_name})"),
+            out_value: format!("(({out_value}).{member_name})"),
         }
     }
 
