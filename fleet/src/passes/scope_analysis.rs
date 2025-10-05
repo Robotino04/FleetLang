@@ -54,7 +54,7 @@ pub struct Variable {
 pub struct Function {
     pub name: String,
     pub return_type: Option<UnionFindSetPtr<RuntimeType>>,
-    pub parameter_types: Option<Vec<(UnionFindSetPtr<RuntimeType>, String)>>,
+    pub parameter_types: Option<Vec<Rc<RefCell<Variable>>>>,
     pub id: FunctionID,
     pub definition_node_id: NodeID,
 }

@@ -31,7 +31,7 @@ use crate::{
             VariableData,
         },
         runtime_type::RuntimeType,
-        scope_analysis::Function,
+        scope_analysis::{Function, Variable},
         top_level_binding_finder::TopLevelBindingFinder,
         union_find_set::UnionFindSetPtr,
     },
@@ -237,9 +237,9 @@ impl CCodeGenerator<'_> {
             .as_ref()
             .unwrap()
             .iter()
-            .map(|(param, name)| {
-                let (type_, after_id) = self.runtime_type_to_c(*param);
-                type_ + " " + &self.mangle_variable(name) + &after_id
+            .map(|param| {
+                let (type_, after_id) = self.runtime_type_to_c(param.borrow().type_.unwrap());
+                type_ + " " + &self.mangle_variable(&param.borrow()) + &after_id
             })
             .join(", ");
 
@@ -262,8 +262,8 @@ impl CCodeGenerator<'_> {
             + ")"
     }
 
-    fn mangle_variable(&self, name: &str) -> String {
-        format!("fleet_{name}")
+    fn mangle_variable(&self, var: &Variable) -> String {
+        format!("fleet_{}_{}", var.name, var.id.0)
     }
     fn mangle_function(&self, name: &str) -> String {
         format!("fleet_{name}")
@@ -451,7 +451,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                 .as_ref()
                 .unwrap()
                 .iter()
-                .map(|(_param, name)| self.mangle_variable(name))
+                .map(|param| self.mangle_variable(&param.borrow()))
                 .join(",")
         )
     }
@@ -460,7 +460,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         &mut self,
         SimpleBinding {
             name_token: _,
-            name,
+            name: _,
             type_: _,
             id,
         }: &mut SimpleBinding,
@@ -472,7 +472,14 @@ impl AstVisitor for CCodeGenerator<'_> {
 
         let (type_, after_id) = self.runtime_type_to_c(inferred_type);
 
-        format!("{} {}{}", type_, self.mangle_variable(name), after_id)
+        let ref_var = self.variable_data.get(id).unwrap();
+
+        format!(
+            "{} {}{}",
+            type_,
+            self.mangle_variable(&ref_var.borrow()),
+            after_id
+        )
     }
 
     fn visit_expression_statement(
@@ -553,7 +560,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         let (rw_allocations, rw_deallocations): (Vec<_>, Vec<_>) = bindings
             .rw
             .iter_mut()
-            .map(|(_name, type_, top_level_binding)| {
+            .map(|(type_, top_level_binding)| {
                 let PreStatementValue {
                     pre_statements,
                     out_value,
@@ -598,9 +605,9 @@ impl AstVisitor for CCodeGenerator<'_> {
         let (ro_allocations, ro_deallocations): (Vec<_>, Vec<_>) = bindings
             .ro
             .iter_mut()
-            .map(|(name, type_, _variable)| {
+            .map(|(type_, variable)| {
                 (
-                    self.mangle_variable(name),
+                    self.mangle_variable(&variable.borrow()),
                     self.runtime_type_to_byte_size(*type_),
                 )
             })
@@ -1219,7 +1226,6 @@ impl AstVisitor for CCodeGenerator<'_> {
                     .type_data
                     .get(id)
                     .expect("type data must exist before calling c_generator");
-                let (type_, after_id) = self.runtime_type_to_c(expected_type);
 
                 let expected_type = self.type_sets.get(expected_type);
 
@@ -1336,14 +1342,16 @@ impl AstVisitor for CCodeGenerator<'_> {
     fn visit_variable_access_expression(
         &mut self,
         VariableAccessExpression {
-            name,
+            name: _,
             name_token: _,
-            id: _,
+            id,
         }: &mut VariableAccessExpression,
     ) -> Self::ExpressionOutput {
+        let ref_var = self.variable_data.get(id).unwrap();
+
         PreStatementValue {
             pre_statements: "".to_string(),
-            out_value: self.mangle_variable(name),
+            out_value: self.mangle_variable(&ref_var.borrow()),
         }
     }
 
@@ -1507,14 +1515,16 @@ impl AstVisitor for CCodeGenerator<'_> {
     fn visit_variable_lvalue(
         &mut self,
         VariableLValue {
-            name,
+            name: _,
             name_token: _,
-            id: _,
+            id,
         }: &mut VariableLValue,
     ) -> Self::LValueOutput {
+        let ref_var = self.variable_data.get(id).unwrap();
+
         PreStatementValue {
             pre_statements: "".to_string(),
-            out_value: self.mangle_variable(name),
+            out_value: self.mangle_variable(&ref_var.borrow()),
         }
     }
 

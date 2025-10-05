@@ -23,6 +23,9 @@
 - fix nested structs in glsl (mostly copy-paste from c)
 - use byval attributes for arrays and structs
 
+#### Meta
+- make sure web demo compiles and works
+- Make sure README is up-to-date and actually good.
 
 ### easy
 - add way to get length of array

@@ -1123,7 +1123,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .get_function("fl_runtime_free_gpu_backing")
             .expect("fl runtime functions should exist before walking the ast");
 
-        for (_name, type_, top_level_binding) in &mut bindings.rw {
+        for (type_, top_level_binding) in &mut bindings.rw {
             self.builder.position_at_end(bindings_block);
             let binding_ir = self.visit_variable_lvalue(top_level_binding)?;
             let size = self
@@ -1161,7 +1161,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let bindings_ir = bindings
             .ro
             .iter()
-            .map(|(_name, type_, top_level_binding)| {
+            .map(|(type_, top_level_binding)| {
                 self.builder.position_at_end(bindings_block);
                 let binding_ir = self
                     .variable_storage

@@ -128,7 +128,10 @@ impl<'a> TypePropagator<'a> {
             .unwrap_or_else(|| self.type_sets.insert_set(RuntimeType::Unknown));
         let parameter_types = parameters
             .iter_mut()
-            .map(|(param, _comma)| (self.visit_simple_binding(param), param.name.clone()))
+            .map(|(param, _comma)| {
+                self.visit_simple_binding(param);
+                self.referenced_variable.get(&param.id).unwrap().clone()
+            })
             .collect();
 
         let Some(ref_func) = self.referenced_function.get(id) else {
@@ -954,9 +957,13 @@ impl AstVisitor for TypePropagator<'_> {
             .enumerate()
         {
             match types {
-                EitherOrBoth::Both((arg_type, arg), (param_type, param_name)) => {
+                EitherOrBoth::Both((arg_type, arg), param) => {
                     // function arguments shouldn't get specialized by calling the function
-                    let param_type = self.type_sets.detach(*param_type);
+                    let param_type = param
+                        .borrow()
+                        .type_
+                        .unwrap_or_else(|| self.type_sets.insert_set(RuntimeType::Unknown));
+                    let param_type = self.type_sets.detach(param_type);
 
                     if !RuntimeType::merge_types(*arg_type, param_type, &mut self.type_sets) {
                         let param_type_str = self.stringify_type_ptr(param_type);
@@ -965,8 +972,9 @@ impl AstVisitor for TypePropagator<'_> {
                         self.errors.push(FleetError::from_node(
                             *arg,
                             format!(
-                                "{name:?} expects a value of type {} as argument {param_name:?} (Nr. {}). Got {}",
+                                "{name:?} expects a value of type {} as argument {:?} (Nr. {}). Got {}",
                                 param_type_str,
+                                param.borrow().name,
                                 i + 1,
                                 arg_type_str,
                             ),
@@ -981,13 +989,18 @@ impl AstVisitor for TypePropagator<'_> {
                         ErrorSeverity::Error,
                     ));
                 }
-                EitherOrBoth::Right((param_type, param_name)) => {
-                    let param_type_str = self.stringify_type_ptr(*param_type);
+                EitherOrBoth::Right(param) => {
+                    let param_type = param
+                        .borrow()
+                        .type_
+                        .unwrap_or_else(|| self.type_sets.insert_set(RuntimeType::Unknown));
+                    let param_type_str = self.stringify_type_ptr(param_type);
 
                     self.errors.push(FleetError::from_token(
                         close_paren_token,
                         format!(
-                            "{name:?} is missing parameter {param_name:?} (Nr. {}) of type {}",
+                            "{name:?} is missing parameter {:?} (Nr. {}) of type {}",
+                            param.borrow().name,
                             i + 1,
                             param_type_str,
                         ),

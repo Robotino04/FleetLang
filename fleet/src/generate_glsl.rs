@@ -143,8 +143,8 @@ impl Pass for GLSLCodeGenerator<'_> {
 }
 
 pub struct OnStatementBindings {
-    pub rw: Vec<(String, UnionFindSetPtr<RuntimeType>, VariableLValue)>,
-    pub ro: Vec<(String, UnionFindSetPtr<RuntimeType>, Rc<RefCell<Variable>>)>,
+    pub rw: Vec<(UnionFindSetPtr<RuntimeType>, VariableLValue)>,
+    pub ro: Vec<(UnionFindSetPtr<RuntimeType>, Rc<RefCell<Variable>>)>,
 }
 
 impl<'state> GLSLCodeGenerator<'state> {
@@ -172,15 +172,14 @@ impl<'state> GLSLCodeGenerator<'state> {
 
     fn generate_buffer_definition(
         &self,
-        name: &str,
+        mangled_name: &str,
         index: u32,
         type_: UnionFindSetPtr<RuntimeType>,
         modifiers: &str,
     ) -> String {
         let (pre_name, post_name) = self.runtime_type_to_glsl(type_);
-        let name = self.mangle_variable(name);
         format!(
-            "layout(std430, binding = {index}) buffer Input{index} {{ {modifiers} {pre_name} {name}{post_name}; }};",
+            "layout(std430, binding = {index}) buffer Input{index} {{ {modifiers} {pre_name} {mangled_name}{post_name}; }};",
         )
     }
 
@@ -215,13 +214,7 @@ impl<'state> GLSLCodeGenerator<'state> {
                         == variable.borrow().id
                 })
             })
-            .map(|(name, variable)| {
-                (
-                    name.clone(),
-                    variable.borrow().type_.unwrap(),
-                    variable.clone(),
-                )
-            })
+            .map(|(_name, variable)| (variable.borrow().type_.unwrap(), variable.clone()))
             .collect_vec();
 
         let mut rw_uniqueness_set = HashSet::new();
@@ -247,7 +240,6 @@ impl<'state> GLSLCodeGenerator<'state> {
             })
             .map(|binding| {
                 (
-                    binding.name.clone(),
                     *type_data
                         .get(&binding.id)
                         .expect("type data must exist before calling c_generator"),
@@ -335,8 +327,15 @@ impl<'state> GLSLCodeGenerator<'state> {
         let rw_buffer_definitions = bindings
             .rw
             .iter()
-            .map(|(name, type_, _binding)| {
-                let res = self.generate_buffer_definition(name, buffer_count, *type_, "");
+            .map(|(type_, binding)| {
+                let ref_var = self.variable_data.get(&binding.id).unwrap();
+
+                let res = self.generate_buffer_definition(
+                    &self.mangle_variable(&ref_var.borrow()),
+                    buffer_count,
+                    *type_,
+                    "",
+                );
                 buffer_count += 1;
                 res
             })
@@ -345,8 +344,13 @@ impl<'state> GLSLCodeGenerator<'state> {
         let ro_buffer_definitions = bindings
             .ro
             .iter()
-            .map(|(name, type_, _variable)| {
-                let res = self.generate_buffer_definition(name, buffer_count, *type_, "readonly");
+            .map(|(type_, variable)| {
+                let res = self.generate_buffer_definition(
+                    &self.mangle_variable(&variable.borrow()),
+                    buffer_count,
+                    *type_,
+                    "readonly",
+                );
                 buffer_count += 1;
                 res
             })
@@ -547,9 +551,9 @@ impl<'state> GLSLCodeGenerator<'state> {
             .as_ref()
             .unwrap()
             .iter()
-            .map(|(param, name)| {
-                let (type_, after_id) = self.runtime_type_to_glsl(*param);
-                type_ + " " + &self.mangle_variable(name) + &after_id
+            .map(|param| {
+                let (type_, after_id) = self.runtime_type_to_glsl(param.borrow().type_.unwrap());
+                type_ + " " + &self.mangle_variable(&param.borrow()) + &after_id
             })
             .join(", ");
 
@@ -572,8 +576,8 @@ impl<'state> GLSLCodeGenerator<'state> {
             + ")"
     }
 
-    fn mangle_variable(&self, name: &str) -> String {
-        format!("fleet_{name}")
+    fn mangle_variable(&self, var: &Variable) -> String {
+        format!("fleet_{}_{}", var.name, var.id.0)
     }
     fn mangle_function(&self, name: &str) -> String {
         format!("fleet_{name}")
@@ -697,7 +701,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         &mut self,
         SimpleBinding {
             name_token: _,
-            name,
+            name: _,
             type_: _,
             id,
         }: &mut SimpleBinding,
@@ -709,7 +713,14 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
         let (type_, after_id) = self.runtime_type_to_glsl(inferred_type);
 
-        format!("{} {}{}", type_, self.mangle_variable(name), after_id)
+        let ref_var = self.variable_data.get(id).unwrap();
+
+        format!(
+            "{} {}{}",
+            type_,
+            self.mangle_variable(&ref_var.borrow()),
+            after_id
+        )
     }
 
     fn visit_expression_statement(
@@ -803,7 +814,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         } = *self.type_sets.get(type_)
         {
             let lvalue_gen = self.visit_simple_binding(binding);
-            let lvalue_temporary = self.mangle_variable(&ref_var.borrow().name);
+            let lvalue_temporary = self.mangle_variable(&ref_var.borrow());
 
             let rvalue_temporary = self.unique_temporary("rvalue");
             let PreStatementValue {
@@ -1433,7 +1444,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
     fn visit_variable_access_expression(
         &mut self,
         VariableAccessExpression {
-            name,
+            name: _,
             name_token: _,
             id,
         }: &mut VariableAccessExpression,
@@ -1446,6 +1457,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
         let type_ = self.type_sets.get(ref_var.borrow().type_.unwrap());
 
+        // TODO: Why is this here?
         if let RuntimeType::ArrayOf {
             subtype: _,
             size: _,
@@ -1453,12 +1465,12 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         {
             PreStatementValue {
                 pre_statements: "".to_string(),
-                out_value: self.mangle_variable(name).to_string(),
+                out_value: self.mangle_variable(&ref_var.borrow()),
             }
         } else {
             PreStatementValue {
                 pre_statements: "".to_string(),
-                out_value: self.mangle_variable(name),
+                out_value: self.mangle_variable(&ref_var.borrow()),
             }
         }
     }
@@ -1647,14 +1659,16 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
     fn visit_variable_lvalue(
         &mut self,
         VariableLValue {
-            name,
+            name: _,
             name_token: _,
-            id: _,
+            id,
         }: &mut VariableLValue,
     ) -> Self::LValueOutput {
+        let ref_var = self.variable_data.get(id).unwrap();
+
         PreStatementValue {
             pre_statements: "".to_string(),
-            out_value: self.mangle_variable(name),
+            out_value: self.mangle_variable(&ref_var.borrow()),
         }
     }
 

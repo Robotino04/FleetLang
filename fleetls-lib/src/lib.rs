@@ -543,19 +543,22 @@ impl Backend {
                         );
                     };
                     let return_type = type_sets.get(return_type).stringify(type_sets);
-                    let parameters = if let Some(param_types) =
-                        ref_func.borrow().parameter_types.as_ref()
-                    {
-                        Itertools::intersperse(
-                            param_types.iter().map(|(param, name)| {
-                                name.clone() + ": " + &type_sets.get(*param).stringify(type_sets)
-                            }),
-                            ", ".to_string(),
-                        )
-                        .collect::<String>()
-                    } else {
-                        "/* Param types not processed by ScopeAnalyzer */".to_string()
-                    };
+                    let parameters =
+                        if let Some(param_types) = ref_func.borrow().parameter_types.as_ref() {
+                            Itertools::intersperse(
+                                param_types.iter().map(|param| {
+                                    name.clone()
+                                        + ": "
+                                        + &type_sets
+                                            .get(param.borrow().type_.unwrap())
+                                            .stringify(type_sets)
+                                }),
+                                ", ".to_string(),
+                            )
+                            .collect::<String>()
+                        } else {
+                            "/* Param types not processed by ScopeAnalyzer */".to_string()
+                        };
 
                     (parameters, return_type)
                 })();
@@ -602,19 +605,22 @@ impl Backend {
                         );
                     };
                     let return_type = type_sets.get(return_type).stringify(type_sets);
-                    let parameters = if let Some(param_types) =
-                        ref_func.borrow().parameter_types.as_ref()
-                    {
-                        Itertools::intersperse(
-                            param_types.iter().map(|(param, name)| {
-                                name.clone() + ": " + &type_sets.get(*param).stringify(type_sets)
-                            }),
-                            ", ".to_string(),
-                        )
-                        .collect::<String>()
-                    } else {
-                        "/* Param types not processed by ScopeAnalyzer */".to_string()
-                    };
+                    let parameters =
+                        if let Some(param_types) = ref_func.borrow().parameter_types.as_ref() {
+                            Itertools::intersperse(
+                                param_types.iter().map(|param| {
+                                    name.clone()
+                                        + ": "
+                                        + &type_sets
+                                            .get(param.borrow().type_.unwrap())
+                                            .stringify(type_sets)
+                                }),
+                                ", ".to_string(),
+                            )
+                            .collect::<String>()
+                        } else {
+                            "/* Param types not processed by ScopeAnalyzer */".to_string()
+                        };
 
                     (parameters, return_type)
                 })();
