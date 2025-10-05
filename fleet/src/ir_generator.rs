@@ -11,6 +11,7 @@ use inkwell::{
     basic_block::BasicBlock,
     builder::Builder,
     context::Context,
+    intrinsics::Intrinsic,
     memory_buffer::MemoryBuffer,
     module::{Linkage, Module},
     passes::PassBuilderOptions,
@@ -2093,6 +2094,40 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                             ),
                             ErrorSeverity::Error,
                         ))?,
+                })
+            }
+            "sqrt" => {
+                let expected_type = *self
+                    .type_data
+                    .get(id)
+                    .expect("type data must exist before calling ir_generator");
+                let expected_type_ir = self.runtime_type_to_llvm(expected_type, &expr_clone)?;
+
+                Ok(match args.first().unwrap() {
+                    RuntimeValueIR::Float(value) => {
+                        let intrinsic = Intrinsic::find("llvm.sqrt").unwrap();
+                        let intrinsic = intrinsic
+                            .get_declaration(
+                                &self.module,
+                                &[expected_type_ir.into_basic_type().unwrap()],
+                            )
+                            .unwrap();
+                        RuntimeValueIR::Float(
+                            self.builder
+                                .build_direct_call(intrinsic, &[(*value).into()], "intrinsic_sqrt")?
+                                .try_as_basic_value()
+                                .unwrap_left()
+                                .into_float_value(),
+                        )
+                    }
+                    _ => self.report_error(FleetError::from_node(
+                        &expr_clone,
+                        format!(
+                            "@zero compiler function has unknown or error type: {}",
+                            self.type_sets.get(expected_type).stringify(&self.type_sets)
+                        ),
+                        ErrorSeverity::Error,
+                    ))?,
                 })
             }
             "comptime" => Ok(*args.first().unwrap()),

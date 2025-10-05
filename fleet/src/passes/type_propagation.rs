@@ -1025,6 +1025,10 @@ impl AstVisitor for TypePropagator<'_> {
             UnionFindSetPtr<RuntimeType>,
         ) = match name.as_str() {
             "zero" => (vec![], self.type_sets.insert_set(RuntimeType::Unknown)),
+            "sqrt" => {
+                let type_ = self.type_sets.insert_set(RuntimeType::Unknown);
+                (vec![(type_, "value".to_string())], type_)
+            }
             "comptime" => {
                 let type_ = self.type_sets.insert_set(RuntimeType::Unknown);
                 (vec![(type_, "value".to_string())], type_)

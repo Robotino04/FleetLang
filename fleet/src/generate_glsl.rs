@@ -1229,7 +1229,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             id,
         } = expr;
 
-        let (_pre_statements, _args): (Vec<_>, Vec<_>) = arguments
+        let (_pre_statements, args): (Vec<_>, Vec<_>) = arguments
             .iter_mut()
             .map(|(arg, _comma)| self.visit_expression(arg))
             .map(
@@ -1296,6 +1296,39 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                     PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: "\n#error unimplemented type for @zero\n".to_string(),
+                    }
+                }
+            }
+            "sqrt" => {
+                let expected_type = *self
+                    .type_data
+                    .get(id)
+                    .expect("type data must exist before calling glsl_generator");
+
+                let expected_type = self.type_sets.get(expected_type);
+
+                if let RuntimeType::F32 = expected_type {
+                    PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: format!("(sqrt({}))", args.first().unwrap()),
+                    }
+                } else if let RuntimeType::F64 = expected_type {
+                    PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: format!("(sqrt({}))", args.first().unwrap()),
+                    }
+                } else {
+                    self.errors.push(FleetError::from_node(
+                        &expr_clone,
+                        format!(
+                            "@sqrt isn't implemented for type {} in c backend",
+                            expected_type.stringify(&self.type_sets)
+                        ),
+                        ErrorSeverity::Error,
+                    ));
+                    PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: "\n#error unimplemented type for @sqrt\n".to_string(),
                     }
                 }
             }

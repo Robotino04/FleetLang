@@ -1214,6 +1214,40 @@ impl AstVisitor for CCodeGenerator<'_> {
                     }
                 }
             }
+            "sqrt" => {
+                let expected_type = *self
+                    .type_data
+                    .get(id)
+                    .expect("type data must exist before calling c_generator");
+                let (type_, after_id) = self.runtime_type_to_c(expected_type);
+
+                let expected_type = self.type_sets.get(expected_type);
+
+                if let RuntimeType::F32 = expected_type {
+                    PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: format!("(sqrtf({}))", args.first().unwrap()),
+                    }
+                } else if let RuntimeType::F64 = expected_type {
+                    PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: format!("(sqrt({}))", args.first().unwrap()),
+                    }
+                } else {
+                    self.errors.push(FleetError::from_node(
+                        &expr_clone,
+                        format!(
+                            "@sqrt isn't implemented for type {} in c backend",
+                            expected_type.stringify(&self.type_sets)
+                        ),
+                        ErrorSeverity::Error,
+                    ));
+                    PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: "\n#error unimplemented type for @sqrt\n".to_string(),
+                    }
+                }
+            }
             "comptime" => PreStatementValue {
                 pre_statements: pre_statements.first().unwrap().clone(),
                 out_value: args.first().unwrap().clone(),
