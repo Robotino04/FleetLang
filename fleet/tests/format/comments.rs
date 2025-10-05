@@ -403,3 +403,30 @@ fn empty_line_with_spaces_only() {
         "main",
     );
 }
+
+#[test]
+fn preserve_spacing_on_let() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                on self.gpus[0][x = 5] () {}
+
+                // this line ^^^^ here should stay when formatting
+                let x = 2;
+
+                return 0;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                on self.gpus[0][x = 5] () {}
+
+                // this line ^^^^ here should stay when formatting
+                let x = 2;
+
+                return 0;
+            }"##
+        },
+        "main",
+    );
+}

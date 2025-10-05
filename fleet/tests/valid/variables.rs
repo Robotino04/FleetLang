@@ -1,6 +1,6 @@
 use indoc::indoc;
 
-use crate::common::assert_compile_and_return_value;
+use crate::common::{assert_compile_and_output_subprocess, assert_compile_and_return_value};
 
 #[test]
 fn assign() {
@@ -406,5 +406,38 @@ fn shadowing() {
         "##},
         "main",
         3,
+    );
+}
+
+/// Consistent-ish reproduction of shadowing causing UB in C backend.
+///
+/// Shadowing was previously just done by having C handle everything.
+/// In C however, a variable is already shadowed in its own initializer
+/// and that will therefore read an undefined value.
+#[test]
+fn shadowing_ub() {
+    assert_compile_and_output_subprocess(
+        indoc! {r##"
+            let putchar_impl = (c: i32) -> i32 @extern "putchar";
+            let putchar = (c: u8) -> () {
+                putchar_impl(c as i32);
+            }
+
+            let main = () -> i32 {
+                for (let i = 0; i < 5; i = i + 1) {
+                    for (let j = 0; j < 2; j = j + 1) {
+                        let i = i + 1;
+                        putchar('0' + i);
+                    }
+                }
+
+                putchar('\n');
+
+                return 0;
+            }
+        "##},
+        0,
+        "1122334455\n",
+        "",
     );
 }
