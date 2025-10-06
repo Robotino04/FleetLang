@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
 };
 
-use indent::indent_by;
+use indent::{indent_all_by, indent_by};
 use indoc::formatdoc;
 
 use itertools::Itertools;
@@ -31,7 +31,8 @@ use crate::{
     passes::{
         pass_manager::{
             Errors, FunctionData, GlobalState, Pass, PassError, PassFactory, PassResult,
-            PrecompiledGlslFunctions, ScopeData, StatData, TypeData, TypeSets, VariableData,
+            PrecompiledGlslFunctions, ScopeData, StatData, StructAliasMap, TypeData, TypeSets,
+            VariableData,
         },
         runtime_type::RuntimeType,
         scope_analysis::{Function, FunctionID, Variable},
@@ -54,6 +55,7 @@ pub struct GLSLCodeGenerator<'state> {
 
     stats: Ref<'state, StatData>,
 
+    struct_aliases: RefCell<StructAliasMap>,
     temporary_counter: RefCell<u64>,
 }
 
@@ -93,6 +95,7 @@ impl PassFactory for GLSLCodeGenerator<'_> {
 
             output_functions: Some(output_functions.get_mut(state)),
 
+            struct_aliases: Default::default(),
             temporary_counter: RefCell::new(0),
         })
     }
@@ -167,7 +170,19 @@ impl<'state> GLSLCodeGenerator<'state> {
             stats,
 
             temporary_counter: RefCell::new(0),
+            struct_aliases: Default::default(),
         }
+    }
+
+    fn as_struct_type(&self, body: String) -> String {
+        let num_structs = self.struct_aliases.borrow().len();
+
+        self.struct_aliases
+            .borrow_mut()
+            .entry(body)
+            .or_insert_with(|| (num_structs, self.unique_temporary("Struct")))
+            .1
+            .clone()
     }
 
     fn generate_buffer_definition(
@@ -262,6 +277,7 @@ impl<'state> GLSLCodeGenerator<'state> {
         gpu_executor: &mut GPUExecutor,
 
         glsl_functions: &HashMap<FunctionID, (String, String)>,
+        struct_aliases: StructAliasMap,
     ) -> Result<String> {
         let GPUExecutor {
             host: _,
@@ -272,6 +288,8 @@ impl<'state> GLSLCodeGenerator<'state> {
             close_bracket_token: _,
             id: _,
         } = gpu_executor;
+
+        self.struct_aliases.borrow_mut().extend(struct_aliases.0);
 
         let iterator_sizes_str = "iterator_sizes";
 
@@ -378,6 +396,14 @@ impl<'state> GLSLCodeGenerator<'state> {
             .into_iter()
             .unzip();
 
+        let struct_aliases = self
+            .struct_aliases
+            .borrow()
+            .iter()
+            .sorted_by_key(|(_body, (i, _name))| *i)
+            .map(|(body, (_i, name))| format!("struct {name} {{\n{}\n}};", indent_all_by(4, body)))
+            .join("\n");
+
         let function_declarations = function_declarations.join("\n");
         let function_definitions = function_definitions.join("\n");
 
@@ -388,6 +414,9 @@ impl<'state> GLSLCodeGenerator<'state> {
 
             // https://github.com/Darkyenus/glsl4idea/issues/175
             #extension GL_EXT_shader_explicit_arithmetic_types         : enable
+
+            // structs
+            {struct_aliases}
 
             // declarations
             {function_declarations}
@@ -486,18 +515,16 @@ impl<'state> GLSLCodeGenerator<'state> {
             }
             RuntimeType::Struct {
                 members,
-                source_hash,
+                source_hash: _,
             } => (
-                format!(
-                    "struct {} {{\n{}\n}}",
-                    self.unique_temporary(&format!("Struct_hash_{:x?}", source_hash.unwrap())),
+                self.as_struct_type(
                     members
                         .iter()
                         .map(|(member, type_)| {
                             let (type_, after_id) = self.runtime_type_to_glsl(*type_);
                             format!("{type_} {member}{after_id};")
                         })
-                        .join("\n")
+                        .join("\n"),
                 ),
                 "".to_string(),
             ),
@@ -601,7 +628,7 @@ pub struct PreStatementValue {
 }
 
 impl AstVisitor for GLSLCodeGenerator<'_> {
-    type ProgramOutput = Result<HashMap<FunctionID, (String, String)>>;
+    type ProgramOutput = Result<(HashMap<FunctionID, (String, String)>, StructAliasMap)>;
     type TopLevelOutput = Result<Option<(String, String)>>;
     type FunctionBodyOutput = Result<String>;
     type SimpleBindingOutput = String;
@@ -613,30 +640,33 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
     type TypeOutput = String;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
-        program
-            .top_level_statements
-            .iter_mut()
-            .filter_map(|tls| {
-                if let TopLevelStatement::Function(_) = tls {
-                    let id = self.function_data.get(&tls.get_id()).unwrap().borrow().id;
-                    let tls_generated = match self.visit_top_level_statement(tls) {
-                        Ok(x) => x,
+        Ok((
+            program
+                .top_level_statements
+                .iter_mut()
+                .filter_map(|tls| {
+                    if let TopLevelStatement::Function(_) = tls {
+                        let id = self.function_data.get(&tls.get_id()).unwrap().borrow().id;
+                        let tls_generated = match self.visit_top_level_statement(tls) {
+                            Ok(x) => x,
+                            Err(err) => return Some(Err(err)),
+                        };
+                        Some(Ok((id, tls_generated)))
+                    } else {
+                        None
+                    }
+                })
+                .filter_map(|res| {
+                    let (fid, opt) = match res {
+                        Ok(ok) => ok,
                         Err(err) => return Some(Err(err)),
                     };
-                    Some(Ok((id, tls_generated)))
-                } else {
-                    None
-                }
-            })
-            .filter_map(|res| {
-                let (fid, opt) = match res {
-                    Ok(ok) => ok,
-                    Err(err) => return Some(Err(err)),
-                };
 
-                opt.map(|some| Ok((fid, some)))
-            })
-            .collect::<Result<HashMap<_, _>>>()
+                    opt.map(|some| Ok((fid, some)))
+                })
+                .collect::<Result<HashMap<_, _>>>()?,
+            StructAliasMap(self.struct_aliases.borrow().clone()),
+        ))
     }
 
     fn visit_function_definition(

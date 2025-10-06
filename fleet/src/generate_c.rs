@@ -1,7 +1,4 @@
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    collections::HashMap,
-};
+use std::cell::{Ref, RefCell, RefMut};
 
 use indent::indent_all_by;
 use indoc::formatdoc;
@@ -27,8 +24,8 @@ use crate::{
     passes::{
         pass_manager::{
             CCodeOutput, Errors, FunctionData, GlobalState, Pass, PassError, PassFactory,
-            PassResult, PrecompiledGlslFunctions, ScopeData, StatData, TypeData, TypeSets,
-            VariableData,
+            PassResult, PrecompiledGlslFunctions, ScopeData, StatData, StructAliasMap, TypeData,
+            TypeSets, VariableData,
         },
         runtime_type::RuntimeType,
         scope_analysis::{Function, Variable},
@@ -52,8 +49,7 @@ pub struct CCodeGenerator<'state> {
     scope_data: Ref<'state, ScopeData>,
     glsl_functions: Ref<'state, PrecompiledGlslFunctions>,
 
-    struct_aliases: RefCell<HashMap<String, (usize, String)>>,
-
+    struct_aliases: RefCell<StructAliasMap>,
     temporary_counter: RefCell<u64>,
 }
 
@@ -98,7 +94,6 @@ impl PassFactory for CCodeGenerator<'_> {
             glsl_functions: glsl_functions.get(state),
 
             struct_aliases: Default::default(),
-
             temporary_counter: RefCell::new(0),
         })
     }
@@ -681,7 +676,8 @@ impl AstVisitor for CCodeGenerator<'_> {
             body,
             iterators,
             &mut gpu_executor_clone,
-            &self.glsl_functions,
+            &self.glsl_functions.0.0,
+            StructAliasMap(self.glsl_functions.0.1.clone()),
         ) else {
             return "#error glsl generation failed completely\n".to_string();
         };

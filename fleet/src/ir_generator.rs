@@ -49,7 +49,8 @@ use crate::{
         find_node_bounds::find_node_bounds,
         pass_manager::{
             Errors, FunctionData, GlobalState, Pass, PassError, PassFactory, PassResult,
-            PrecompiledGlslFunctions, ScopeData, StatData, TypeData, TypeSets, VariableData,
+            PrecompiledGlslFunctions, ScopeData, StatData, StructAliasMap, TypeData, TypeSets,
+            VariableData,
         },
         runtime_type::RuntimeType,
         scope_analysis::{FunctionID, VariableID},
@@ -1263,7 +1264,8 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             body,
             iterators,
             &mut gpu_executor_clone,
-            &self.glsl_functions,
+            &self.glsl_functions.0.0,
+            StructAliasMap(self.glsl_functions.0.1.clone()),
         )?;
 
         #[cfg(not(feature = "gpu_backend"))]

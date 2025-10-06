@@ -87,7 +87,8 @@ NewtypeDeref!(pub TypeData, PerNodeData<UnionFindSetPtr<RuntimeType>>);
 NewtypeDeref!(pub TypeSets, UnionFindSet<RuntimeType>);
 NewtypeDeref!(pub ScopeData, PerNodeData<Rc<RefCell<VariableScope>>>);
 NewtypeDeref!(pub StatData, PerNodeData<NodeStats>);
-NewtypeDeref!(pub PrecompiledGlslFunctions, HashMap<FunctionID, (String, String)>);
+NewtypeDeref!(pub StructAliasMap, HashMap<String, (usize, String)>);
+NewtypeDeref!(pub PrecompiledGlslFunctions, (HashMap<FunctionID, (String, String)>, StructAliasMap));
 NewtypeDeref!(pub CCodeOutput, String);
 
 #[derive(Debug, Clone)]
