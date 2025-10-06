@@ -137,10 +137,21 @@ static void destroyBuffer(VkDevice device, VkBuffer buffer, VkDeviceMemory buffe
 
 static VkInstance createInstance() {
     LOG(std::cout << "Creating instance\n");
-    VkInstance instance;
+
+    VkApplicationInfo appInfo{VK_STRUCTURE_TYPE_APPLICATION_INFO};
+    appInfo.pApplicationName = "Fleet Runtime";
+    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.pEngineName = "Fleet Runtime";
+    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.apiVersion = VK_API_VERSION_1_3;
+
     VkInstanceCreateInfo instInfo{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    instInfo.pApplicationInfo = &appInfo;
+
     instInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
     instInfo.ppEnabledLayerNames = validationLayers.data();
+
+    VkInstance instance;
     VK_CHECK(vkCreateInstance(&instInfo, nullptr, &instance));
     return instance;
 }
