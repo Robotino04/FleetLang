@@ -48,14 +48,10 @@
             pkgs.libz
             pkgs.libxml2
             pkgs.libffi
-            pkgs.ncurses # pkgs.libtinfo is broken atm
+            pkgs.ncurses # pkgs.libtinfo is broken atm (see https://github.com/NixOS/nixpkgs/issues/387912)
             pkgs.llvmPackages_18.bintools
             pkgs.llvmPackages_18.clang-tools
             pkgs.llvmPackages_18.clang # required for tests
-
-            pkgs.glfw
-            pkgs.libGL
-            pkgs.libGL.dev
 
             pkgs.shaderc.bin #pkgs.glslang
             pkgs.vulkan-headers
