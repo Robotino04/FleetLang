@@ -415,6 +415,8 @@ impl<'state> GLSLCodeGenerator<'state> {
             // https://github.com/Darkyenus/glsl4idea/issues/175
             #extension GL_EXT_shader_explicit_arithmetic_types         : enable
 
+            highp float;
+
             // structs
             {struct_aliases}
 
