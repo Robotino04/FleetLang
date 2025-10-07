@@ -214,7 +214,13 @@ impl<'a> TypePropagator<'a> {
             let actual_type = actual_type.clone();
 
             // TODO: once we track variable definitions, use that here
-            if let RuntimeType::Unknown | RuntimeType::Number { .. } = actual_type {
+            if let RuntimeType::Unknown
+            | RuntimeType::Number { .. }
+            | RuntimeType::ArrayOf {
+                subtype: _,
+                size: None,
+            } = actual_type
+            {
                 self.errors.push(FleetError::from_node(
                     error_node,
                     format!(
