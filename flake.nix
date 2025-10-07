@@ -96,6 +96,8 @@
               llvmPackages.clang-tools
               llvmPackages.clang
 
+              pkgs.raylib
+
               pkgs.vulkan-tools
               pkgs.vim.xxd
 

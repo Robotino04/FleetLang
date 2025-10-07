@@ -16,7 +16,8 @@ CXXFLAGS := $(CFLAGS)
 LDFLAGS := \
 	-g \
 	-rdynamic \
-	-lvulkan
+	-lvulkan \
+	-lraylib
 
 
 CXX := clang++
