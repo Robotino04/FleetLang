@@ -138,7 +138,7 @@ impl AstToDocumentModelConverter<'_> {
                         Some(DocumentElement::Concatenation(vec![
                             DocumentElement::Text("// ".to_string()),
                             DocumentElement::Text(contents.trim().to_string()),
-                            DocumentElement::single_collapsable_linebreak(),
+                            DocumentElement::required_collapsable_linebreak(),
                         ]))
                     }
                     TriviaKind::BlockComment(contents) => {
@@ -184,7 +184,11 @@ impl AstToDocumentModelConverter<'_> {
                     }
                     TriviaKind::EmptyLine => {
                         if allow_newlines {
-                            Some(DocumentElement::CollapsableLineBreak { max: 2, count: 1 })
+                            Some(DocumentElement::CollapsableLineBreak {
+                                min: 0,
+                                max: 2,
+                                count: 1,
+                            })
                         } else {
                             None
                         }
@@ -327,22 +331,31 @@ impl AstToDocumentModelConverter<'_> {
         self.is_first_in_statement = true;
         if body.is_empty() {
             DocumentElement::Concatenation(vec![
-                self.token_to_element(open_paren),
-                DocumentElement::ReverseLineBreakEater,
+                self.token_to_element_config(open_paren, TokenToElementConfig::open_brace()),
                 DocumentElement::LineBreakEater,
-                self.token_to_element(close_paren),
+                DocumentElement::Indentation(Box::new(DocumentElement::Concatenation(vec![
+                    self.trivia_to_element(&close_paren.leading_trivia, true),
+                ]))),
+                DocumentElement::ReverseLineBreakEater,
+                DocumentElement::spaced_concatentation(
+                    DocumentElement::single_collapsable_space(),
+                    vec![
+                        self.token_type_to_element(close_paren),
+                        self.trivia_to_element(&close_paren.trailing_trivia, true),
+                    ],
+                ),
             ])
         } else {
             DocumentElement::spaced_concatentation(
-                DocumentElement::single_collapsable_linebreak(),
+                DocumentElement::required_collapsable_linebreak(),
                 vec![
                     self.token_to_element_config(open_paren, TokenToElementConfig::open_brace()),
                     DocumentElement::LineBreakEater,
                     DocumentElement::Indentation(Box::new(DocumentElement::spaced_concatentation(
-                        DocumentElement::single_collapsable_linebreak(),
+                        DocumentElement::required_collapsable_linebreak(),
                         vec![
                             DocumentElement::spaced_concatentation(
-                                DocumentElement::single_collapsable_linebreak(),
+                                DocumentElement::required_collapsable_linebreak(),
                                 body,
                             ),
                             self.trivia_to_element(&close_paren.leading_trivia, true),
@@ -379,7 +392,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
         DocumentElement::Concatenation(vec![
             DocumentElement::LineBreakEater,
             DocumentElement::spaced_concatentation(
-                DocumentElement::single_collapsable_linebreak(),
+                DocumentElement::required_collapsable_linebreak(),
                 program
                     .top_level_statements
                     .iter_mut()
@@ -725,7 +738,7 @@ impl AstVisitor for AstToDocumentModelConverter<'_> {
         }
 
         DocumentElement::spaced_concatentation(
-            DocumentElement::single_collapsable_linebreak(),
+            DocumentElement::required_collapsable_linebreak(),
             elements,
         )
     }

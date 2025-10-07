@@ -21,12 +21,20 @@ pub enum DocumentElement {
     // these two also eat nearby spaces
     ForcedLineBreak,
     CollapsableLineBreak {
+        /// The number of line breaks the formatter requires.
+        min: usize,
+
+        /// The maximum number of user-provided line breaks that will be preserved.
         max: usize,
+
+        /// The number of line breaks the user has inserted (e.g. via comments or blank lines).
+        /// The final number of line breaks will be clamped between [`min`] and [`max`].
         count: usize,
     },
 
     ForcedSpace,
     CollapsableSpace {
+        min: usize,
         max: usize,
         count: usize,
     },
@@ -58,10 +66,18 @@ impl DocumentElement {
     }
 
     pub fn single_collapsable_space() -> DocumentElement {
-        DocumentElement::CollapsableSpace { max: 1, count: 1 }
+        DocumentElement::CollapsableSpace {
+            min: 1,
+            max: 1,
+            count: 0,
+        }
     }
-    pub fn single_collapsable_linebreak() -> DocumentElement {
-        DocumentElement::CollapsableLineBreak { max: 1, count: 1 }
+    pub fn required_collapsable_linebreak() -> DocumentElement {
+        DocumentElement::CollapsableLineBreak {
+            min: 1,
+            max: 1,
+            count: 0,
+        }
     }
 }
 
@@ -150,6 +166,7 @@ fn flatten_document_elements_once(element: DocumentElement) -> (DocumentElement,
                         continue;
                     }
                     CollapsableLineBreak {
+                        min: min1,
                         max: max1,
                         count: count1,
                     } => {
@@ -161,15 +178,15 @@ fn flatten_document_elements_once(element: DocumentElement) -> (DocumentElement,
                         }
 
                         if let Some(CollapsableLineBreak {
+                            min: min2,
                             max: max2,
                             count: count2,
                         }) = res.last_mut()
                         {
-                            if max1 == *max2 {
-                                *count2 = (count1 + *count2).min(max1);
-                            } else {
-                                *max2 = (*max2).max(max1);
-                            }
+                            *min2 = min1.max(*min2);
+                            *max2 = max1.max(*max2);
+                            *count2 += count1;
+                            *count2 = (*max2).min(*count2);
 
                             did_change = true;
                             continue;
@@ -191,6 +208,7 @@ fn flatten_document_elements_once(element: DocumentElement) -> (DocumentElement,
                         }
                     }
                     CollapsableSpace {
+                        min: min1,
                         max: max1,
                         count: count1,
                     } => {
@@ -206,12 +224,15 @@ fn flatten_document_elements_once(element: DocumentElement) -> (DocumentElement,
                         }
 
                         if let Some(CollapsableSpace {
+                            min: min2,
                             max: max2,
                             count: count2,
                         }) = res.last_mut()
                         {
-                            *max2 = (*max2).max(max1);
-                            *count2 = (count1 + *count2).min(*max2);
+                            *min2 = min1.max(*min2);
+                            *max2 = max1.max(*max2);
+                            *count2 += count1;
+                            *count2 = (*max2).min(*count2);
 
                             did_change = true;
                             continue;
@@ -326,9 +347,13 @@ pub fn stringify_document_impl(element: DocumentElement) -> String {
             .collect(),
         DocumentElement::Indentation(child) => indent_all_by(4, stringify_document_impl(*child)),
         DocumentElement::ForcedSpace => " ".to_string(),
-        DocumentElement::CollapsableSpace { max, count } => " ".repeat(count.min(max)),
+        DocumentElement::CollapsableSpace { min, max, count } => {
+            " ".repeat(count.max(min).min(max))
+        }
         DocumentElement::ForcedLineBreak => "\n".to_string(),
-        DocumentElement::CollapsableLineBreak { max, count } => "\n".repeat(count.min(max)),
+        DocumentElement::CollapsableLineBreak { min, max, count } => {
+            "\n".repeat(count.max(min).min(max))
+        }
         DocumentElement::Text(text) => text.clone(),
         DocumentElement::SpaceEater => "".to_string(),
         DocumentElement::ReverseSpaceEater => "".to_string(),
@@ -345,7 +370,11 @@ mod test {
     fn empty_spaced_concatenation() {
         assert_eq!(
             DocumentElement::spaced_concatentation(
-                DocumentElement::CollapsableSpace { max: 5, count: 2 },
+                DocumentElement::CollapsableSpace {
+                    min: 0,
+                    max: 5,
+                    count: 2
+                },
                 vec![]
             ),
             DocumentElement::Concatenation(vec![])
@@ -356,10 +385,22 @@ mod test {
     fn collapsable_spaces() {
         assert_eq!(
             fully_flatten_document(DocumentElement::Concatenation(vec![
-                DocumentElement::CollapsableSpace { max: 5, count: 2 },
-                DocumentElement::CollapsableSpace { max: 5, count: 2 },
+                DocumentElement::CollapsableSpace {
+                    min: 0,
+                    max: 5,
+                    count: 2
+                },
+                DocumentElement::CollapsableSpace {
+                    min: 0,
+                    max: 5,
+                    count: 2
+                },
             ])),
-            DocumentElement::CollapsableSpace { max: 5, count: 4 }
+            DocumentElement::CollapsableSpace {
+                min: 0,
+                max: 5,
+                count: 4
+            }
         );
     }
 
@@ -367,10 +408,22 @@ mod test {
     fn collapsable_spaces_max() {
         assert_eq!(
             fully_flatten_document(DocumentElement::Concatenation(vec![
-                DocumentElement::CollapsableSpace { max: 5, count: 4 },
-                DocumentElement::CollapsableSpace { max: 5, count: 2 },
+                DocumentElement::CollapsableSpace {
+                    min: 0,
+                    max: 5,
+                    count: 4
+                },
+                DocumentElement::CollapsableSpace {
+                    min: 0,
+                    max: 5,
+                    count: 2
+                },
             ])),
-            DocumentElement::CollapsableSpace { max: 5, count: 5 }
+            DocumentElement::CollapsableSpace {
+                min: 0,
+                max: 5,
+                count: 5
+            }
         );
     }
 
@@ -378,10 +431,22 @@ mod test {
     fn collapsable_linebreak() {
         assert_eq!(
             fully_flatten_document(DocumentElement::Concatenation(vec![
-                DocumentElement::CollapsableLineBreak { max: 5, count: 2 },
-                DocumentElement::CollapsableLineBreak { max: 5, count: 2 },
+                DocumentElement::CollapsableLineBreak {
+                    min: 0,
+                    max: 5,
+                    count: 2
+                },
+                DocumentElement::CollapsableLineBreak {
+                    min: 0,
+                    max: 5,
+                    count: 2
+                },
             ])),
-            DocumentElement::CollapsableLineBreak { max: 5, count: 4 }
+            DocumentElement::CollapsableLineBreak {
+                min: 0,
+                max: 5,
+                count: 4
+            }
         );
     }
 
@@ -389,10 +454,22 @@ mod test {
     fn collapsable_linebreak_max() {
         assert_eq!(
             fully_flatten_document(DocumentElement::Concatenation(vec![
-                DocumentElement::CollapsableLineBreak { max: 5, count: 4 },
-                DocumentElement::CollapsableLineBreak { max: 5, count: 2 },
+                DocumentElement::CollapsableLineBreak {
+                    min: 0,
+                    max: 5,
+                    count: 4
+                },
+                DocumentElement::CollapsableLineBreak {
+                    min: 0,
+                    max: 5,
+                    count: 2
+                },
             ])),
-            DocumentElement::CollapsableLineBreak { max: 5, count: 5 }
+            DocumentElement::CollapsableLineBreak {
+                min: 0,
+                max: 5,
+                count: 5
+            }
         );
     }
 
@@ -431,10 +508,10 @@ mod test {
         assert_eq!(
             fully_flatten_document(DocumentElement::Concatenation(vec![
                 DocumentElement::LineBreakEater,
-                DocumentElement::single_collapsable_linebreak(),
+                DocumentElement::required_collapsable_linebreak(),
                 DocumentElement::ForcedLineBreak,
-                DocumentElement::single_collapsable_linebreak(),
-                DocumentElement::single_collapsable_linebreak(),
+                DocumentElement::required_collapsable_linebreak(),
+                DocumentElement::required_collapsable_linebreak(),
                 DocumentElement::ForcedLineBreak,
             ])),
             DocumentElement::LineBreakEater,
@@ -445,10 +522,10 @@ mod test {
     fn reverse_linebreak_eater() {
         assert_eq!(
             fully_flatten_document(DocumentElement::Concatenation(vec![
-                DocumentElement::single_collapsable_linebreak(),
+                DocumentElement::required_collapsable_linebreak(),
                 DocumentElement::ForcedLineBreak,
-                DocumentElement::single_collapsable_linebreak(),
-                DocumentElement::single_collapsable_linebreak(),
+                DocumentElement::required_collapsable_linebreak(),
+                DocumentElement::required_collapsable_linebreak(),
                 DocumentElement::ForcedLineBreak,
                 DocumentElement::ReverseLineBreakEater,
             ])),
