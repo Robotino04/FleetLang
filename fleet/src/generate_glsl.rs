@@ -1627,7 +1627,22 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                 Subtract => format!("(({left_out_value}) - ({right_out_value}))"),
                 Multiply => format!("(({left_out_value}) * ({right_out_value}))"),
                 Divide => format!("(({left_out_value}) / ({right_out_value}))"),
-                Modulo => format!("(mod(({left_out_value}), ({right_out_value})))"),
+                Modulo => {
+                    if self
+                        .type_sets
+                        .get(
+                            *self
+                                .type_data
+                                .get(&left.get_id())
+                                .expect("type data must exist before calling glsl_generator"),
+                        )
+                        .is_float()
+                    {
+                        format!("(mod(({left_out_value}), ({right_out_value})))")
+                    } else {
+                        format!("(({left_out_value}) % ({right_out_value}))")
+                    }
+                }
                 GreaterThan => format!("(({left_out_value}) > ({right_out_value}))"),
                 GreaterThanOrEqual => format!("(({left_out_value}) >= ({right_out_value}))"),
                 LessThan => format!("(({left_out_value}) < ({right_out_value}))"),
