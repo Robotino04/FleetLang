@@ -18,19 +18,18 @@
         };
 
         naersk' = pkgs.callPackage naersk {};
-      in rec {
-        fl_runtime = pkgs.clang18Stdenv.mkDerivation {
+
+        llvmPackages = pkgs.llvmPackages_18;
+
+        fl_runtime = llvmPackages.stdenv.mkDerivation {
           name = "fl_runtime";
           src = ./fl_runtime;
           installPhase = ''
             mkdir -p $out/share/
-            cp fl_runtime_declarations.bc $out/share/
+            cp fl_runtime_declarations.bc fl_runtime.o fl_runtime.so testhook.so $out/share/
           '';
           buildInputs = [
             pkgs.shaderc.bin #pkgs.glslang
-
-            pkgs.libGL
-            pkgs.libGL.dev
 
             pkgs.vulkan-headers
             pkgs.vulkan-loader
@@ -38,20 +37,31 @@
           ];
         };
 
-        defaultPackage = naersk'.buildPackage {
+        shared_attrs = rec {
           src = ./.;
           preBuild = ''
             mkdir -p fl_runtime/
             cp "${fl_runtime}/share/fl_runtime_declarations.bc" fl_runtime/
           '';
+
+          doCheck = true;
+          checkInputs = [
+            pkgs.mesa
+            llvmPackages.clang
+          ];
+          preCheck = ''
+            mkdir -p fl_runtime/
+            cp ${fl_runtime}/share/{fl_runtime.o,fl_runtime.so,testhook.so} fl_runtime/
+
+            export VK_ICD_FILENAMES=${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json
+            export MESA_SHADER_CACHE_DIR=/tmp/mesa_shader_cache
+          '';
+
           buildInputs = [
             pkgs.libz
             pkgs.libxml2
             pkgs.libffi
             pkgs.ncurses # pkgs.libtinfo is broken atm (see https://github.com/NixOS/nixpkgs/issues/387912)
-            pkgs.llvmPackages_18.bintools
-            pkgs.llvmPackages_18.clang-tools
-            pkgs.llvmPackages_18.clang # required for tests
 
             pkgs.shaderc.bin #pkgs.glslang
             pkgs.vulkan-headers
@@ -63,28 +73,36 @@
           VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
           SHADERC_LIB_DIR = "${pkgs.shaderc.static}/lib/";
 
-          #LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath packages}";
+          LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath buildInputs}";
 
           # nvidia drivers don't clean up on shutdown and thus ASan/LSan will detect the leaks and exit the program early
           # needs to be here for tests
           LSAN_OPTIONS = "suppressions=${./lsan.supp}";
         };
-
-        devShell = defaultPackage.overrideAttrs (prev: {
-          nativeBuildInputs =
-            prev.nativeBuildInputs
-            ++ [
+      in {
+        defaultPackage = naersk'.buildPackage shared_attrs;
+        devShell = naersk'.buildPackage (
+          shared_attrs
+          // {
+            # don't forget to merge arrays manually
+            singleStep = true;
+            nativeBuildInputs = [
               pkgs.cargo
               pkgs.clippy
               pkgs.rustc
               pkgs.cargo-watch
+
+              llvmPackages.bintools
+              llvmPackages.clang-tools
+              llvmPackages.clang
 
               pkgs.vulkan-tools
               pkgs.vim.xxd
 
               pkgs.viu
             ];
-        });
+          }
+        );
       }
     );
 }
