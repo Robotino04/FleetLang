@@ -10,7 +10,7 @@ use crate::{
     passes::pass_manager::{Errors, GlobalState, InputSource, Pass, PassFactory, PassResult},
 };
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Token {
     pub type_: TokenType,
     pub range: SourceRange,
@@ -22,11 +22,13 @@ pub struct Token {
     pub file_name: FileName,
 }
 
+/*
 impl Debug for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Token { .. }")
     }
 }
+*/
 
 NewtypeDeref!(pub FileName, Rc<String>, Clone, PartialEq, Eq);
 
