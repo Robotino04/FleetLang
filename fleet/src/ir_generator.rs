@@ -2029,7 +2029,8 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         let mut args = vec![];
         for (arg, _comma) in arguments {
-            args.push(self.visit_expression(arg)?);
+            let ir_value = self.visit_expression(arg)?;
+            args.push((arg, ir_value));
         }
 
         match name.as_str() {
@@ -2105,7 +2106,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .expect("type data must exist before calling ir_generator");
                 let expected_type_ir = self.runtime_type_to_llvm(expected_type, &expr_clone)?;
 
-                Ok(match args.first().unwrap() {
+                Ok(match args.first().unwrap().1 {
                     RuntimeValueIR::Float(value) => {
                         let intrinsic = Intrinsic::find("llvm.sqrt").unwrap();
                         let intrinsic = intrinsic
@@ -2116,7 +2117,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                             .unwrap();
                         RuntimeValueIR::Float(
                             self.builder
-                                .build_direct_call(intrinsic, &[(*value).into()], "intrinsic_sqrt")?
+                                .build_direct_call(intrinsic, &[value.into()], "intrinsic_sqrt")?
                                 .try_as_basic_value()
                                 .unwrap_left()
                                 .into_float_value(),
@@ -2139,7 +2140,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .expect("type data must exist before calling ir_generator");
                 let expected_type_ir = self.runtime_type_to_llvm(expected_type, &expr_clone)?;
 
-                Ok(match args.first().unwrap() {
+                Ok(match args.first().unwrap().1 {
                     RuntimeValueIR::Float(value) => {
                         let intrinsic = Intrinsic::find("llvm.sin").unwrap();
                         let intrinsic = intrinsic
@@ -2150,7 +2151,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                             .unwrap();
                         RuntimeValueIR::Float(
                             self.builder
-                                .build_direct_call(intrinsic, &[(*value).into()], "intrinsic_sin")?
+                                .build_direct_call(intrinsic, &[value.into()], "intrinsic_sin")?
                                 .try_as_basic_value()
                                 .unwrap_left()
                                 .into_float_value(),
@@ -2173,7 +2174,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .expect("type data must exist before calling ir_generator");
                 let expected_type_ir = self.runtime_type_to_llvm(expected_type, &expr_clone)?;
 
-                Ok(match args.first().unwrap() {
+                Ok(match args.first().unwrap().1 {
                     RuntimeValueIR::Float(value) => {
                         let intrinsic = Intrinsic::find("llvm.cos").unwrap();
                         let intrinsic = intrinsic
@@ -2184,7 +2185,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                             .unwrap();
                         RuntimeValueIR::Float(
                             self.builder
-                                .build_direct_call(intrinsic, &[(*value).into()], "intrinsic_cos")?
+                                .build_direct_call(intrinsic, &[value.into()], "intrinsic_cos")?
                                 .try_as_basic_value()
                                 .unwrap_left()
                                 .into_float_value(),
@@ -2200,7 +2201,77 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     ))?,
                 })
             }
-            "comptime" => Ok(*args.first().unwrap()),
+            "length" => {
+                let array_type = *self
+                    .type_data
+                    .get(&args.first().unwrap().0.get_id())
+                    .expect("type data must exist before calling ir_generator");
+                let expected_type = *self
+                    .type_data
+                    .get(id)
+                    .expect("type data must exist before calling ir_generator");
+
+                let length = match self.type_sets.get(array_type) {
+                    RuntimeType::ArrayOf {
+                        subtype: _,
+                        size: Some(length),
+                    } => *length,
+                    RuntimeType::ArrayOf {
+                        subtype: _,
+                        size: None,
+                    } => self.report_error(FleetError::from_node(
+                        &expr_clone,
+                        format!(
+                            "@length called with unsized array value of type {}",
+                            self.type_sets.get(array_type).stringify(&self.type_sets)
+                        ),
+                        ErrorSeverity::Error,
+                    ))?,
+                    _ => self.report_error(FleetError::from_node(
+                        &expr_clone,
+                        format!(
+                            "@length called with non-array typed value of type {}",
+                            self.type_sets.get(array_type).stringify(&self.type_sets)
+                        ),
+                        ErrorSeverity::Error,
+                    ))?,
+                };
+
+                let ir_type = self.runtime_type_to_llvm(expected_type, &expr_clone)?;
+
+                Ok(match args.first().unwrap().1 {
+                    RuntimeValueIR::Array(_value) => match ir_type {
+                        AnyTypeEnum::IntType(type_)
+                            if self.type_sets.get(expected_type).is_signed() =>
+                        {
+                            RuntimeValueIR::SignedInt(type_.const_int(length as u64, true))
+                        }
+                        AnyTypeEnum::IntType(type_)
+                            if self.type_sets.get(expected_type).is_unsigned() =>
+                        {
+                            RuntimeValueIR::UnsignedInt(type_.const_int(length as u64, false))
+                        }
+                        AnyTypeEnum::IntType(_type) => {
+                            unreachable!("all ints should either be signed or unsigned")
+                        }
+
+                        _ => self.report_error(FleetError::from_node(
+                            &expr_clone,
+                            "This was not an int in the llvm backend",
+                            ErrorSeverity::Error,
+                        ))?,
+                    },
+                    _ => self.report_error(FleetError::from_node(
+                        &expr_clone,
+                        format!(
+                            "@length called with non-array typed value of type {}",
+                            self.type_sets.get(array_type).stringify(&self.type_sets)
+                        ),
+                        ErrorSeverity::Error,
+                    ))?,
+                })
+            }
+            "comptime" => Ok(args.first().unwrap().1),
             _ => self.report_error(FleetError::from_node(
                 &expr_clone,
                 format!("No compiler function named {name:?} is implemented for the LLVM backend"),

@@ -1074,6 +1074,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             "sqrt" => {}
             "sin" => {}
             "cos" => {}
+            "length" => {}
             "comptime" => {
                 self.comptime_deps.mark_comptime_required(*id);
             }

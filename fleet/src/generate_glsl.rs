@@ -1429,6 +1429,55 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                     }
                 }
             }
+            "length" => {
+                let array_type = *self
+                    .type_data
+                    .get(&arguments[0].0.get_id())
+                    .expect("type data must exist before calling glsl_generator");
+
+                let array_type = self.type_sets.get(array_type);
+
+                match array_type {
+                    RuntimeType::ArrayOf {
+                        subtype: _,
+                        size: Some(size),
+                    } => PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: format!("{size}"),
+                    },
+                    RuntimeType::ArrayOf {
+                        subtype: _,
+                        size: None,
+                    } => {
+                        self.errors.push(FleetError::from_node(
+                            &expr_clone,
+                            format!(
+                                "@length called with unsized array value of type {}",
+                                array_type.stringify(&self.type_sets)
+                            ),
+                            ErrorSeverity::Error,
+                        ));
+                        PreStatementValue {
+                            pre_statements: "".to_string(),
+                            out_value: "\n#error unsized type for @length\n".to_string(),
+                        }
+                    }
+                    _ => {
+                        self.errors.push(FleetError::from_node(
+                            &expr_clone,
+                            format!(
+                                "@length called with non-array typed value of type {}",
+                                array_type.stringify(&self.type_sets)
+                            ),
+                            ErrorSeverity::Error,
+                        ));
+                        PreStatementValue {
+                            pre_statements: "".to_string(),
+                            out_value: "\n#error non-array type for @length\n".to_string(),
+                        }
+                    }
+                }
+            }
             _ => {
                 self.errors.push(FleetError::from_node(
                     &expr_clone,

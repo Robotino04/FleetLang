@@ -155,3 +155,54 @@ fn signed_index() {
         },
     );
 }
+#[test]
+fn length_number() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = 5;
+                return @length(a);
+            }
+        "##},
+        SourceLocation {
+            index: 57,
+            line: 3,
+            column: 19,
+        },
+    );
+}
+#[test]
+fn length_struct() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = struct {
+                    a: i32,
+                } {
+                    a: 9,
+                };
+                return @length(a);
+            }
+        "##},
+        SourceLocation {
+            index: 108,
+            line: 7,
+            column: 19,
+        },
+    );
+}
+#[test]
+fn length_bool() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                return @length(true);
+            }
+        "##},
+        SourceLocation {
+            index: 42,
+            line: 2,
+            column: 19,
+        },
+    );
+}

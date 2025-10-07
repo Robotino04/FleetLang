@@ -1,0 +1,11 @@
+let putchar_impl = (char: i32) -> i32 @extern "putchar";
+let putchar = (char: u8) -> () {
+    putchar_impl(char as i32);
+}
+let main = () -> i32 {
+    let text = ['H', 'e', 'l', 'l', 'o', ',', ' ', 'W', 'o', 'r', 'l', 'd', '!', '\n'];
+    for (let i: u32 = 0; i < @length(text); i = i + 1) {
+        putchar(text[i]);
+    }
+    return 0;
+}

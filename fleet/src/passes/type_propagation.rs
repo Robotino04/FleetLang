@@ -1059,6 +1059,18 @@ impl AstVisitor for TypePropagator<'_> {
                 });
                 (vec![(type_, "value".to_string())], type_)
             }
+            "length" => {
+                let element_type = self.type_sets.insert_set(RuntimeType::Unknown);
+                let in_type = self.type_sets.insert_set(RuntimeType::ArrayOf {
+                    subtype: element_type,
+                    size: None,
+                });
+                let out_type = self.type_sets.insert_set(RuntimeType::Number {
+                    signed: None,
+                    integer: Some(true),
+                });
+                (vec![(in_type, "value".to_string())], out_type)
+            }
             "comptime" => {
                 let type_ = self.type_sets.insert_set(RuntimeType::Unknown);
                 (vec![(type_, "value".to_string())], type_)

@@ -301,3 +301,45 @@ fn array_as_returnvalue() {
         2,
     );
 }
+#[test]
+fn length() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = [67, 223, -1];
+
+                return @length(a);
+            }
+        "##},
+        "main",
+        3,
+    );
+}
+#[test]
+fn length_nested_inner() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = [[67, 223, -1], [9, 10, 21]];
+
+                return @length(a[0]);
+            }
+        "##},
+        "main",
+        3,
+    );
+}
+#[test]
+fn length_nested_outer() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = [[67, 223, -1], [9, 10, 21]];
+
+                return @length(a);
+            }
+        "##},
+        "main",
+        2,
+    );
+}

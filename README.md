@@ -28,6 +28,7 @@ Features:
 - tied to ^this^: warnings for unused functions/variables
 - fix nested structs in glsl (mostly copy-paste from C)
 - use byval attributes for arrays and structs
+- import of some sort
 
 #### Meta
 - make sure web demo compiles and works
