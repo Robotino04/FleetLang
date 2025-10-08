@@ -55,6 +55,7 @@ Features:
 - special-case small 2D and 3D GPU dispatches that fit in the size limits
 - parse statements even without semicolons (for FleetLS)
 - array index bounds checking
+- cache compiled shaders for repeated invocations
 
 ### Hard
 - tuple types

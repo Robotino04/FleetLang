@@ -17,6 +17,12 @@
 
 #include "fl_runtime.h"
 
+extern "C" {
+void eputchar(uint8_t c) {
+    fprintf(stderr, "%c", c);
+}
+}
+
 #define VK_CHECK(x)                                                                                         \
     do {                                                                                                    \
         VkResult err = x;                                                                                   \
@@ -26,6 +32,8 @@
             std::exit(-1);                                                                                  \
         }                                                                                                   \
     } while (0)
+
+// #define DO_LOG
 
 #ifdef DO_LOG
     #define LOG(X) X

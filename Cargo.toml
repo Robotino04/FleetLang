@@ -5,3 +5,4 @@ default-members = ["fleet", "fleetc", "fleetls", "fleetls-lib"]
 
 [profile.dev]
 opt-level = 1 # used to avoid stack overflows in debug builds
+panic = "abort"
