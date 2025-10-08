@@ -1,6 +1,8 @@
+MAKEFLAGS += -r
+
 .PHONY: run_llvm run_c all clean hook_c hook_llvm
 
-CFLAGS= \
+CFLAGS := \
 	-Wreturn-stack-address \
 	-fsanitize=undefined \
 	-fsanitize=address \
@@ -9,23 +11,32 @@ CFLAGS= \
 	-fno-omit-frame-pointer \
 	-g
 
-LDFLAGS= \
+CXXFLAGS := $(CFLAGS)
+
+LDFLAGS := \
 	-rdynamic \
 	-lvulkan
+
+
+CXX := clang++
+CC := clang
 
 all: out_llvm out_c
 
 clean:
 	rm -f out_llvm out_c.o out_c c_out.log llvm_out.log out_c2
 
+fl_runtime/%:
+	$(MAKE) -C $(dir $@) $(notdir $@)
+
 out_llvm: test.o fl_runtime/fl_runtime.o
-	clang++ $(LDFLAGS) $(CFLAGS) test.o fl_runtime/fl_runtime.o -o out_llvm
+	$(CXX) $(LDFLAGS) $(CXXFLAGS) test.o fl_runtime/fl_runtime.o -o out_llvm
 
 out_c.o: out.c fl_runtime/fl_runtime.h
-	clang $(CFLAGS) -c out.c -o out_c.o -Ifl_runtime/
+	$(CC) $(CFLAGS) -c out.c -o out_c.o -Ifl_runtime/
 
 out_c: out_c.o fl_runtime/fl_runtime.o
-	clang++ $(LDFLAGS) $(CFLAGS) out_c.o fl_runtime/fl_runtime.o -o out_c
+	$(CXX) $(LDFLAGS) $(CXXFLAGS) out_c.o fl_runtime/fl_runtime.o -o out_c
 
 hook_llvm: out_llvm fl_runtime/testhook.so
 	set -e; \
@@ -51,10 +62,10 @@ hook_c: out_c fl_runtime/testhook.so
 	cat c_out.log | cat
 
 out_c2.o: out2.c fl_runtime/fl_runtime.h
-	clang $(CFLAGS) -c out2.c -o out_c2.o -Ifl_runtime/
+	$(CC) $(CFLAGS) -c out2.c -o out_c2.o -Ifl_runtime/
 
 out_c2: out_c2.o fl_runtime/fl_runtime.o
-	clang++ $(CFLAGS) out_c2.o fl_runtime/fl_runtime.o -lvulkan -o out_c2 -rdynamic
+	$(CXX) $(CFLAGS) out_c2.o fl_runtime/fl_runtime.o -lvulkan -o out_c2 -rdynamic
 
 run_llvm: out_llvm
 	./out_llvm
