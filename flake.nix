@@ -69,7 +69,7 @@
             pkgs.vulkan-validation-layers
           ];
 
-          LLVM_SYS_180_PREFIX = "${pkgs.llvmPackages_18.libllvm.dev}";
+          LLVM_SYS_180_PREFIX = "${llvmPackages.libllvm.dev}";
           VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
           SHADERC_LIB_DIR = "${pkgs.shaderc.static}/lib/";
 
