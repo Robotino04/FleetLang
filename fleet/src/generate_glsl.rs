@@ -35,7 +35,7 @@ use crate::{
             VariableData,
         },
         runtime_type::RuntimeType,
-        scope_analysis::{Function, FunctionID, Variable},
+        scope_analysis::{Function, Variable},
         union_find_set::UnionFindSetPtr,
     },
 };
@@ -131,12 +131,11 @@ impl Pass for GLSLCodeGenerator<'_> {
             .at_least_maybe()
         {
             *output_functions =
-                PrecompiledGlslFunctions(self.visit_program(&mut program).map_err(|err| {
-                    PassError::CompilerError {
+                self.visit_program(&mut program)
+                    .map_err(|err| PassError::CompilerError {
                         source: err,
                         producing_pass: Self::name(),
-                    }
-                })?);
+                    })?;
         } else {
             warn!("Skipping glsl pregen because nothing uses the gpu");
         }
@@ -276,8 +275,11 @@ impl<'state> GLSLCodeGenerator<'state> {
         iterators: &mut [OnStatementIterator],
         gpu_executor: &mut GPUExecutor,
 
-        glsl_functions: &HashMap<FunctionID, (String, String)>,
-        struct_aliases: StructAliasMap,
+        PrecompiledGlslFunctions((
+            glsl_functions,
+            StructAliasMap(struct_aliases),
+            prev_temporary_counter,
+        )): PrecompiledGlslFunctions,
     ) -> Result<String> {
         let GPUExecutor {
             host: _,
@@ -289,7 +291,8 @@ impl<'state> GLSLCodeGenerator<'state> {
             id: _,
         } = gpu_executor;
 
-        self.struct_aliases.borrow_mut().extend(struct_aliases.0);
+        self.struct_aliases.borrow_mut().extend(struct_aliases);
+        *self.temporary_counter.borrow_mut() = prev_temporary_counter;
 
         let iterator_sizes_str = "iterator_sizes";
 
@@ -630,7 +633,7 @@ pub struct PreStatementValue {
 }
 
 impl AstVisitor for GLSLCodeGenerator<'_> {
-    type ProgramOutput = Result<(HashMap<FunctionID, (String, String)>, StructAliasMap)>;
+    type ProgramOutput = Result<PrecompiledGlslFunctions>;
     type TopLevelOutput = Result<Option<(String, String)>>;
     type FunctionBodyOutput = Result<String>;
     type SimpleBindingOutput = String;
@@ -642,7 +645,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
     type TypeOutput = String;
 
     fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
-        Ok((
+        Ok(PrecompiledGlslFunctions((
             program
                 .top_level_statements
                 .iter_mut()
@@ -667,8 +670,9 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                     opt.map(|some| Ok((fid, some)))
                 })
                 .collect::<Result<HashMap<_, _>>>()?,
-            StructAliasMap(self.struct_aliases.borrow().clone()),
-        ))
+            self.struct_aliases.borrow().clone(),
+            self.temporary_counter.into_inner(),
+        )))
     }
 
     fn visit_function_definition(

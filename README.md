@@ -23,7 +23,6 @@ Features:
 ## TODOs
 
 ### Priority
-- add way to get length of array
 - track definitions and references of variables
 - tied to ^this^: warnings for unused functions/variables
 - fix nested structs in glsl (mostly copy-paste from C)
@@ -55,6 +54,7 @@ Features:
 - remove lvalues maybe?
 - special-case small 2D and 3D GPU dispatches that fit in the size limits
 - parse statements even without semicolons (for FleetLS)
+- array index bounds checking
 
 ### Hard
 - tuple types

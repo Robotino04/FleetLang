@@ -676,8 +676,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             body,
             iterators,
             &mut gpu_executor_clone,
-            &self.glsl_functions.0.0,
-            StructAliasMap(self.glsl_functions.0.1.clone()),
+            (*self.glsl_functions).clone(),
         ) else {
             return "#error glsl generation failed completely\n".to_string();
         };
