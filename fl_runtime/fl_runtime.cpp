@@ -99,7 +99,6 @@ static bool checkValidationLayerSupport() {
     return true;
 }
 
-// Create buffer + allocate + bind memory
 static void createBuffer(
     VkDevice device,
     VkPhysicalDevice physicalDevice,
@@ -335,43 +334,73 @@ static void destroyCommonBuffer(CommonBuffer&& buf) {
     destroyBuffer(buf.device, buf.buf, buf.mem);
 }
 
-struct PerShaderData {
-    VkDescriptorSetLayout descriptorSetLayout;
-    VkDescriptorPool descriptorPool;
-    VkDescriptorSet descriptorSet;
+struct CachedShader {
     VkPipelineLayout pipelineLayout;
     VkPipeline pipeline;
+    VkDescriptorSetLayout descriptorSetLayout;
+};
+
+struct PerShaderData {
+    CachedShader shader;
+    VkDescriptorPool descriptorPool;
+    VkDescriptorSet descriptorSet;
     VkCommandPool commandPool;
     VkCommandBuffer commandBuffer;
 };
 
+static size_t hashSPIRV(const uint32_t* code, size_t size_bytes) {
+    std::hash<std::string_view> hasher;
+    return hasher(std::string_view(reinterpret_cast<const char*>(code), size_bytes));
+}
+
+
+static thread_local std::unordered_map<size_t, CachedShader> shader_cache;
+
 static PerShaderData perShaderSetup(std::vector<CommonBuffer> buffersToBind, const uint32_t* code, uint64_t code_size) {
-    LOG(std::cerr << "Creating DescriptorSetLayouts\n");
-    std::vector<VkDescriptorSetLayoutBinding> bindings;
-    for (int i = 0; i < buffersToBind.size(); ++i) {
-        VkDescriptorSetLayoutBinding binding{};
-        binding.binding = i;
-        binding.descriptorCount = 1;
-        binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-        bindings.push_back(binding);
+    size_t shaderHash = hashSPIRV(code, code_size);
+
+    CachedShader* cached = nullptr;
+
+    auto it = shader_cache.find(shaderHash);
+    if (it == shader_cache.end()) {
+        LOG(std::cerr << "Shader not found in cache. Compiling and caching...\n");
+
+        std::vector<VkDescriptorSetLayoutBinding> bindings;
+        for (int i = 0; i < buffersToBind.size(); ++i) {
+            VkDescriptorSetLayoutBinding binding{};
+            binding.binding = i;
+            binding.descriptorCount = 1;
+            binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+            bindings.push_back(binding);
+        }
+
+        VkDescriptorSetLayout descriptorSetLayout = createDescriptorSetLayout(global_s.device, bindings);
+
+        VkPushConstantRange pushConstantRange{};
+        pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+        pushConstantRange.offset = 0;
+        pushConstantRange.size = 4;
+
+        VkPipelineLayout pipelineLayout = createPipelineLayout(global_s.device, descriptorSetLayout, pushConstantRange);
+
+        VkPipeline pipeline = loadComputeShader(global_s.device, pipelineLayout, code, code_size);
+
+        shader_cache[shaderHash] = CachedShader{
+            .pipelineLayout = pipelineLayout,
+            .pipeline = pipeline,
+            .descriptorSetLayout = descriptorSetLayout,
+        };
+
+        cached = &shader_cache[shaderHash];
+    }
+    else {
+        LOG(std::cerr << "Shader found in cache. Reusing pipeline.\n");
+        cached = &it->second;
     }
 
-    VkDescriptorSetLayout descriptorSetLayout = createDescriptorSetLayout(global_s.device, bindings);
-
-    VkDescriptorPool descriptorPool = createDescriptorPool(global_s.device, bindings.size());
-
-    VkDescriptorSet descriptorSet = allocateDescriptorSet(global_s.device, descriptorSetLayout, descriptorPool);
-
-    // === Pipeline Layout ===
-    VkPushConstantRange pushConstantRange{};
-    pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    pushConstantRange.offset = 0;
-    pushConstantRange.size = 4;
-
-    VkPipelineLayout pipelineLayout = createPipelineLayout(global_s.device, descriptorSetLayout, pushConstantRange);
-
-    VkPipeline pipeline = loadComputeShader(global_s.device, pipelineLayout, code, code_size);
+    VkDescriptorPool descriptorPool = createDescriptorPool(global_s.device, buffersToBind.size());
+    VkDescriptorSet descriptorSet = allocateDescriptorSet(global_s.device, cached->descriptorSetLayout, descriptorPool);
 
     std::vector<VkDescriptorBufferInfo> infos;
     for (auto const& buffer : buffersToBind) {
@@ -394,38 +423,30 @@ static PerShaderData perShaderSetup(std::vector<CommonBuffer> buffersToBind, con
     VkCommandPool commandPool = createCommandPool(global_s.device, global_s.queueFamilyIndex);
     VkCommandBuffer commandBuffer = allocateCommandBuffer(global_s.device, commandPool);
 
-
     return PerShaderData{
-        .descriptorSetLayout = descriptorSetLayout,
+        .shader = *cached,
         .descriptorPool = descriptorPool,
         .descriptorSet = descriptorSet,
-        .pipelineLayout = pipelineLayout,
-        .pipeline = pipeline,
         .commandPool = commandPool,
         .commandBuffer = commandBuffer,
     };
 }
 
+
 static void perShaderTeardown(PerShaderData&& sd) {
-    LOG(std::cerr << "destroying pipeline" << "\n");
-    vkDestroyPipeline(global_s.device, sd.pipeline, nullptr);
     LOG(std::cerr << "destroying command pool" << "\n");
     vkDestroyCommandPool(global_s.device, sd.commandPool, nullptr);
-    LOG(std::cerr << "destroying pipeline_layout" << "\n");
-    vkDestroyPipelineLayout(global_s.device, sd.pipelineLayout, nullptr);
     LOG(std::cerr << "destroying descriptor pool" << "\n");
     vkDestroyDescriptorPool(global_s.device, sd.descriptorPool, nullptr);
-    LOG(std::cerr << "destroying descriptor set" << "\n");
-    vkDestroyDescriptorSetLayout(global_s.device, sd.descriptorSetLayout, nullptr);
 }
 
 static void runShader(PerShaderData const& sd, uint computeSize) {
     LOG(std::cerr << "Filling command buffer\n");
     VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     vkBeginCommandBuffer(sd.commandBuffer, &beginInfo);
-    vkCmdBindPipeline(sd.commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, sd.pipeline);
-    vkCmdBindDescriptorSets(sd.commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, sd.pipelineLayout, 0, 1, &sd.descriptorSet, 0, nullptr);
-    vkCmdPushConstants(sd.commandBuffer, sd.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &computeSize);
+    vkCmdBindPipeline(sd.commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, sd.shader.pipeline);
+    vkCmdBindDescriptorSets(sd.commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, sd.shader.pipelineLayout, 0, 1, &sd.descriptorSet, 0, nullptr);
+    vkCmdPushConstants(sd.commandBuffer, sd.shader.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &computeSize);
     vkCmdDispatch(sd.commandBuffer, (computeSize + 1023) / 1024, 1, 1);
     vkEndCommandBuffer(sd.commandBuffer);
 
@@ -447,7 +468,6 @@ void fl_runtime_init(void) {
         throw std::runtime_error("validation layers requested, but not available!");
     }
 
-    // === Vulkan instance + physical device + logical device ===
     VkInstance instance = createInstance();
 
     VkPhysicalDevice physicalDevice = getPhysicalDevice(instance);
@@ -469,6 +489,17 @@ void fl_runtime_init(void) {
 }
 
 void fl_runtime_deinit(void) {
+    LOG(std::cerr << "clearing shader cache" << "\n");
+    for (auto& [_, cached] : shader_cache) {
+        LOG(std::cerr << "destroying pipeline" << "\n");
+        vkDestroyPipeline(global_s.device, cached.pipeline, nullptr);
+        LOG(std::cerr << "destroying pipeline_layout" << "\n");
+        vkDestroyPipelineLayout(global_s.device, cached.pipelineLayout, nullptr);
+        LOG(std::cerr << "destroying descriptor set" << "\n");
+        vkDestroyDescriptorSetLayout(global_s.device, cached.descriptorSetLayout, nullptr);
+    }
+    shader_cache.clear();
+
     LOG(std::cerr << "destroying logical device" << "\n");
     vkDestroyDevice(global_s.device, nullptr);
     LOG(std::cerr << "destroying instance" << "\n");
