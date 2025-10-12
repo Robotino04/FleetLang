@@ -413,7 +413,7 @@ impl<'state> GLSLCodeGenerator<'state> {
         let unescaped_glsl = formatdoc! {
             "
             #version 430
-            layout(local_size_x = 1024) in;
+            layout(local_size_x = 256) in;
 
             // https://github.com/Darkyenus/glsl4idea/issues/175
             #extension GL_EXT_shader_explicit_arithmetic_types         : enable

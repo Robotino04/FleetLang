@@ -537,7 +537,7 @@ static void runShader(PerShaderData const& sd, uint computeSize) {
     vkCmdBindPipeline(sd.commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, sd.shader.pipeline);
     vkCmdBindDescriptorSets(sd.commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, sd.shader.pipelineLayout, 0, 1, &sd.descriptorSet, 0, nullptr);
     vkCmdPushConstants(sd.commandBuffer, sd.shader.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &computeSize);
-    vkCmdDispatch(sd.commandBuffer, (computeSize + 1023) / 1024, 1, 1);
+    vkCmdDispatch(sd.commandBuffer, (computeSize + 255) / 256, 1, 1);
     vkEndCommandBuffer(sd.commandBuffer);
 
     LOG(std::cerr << "Submitting command buffer\n");
