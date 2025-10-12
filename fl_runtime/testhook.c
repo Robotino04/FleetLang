@@ -13,12 +13,10 @@
     #error This C compiler doesn't use standard-sized (IEEE754) floats and doubles. Behaviour is unknown.
 #endif
 
-typedef int (*main_fn)(int, char**, char**);
-typedef int (*libc_start_main_fn)(
-    main_fn main, int argc, char** ubp_av, void (*init)(void), void (*fini)(void), void (*rtld_fini)(void), void* stack_end
-);
+typedef int (*main_func_t)(int, char**, char**);
+typedef int (*libc_start_main_t)(main_func_t, int, char**, void (*)(), void (*)(), void (*)(), void*);
 
-__attribute__((constructor)) static void fleetc_test_entry(void) {
+static void fleetc_test_entry(void) {
     const char* pipe_path = getenv("FLEETC_TEST_PIPE");
     if (!pipe_path) {
         fprintf(stderr, "FLEETC_TEST_PIPE not set\n");
@@ -107,8 +105,27 @@ __attribute__((constructor)) static void fleetc_test_entry(void) {
     }
 
     close(fd);
-    
+
     fflush(stdout);
     fflush(stderr);
-    _exit(0); // Ensure the real main() never runs
+    exit(0); // Ensure the real main() never runs
+}
+
+static int my_main(int argc, char** argv, char** envp) {
+    fleetc_test_entry();
+    return 42;
+}
+
+
+int __libc_start_main(
+    main_func_t main_func, int argc, char** argv, void (*init)(void), void (*fini)(void), void (*rtld_fini)(void), void* stack_end
+) {
+
+    static libc_start_main_t real_libc_start_main = NULL;
+    if (!real_libc_start_main) {
+        real_libc_start_main = (libc_start_main_t)dlsym(RTLD_NEXT, "__libc_start_main");
+    }
+
+    // Replace the original main_func with my_main
+    return real_libc_start_main(my_main, argc, argv, init, fini, rtld_fini, stack_end);
 }
