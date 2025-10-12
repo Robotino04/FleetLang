@@ -101,6 +101,7 @@
 
               pkgs.viu
             ];
+            LD_LIBRARY_PATH = "/run/opengl-driver/lib:/run/opengl-driver-32/lib:" + shared_attrs.LD_LIBRARY_PATH;
           }
         );
       }

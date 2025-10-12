@@ -33,6 +33,18 @@ void eputchar(uint8_t c) {
         }                                                                                                   \
     } while (0)
 
+
+VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+    VkDebugUtilsMessageTypeFlagsEXT messageType,
+    const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+    void* pUserData
+) {
+
+    std::cout << "Validation layer:\n" << pCallbackData->pMessage << "\n";
+    return VK_FALSE;
+}
+
 // #define DO_LOG
 
 #ifdef DO_LOG
@@ -43,6 +55,7 @@ void eputchar(uint8_t c) {
 
 struct VulkanSetupData {
     VkInstance instance;
+    VkDebugUtilsMessengerEXT debugMessenger;
     VkPhysicalDevice physicalDevice;
     VkDevice device;
     uint queueFamilyIndex;
@@ -60,6 +73,10 @@ struct CommonBuffer {
 
 static const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation",
+};
+static const std::vector<const char*> extensions = {
+    VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+    VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME,
 };
 
 
@@ -97,6 +114,27 @@ static bool checkValidationLayerSupport() {
 
 
     return true;
+}
+
+static VkDebugUtilsMessengerEXT createDebugMessenger(VkInstance instance) {
+    VkDebugUtilsMessengerEXT debugMessenger;
+
+    VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo = {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+        .messageSeverity = /*VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | */ VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
+                         | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+        .messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
+                     | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+        .pfnUserCallback = debugCallback,
+        .pUserData = NULL
+    };
+
+    auto CreateDebugUtilsMessengerEXT = (PFN_vkCreateDebugUtilsMessengerEXT
+    )vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+
+    VK_CHECK(CreateDebugUtilsMessengerEXT(instance, &debugCreateInfo, NULL, &debugMessenger));
+
+    return debugMessenger;
 }
 
 static void createBuffer(
@@ -158,6 +196,9 @@ static VkInstance createInstance() {
     instInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
     instInfo.ppEnabledLayerNames = validationLayers.data();
 
+    instInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+    instInfo.ppEnabledExtensionNames = extensions.data();
+
     VkInstance instance;
     VK_CHECK(vkCreateInstance(&instInfo, nullptr, &instance));
     return instance;
@@ -178,6 +219,12 @@ static VkPhysicalDevice getPhysicalDevice(VkInstance instance) {
     }
 
     LOG(std::cerr << "Using first device\n");
+
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(physicalDevices[0], &props);
+    std::cout << "maxComputeWorkGroupSize: " << props.limits.maxComputeWorkGroupSize[0] << ", "
+              << props.limits.maxComputeWorkGroupSize[1] << ", " << props.limits.maxComputeWorkGroupSize[2] << "\n";
+
 
     return physicalDevices[0];
 }
@@ -470,6 +517,8 @@ void fl_runtime_init(void) {
 
     VkInstance instance = createInstance();
 
+    VkDebugUtilsMessengerEXT debugMessenger = createDebugMessenger(instance);
+
     VkPhysicalDevice physicalDevice = getPhysicalDevice(instance);
 
     auto&& [_device, _queueFamilyIndex] = createLogicalDeviceAndQueue(physicalDevice);
@@ -502,6 +551,12 @@ void fl_runtime_deinit(void) {
 
     LOG(std::cerr << "destroying logical device" << "\n");
     vkDestroyDevice(global_s.device, nullptr);
+
+    LOG(std::cerr << "destroying debug messenger" << "\n");
+    auto DestroyDebugUtilsMessengerEXT = (PFN_vkDestroyDebugUtilsMessengerEXT
+    )vkGetInstanceProcAddr(global_s.instance, "vkDestroyDebugUtilsMessengerEXT");
+    DestroyDebugUtilsMessengerEXT(global_s.instance, global_s.debugMessenger, NULL);
+
     LOG(std::cerr << "destroying instance" << "\n");
     vkDestroyInstance(global_s.instance, nullptr);
 }

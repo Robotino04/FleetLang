@@ -464,7 +464,8 @@ impl<'state> GLSLCodeGenerator<'state> {
         error_node: &I,
     ) -> Result<shaderc::CompilationArtifact> {
         let compiler = shaderc::Compiler::new().unwrap();
-        let options = shaderc::CompileOptions::new().unwrap();
+        let mut options = shaderc::CompileOptions::new().unwrap();
+        options.set_generate_debug_info();
         Ok(compiler
             .compile_into_spirv(
                 source,
