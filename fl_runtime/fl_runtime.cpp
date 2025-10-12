@@ -17,11 +17,6 @@
 
 #include "fl_runtime.h"
 
-extern "C" {
-void eputchar(uint8_t c) {
-    fprintf(stderr, "%c", c);
-}
-}
 
 #define VK_CHECK(x)                                                                                         \
     do {                                                                                                    \

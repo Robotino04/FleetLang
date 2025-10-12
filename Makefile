@@ -24,19 +24,22 @@ CC := clang
 all: out_llvm out_c
 
 clean:
-	rm -f out_llvm out_c.o out_c c_out.log llvm_out.log out_c2
+	rm -f out_llvm out_c.o out_c c_out.log llvm_out.log out_c2 native_helpers.o
 
 fl_runtime/%:
 	$(MAKE) -C $(dir $@) $(notdir $@)
 
-out_llvm: test.o fl_runtime/fl_runtime.o
-	$(CXX) $(LDFLAGS) $(CXXFLAGS) test.o fl_runtime/fl_runtime.o -o out_llvm
+native_helpers.o: native_helpers.c
+	$(CC) $(CFLAGS) -c native_helpers.c -o native_helpers.o
+
+out_llvm: test.o fl_runtime/fl_runtime.o native_helpers.o
+	$(CXX) $(LDFLAGS) $(CXXFLAGS) test.o native_helpers.o fl_runtime/fl_runtime.o -o out_llvm
 
 out_c.o: out.c fl_runtime/fl_runtime.h
 	$(CC) $(CFLAGS) -c out.c -o out_c.o -Ifl_runtime/
 
-out_c: out_c.o fl_runtime/fl_runtime.o
-	$(CXX) $(LDFLAGS) $(CXXFLAGS) out_c.o fl_runtime/fl_runtime.o -o out_c
+out_c: out_c.o native_helpers.o fl_runtime/fl_runtime.o
+	$(CXX) $(LDFLAGS) $(CXXFLAGS) out_c.o native_helpers.o fl_runtime/fl_runtime.o -o out_c
 
 hook_llvm: out_llvm fl_runtime/testhook.so
 	set -e; \
