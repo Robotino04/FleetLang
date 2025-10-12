@@ -28,6 +28,16 @@
         }                                                                                                   \
     } while (0)
 
+template <typename T>
+T get_instance_proc(VkInstance instance, const char* name) {
+    auto fn = reinterpret_cast<T>(vkGetInstanceProcAddr(instance, name));
+    if (!fn) {
+        std::cerr << "Failed to load: " << name << "\n";
+        std::exit(-1);
+    }
+    return fn;
+}
+
 
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -71,7 +81,6 @@ static const std::vector<const char*> validationLayers = {
 };
 static const std::vector<const char*> extensions = {
     VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
-    VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME,
 };
 
 
@@ -110,6 +119,42 @@ static bool checkValidationLayerSupport() {
 
     return true;
 }
+static bool checkInstanceExtensionSupport() {
+    uint32_t extensionCount = 0;
+    vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+
+    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+    vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, availableExtensions.data());
+
+    LOG(std::cerr << "Available instance extensions:\n");
+    for (const auto& ext : availableExtensions) {
+        LOG(std::cerr << "- " << ext.extensionName << "\n");
+    }
+
+    LOG(std::cerr << "Requested instance extensions:\n");
+    for (const auto& required : extensions) {
+        LOG(std::cerr << "- " << required << "\n");
+    }
+
+    for (const char* required : extensions) {
+        bool found = false;
+
+        for (const auto& ext : availableExtensions) {
+            if (std::string(required) == ext.extensionName) {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            std::cerr << "Missing required extension: " << required << "\n";
+            return false;
+        }
+    }
+
+    return true;
+}
+
 
 static VkDebugUtilsMessengerEXT createDebugMessenger(VkInstance instance) {
     VkDebugUtilsMessengerEXT debugMessenger;
@@ -124,10 +169,9 @@ static VkDebugUtilsMessengerEXT createDebugMessenger(VkInstance instance) {
         .pUserData = NULL
     };
 
-    auto CreateDebugUtilsMessengerEXT = (PFN_vkCreateDebugUtilsMessengerEXT
-    )vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+    VK_CHECK(get_instance_proc<PFN_vkCreateDebugUtilsMessengerEXT>(instance, "vkCreateDebugUtilsMessengerEXT")(instance, &debugCreateInfo, NULL, &debugMessenger)
+    );
 
-    VK_CHECK(CreateDebugUtilsMessengerEXT(instance, &debugCreateInfo, NULL, &debugMessenger));
 
     return debugMessenger;
 }
@@ -217,8 +261,8 @@ static VkPhysicalDevice getPhysicalDevice(VkInstance instance) {
 
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(physicalDevices[0], &props);
-    std::cout << "maxComputeWorkGroupSize: " << props.limits.maxComputeWorkGroupSize[0] << ", "
-              << props.limits.maxComputeWorkGroupSize[1] << ", " << props.limits.maxComputeWorkGroupSize[2] << "\n";
+    LOG(std::cerr << "maxComputeWorkGroupSize: " << props.limits.maxComputeWorkGroupSize[0] << ", "
+                  << props.limits.maxComputeWorkGroupSize[1] << ", " << props.limits.maxComputeWorkGroupSize[2] << "\n";)
 
 
     return physicalDevices[0];
@@ -507,7 +551,12 @@ static thread_local std::vector<void*> bound_buffers;
 extern "C" {
 void fl_runtime_init(void) {
     if (!checkValidationLayerSupport()) {
-        throw std::runtime_error("validation layers requested, but not available!");
+        std::cerr << "validation layers requested, but not available!\n";
+        exit(-1);
+    }
+    if (!checkInstanceExtensionSupport()) {
+        std::cerr << "extensions requested, but not available!\n";
+        exit(-1);
     }
 
     VkInstance instance = createInstance();
@@ -525,6 +574,7 @@ void fl_runtime_init(void) {
 
     global_s = VulkanSetupData{
         .instance = instance,
+        .debugMessenger = debugMessenger,
         .physicalDevice = physicalDevice,
         .device = device,
         .queueFamilyIndex = queueFamilyIndex,
@@ -548,9 +598,12 @@ void fl_runtime_deinit(void) {
     vkDestroyDevice(global_s.device, nullptr);
 
     LOG(std::cerr << "destroying debug messenger" << "\n");
-    auto DestroyDebugUtilsMessengerEXT = (PFN_vkDestroyDebugUtilsMessengerEXT
-    )vkGetInstanceProcAddr(global_s.instance, "vkDestroyDebugUtilsMessengerEXT");
-    DestroyDebugUtilsMessengerEXT(global_s.instance, global_s.debugMessenger, NULL);
+    get_instance_proc<
+        PFN_vkDestroyDebugUtilsMessengerEXT>(global_s.instance, "vkDestroyDebugUtilsMessengerEXT")(
+        global_s.instance,
+        global_s.debugMessenger,
+        NULL
+    );
 
     LOG(std::cerr << "destroying instance" << "\n");
     vkDestroyInstance(global_s.instance, nullptr);
