@@ -257,15 +257,19 @@ static VkPhysicalDevice getPhysicalDevice(VkInstance instance) {
                       << ", vendor: " << vk::to_string((vk::VendorId)props.vendorID) << ")\n");
     }
 
-    LOG(std::cerr << "Using first device\n");
+
+    const auto deviceIndex = 0;
+    auto device = physicalDevices[deviceIndex];
+    LOG(std::cerr << "Using device " << deviceIndex << "\n");
+
 
     VkPhysicalDeviceProperties props;
-    vkGetPhysicalDeviceProperties(physicalDevices[0], &props);
+    vkGetPhysicalDeviceProperties(device, &props);
     LOG(std::cerr << "maxComputeWorkGroupSize: " << props.limits.maxComputeWorkGroupSize[0] << ", "
                   << props.limits.maxComputeWorkGroupSize[1] << ", " << props.limits.maxComputeWorkGroupSize[2] << "\n";)
 
 
-    return physicalDevices[0];
+    return device;
 }
 
 static std::pair<VkDevice, uint> createLogicalDeviceAndQueue(VkPhysicalDevice physicalDevice) {
