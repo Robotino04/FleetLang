@@ -14,6 +14,7 @@ CFLAGS := \
 CXXFLAGS := $(CFLAGS)
 
 LDFLAGS := \
+	-g \
 	-rdynamic \
 	-lvulkan
 

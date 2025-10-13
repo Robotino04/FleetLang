@@ -472,7 +472,7 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
         .get::<StatData>()
         .unwrap()
         .get(&pm.state.get::<Program>().unwrap().id)
-        .expect("No stats-rdynamic available for function to test")
+        .expect("No stats available for function to test")
         .uses_gpu
         .at_least_maybe();
 
@@ -502,12 +502,9 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
 
         clang_cmd.arg(fl_runtime_obj.to_str().unwrap());
         clang_cmd.arg("-lvulkan");
-
-        println!("Calling clang to link {object_file:?} and {fl_runtime_obj:?} to {binary_file:?}");
-    } else {
-        println!("Calling clang to link {object_file:?} to {binary_file:?}");
     }
 
+    println!("{:?}", clang_cmd);
     let clang_out = clang_cmd.output().unwrap();
 
     print!(
@@ -543,6 +540,7 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     let mut clang_compile = Command::new("clang++");
     clang_compile
         .arg("-fdiagnostics-color=always")
+        .arg("-rdynamic")
         .args([
             "-Wreturn-stack-address",
             "-fsanitize=undefined",
@@ -596,7 +594,7 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
         clang_link.arg("-lvulkan");
     }
 
-    println!("Calling clang to compile {c_file:?} to {obj_file:?}");
+    println!("{:?}", clang_compile);
     let clang_compile_out = clang_compile.output().unwrap();
     print!(
         "Clang stdout:\n{}",
@@ -608,7 +606,7 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     );
     assert!(clang_compile_out.status.success());
 
-    println!("Calling clang to link {obj_file:?} to {binary_file:?}");
+    println!("{:?}", clang_link);
     let clang_link_out = clang_link.output().unwrap();
     print!(
         "Clang stdout:\n{}",
@@ -663,14 +661,15 @@ fn run_and_check_output(
     };
 
     println!("Starting testee");
-    let cmd = Command::new(binary)
-        .env("FLEETC_TEST_PIPE", &child_pipe_path)
+    let mut cmd = Command::new(binary);
+    cmd.env("FLEETC_TEST_PIPE", &child_pipe_path)
         .env("FLEETC_TEST_TYPE", expected_result.type_signifier())
         .env("LD_PRELOAD", &testhook_lib)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .stderr(Stdio::piped());
+
+    println!("{:?}", cmd);
+    let cmd = cmd.spawn().unwrap();
 
     println!("opening file");
     let mut child_pipe = File::open(child_pipe_path).unwrap();

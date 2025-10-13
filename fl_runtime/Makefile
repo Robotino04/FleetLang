@@ -14,8 +14,14 @@ CXXFLAGS := \
 CXX := clang++
 CC := clang
 
-LDFLAGS :=
+LDFLAGS := -g
 LDFLAGS_RUNTIME := $(LDFLAGS) -lvulkan
+
+EXAMPLE_CXXFLAGS := \
+	-fsanitize=undefined \
+	-fsanitize=address \
+	-fstack-protector-all \
+	-fsanitize-address-use-after-return=always
 
 
 all: example fl_runtime_declarations.bc fl_runtime.so testhook.so
@@ -32,10 +38,10 @@ fl_runtime_declarations.bc: fl_runtime.h
 
 
 example: example.o fl_runtime.o compute.comp.spv
-	$(CXX) $(LDFLAGS_RUNTIME) $(CXXFLAGS) -o example example.o fl_runtime.o
+	$(CXX) $(LDFLAGS_RUNTIME) $(EXAMPLE_CXXFLAGS) $(CXXFLAGS) -o example example.o fl_runtime.o
 
 example.o: example.cpp
-	$(CXX) -c $(CXXFLAGS) -o example.o example.cpp
+	$(CXX) -c $(EXAMPLE_CXXFLAGS) $(CXXFLAGS) -o example.o example.cpp
 
 compute.comp.spv: compute.comp
 	glslc compute.comp -o compute.comp.spv

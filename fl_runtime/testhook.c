@@ -37,19 +37,19 @@ static void fleetc_test_entry(void) {
     // Call fleet_main
     void* fleet_main = dlsym(RTLD_DEFAULT, "fleet_main");
     if (!fleet_main) {
-        fprintf(stderr, "fleet_main not found\n");
+        fprintf(stderr, "dlsym(\"fleet_main\") failed: %s\n", dlerror());
         close(fd);
         exit(4);
     }
     void (*initialize_fleet)(void) = dlsym(RTLD_DEFAULT, "initialize_fleet");
     if (!initialize_fleet) {
-        fprintf(stderr, "initialize_fleet not found\n");
+        fprintf(stderr, "initialize_fleet not found: %s\n", dlerror());
         close(fd);
         exit(5);
     }
     void (*deinitialize_fleet)(void) = dlsym(RTLD_DEFAULT, "deinitialize_fleet");
     if (!deinitialize_fleet) {
-        fprintf(stderr, "deinitialize_fleet not found\n");
+        fprintf(stderr, "deinitialize_fleet not found: %s\n", dlerror());
         close(fd);
         exit(6);
     }
@@ -121,10 +121,11 @@ int __libc_start_main(
     main_func_t main_func, int argc, char** argv, void (*init)(void), void (*fini)(void), void (*rtld_fini)(void), void* stack_end
 ) {
 
-    static libc_start_main_t real_libc_start_main = NULL;
+    libc_start_main_t real_libc_start_main = NULL;
     if (!real_libc_start_main) {
         real_libc_start_main = (libc_start_main_t)dlsym(RTLD_NEXT, "__libc_start_main");
     }
+    unsetenv("LD_PRELOAD");
 
     // Replace the original main_func with my_main
     return real_libc_start_main(my_main, argc, argv, init, fini, rtld_fini, stack_end);
