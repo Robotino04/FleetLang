@@ -97,6 +97,7 @@
               llvmPackages.clang
 
               pkgs.raylib
+              pkgs.python3
 
               pkgs.vulkan-tools
               pkgs.vim.xxd

@@ -13,21 +13,22 @@ struct ImageColor {
     float b;
 };
 
+#define IMAGE_WIDTH 1920
+#define IMAGE_HEIGHT 1080
+
 struct ImageRow {
-    struct ImageColor row[600];
+    struct ImageColor row[IMAGE_HEIGHT];
 };
 
 struct Image800x600 {
-    struct ImageRow value[800];
+    struct ImageRow value[IMAGE_WIDTH];
 };
 
 
 // Initialize raylib window
 void helper_initialize_window(void) {
-    const int screenWidth = 800;
-    const int screenHeight = 600;
-    //SetTraceLogLevel(LOG_ALL);
-    InitWindow(screenWidth, screenHeight, "Raylib Image Viewer");
+    // SetTraceLogLevel(LOG_ALL);
+    InitWindow(IMAGE_WIDTH, IMAGE_HEIGHT, "Raylib Image Viewer");
 }
 
 // Deinitialize raylib window
@@ -41,8 +42,8 @@ void helper_submit_frame(struct Image800x600 image, float samples) {
     ClearBackground(BLACK);
 
     // Draw each pixel
-    for (int x = 0; x < 800; x++) {
-        for (int y = 0; y < 600; y++) {
+    for (int x = 0; x < IMAGE_WIDTH; x++) {
+        for (int y = 0; y < IMAGE_HEIGHT; y++) {
             struct ImageColor c = image.value[x].row[y];
             Color rayColor = {
                 (unsigned char)(c.r / samples * 255.0f),
@@ -50,7 +51,7 @@ void helper_submit_frame(struct Image800x600 image, float samples) {
                 (unsigned char)(c.b / samples * 255.0f),
                 255
             };
-            DrawPixel(x, 600 - y, rayColor);
+            DrawPixel(x, IMAGE_HEIGHT - y, rayColor);
         }
     }
 

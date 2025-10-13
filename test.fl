@@ -506,7 +506,7 @@ let intersect_sphere = (ray: Ray) -> f32 {
 }
 
 let push_hitpoint = (hit: HitInfo, through: bool) -> HitInfo {
-    let epsilon = 0.00002;
+    let epsilon = 0.0002;
     if through == hit.is_front_face {
         epsilon = -epsilon;
     }
@@ -523,143 +523,9 @@ let surface_normal = (hit: HitInfo) -> Vec3 {
     }
 }
 
-let trace_ray = (scene: Sphere[500], ray: Ray, seed: Vec3) -> Color {
-    let color = Color {
-        r: 1,
-        g: 1,
-        b: 1,
-    };
-
-    for (let depth: u32 = 0; depth < 8; depth = depth + 1) {
-        let hit = HitInfo {
-            t: inf(),
-            normal: Vec3 {
-                x: 0,
-                y: 0,
-                z: 0,
-            },
-            hit_point: Vec3 {
-                x: 0,
-                y: 0,
-                z: 0,
-            },
-            is_front_face: false,
-            material: Material {
-                albedo: Color {
-                    r: 0,
-                    g: 0,
-                    b: 0,
-                },
-                emission: Color {
-                    r: 0,
-                    g: 0,
-                    b: 0,
-                },
-                emission_strength: 0,
-                ior: 0,
-                fuzziness: 0,
-            },
-        };
-        for (let i = 0; i < @length(scene); i = i + 1) {
-            let t = intersect_sphere(scene[i], ray);
-            if t < 0 {
-                skip;
-            }
-            if t < hit.t {
-                let hit_point = add3(ray.origin, mul1x3(t, ray.direction));
-                let normal = normalized(sub3(hit_point, scene[i].center));
-                let is_front_face = dot(ray.direction, normal) < 0;
-
-                hit = HitInfo {
-                    t: t,
-                    normal: normal,
-                    hit_point: hit_point,
-                    is_front_face: is_front_face,
-                    material: scene[i].material,
-                };
-            }
-        }
-
-        if hit.t == inf() {
-            let alignment = clamp_f32(dot(ray.direction, Vec3 {
-                x: 0,
-                y: 1,
-                z: 0,
-            }), 0, 1);
-            color = mul3_color(color, add3_color(mul_color(1 - alignment, Color {
-                r: 1,
-                g: 1,
-                b: 1,
-            }), mul_color(alignment, Color {
-                r: 0.5,
-                g: 0.7,
-                b: 1.0,
-            })));
-            break;
-        }
-        else {
-            seed = random_in_sphere(seed);
-
-            if hit.material.emission_strength > 0 {
-                // emissive
-                color = mul_color(hit.material.emission_strength, mul3_color(hit.material.emission, color));
-                break;
-            }
-            elif hit.material.ior != 0 {
-                // glass
-                let ri = hit.material.ior;
-                if hit.is_front_face {
-                    ri = 1 / hit.material.ior;
-                }
-
-                let direction = Vec3 {
-                    x: 0,
-                    y: 0,
-                    z: 0,
-                };
-                if can_refract(ray.direction, surface_normal(hit), ri) && reflectance(ray.direction, surface_normal(hit), ri) < random(seed) {
-                    hit = push_hitpoint(hit, true);
-                    direction = refract(ray.direction, surface_normal(hit), ri);
-                }
-                else {
-                    hit = push_hitpoint(hit, false);
-                    direction = reflect(ray.direction, surface_normal(hit));
-                }
-
-                ray = Ray {
-                    origin: hit.hit_point,
-                    direction: direction,
-                };
-            }
-            elif hit.material.fuzziness < 0 {
-                // diffuse
-                hit = push_hitpoint(hit, false);
-
-                ray = Ray {
-                    origin: hit.hit_point,
-                    direction: normalized(add3(surface_normal(hit), normalized(random_in_sphere(seed)))),
-                };
-                color = mul3_color(hit.material.albedo, color);
-            }
-            else {
-                // metal
-                hit = push_hitpoint(hit, false);
-
-                ray = Ray {
-                    origin: hit.hit_point,
-                    direction: add3(reflect(ray.direction, surface_normal(hit)), mul1x3(hit.material.fuzziness, random_in_sphere(seed))),
-                };
-                color = mul3_color(hit.material.albedo, color);
-            }
-        }
-    }
-
-    return color;
-}
-
 let init_window = () -> () @extern "helper_initialize_window";
 let deinit_window = () -> () @extern "helper_deinitialize_window";
-let submit_frame = (image: Color[600][800], samples: f32) -> () @extern "helper_submit_frame";
+let submit_frame = (image: Color[1080][1920], samples: f32) -> () @extern "helper_submit_frame";
 
 // let write_ppm_p3_image = (image: Color[1080][1920]) -> () {}
 let main = () -> i32 {
@@ -668,17 +534,18 @@ let main = () -> i32 {
     if do_display {
         init_window();
     }
-    let image: Color[600][800] = @zero();
+    let image: Color[1080][1920] = @zero();
     let width: u32 = @length(image);
     let height: u32 = @length(image[0]);
 
     let maxdim = max_i32(width as i32, height as i32) as f32;
 
+    // Bright title image scene
     let scene: Sphere[500] = @zero();
     let scene_index = 0;
 
     let seed = Vec3 {
-        x: 1,
+        x: 4,
         y: 2,
         z: 3,
     };
@@ -1011,7 +878,7 @@ let main = () -> i32 {
     let defocus_disk_v = mul1x3(defocus_radius, v);
 
     let num_samples = 256;
-    let num_inner_samples = 2;
+    let num_inner_samples = 32;
     for (let sample: u32 = 0; sample < num_samples; sample = sample + num_inner_samples) {
         on self.gpus[0][x = width][y = height] (image[x][y]) {
             // for (let x = 0; x < width; x = x + 1) {
