@@ -1213,43 +1213,46 @@ impl Expression {
         use BinaryOperation::*;
         match self {
             Expression::Literal { .. } => 0,
+            Expression::VariableAccess { .. } => 0,
+            Expression::Grouping { .. } => 0,
+
             Expression::Array { .. } => 0,
-            Expression::ArrayIndex { .. } => 0,
-            Expression::StructAccess { .. } => 0,
             Expression::Struct { .. } => 0,
+
             Expression::FunctionCall { .. } => 0,
             Expression::CompilerExpression { .. } => 0,
-            Expression::Grouping { .. } => 0,
-            Expression::VariableAccess { .. } => 0,
 
-            Expression::Unary { .. } => 1,
-            Expression::Cast { .. } => 2,
+            Expression::ArrayIndex { .. } => 1,
+            Expression::StructAccess { .. } => 1,
+
+            Expression::Unary { .. } => 2,
+            Expression::Cast { .. } => 3,
             Expression::Binary(BinaryExpression {
                 operation: Multiply | Divide | Modulo,
                 ..
-            }) => 3,
+            }) => 4,
             Expression::Binary(BinaryExpression {
                 operation: Add | Subtract,
                 ..
-            }) => 4,
+            }) => 5,
             Expression::Binary(BinaryExpression {
                 operation: LessThan | LessThanOrEqual | GreaterThan | GreaterThanOrEqual,
                 ..
-            }) => 5,
+            }) => 6,
             Expression::Binary(BinaryExpression {
                 operation: Equal | NotEqual,
                 ..
-            }) => 6,
+            }) => 7,
             Expression::Binary(BinaryExpression {
                 operation: LogicalAnd,
                 ..
-            }) => 7,
+            }) => 8,
             Expression::Binary(BinaryExpression {
                 operation: LogicalOr,
                 ..
-            }) => 8,
+            }) => 9,
 
-            Expression::VariableAssignment { .. } => 9,
+            Expression::VariableAssignment { .. } => 10,
         }
     }
     pub fn get_associativity(&self) -> Associativity {
