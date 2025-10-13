@@ -628,6 +628,7 @@ fn clean_stderr(stderr: String) -> String {
     stderr
         .lines()
         .skip_while(|line| line.starts_with("pci id for fd ") && line.ends_with(", driver (null)"))
+        .take_while(|line| *line != "-----------------------------------------------------")
         .join("\n")
 }
 
