@@ -2081,7 +2081,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                             ptr,
                             1, // alignment gets read from the pointer itself in LLVM 7 and above
                             self.context.i8_type().const_zero(),
-                            expected_type_ir.into_array_type().size_of().unwrap(),
+                            expected_type_ir.into_struct_type().size_of().unwrap(),
                         )?;
 
                         RuntimeValueIR::Struct(ptr)

@@ -1189,7 +1189,9 @@ impl AstVisitor for CCodeGenerator<'_> {
                         pre_statements: "".to_string(),
                         out_value: "false".to_string(),
                     }
-                } else if let RuntimeType::ArrayOf { .. } = expected_type {
+                } else if let RuntimeType::ArrayOf { .. } | RuntimeType::Struct { .. } =
+                    expected_type
+                {
                     let tmp = self.unique_temporary("zero");
                     let size = self.runtime_type_to_byte_size_impl(expected_type);
                     PreStatementValue {
