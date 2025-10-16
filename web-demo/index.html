@@ -1,72 +1,80 @@
 <!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/firacode@6.2.0/distr/fira_code.css" />
-        <title>FleetLang Monaco Editor Demo</title>
-        <style>
-            html,
-            body {
-                height: 100%;
-                margin: 0;
-                padding: 0;
-                background: var(--theme-bg, #181825);
-            }
 
-            #container {
-                display: flex;
-                height: 100vh;
-                width: 100vw;
-            }
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light">
+    <meta name="darkreader-lock" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/firacode@6.2.0/distr/fira_code.css" />
+    <title>FleetLang Monaco Editor Demo</title>
+    <style>
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background: var(--theme-bg, #181825);
+        }
 
-            #editor,
-            #output-editor {
-                width: 50vw;
-                height: 100vh;
-            }
+        #container {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+        }
 
-            #example-selector {
-                font-size: 1rem;
-                padding: 4px 12px;
-                border-radius: 6px;
-                border: 1px solid var(--theme-border, #cba6f7);
-                background: var(--theme-bg, #181825);
-                color: var(--theme-fg, #cdd6f4);
-                margin-right: 8px;
-                margin-bottom: 4px;
-                transition: background 0.2s, color 0.2s, border-color 0.2s;
-            }
-            label[for="example-selector"] {
-                color: var(--theme-fg, #cdd6f4);
-                font-weight: 500;
-            }
-            body.light-theme #example-selector {
-                border-color: var(--theme-border, #8839ef);
-                background: var(--theme-bg, #dce0e8);
-                color: var(--theme-fg, #4c4f69);
-            }
-            body.light-theme label[for="example-selector"] {
-                color: var(--theme-fg, #4c4f69);
-            }
-            .topbar {
-                padding: 8px;
-                background: var(--theme-bg, #181825);
-                border-bottom: 1px solid var(--theme-border, #cba6f7);
-            }
-        </style>
-    </head>
+        #editor,
+        #output-editor {
+            width: 50vw;
+            height: 100vh;
+        }
 
-    <body>
-        <div class="topbar">
-            <label for="example-selector">Load example:&nbsp;</label>
-            <select id="example-selector">
-            </select>
-        </div>
-        <div id="container">
-            <div id="editor"></div>
-            <div id="output-editor"></div>
-        </div>
-        <script type="module" src="/src/monaco-setup.ts"></script>
-    </body>
+        #example-selector {
+            font-size: 1rem;
+            padding: 4px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--theme-border, #cba6f7);
+            background: var(--theme-bg, #181825);
+            color: var(--theme-fg, #cdd6f4);
+            margin-right: 8px;
+            margin-bottom: 4px;
+        }
+
+        label[for="example-selector"] {
+            color: var(--theme-fg, #cdd6f4);
+            font-weight: 500;
+        }
+
+        body.light-theme #example-selector {
+            border-color: var(--theme-border, #8839ef);
+            background: var(--theme-bg, #dce0e8);
+            color: var(--theme-fg, #4c4f69);
+        }
+
+        body.light-theme label[for="example-selector"] {
+            color: var(--theme-fg, #4c4f69);
+        }
+
+        .topbar {
+            padding: 8px;
+            background: var(--theme-bg, #181825);
+            border-bottom: 1px solid var(--theme-border, #cba6f7);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="topbar">
+        <label for="example-selector">Load example:&nbsp;</label>
+        <select id="example-selector">
+        </select>
+    </div>
+    <svg id="ast-view" width="600" height="400"></svg>
+    <div id="container">
+        <div id="editor"></div>
+        <div id="output-editor"></div>
+    </div>
+    <script type="module" src="/src/monaco-setup.ts"></script>
+</body>
+
 </html>

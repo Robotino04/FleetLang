@@ -165,6 +165,15 @@ async function setupCompileToC() {
   updateOutput();
 }
 
+const darkModePreference = window.matchMedia("(prefers-color-scheme: dark)");
+darkModePreference.addEventListener("change", (e) => {
+  if (e.matches) {
+    monaco.editor.setTheme("mocha");
+  } else {
+    monaco.editor.setTheme("latte");
+  }
+});
+
 (async () => {
   const server = await setupLanguageServer();
   await setupCompileToC();
