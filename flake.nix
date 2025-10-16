@@ -45,6 +45,7 @@
           ./fleetc
           ./fleetls
           ./fleetls-lib
+          ./fleetls-wasm
           ./fl_runtime/fl_runtime.h
         ];
 
@@ -96,17 +97,21 @@
       in rec {
         defaultPackage = packages.fleet;
         packages = {
+          all = pkgs.writeTextFile {
+            name = "all.txt";
+            text = lib.pipe packages [
+              (pkgs.lib.filterAttrs (name: value: name != "all"))
+              pkgs.lib.attrValues
+              (pkgs.lib.map (package: "${package}"))
+              (pkgs.lib.concatStringsSep "\n")
+            ];
+          };
           fleet = naersk'.buildPackage shared_attrs;
 
           fleetls-wasm = naersk'.buildPackage (
             shared_attrs
             // {
               pname = "fleetls-wasm";
-
-              src = lib.fileset.toSource {
-                root = ./.;
-                fileset = lib.fileset.union shared_rust_src ./fleetls-wasm;
-              };
 
               release = false;
               copyLibs = true;
