@@ -1,6 +1,6 @@
 # Examples
 
-There are two kind of examples for fleet: tested and untested examples.
+There are two kind of examples for Fleet: tested and untested examples.
 Tested examples are ones that get compiled and ran for every commit while untested ones are not guaranteed to work.
 Untested examples are however more complex and demonstrate more of the language so they are more interesting.
 You can find the untested ones in this directory and the tested ones are located in `/fleet/src/tests/examples`.
