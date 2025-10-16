@@ -16,6 +16,7 @@ export default defineConfig({
       "@assets": "/assets",
     },
   },
+  base: "/FleetLang/",
   build: {
     outDir: "dist",
     rollupOptions: {
