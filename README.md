@@ -18,52 +18,7 @@ Features:
     - Automatically removes unnecessary parentheses in expressions: `((1 * 2) + 3)` → `1 * 2 + 3`
 - signature help
 - hover information
-
-
-## TODOs
-
-### Priority
-- track definitions and references of variables
-- tied to ^this^: warnings for unused functions/variables
-- fix nested structs in glsl (mostly copy-paste from C)
-- use byval attributes for arrays and structs
-- import of some sort
-
-#### Meta
-- make sure web demo compiles and works
-- Make sure README is up-to-date and actually good.
-
-### Easy
-- if expressions
-- consistent error language style
-- test array-to-array assignments in GLSL (maybe C as well)
-- test bigger-than-float float literals with C and GLSL backend
-- disallow returning arrays
-- add different errors for missing Pass dependencies and for failed check_empty calls
-- move runtime_type_to_byte_size somewhere common
-- allow on-statements without iterators again
-- add lint to make variables and functions snake_case and types CamelCase
-- allow struct initializers to have any order
-
-### Medium
-- real mutability/constant system
-- allow variable redefinition
-- add quick fix system for e.g. non-block as if body
-- maybe make non-block-statement fixes a code action instead of formatting. Replace `assert_compile_error_no_formatting` after
-- strings
-- remove lvalues maybe?
-- special-case small 2D and 3D GPU dispatches that fit in the size limits
-- parse statements even without semicolons (for FleetLS)
-- array index bounds checking
-
-### Hard
-- tuple types
-- struct alignment and padding
-- sum types
-- comptime evaluation
-- comptime type eval for generics (similar to zig/hblang)
-- heap allocations
-- after consteval, make math intrinsics a single compiler function
+- lots of crashes
 
 
 ## Building
@@ -116,3 +71,71 @@ For VSCode users, there is no Fleet-specific extension (yet). However, there is 
 
 > [!NOTE]
 > Using FleetLS through VSCode isn't tested well and may not work as intended. There may be an official extension in the future.
+
+## Known Bugs
+Some things are known to be broken.
+The most significant one is that arrays and structs are currently passed to functions by value.
+This breaks LLVM for large parameters because it treats each field as its own SSA register.
+You can still use the C backend for programs that rely on this.
+FleetC always writes the C code before starting up LLVM.
+So you can just cancel the compilation after it stalls.
+
+Also, as noted in the examples, everything is stored on the stack so you may need to make that bigger:
+
+```sh
+ulimit -s 650000 
+```
+
+
+## Contributing
+If you wish to contribute to Fleet, that's awesome.
+In order to make sure noone else is working on something already, you are encouraged to create an issue on GitHub for discussion related to your task.
+After you have finished something, you can submit a Pull Request.
+You can of course already open the PR before you are done to keep track of partial work. In this case, please mark your PR as a draft.
+
+### TODOs
+These are some things that need doing or fixing.
+If something doesn't make sense or isn't accurate anymore, feel free to reach out or create an issue.
+
+#### Priority
+- track definitions and references of variables
+- tied to ^this^: warnings for unused functions/variables
+- use byval attributes for arrays and structs
+- import of some sort
+- llvm crashes if skip isn't last statement in block
+
+##### Meta
+- make sure web demo compiles and works
+- Make sure README is up-to-date and actually good.
+
+#### Easy
+- if expressions
+- consistent error language style
+- test array-to-array assignments in GLSL (maybe C as well)
+- test bigger-than-float float literals with C and GLSL backend
+- disallow returning arrays
+- add different errors for missing Pass dependencies and for failed check_empty calls
+- move runtime_type_to_byte_size somewhere common
+- allow on-statements without iterators again
+- add lint to make variables and functions snake_case and types CamelCase
+- allow struct initializers to have any order
+
+#### Medium
+- real mutability/constant system
+- allow variable redefinition
+- add quick fix system for e.g. non-block as if body
+- maybe make non-block-statement fixes a code action instead of formatting. Replace `assert_compile_error_no_formatting` after
+- strings
+- remove lvalues maybe?
+- special-case small 2D and 3D GPU dispatches that fit in the size limits
+- parse statements even without semicolons (for FleetLS)
+- array index bounds checking
+
+#### Hard
+- tuple types
+- struct alignment and padding
+- sum types
+- comptime evaluation
+- comptime type eval for generics (similar to zig/hblang)
+- heap allocations
+- after consteval, make math intrinsics a single compiler function

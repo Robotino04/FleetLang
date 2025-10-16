@@ -12,11 +12,11 @@ let main = () -> i32 {
     putchar('o');
     putchar(',');
     putchar(' ');
-    putchar('F');
+    putchar('W');
+    putchar('o');
+    putchar('r');
     putchar('l');
-    putchar('e');
-    putchar('e');
-    putchar('t');
+    putchar('d');
     putchar('!');
     putchar('\n');
     return 0;

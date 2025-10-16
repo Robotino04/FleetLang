@@ -1,6 +1,6 @@
 MAKEFLAGS += -r
 
-.PHONY: all clean hook_%
+.PHONY: all clean
 
 CFLAGS := \
 	-Wreturn-stack-address \
@@ -10,7 +10,7 @@ CFLAGS := \
 	-fsanitize-address-use-after-return=always \
 	-fno-omit-frame-pointer \
 	-g \
-	-Ifl_runtime/
+	-I../fl_runtime/
 
 CXXFLAGS := $(CFLAGS)
 
@@ -24,31 +24,29 @@ LDFLAGS := \
 CXX := clang++
 CC := clang
 
-EXAMPLES := test.fl
+EXAMPLES := raytracing.fl mandelbrot_set.fl hello_world.fl
 FL_OBJECTS := $(EXAMPLES:.fl=.o)
 C_OBJECTS := $(EXAMPLES:.fl=_c.o)
 
 GENERATED_C := $(EXAMPLES:.fl=.c)
 GENERATED_LLVM := $(EXAMPLES:.fl=.opt.ll) $(EXAMPLES:.fl=.unopt.ll)
 
-FL_BINS := $(EXAMPLES:.fl=)
-C_BINS := $(EXAMPLES:.fl=_c)
+FL_BINS := $(EXAMPLES:.fl=_out)
+C_BINS := $(EXAMPLES:.fl=_c_out)
 
 all: $(FL_BINS) $(C_BINS)
 
 clean:
-	rm -f $(FL_OBJECTS) $(GENERATED_C) $(GENERATED_LLVM) $(FL_BINS) $(C_BINS)
+	rm -f $(FL_OBJECTS) $(GENERATED_C) $(GENERATED_LLVM) $(FL_BINS) $(C_BINS) native_helpers.o
 
-examples/%:
-	$(MAKE) -C $(dir $@) $(notdir $@)
 
-fl_runtime/%:
-	$(MAKE) -C $(dir $@) $(notdir $@)
+native_helpers.o: native_helpers.c
+	$(CC) $(CFLAGS) -c native_helpers.c -o native_helpers.o
 
-%.o: %.fl fl_runtime/fl_runtime_declarations.bc
+%.o: %.fl ../fl_runtime/fl_runtime_declarations.bc
 	cargo run -- $< -o $@
-
-%.c: %.o
+	
+$(GENERATED_C): %.c: %.o
 	# a fake rule to let Make know how to get the .c files
 	# FleetC currently produces both for a single invocation 
 	touch $@
@@ -56,16 +54,8 @@ fl_runtime/%:
 %_c.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-%: %.o fl_runtime/fl_runtime.o examples/native_helpers.o
+%_out: %.o ../fl_runtime/fl_runtime.o native_helpers.o
 	$(CXX) $(LDFLAGS) $(CXXFLAGS) $^ -o $@
 
-hook_%: % fl_runtime/testhook.so
-	set -e; \
-	PIPE=$$(mktemp -u); \
-	mkfifo $$PIPE; \
-	export FLEETC_TEST_PIPE=$$PIPE; \
-	export FLEETC_TEST_TYPE=i64; \
-	cat $$PIPE | xxd -R always > llvm_out.log & \
-	LD_PRELOAD=./fl_runtime/testhook.so ./$<; \
-	rm -f $$PIPE; \
-	cat llvm_out.log | cat
+../fl_runtime/%:
+	$(MAKE) -C $(dir $@) $(notdir $@)

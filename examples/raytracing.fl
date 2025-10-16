@@ -1,0 +1,1729 @@
+let putchar_impl = (c: i32) -> i32 @extern "putchar";
+let putchar = (c: u8) -> () {
+    putchar_impl(c as i32);
+}
+// HACK: defined by fl_runtime
+let eputchar = (c: u8) -> () @extern "eputchar";
+
+let gputchar = (c: u8, use_stderr: bool) -> () {
+    if use_stderr {
+        eputchar(c);
+    }
+    else {
+        putchar(c);
+    }
+}
+
+let put_number_impl = (n: i32, use_stderr: bool) -> () {
+    if n < 0 {
+        gputchar('-', use_stderr);
+        n = -n;
+    }
+
+    if n == 0 {
+        gputchar('0', use_stderr);
+    }
+    else {
+        let buf: u8[10] = @zero();
+        let i = 0;
+
+        while n > 0 {
+            buf[i] = '0' + (n % 10) as u8;
+            n = n / 10;
+            i = i + 1;
+        }
+        while i > 0 {
+            i = i - 1;
+            gputchar(buf[i], use_stderr);
+        }
+    }
+}
+let put_number = (n: i32) -> () {
+    put_number_impl(n, false);
+}
+let eput_number = (n: i32) -> () {
+    put_number_impl(n, true);
+}
+let min_i32 = (a: i32, b: i32) -> i32 {
+    if a > b {
+        return b;
+    }
+    else {
+        return a;
+    }
+}
+let max_i32 = (a: i32, b: i32) -> i32 {
+    if b > a {
+        return b;
+    }
+    else {
+        return a;
+    }
+}
+let clamp_i32 = (x: i32, minv: i32, maxv: i32) -> i32 {
+    return min_i32(max_i32(x, minv), maxv);
+}
+let min_f32 = (a: f32, b: f32) -> f32 {
+    if a > b {
+        return b;
+    }
+    else {
+        return a;
+    }
+}
+let max_f32 = (a: f32, b: f32) -> f32 {
+    if b > a {
+        return b;
+    }
+    else {
+        return a;
+    }
+}
+let clamp_f32 = (x: f32, minv: f32, maxv: f32) -> f32 {
+    return min_f32(max_f32(x, minv), maxv);
+}
+
+let inf = () -> f32 {
+    return 1 / 0; // IEEE754 infinity
+}
+
+let Vec3 = struct {
+    x: f32,
+    y: f32,
+    z: f32,
+};
+
+let Color = struct {
+    r: f32,
+    g: f32,
+    b: f32,
+};
+
+let add3 = (a: Vec3, b: Vec3) -> Vec3 {
+    return Vec3 {
+        x: a.x + b.x,
+        y: a.y + b.y,
+        z: a.z + b.z,
+    };
+}
+let sub3 = (a: Vec3, b: Vec3) -> Vec3 {
+    return Vec3 {
+        x: a.x - b.x,
+        y: a.y - b.y,
+        z: a.z - b.z,
+    };
+}
+let inverse3 = (a: Vec3) -> Vec3 {
+    return Vec3 {
+        x: 1 / a.x,
+        y: 1 / a.y,
+        z: 1 / a.z,
+    };
+}
+let mul3 = (a: Vec3, b: Vec3) -> Vec3 {
+    return Vec3 {
+        x: a.x * b.x,
+        y: a.y * b.y,
+        z: a.z * b.z,
+    };
+}
+let div3 = (a: Vec3, b: Vec3) -> Vec3 {
+    return Vec3 {
+        x: a.x / b.x,
+        y: a.y / b.y,
+        z: a.z / b.z,
+    };
+}
+let mul1x3 = (a: f32, b: Vec3) -> Vec3 {
+    return Vec3 {
+        x: a * b.x,
+        y: a * b.y,
+        z: a * b.z,
+    };
+}
+let mul_color = (a: f32, b: Color) -> Color {
+    return Color {
+        r: a * b.r,
+        g: a * b.g,
+        b: a * b.b,
+    };
+}
+let mul3_color = (a: Color, b: Color) -> Color {
+    return Color {
+        r: a.r * b.r,
+        g: a.g * b.g,
+        b: a.b * b.b,
+    };
+}
+let add3_color = (a: Color, b: Color) -> Color {
+    return Color {
+        r: a.r + b.r,
+        g: a.g + b.g,
+        b: a.b + b.b,
+    };
+}
+let dot = (a: Vec3, b: Vec3) -> f32 {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+let cross = (a: Vec3, b: Vec3) -> Vec3 {
+    return Vec3 {
+        x: a.y * b.z - a.z * b.y,
+        y: a.z * b.x - a.x * b.z,
+        z: a.x * b.y - a.y * b.x,
+    };
+}
+let length2 = (a: Vec3) -> f32 {
+    return dot(a, a);
+}
+let length = (a: Vec3) -> f32 {
+    return @sqrt(length2(a));
+}
+let normalized = (x: Vec3) -> Vec3 {
+    return mul1x3(1 / length(x), x);
+}
+let reflect = (x: Vec3, normal: Vec3) -> Vec3 {
+    return sub3(x, mul1x3(2 * dot(x, normal), normal));
+}
+let refract = (x: Vec3, normal: Vec3, ior: f32) -> Vec3 {
+    let cos_theta = min_f32(dot(mul1x3(-1, x), normal), 1);
+    let r_out_perpendicular = mul1x3(ior, add3(x, mul1x3(cos_theta, normal)));
+    let r_out_parallel = mul1x3(-@sqrt(abs(1 - length2(r_out_perpendicular))), normal);
+    return add3(r_out_parallel, r_out_perpendicular);
+}
+let can_refract = (x: Vec3, normal: Vec3, ior: f32) -> bool {
+    let cos_theta = min_f32(dot(mul1x3(-1, x), normal), 1);
+    let sin_theta = @sqrt(1 - cos_theta * cos_theta);
+    return ior * sin_theta < 1;
+}
+let reflectance = (x: Vec3, normal: Vec3, ior: f32) -> f32 {
+    let cos_theta = min_f32(dot(mul1x3(-1, x), normal), 1);
+    let r0 = (1 - ior) / (1 + ior);
+    r0 = r0 * r0;
+    let _1_minus_cos = 1 - cos_theta;
+    return r0 + (1 - r0) * _1_minus_cos * _1_minus_cos * _1_minus_cos * _1_minus_cos * _1_minus_cos;
+}
+
+let abs = (x: f32) -> f32 {
+    if x < 0 {
+        return -x;
+    }
+    else {
+        return x;
+    }
+}
+let tan = (x: f32) -> f32 {
+    return @sin(x) / @cos(x);
+}
+let squared = (x: f32) -> f32 {
+    return x * x * x;
+}
+
+let random = (seed: Vec3) -> f32 {
+    let dot_seed = seed.x * 12.9898 + seed.y * 78.233 + seed.z * 37.719;
+
+    let s = @sin(dot_seed) * 43758.5453;
+
+    return abs(s % 1);
+}
+
+let random_in_sphere = (seed: Vec3) -> Vec3 {
+    let v = Vec3 {
+        x: 1,
+        y: 1,
+        z: 1,
+    };
+    let i = 0;
+    while length2(v) > 1 && i < 10 {
+        let x = random(seed);
+        seed.y = seed.y + 1;
+        let y = random(seed);
+        seed.y = seed.y + 1;
+        let z = random(seed);
+        seed.y = seed.y + 1;
+        v = Vec3 {
+            x: x * 2 - 1,
+            y: y * 2 - 1,
+            z: z * 2 - 1,
+        };
+        i = i + 1;
+    }
+    return v;
+}
+let random_in_disk = (seed: Vec3) -> Vec3 {
+    let v = Vec3 {
+        x: 1,
+        y: 1,
+        z: 0,
+    };
+    let i = 0;
+    while length2(v) > 1 && i < 10 {
+        let x = random(seed);
+        seed.y = seed.y + 1;
+        let y = random(seed);
+        seed.y = seed.y + 1;
+        v = Vec3 {
+            x: x * 2 - 1,
+            y: y * 2 - 1,
+            z: 0,
+        };
+        i = i + 1;
+    }
+    return v;
+}
+
+let lerp = (t: f32, a: f32, b: f32) -> f32 {
+    return (1 - t) * a + t * b;
+}
+let lerp3 = (t: f32, a: Vec3, b: Vec3) -> Vec3 {
+    return Vec3 {
+        x: lerp(t, a.x, b.x),
+        y: lerp(t, a.y, b.y),
+        z: lerp(t, a.z, b.z),
+    };
+}
+let degrees_to_radians = (x: f32) -> f32 {
+    return x / 180 * 3.1415926535;
+}
+
+let Ray = struct {
+    origin: Vec3,
+    direction: Vec3,
+};
+let Material = struct {
+    albedo: Color,
+    emission: Color,
+    emission_strength: f32,
+    ior: f32,
+    fuzziness: f32,
+};
+let Sphere = struct {
+    transform: Transform,
+    material: Material,
+};
+
+let Transform = struct {
+    position: Vec3,
+    rotation: Vec3,
+    scale: Vec3,
+};
+
+let HitInfo = struct {
+    t: f32,
+    normal: Vec3,
+    hit_point: Vec3,
+    is_front_face: bool,
+    material: Material,
+};
+
+let Matrix3x3 = struct {
+    c1: Vec3,
+    c2: Vec3,
+    c3: Vec3,
+};
+
+let euler_to_matrix = (euler: Vec3) -> Matrix3x3 {
+    let sx = @sin(euler.x); // pitch (X)
+    let cx = @cos(euler.x);
+
+    let sy = @sin(euler.y); // yaw (Y)
+    let cy = @cos(euler.y);
+
+    let sz = @sin(euler.z); // roll (Z)
+    let cz = @cos(euler.z);
+
+    // Rotation matrix for X (pitch)
+    let rot_x = Matrix3x3 {
+        c1: Vec3 {
+            x: 1.0,
+            y: 0.0,
+            z: 0.0,
+        },
+        c2: Vec3 {
+            x: 0.0,
+            y: cx,
+            z: sx,
+        },
+        c3: Vec3 {
+            x: 0.0,
+            y: -sx,
+            z: cx,
+        },
+    };
+
+    // Rotation matrix for Y (yaw)
+    let rot_y = Matrix3x3 {
+        c1: Vec3 {
+            x: cy,
+            y: 0.0,
+            z: -sy,
+        },
+        c2: Vec3 {
+            x: 0.0,
+            y: 1.0,
+            z: 0.0,
+        },
+        c3: Vec3 {
+            x: sy,
+            y: 0.0,
+            z: cy,
+        },
+    };
+
+    // Rotation matrix for Z (roll)
+    let rot_z = Matrix3x3 {
+        c1: Vec3 {
+            x: cz,
+            y: sz,
+            z: 0.0,
+        },
+        c2: Vec3 {
+            x: -sz,
+            y: cz,
+            z: 0.0,
+        },
+        c3: Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 1.0,
+        },
+    };
+
+    // Final rotation matrix: Rz * Ry * Rx
+    // Meaning: apply Rx, then Ry, then Rz
+    return mul_matrix3_matrix3(rot_z, mul_matrix3_matrix3(rot_y, rot_x));
+}
+
+let inverse_rotation_matrix = (m: Matrix3x3) -> Matrix3x3 {
+    return Matrix3x3 {
+        c1: Vec3 {
+            x: m.c1.x,
+            y: m.c2.x,
+            z: m.c3.x,
+        },
+        c2: Vec3 {
+            x: m.c1.y,
+            y: m.c2.y,
+            z: m.c3.y,
+        },
+        c3: Vec3 {
+            x: m.c1.z,
+            y: m.c2.z,
+            z: m.c3.z,
+        },
+    };
+}
+
+let mul_matrix3_vec3 = (m: Matrix3x3, v: Vec3) -> Vec3 {
+    return add3(add3(mul1x3(v.x, m.c1), mul1x3(v.y, m.c2)), mul1x3(v.z, m.c3));
+}
+
+let mul_matrix3_matrix3 = (a: Matrix3x3, b: Matrix3x3) -> Matrix3x3 {
+    return Matrix3x3 {
+        c1: mul_matrix3_vec3(a, b.c1),
+        c2: mul_matrix3_vec3(a, b.c2),
+        c3: mul_matrix3_vec3(a, b.c3),
+    };
+}
+
+let transform_point_local = (point: Vec3, transform: Transform) -> Vec3 {
+    let translated = sub3(point, transform.position);
+
+    let rot_matrix = euler_to_matrix(transform.rotation);
+    let inv_rot_matrix = inverse_rotation_matrix(rot_matrix);
+
+    let rotated = mul_matrix3_vec3(inv_rot_matrix, translated);
+
+    let local = div3(rotated, transform.scale);
+
+    return local;
+}
+let transform_direction_local = (dir: Vec3, transform: Transform) -> Vec3 {
+    let rot_matrix = euler_to_matrix(transform.rotation);
+    let inv_rot_matrix = inverse_rotation_matrix(rot_matrix);
+
+    let rotated = mul_matrix3_vec3(inv_rot_matrix, dir);
+
+    let local = div3(rotated, transform.scale);
+
+    return normalized(local);
+}
+let transform_normal_local = (dir: Vec3, transform: Transform) -> Vec3 {
+    let rot_matrix = euler_to_matrix(transform.rotation);
+    let inv_rot_matrix = inverse_rotation_matrix(rot_matrix);
+
+    let local = mul_matrix3_vec3(inv_rot_matrix, dir);
+
+    return normalized(local);
+}
+
+let transform_point_world = (point: Vec3, transform: Transform) -> Vec3 {
+    let rot_matrix = euler_to_matrix(transform.rotation);
+
+    let rotated = mul3(point, transform.scale);
+    let translated = mul_matrix3_vec3(rot_matrix, rotated);
+    let world = add3(translated, transform.position);
+
+    return world;
+}
+let transform_direction_world = (dir: Vec3, transform: Transform) -> Vec3 {
+    let rot_matrix = euler_to_matrix(transform.rotation);
+
+    let rotated = mul3(dir, transform.scale);
+    let world = mul_matrix3_vec3(rot_matrix, rotated);
+
+    return normalized(world);
+}
+let transform_normal_world = (dir: Vec3, transform: Transform) -> Vec3 {
+    let rot_matrix = euler_to_matrix(transform.rotation);
+
+    let world = mul_matrix3_vec3(rot_matrix, dir);
+
+    return normalized(world);
+}
+
+let transform_ray_local = (ray: Ray, transform: Transform) -> Ray {
+    return Ray {
+        origin: transform_point_local(ray.origin, transform),
+        direction: transform_direction_local(ray.direction, transform),
+    };
+}
+
+let intersect_sphere = (ray: Ray) -> f32 {
+    let a = dot(ray.direction, ray.direction);
+    let b = 2 * dot(ray.origin, ray.direction);
+    let c = dot(ray.origin, ray.origin) - 1;
+
+    let delta = b * b - 4 * a * c;
+    if delta < 0 {
+        return -1;
+    }
+
+    let t1 = (-b - @sqrt(delta)) / (2 * a);
+    let t2 = (-b + @sqrt(delta)) / (2 * a);
+    if t1 > 0 && t2 > 0 {
+        return min_f32(t1, t2);
+    }
+    else {
+        return max_f32(t1, t2);
+    }
+}
+
+let push_hitpoint = (hit: HitInfo, through: bool) -> HitInfo {
+    let epsilon = 0.0002;
+    if through == hit.is_front_face {
+        epsilon = -epsilon;
+    }
+
+    hit.hit_point = add3(hit.hit_point, mul1x3(epsilon, hit.normal));
+    return hit;
+}
+let surface_normal = (hit: HitInfo) -> Vec3 {
+    if hit.is_front_face {
+        return hit.normal;
+    }
+    else {
+        return mul1x3(-1, hit.normal);
+    }
+}
+
+let hue_to_color = (hue: f32) -> Color {
+    let kr = (5 + hue * 6) % 6;
+    let kg = (3 + hue * 6) % 6;
+    let kb = (1 + hue * 6) % 6;
+
+    return Color {
+        r: 1 - clamp_f32(min_f32(kr, 4 - kr), 0, 1),
+        g: 1 - clamp_f32(min_f32(kg, 4 - kg), 0, 1),
+        b: 1 - clamp_f32(min_f32(kb, 4 - kb), 0, 1),
+    };
+}
+
+/*
+let init_window = () -> () @extern "helper_initialize_window";
+let deinit_window = () -> () @extern "helper_deinitialize_window";
+let submit_frame = (image: Color[1080][1920], samples: f32) -> () @extern "helper_submit_frame";
+*/
+
+// let write_ppm_p3_image = (image: Color[1080][1920]) -> () {}
+let main = () -> i32 {
+    /*
+    let do_display = false;
+
+    if do_display {
+        init_window();
+    }
+    */
+
+    let image: Color[1080][1920] = @zero();
+    let width: u32 = @length(image);
+    let height: u32 = @length(image[0]);
+
+    let maxdim = max_i32(width as i32, height as i32) as f32;
+
+    let scene_index = 0;
+
+    // Toggle this scene off by changing the // to a /* (or reversed to toggle on)
+    /* Dark "underwater" scene with bubbles
+    let scene: Sphere[1000] = @zero();
+    let seed = Vec3 {
+        x: 8,
+        y: 1,
+        z: 3,
+    };
+
+    let grass_material = Material {
+        albedo: Color {
+            r: 0.001118,
+            g: 0.127605,
+            b: 0.0,
+        },
+        emission: Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+        },
+        emission_strength: 0.0,
+        ior: 0.0,
+        fuzziness: 0.0,
+    };
+
+    let grass_positions = [Vec3 {
+        x: 0,
+        y: 0,
+        z: 0,
+    }, Vec3 {
+        x: 1,
+        y: 1,
+        z: 0,
+    }];
+
+    for (let i = 0; i < @length(grass_positions); i = i + 1) {
+        scene[scene_index] = Sphere {
+            transform: Transform {
+                position: add3(grass_positions[i], Vec3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                }),
+                rotation: Vec3 {
+                    x: degrees_to_radians(-48.7815),
+                    y: degrees_to_radians(-228.409),
+                    z: degrees_to_radians(2.43459),
+                },
+                scale: Vec3 {
+                    x: 0.085705,
+                    y: 1,
+                    z: 0.085705,
+                },
+            },
+            material: grass_material,
+        };
+        scene_index = scene_index + 1;
+        scene[scene_index] = Sphere {
+            transform: Transform {
+                position: add3(grass_positions[i], Vec3 {
+                    x: 0.162933,
+                    y: 0.102721,
+                    z: -0.046896,
+                }),
+                rotation: Vec3 {
+                    x: degrees_to_radians(5.91237),
+                    y: degrees_to_radians(8.73399),
+                    z: degrees_to_radians(17.8643),
+                },
+                scale: Vec3 {
+                    x: 0.156823,
+                    y: 1.0,
+                    z: 0.156823,
+                },
+            },
+            material: grass_material,
+        };
+        scene_index = scene_index + 1;
+        scene[scene_index] = Sphere {
+            transform: Transform {
+                position: add3(grass_positions[i], Vec3 {
+                    x: -0.094246,
+                    y: -0.008518,
+                    z: -0.323862,
+                }),
+                rotation: Vec3 {
+                    x: degrees_to_radians(0.617942),
+                    y: degrees_to_radians(-67.2458),
+                    z: degrees_to_radians(15.2653),
+                },
+                scale: Vec3 {
+                    x: 0.156823,
+                    y: 1.0,
+                    z: 0.156823,
+                },
+            },
+            material: grass_material,
+        };
+        scene_index = scene_index + 1;
+        scene[scene_index] = Sphere {
+            transform: Transform {
+                position: add3(grass_positions[i], Vec3 {
+                    x: -0.232681,
+                    y: -0.169819,
+                    z: 0.01518,
+                }),
+                rotation: Vec3 {
+                    x: degrees_to_radians(13.289),
+                    y: degrees_to_radians(-15.2052),
+                    z: degrees_to_radians(-14.4176),
+                },
+                scale: Vec3 {
+                    x: 0.156823,
+                    y: 1.0,
+                    z: 0.156823,
+                },
+            },
+            material: grass_material,
+        };
+        scene_index = scene_index + 1;
+        scene[scene_index] = Sphere {
+            transform: Transform {
+                position: add3(grass_positions[i], Vec3 {
+                    x: -0.176231,
+                    y: -0.157557,
+                    z: 0.084112,
+                }),
+                rotation: Vec3 {
+                    x: degrees_to_radians(-30.6403),
+                    y: degrees_to_radians(-5.65497),
+                    z: degrees_to_radians(-3.89168),
+                },
+                scale: Vec3 {
+                    x: 0.156823,
+                    y: 1.0,
+                    z: 0.156823,
+                },
+            },
+            material: grass_material,
+        };
+        scene_index = scene_index + 1;
+        scene[scene_index] = Sphere {
+            transform: Transform {
+                position: add3(grass_positions[i], Vec3 {
+                    x: -0.192436,
+                    y: -0.01025,
+                    z: -0.044928,
+                }),
+                rotation: Vec3 {
+                    x: degrees_to_radians(-29.8201),
+                    y: degrees_to_radians(28.3148),
+                    z: degrees_to_radians(4.65271),
+                },
+                scale: Vec3 {
+                    x: 0.085705,
+                    y: 1.0,
+                    z: 0.085705,
+                },
+            },
+            material: grass_material,
+        };
+        scene_index = scene_index + 1;
+        scene[scene_index] = Sphere {
+            transform: Transform {
+                position: add3(grass_positions[i], Vec3 {
+                    x: -0.067619,
+                    y: 0.102721,
+                    z: -0.09692,
+                }),
+                rotation: Vec3 {
+                    x: degrees_to_radians(0.000003),
+                    y: degrees_to_radians(0.000001),
+                    z: degrees_to_radians(-0.000002),
+                },
+                scale: Vec3 {
+                    x: 0.156823,
+                    y: 1.0,
+                    z: 0.156823,
+                },
+            },
+            material: grass_material,
+        };
+        scene_index = scene_index + 1;
+        scene[scene_index] = Sphere {
+            transform: Transform {
+                position: add3(grass_positions[i], Vec3 {
+                    x: -0.125633,
+                    y: -0.073166,
+                    z: -0.060635,
+                }),
+                rotation: Vec3 {
+                    x: degrees_to_radians(-51.0475),
+                    y: degrees_to_radians(-36.7128),
+                    z: degrees_to_radians(1.07866),
+                },
+                scale: Vec3 {
+                    x: 0.085705,
+                    y: 1.0,
+                    z: 0.085705,
+                },
+            },
+            material: grass_material,
+        };
+        scene_index = scene_index + 1;
+    }
+
+    let box_color = Color {
+        r: 0.02,
+        g: 0.02,
+        b: 0.02,
+    };
+    // Ground
+    scene[scene_index] = Sphere {
+        transform: Transform {
+            position: Vec3 {
+                x: 0.0,
+                y: -1000.0,
+                z: 0.0,
+            },
+            rotation: @zero(),
+            scale: Vec3 {
+                x: 1000,
+                y: 1000,
+                z: 1000,
+            },
+        },
+        material: Material {
+            albedo: box_color,
+            emission: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            emission_strength: 0.0,
+            ior: 0.0,
+            fuzziness: -1.0, // Lambertian
+        },
+    };
+    scene_index = scene_index + 1;
+    let box_size = 75 / 2;
+    // left wall
+    scene[scene_index] = Sphere {
+        transform: Transform {
+            position: Vec3 {
+                x: -1000.0 - box_size,
+                y: 0.0,
+                z: 0.0,
+            },
+            rotation: @zero(),
+            scale: Vec3 {
+                x: 1000,
+                y: 1000,
+                z: 1000,
+            },
+        },
+        material: Material {
+            albedo: box_color,
+            emission: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            emission_strength: 0.0,
+            ior: 0.0,
+            fuzziness: -1.0, // Lambertian
+        },
+    };
+    scene_index = scene_index + 1;
+    // right wall
+    scene[scene_index] = Sphere {
+        transform: Transform {
+            position: Vec3 {
+                x: 1000.0 + box_size,
+                y: 0.0,
+                z: 0.0,
+            },
+            rotation: @zero(),
+            scale: Vec3 {
+                x: 1000,
+                y: 1000,
+                z: 1000,
+            },
+        },
+        material: Material {
+            albedo: box_color,
+            emission: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            emission_strength: 0.0,
+            ior: 0.0,
+            fuzziness: -1.0, // Lambertian
+        },
+    };
+    scene_index = scene_index + 1;
+    // back wall
+    scene[scene_index] = Sphere {
+        transform: Transform {
+            position: Vec3 {
+                x: 0.0,
+                y: 0.0,
+                z: -1000.0 - box_size,
+            },
+            rotation: @zero(),
+            scale: Vec3 {
+                x: 1000,
+                y: 1000,
+                z: 1000,
+            },
+        },
+        material: Material {
+            albedo: box_color,
+            emission: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            emission_strength: 0.0,
+            ior: 0.0,
+            fuzziness: -1.0, // Lambertian
+        },
+    };
+    scene_index = scene_index + 1;
+    // front wall
+    scene[scene_index] = Sphere {
+        transform: Transform {
+            position: Vec3 {
+                x: 0.0,
+                y: 0.0,
+                z: 1000.0 + 90,
+            },
+            rotation: @zero(),
+            scale: Vec3 {
+                x: 1000,
+                y: 1000,
+                z: 1000,
+            },
+        },
+        material: Material {
+            albedo: box_color,
+            emission: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            emission_strength: 0.0,
+            ior: 0.0,
+            fuzziness: -1.0, // Lambertian
+        },
+    };
+    scene_index = scene_index + 1;
+
+    let blue_hue = 0.667826;
+    let red_hue = 0.992892;
+    let pink_hue = 0.859003;
+    let green_hue = 0.410123;
+    let yellow_hue = 0.173284;
+
+    let light_positions = [Vec3 {
+        x: -30.8096,
+        y: blue_hue,
+        z: -14.5475,
+    }, Vec3 {
+        x: -1.3013,
+        y: blue_hue,
+        z: 13.2659,
+    }, Vec3 {
+        x: -8.33875,
+        y: red_hue,
+        z: -12.8803,
+    }, Vec3 {
+        x: 15.2579,
+        y: red_hue,
+        z: 18.7112,
+    }, Vec3 {
+        x: -19.9339,
+        y: yellow_hue,
+        z: 1.88456,
+    }, Vec3 {
+        x: 25.2506,
+        y: yellow_hue,
+        z: -17.0745,
+    }, Vec3 {
+        x: 6.794,
+        y: pink_hue,
+        z: -16.8624,
+    }, Vec3 {
+        x: -19.1578,
+        y: pink_hue,
+        z: 18.6138,
+    }, Vec3 {
+        x: 7.74665,
+        y: green_hue,
+        z: 4.67674,
+    }];
+    for (let i = 0; i < @length(light_positions); i = i + 1) {
+        if scene_index >= @length(scene) {
+            skip;
+        }
+
+        let radius = 1.53329;
+
+        let rand_y = random(seed) * 20 + radius;
+        seed = random_in_sphere(seed);
+
+        scene[scene_index] = Sphere {
+            transform: Transform {
+                position: Vec3 {
+                    x: light_positions[i].x,
+                    y: rand_y,
+                    z: light_positions[i].z,
+                },
+                rotation: @zero(),
+                scale: Vec3 {
+                    x: radius,
+                    y: radius,
+                    z: radius,
+                },
+            },
+            material: Material {
+                albedo: @zero(),
+                emission: add3_color(hue_to_color(light_positions[i].y), Color {
+                    r: 0.04,
+                    g: 0.04,
+                    b: 0.04,
+                }),
+                emission_strength: 7.9,
+                ior: 0.0,
+                fuzziness: -1.0,
+            },
+        };
+        scene_index = scene_index + 1;
+        skip;
+        scene[scene_index] = Sphere {
+            transform: Transform {
+                position: Vec3 {
+                    x: light_positions[i].x,
+                    y: rand_y,
+                    z: light_positions[i].z,
+                },
+                rotation: @zero(),
+                scale: Vec3 {
+                    x: radius + 0.001,
+                    y: radius + 0.001,
+                    z: radius + 0.001,
+                },
+            },
+            material: Material {
+                albedo: add3_color(hue_to_color(light_positions[i].y), Color {
+                    r: 0.04,
+                    g: 0.04,
+                    b: 0.04,
+                }),
+                emission: @zero(),
+                emission_strength: 0,
+                ior: 1.325 / 1.500,
+                fuzziness: -1.0,
+            },
+        };
+        scene_index = scene_index + 1;
+    }
+
+    while scene_index < @length(scene) {
+        let rand_x = random(seed);
+        seed = random_in_sphere(seed);
+        let rand_y = random(seed);
+        seed = random_in_sphere(seed);
+        let rand_z = random(seed);
+        seed = random_in_sphere(seed);
+
+        let rand_size = random(seed);
+        seed = random_in_sphere(seed);
+
+        let biased_y = rand_y * 25 - 1;
+        let biased_x = (rand_x * 2 - 1) * box_size;
+        let biased_z = (rand_z * 2 - 1) * box_size;
+        let biased_size = rand_size * rand_size * rand_size;
+        scene[scene_index] = Sphere {
+            transform: Transform {
+                position: Vec3 {
+                    x: biased_x,
+                    y: biased_y,
+                    z: biased_z,
+                },
+                rotation: @zero(),
+                scale: Vec3 {
+                    x: biased_size,
+                    y: biased_size,
+                    z: biased_size,
+                },
+            },
+            material: Material {
+                albedo: Color {
+                    r: 1,
+                    g: 1,
+                    b: 1,
+                },
+                emission: @zero(),
+                emission_strength: 0,
+                ior: 1 / 1.325,
+                fuzziness: -1.0,
+            },
+        };
+        scene_index = scene_index + 1;
+    }
+
+    let camera_settings: struct {
+        fov: f32,
+        lookfrom: Vec3,
+        lookat: Vec3,
+        up: Vec3,
+        dof_angle: f32,
+        focus_distance: f32,
+    } = idk {
+        fov: 39 / 2,
+        lookfrom: Vec3 {
+            x: 0.459955,
+            y: 9.65347,
+            z: 87.1969,
+        },
+        // lookfrom -1z in blender
+        lookat: Vec3 {
+            x: 0.44875,
+            y: 9.66726,
+            z: 86.197,
+        },
+        up: Vec3 {
+            x: 0.0,
+            y: 1.0,
+            z: 0.0,
+        },
+        dof_angle: 0.0,
+        focus_distance: 10,
+    };
+    // End  */
+
+    // Toggle this scene off by changing the // to a /* (or reversed to toggle on)
+    // Bright title image scene
+    let scene: Sphere[500] = @zero();
+
+    let seed = Vec3 {
+        x: 2,
+        y: 6,
+        z: 4.4,
+    };
+
+    // Ground
+    scene[scene_index] = Sphere {
+        transform: Transform {
+            position: Vec3 {
+                x: 0.0,
+                y: -1000.0,
+                z: 0.0,
+            },
+            rotation: @zero(),
+            scale: Vec3 {
+                x: 1000,
+                y: 1000,
+                z: 1000,
+            },
+        },
+        material: Material {
+            albedo: Color {
+                r: 0.5,
+                g: 0.5,
+                b: 0.5,
+            },
+            emission: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            emission_strength: 0.0,
+            ior: 0.0,
+            fuzziness: -1.0, // Lambertian
+        },
+    };
+    scene_index = scene_index + 1;
+
+    // Glass sphere (center)
+    scene[scene_index] = Sphere {
+        transform: Transform {
+            position: Vec3 {
+                x: 0,
+                y: 1,
+                z: 0,
+            },
+            rotation: @zero(),
+            scale: Vec3 {
+                x: 1,
+                y: 1,
+                z: 1,
+            },
+        },
+        material: Material {
+            albedo: Color {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+            },
+            emission: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            emission_strength: 0.0,
+            ior: 1.5,
+            fuzziness: 0.0,
+        },
+    };
+    scene_index = scene_index + 1;
+
+    // Diffuse (left)
+    scene[scene_index] = Sphere {
+        transform: Transform {
+            position: Vec3 {
+                x: -2.0,
+                y: 1.0,
+                z: -2.0,
+            },
+            rotation: @zero(),
+            scale: Vec3 {
+                x: 1,
+                y: 1,
+                z: 1,
+            },
+        },
+        material: Material {
+            albedo: Color {
+                r: 0.4,
+                g: 0.2,
+                b: 0.6,
+            },
+            emission: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            emission_strength: 0.0,
+            ior: 0.0,
+            fuzziness: -1.0,
+        },
+    };
+    scene_index = scene_index + 1;
+
+    // Metal (right)
+    scene[scene_index] = Sphere {
+        transform: Transform {
+            position: Vec3 {
+                x: 2.0,
+                y: 1.0,
+                z: 2.0,
+            },
+            rotation: @zero(),
+            scale: Vec3 {
+                x: 1,
+                y: 1,
+                z: 1,
+            },
+        },
+        material: Material {
+            albedo: Color {
+                r: 0.7,
+                g: 0.6,
+                b: 0.5,
+            },
+            emission: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            emission_strength: 0.0,
+            ior: 0.0,
+            fuzziness: 0.0,
+        },
+    };
+    scene_index = scene_index + 1;
+
+    for (let a = -11; a < 11; a = a + 1) {
+        for (let b = -11; b < 11; b = b + 1) {
+            let choose_mat = random(seed);
+            seed = random_in_sphere(seed);
+
+            let rand_r = random(seed) * 0.0 + 0.2;
+            seed = random_in_sphere(seed);
+
+            let center = @zero();
+            let intersects = true;
+            while intersects {
+                let rand_x = random(seed);
+                seed = random_in_sphere(seed);
+
+                let rand_z = random(seed);
+                seed = random_in_sphere(seed);
+
+                center = Vec3 {
+                    x: a + 0.9 * rand_x,
+                    y: rand_r,
+                    z: b + 0.9 * rand_z,
+                };
+
+                intersects = false;
+                for (let i = 1; i < scene_index; i = i + 1) {
+                    if length(sub3(center, scene[i].transform.position)) < rand_r + scene[i].transform.scale.x {
+                        intersects = true;
+                        break;
+                    }
+                }
+            }
+
+            {
+                if choose_mat < 0.70 {
+                    // Diffuse material
+                    let r1 = random(seed);
+                    seed = random_in_sphere(seed);
+                    let g1 = random(seed);
+                    seed = random_in_sphere(seed);
+                    let b1 = random(seed);
+                    seed = random_in_sphere(seed);
+
+                    let r2 = random(seed);
+                    seed = random_in_sphere(seed);
+                    let g2 = random(seed);
+                    seed = random_in_sphere(seed);
+                    let b2 = random(seed);
+                    seed = random_in_sphere(seed);
+
+                    let albedo = mul3_color(Color {
+                        r: r1,
+                        g: g1,
+                        b: b1,
+                    }, Color {
+                        r: r2,
+                        g: g2,
+                        b: b2,
+                    });
+
+                    scene[scene_index] = Sphere {
+                        transform: Transform {
+                            position: center,
+                            rotation: @zero(),
+                            scale: Vec3 {
+                                x: rand_r,
+                                y: rand_r,
+                                z: rand_r,
+                            },
+                        },
+                        material: Material {
+                            albedo: albedo,
+                            emission: Color {
+                                r: 0.0,
+                                g: 0.0,
+                                b: 0.0,
+                            },
+                            emission_strength: 0.0,
+                            ior: 0.0,
+                            fuzziness: -1.0,
+                        },
+                    };
+                    scene_index = scene_index + 1;
+                }
+                elif choose_mat < 0.80 {
+                    // Metal
+                    let r = lerp(0.5, 1.0, random(seed));
+                    seed = random_in_sphere(seed);
+                    let g = lerp(0.5, 1.0, random(seed));
+                    seed = random_in_sphere(seed);
+                    let b = lerp(0.5, 1.0, random(seed));
+                    seed = random_in_sphere(seed);
+                    let fuzz = lerp(0.0, 0.5, random(seed));
+                    seed = random_in_sphere(seed);
+
+                    scene[scene_index] = Sphere {
+                        transform: Transform {
+                            position: center,
+                            rotation: @zero(),
+                            scale: Vec3 {
+                                x: rand_r,
+                                y: rand_r,
+                                z: rand_r,
+                            },
+                        },
+                        material: Material {
+                            albedo: Color {
+                                r: r,
+                                g: g,
+                                b: b,
+                            },
+                            emission: Color {
+                                r: 0.0,
+                                g: 0.0,
+                                b: 0.0,
+                            },
+                            emission_strength: 0.0,
+                            ior: 0.0,
+                            fuzziness: fuzz,
+                        },
+                    };
+                    scene_index = scene_index + 1;
+                }
+                elif choose_mat < 0.90 {
+                    // Light
+                    let r1 = random(seed);
+                    seed = random_in_sphere(seed);
+                    let g1 = random(seed);
+                    seed = random_in_sphere(seed);
+                    let b1 = random(seed);
+                    seed = random_in_sphere(seed);
+
+                    let emission = Color {
+                        r: r1,
+                        g: g1,
+                        b: b1,
+                    };
+
+                    scene[scene_index] = Sphere {
+                        transform: Transform {
+                            position: center,
+                            rotation: @zero(),
+                            scale: Vec3 {
+                                x: rand_r,
+                                y: rand_r,
+                                z: rand_r,
+                            },
+                        },
+                        material: Material {
+                            albedo: @zero(),
+                            emission: emission,
+                            emission_strength: 10,
+                            ior: 0.0,
+                            fuzziness: -1.0,
+                        },
+                    };
+                    scene_index = scene_index + 1;
+                }
+                else {
+                    // Glass
+                    scene[scene_index] = Sphere {
+                        transform: Transform {
+                            position: center,
+                            rotation: @zero(),
+                            scale: Vec3 {
+                                x: rand_r,
+                                y: rand_r,
+                                z: rand_r,
+                            },
+                        },
+                        material: Material {
+                            albedo: Color {
+                                r: 1.0,
+                                g: 1.0,
+                                b: 1.0,
+                            },
+                            emission: Color {
+                                r: 0.0,
+                                g: 0.0,
+                                b: 0.0,
+                            },
+                            emission_strength: 0.0,
+                            ior: 1.5,
+                            fuzziness: 0.0,
+                        },
+                    };
+                    scene_index = scene_index + 1;
+                }
+            }
+        }
+    }
+
+    let camera_settings: struct {
+        fov: f32,
+        lookfrom: Vec3,
+        lookat: Vec3,
+        up: Vec3,
+        dof_angle: f32,
+        focus_distance: f32,
+    } = idk {
+        fov: 20.0,
+        lookfrom: Vec3 {
+            x: 9,
+            y: 2,
+            z: -9,
+        },
+        lookat: Vec3 {
+            x: 0,
+            y: 0,
+            z: 0,
+        },
+        up: Vec3 {
+            x: 0.0,
+            y: 1.0,
+            z: 0.0,
+        },
+        dof_angle: 0.6,
+        focus_distance: 10,
+    };
+    // End Bright Scene */
+    eput_number(scene_index as i32);
+    eputchar(' ');
+    eputchar('O');
+    eputchar('b');
+    eputchar('j');
+    eputchar('e');
+    eputchar('c');
+    eputchar('t');
+    eputchar('s');
+    eputchar('\n');
+
+    let center = camera_settings.lookfrom;
+
+    let theta = degrees_to_radians(camera_settings.fov);
+    let h = tan(theta / 2);
+    let viewport_height = 2 * h * camera_settings.focus_distance;
+    let viewport_width = viewport_height * width as f32 / height as f32;
+
+    let w = normalized(sub3(camera_settings.lookfrom, camera_settings.lookat));
+    let u = normalized(cross(camera_settings.up, w));
+    let v = cross(w, u);
+
+    let viewport_u = mul1x3(viewport_width, u);
+    let viewport_v = mul1x3(viewport_height, v);
+
+    let pixel_delta_u = mul1x3(1 / width as f32, viewport_u);
+    let pixel_delta_v = mul1x3(1 / height as f32, viewport_v);
+
+    let viewport_upper_left = sub3(sub3(sub3(center, mul1x3(camera_settings.focus_distance, w)), mul1x3(1 / 2, viewport_u)), mul1x3(1 / 2, viewport_v));
+    let pixel00_loc = add3(viewport_upper_left, mul1x3(0.5, add3(pixel_delta_u, pixel_delta_v)));
+
+    let defocus_radius = camera_settings.focus_distance * tan(degrees_to_radians(camera_settings.dof_angle / 2));
+    let defocus_disk_u = mul1x3(defocus_radius, u);
+    let defocus_disk_v = mul1x3(defocus_radius, v);
+
+    let num_samples = 256;
+    let num_inner_samples = 32;
+    for (let sample: u32 = 0; sample < num_samples; sample = sample + num_inner_samples) {
+        on self.gpus[0][x = width][y = height] (image[x][y]) {
+            // for (let x = 0; x < width; x = x + 1) {
+            // for (let y = 0; y < height; y = y + 1) {
+            for (let inner_sample: u32 = 0; inner_sample < num_inner_samples; inner_sample = inner_sample + 1) {
+                let sample = sample + inner_sample;
+                let seed = Vec3 {
+                    x: (x as f32 + y as f32) / (width + height) as f32,
+                    y: x as f32 * y as f32 / (width * height) as f32,
+                    z: (1 + sample as f32) / (x + y + 1) as f32,
+                };
+
+                let pixel_sample = add3(pixel00_loc, add3(mul1x3(x as f32, pixel_delta_u), mul1x3(y as f32, pixel_delta_v)));
+
+                let origin = center;
+                if camera_settings.dof_angle > 0 {
+                    let disk_sample = random_in_disk(seed);
+                    origin = add3(origin, add3(mul1x3(disk_sample.x, defocus_disk_u), mul1x3(disk_sample.y, defocus_disk_v)));
+
+                    seed = random_in_sphere(seed);
+                }
+
+                let ray = Ray {
+                    origin: origin,
+                    direction: normalized(sub3(pixel_sample, origin)),
+                };
+
+                let color = Color {
+                    r: 1,
+                    g: 1,
+                    b: 1,
+                };
+                {
+                    for (let depth: u32 = 0; depth < 8; depth = depth + 1) {
+                        ray.direction = normalized(ray.direction);
+
+                        let hit = HitInfo {
+                            t: inf(),
+                            normal: Vec3 {
+                                x: 0,
+                                y: 0,
+                                z: 0,
+                            },
+                            hit_point: Vec3 {
+                                x: 0,
+                                y: 0,
+                                z: 0,
+                            },
+                            is_front_face: false,
+                            material: Material {
+                                albedo: Color {
+                                    r: 0,
+                                    g: 0,
+                                    b: 0,
+                                },
+                                emission: Color {
+                                    r: 0,
+                                    g: 0,
+                                    b: 0,
+                                },
+                                emission_strength: 0,
+                                ior: 0,
+                                fuzziness: 0,
+                            },
+                        };
+                        for (let i = 0; i < @length(scene); i = i + 1) {
+                            let local_ray = transform_ray_local(ray, scene[i].transform);
+                            let t = intersect_sphere(local_ray);
+                            if t < 0 {
+                                skip;
+                            }
+                            let local_hit_point = add3(local_ray.origin, mul1x3(t, local_ray.direction));
+                            let hit_point = transform_point_world(local_hit_point, scene[i].transform);
+                            let world_t = length(sub3(hit_point, ray.origin));
+
+                            if world_t < hit.t {
+                                let normal = normalized(local_hit_point);
+                                let is_front_face = dot(local_ray.direction, normal) < 0;
+
+                                hit = HitInfo {
+                                    t: world_t,
+                                    normal: transform_normal_world(normal, scene[i].transform),
+                                    hit_point: hit_point,
+                                    is_front_face: is_front_face,
+                                    material: scene[i].material,
+                                };
+                            }
+                        }
+
+                        if hit.t == inf() {
+                            let alignment = clamp_f32(dot(ray.direction, Vec3 {
+                                x: 0,
+                                y: 1,
+                                z: 0,
+                            }), 0, 1);
+                            color = mul3_color(color, add3_color(mul_color(1 - alignment, Color {
+                                r: 1,
+                                g: 1,
+                                b: 1,
+                            }), mul_color(alignment, Color {
+                                r: 0.5,
+                                g: 0.7,
+                                b: 1.0,
+                            })));
+                            break;
+                        }
+                        else {
+                            seed = random_in_sphere(seed);
+
+                            if hit.material.emission_strength > 0 {
+                                // emissive
+                                color = mul_color(hit.material.emission_strength, mul3_color(hit.material.emission, color));
+                                break;
+                            }
+                            elif hit.material.ior != 0 {
+                                // glass
+                                let ri = hit.material.ior;
+                                if hit.is_front_face {
+                                    ri = 1 / hit.material.ior;
+                                }
+
+                                let direction = Vec3 {
+                                    x: 0,
+                                    y: 0,
+                                    z: 0,
+                                };
+                                if can_refract(ray.direction, surface_normal(hit), ri) && reflectance(ray.direction, surface_normal(hit), ri) < random(seed) {
+                                    hit = push_hitpoint(hit, true);
+                                    direction = refract(ray.direction, surface_normal(hit), ri);
+                                }
+                                else {
+                                    hit = push_hitpoint(hit, false);
+                                    direction = reflect(ray.direction, surface_normal(hit));
+                                }
+
+                                ray = Ray {
+                                    origin: hit.hit_point,
+                                    direction: direction,
+                                };
+                            }
+                            elif hit.material.fuzziness < 0 {
+                                // diffuse
+                                hit = push_hitpoint(hit, false);
+
+                                ray = Ray {
+                                    origin: hit.hit_point,
+                                    direction: normalized(add3(surface_normal(hit), normalized(random_in_sphere(seed)))),
+                                };
+                                color = mul3_color(hit.material.albedo, color);
+                            }
+                            else {
+                                // metal
+                                hit = push_hitpoint(hit, false);
+
+                                ray = Ray {
+                                    origin: hit.hit_point,
+                                    direction: add3(reflect(ray.direction, surface_normal(hit)), mul1x3(hit.material.fuzziness, random_in_sphere(seed))),
+                                };
+                                color = mul3_color(hit.material.albedo, color);
+                            }
+                        }
+                    }
+                }
+
+                image[x][y] = add3_color(image[x][y], color);
+            }
+        }
+        /*
+        if do_display {
+            submit_frame(image, (sample + num_inner_samples) as f32);
+        }
+        */
+        eput_number(sample as i32);
+        eputchar('/');
+        eput_number(num_samples as i32);
+        eputchar('\n');
+    }
+    eputchar('G');
+    eputchar('a');
+    eputchar('m');
+    eputchar('m');
+    eputchar('a');
+    eputchar('\n');
+    on self.gpus[0][x = width][y = height] (image[x][y]) {
+        image[x][y] = mul_color(1 / num_samples as f32, image[x][y]);
+
+        // gamma correction
+        image[x][y].r = @sqrt(image[x][y].r);
+        image[x][y].g = @sqrt(image[x][y].g);
+        image[x][y].b = @sqrt(image[x][y].b);
+    }
+    eputchar('D');
+    eputchar('o');
+    eputchar('n');
+    eputchar('e');
+    eputchar('\n');
+
+    {
+        // PPM P3 header
+        putchar('P');
+        putchar('3');
+        putchar('\n');
+        put_number(width as i32);
+        putchar(' ');
+        put_number(height as i32);
+        putchar('\n');
+        put_number(255);
+        putchar('\n');
+
+        for (let y = 0; y < height; y = y + 1) {
+            for (let x = 0; x < width; x = x + 1) {
+                let y = height - y - 1;
+
+                put_number(clamp_i32((image[x][y].r * 255) as i32, 0, 255));
+                putchar(' ');
+                put_number(clamp_i32((image[x][y].g * 255) as i32, 0, 255));
+                putchar(' ');
+                put_number(clamp_i32((image[x][y].b * 255) as i32, 0, 255));
+                putchar(' ');
+            }
+            putchar('\n');
+        }
+    }
+    /*
+    if do_display {
+        deinit_window();
+    }
+    */
+    return 0;
+}

@@ -255,13 +255,13 @@ fn main() {
     pm.insert::<StorePass<Program, FixedProgram>>();
     insert_compile_passes(&mut pm);
     insert_c_passes(&mut pm);
-    pm.insert_params::<SaveArtifactPass>(("./out.c".into(), ArtifactType::CCode));
+    pm.insert_params::<SaveArtifactPass>((cli.input_file.with_extension("c"), ArtifactType::CCode));
 
     pm.insert::<IrGenerator>();
-    pm.insert_params::<SaveArtifactPass>(("./out_unopt.ll".into(), ArtifactType::LlvmIr));
+    pm.insert_params::<SaveArtifactPass>((cli.input_file.with_extension("unopt.ll"), ArtifactType::LlvmIr));
     pm.insert::<LLVMOptimizerPass>();
     pm.insert::<StorePass<Module, OptimizedModule>>();
-    pm.insert_params::<SaveArtifactPass>(("./out_opt.ll".into(), ArtifactType::LlvmIr));
+    pm.insert_params::<SaveArtifactPass>((cli.input_file.with_extension("opt.ll"), ArtifactType::LlvmIr));
 
     pm.insert::<SwapPass<Program, FixedProgram>>();
     pm.insert::<AstToDocumentModelConverter>();

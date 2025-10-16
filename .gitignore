@@ -1,4 +1,7 @@
 /target
-/out*
 /*.log
-/*.o
+*.o
+*.ll
+*.ppm
+/test*
+!/test.fl
