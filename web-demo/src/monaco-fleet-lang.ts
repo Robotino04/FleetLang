@@ -6,11 +6,11 @@ monaco.languages.register({
   aliases: ["FleetLang", "fleet"],
 });
 
-monaco.languages.setMonarchTokensProvider("fleet", {
-  defaultToken: "",
-  tokenPostfix: "",
+function makeNegativeLookahead(words: string[]) {
+  return `(?!\\b(?:${words.join("|")})\\b)`;
+}
 
-  // Keywords
+let reserved_words = {
   keywords: [
     "on",
     "let",
@@ -46,6 +46,27 @@ monaco.languages.setMonarchTokensProvider("fleet", {
     "f64",
     "type",
   ],
+};
+
+const excludedWords = [
+  ...reserved_words.keywords,
+  ...reserved_words.builtins,
+  ...reserved_words.types,
+  ...reserved_words.booleanConstants,
+];
+const negativeLookahead = makeNegativeLookahead(excludedWords);
+const functionCallRegex = new RegExp(
+  `\\b${negativeLookahead}([a-zA-Z_]\\w*)(?=\\s*\\()`,
+);
+
+const tokenizer: monaco.languages.IMonarchLanguage = {
+  defaultToken: "",
+  tokenPostfix: "",
+
+  keywords: reserved_words.keywords,
+  builtins: reserved_words.builtins,
+  booleanConstants: reserved_words.booleanConstants,
+  types: reserved_words.types,
 
   operators: [
     "==",
@@ -83,7 +104,7 @@ monaco.languages.setMonarchTokensProvider("fleet", {
       ],
 
       // Function calls
-      [/\b([a-zA-Z_]\w*)(?=\s*\()/, "variable.function.fleet"],
+      [functionCallRegex, "variable.function.fleet"],
 
       // Keywords, types, builtins, boolean constants
       [
@@ -102,13 +123,13 @@ monaco.languages.setMonarchTokensProvider("fleet", {
       // Whitespace
       { include: "@whitespace" },
 
-      // Punctuation
-      [/[{}()\[\]]/, "punctuation.section.brackets.fleet"],
-      [/[:;,\.@]/, "punctuation.separator.fleet"],
-
       // Operators (multi-character first)
       [/(==|!=|<=|>=|&&|\|\||->)/, "keyword.operator.fleet"],
       [/[=!~\-+*/%><@]/, "keyword.operator.fleet"],
+
+      // Punctuation
+      [/[{}()\[\]]/, "punctuation.section.brackets.fleet"],
+      [/[:;,\.@]/, "punctuation.separator.fleet"],
 
       // Numbers
       [/@float/, "constant.numeric.float.fleet"],
@@ -146,4 +167,6 @@ monaco.languages.setMonarchTokensProvider("fleet", {
       [/'/, "punctuation.definition.string.end.fleet", "@pop"],
     ],
   },
-});
+};
+
+monaco.languages.setMonarchTokensProvider("fleet", tokenizer);
