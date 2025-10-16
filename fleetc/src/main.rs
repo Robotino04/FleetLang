@@ -4,6 +4,7 @@ use std::{fs::read_to_string, process::exit};
 
 use clap::{Parser, ValueEnum};
 
+use fleet::passes::ast_json_dump::{AstJsonDumpPass, AstJsonOutput};
 use fleet::NewtypeDerefNoDefault;
 use fleet::ast::Program;
 use fleet::ast_to_dm::AstToDocumentModelConverter;
@@ -22,10 +23,6 @@ use fleet::passes::simple_function_pass::SingleFunctionPass;
 use fleet::passes::store_pass::StorePass;
 use fleet::passes::swap_pass::SwapPass;
 use fleet::tokenizer::Token;
-
-use crate::ast_json_dump::{AstJsonDumpPass, AstJsonOutput};
-
-mod ast_json_dump;
 
 #[allow(unused)]
 fn generate_header(text: impl AsRef<str>, length: usize) -> String {
@@ -258,10 +255,16 @@ fn main() {
     pm.insert_params::<SaveArtifactPass>((cli.input_file.with_extension("c"), ArtifactType::CCode));
 
     pm.insert::<IrGenerator>();
-    pm.insert_params::<SaveArtifactPass>((cli.input_file.with_extension("unopt.ll"), ArtifactType::LlvmIr));
+    pm.insert_params::<SaveArtifactPass>((
+        cli.input_file.with_extension("unopt.ll"),
+        ArtifactType::LlvmIr,
+    ));
     pm.insert::<LLVMOptimizerPass>();
     pm.insert::<StorePass<Module, OptimizedModule>>();
-    pm.insert_params::<SaveArtifactPass>((cli.input_file.with_extension("opt.ll"), ArtifactType::LlvmIr));
+    pm.insert_params::<SaveArtifactPass>((
+        cli.input_file.with_extension("opt.ll"),
+        ArtifactType::LlvmIr,
+    ));
 
     pm.insert::<SwapPass<Program, FixedProgram>>();
     pm.insert::<AstToDocumentModelConverter>();

@@ -1,21 +1,22 @@
 use std::cell::RefMut;
 
-use fleet::{
+use crate::{
     NewtypeDeref,
     ast::{
         AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
-        BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
-        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-        LiteralExpression, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression,
-        StructAccessLValue, StructExpression, StructMemberDefinition, StructMemberValue,
-        StructType, ThreadExecutor, TypeAlias, UnaryExpression, UnitType, VariableAccessExpression,
+        BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
+        CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+        GroupingLValue, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement, Program,
+        ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
+        StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
+        StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor, TypeAlias,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
     escape::{QuoteType, escape},
-    passes::pass_manager::{Pass, PassFactory, PassResult},
+    passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
 };
 
 NewtypeDeref!(pub AstJsonOutput, String);
@@ -40,7 +41,7 @@ impl PassFactory for AstJsonDumpPass<'_> {
     type Params = ();
 
     fn try_new<'state>(
-        state: &'state mut fleet::passes::pass_manager::GlobalState,
+        state: &'state mut GlobalState,
         _params: Self::Params,
     ) -> Result<Self::Output<'state>, String>
     where
@@ -234,7 +235,11 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             .map(|stmt| self.visit_statement(stmt))
             .collect::<Vec<_>>()
             .join(",\n");
-        format!("[\"Block\",\n{}\n]", stmts_str)
+        if stmts_str.is_empty() {
+            "[\"Block\"]".to_string()
+        } else {
+            format!("[\"Block\",\n{}\n]", stmts_str)
+        }
     }
 
     fn visit_return_statement(
@@ -416,12 +421,12 @@ impl AstVisitor for AstJsonDumpPass<'_> {
         }: &mut LiteralExpression,
     ) -> Self::ExpressionOutput {
         match value {
-            fleet::ast::LiteralKind::Number(n) => format!("\"Number ${}$\"", n),
-            fleet::ast::LiteralKind::Char(c) => {
+            LiteralKind::Number(n) => format!("\"Number ${}$\"", n),
+            LiteralKind::Char(c) => {
                 format!("\"Char `'{}'`\"", escape(c.to_string(), QuoteType::Single))
             }
-            fleet::ast::LiteralKind::Float(f) => format!("\"Float ${}$\"", f),
-            fleet::ast::LiteralKind::Bool(b) => format!("\"Bool {}\"", b),
+            LiteralKind::Float(f) => format!("\"Float ${}$\"", f),
+            LiteralKind::Bool(b) => format!("\"Bool {}\"", b),
         }
     }
 
@@ -576,9 +581,9 @@ impl AstVisitor for AstJsonDumpPass<'_> {
         }: &mut UnaryExpression,
     ) -> Self::ExpressionOutput {
         let op_str = match operation {
-            fleet::ast::UnaryOperation::BitwiseNot => "~",
-            fleet::ast::UnaryOperation::LogicalNot => "!",
-            fleet::ast::UnaryOperation::Negate => "-",
+            UnaryOperation::BitwiseNot => "~",
+            UnaryOperation::LogicalNot => "!",
+            UnaryOperation::Negate => "-",
         };
         let operand_str = self.visit_expression(operand);
         format!("[\"Unary {}\",\n{}\n]", op_str, operand_str)
@@ -609,19 +614,19 @@ impl AstVisitor for AstJsonDumpPass<'_> {
         }: &mut BinaryExpression,
     ) -> Self::ExpressionOutput {
         let op_str = match operation {
-            fleet::ast::BinaryOperation::Add => "+",
-            fleet::ast::BinaryOperation::Subtract => "-",
-            fleet::ast::BinaryOperation::Multiply => "*",
-            fleet::ast::BinaryOperation::Divide => "/",
-            fleet::ast::BinaryOperation::Modulo => "%",
-            fleet::ast::BinaryOperation::GreaterThan => ">",
-            fleet::ast::BinaryOperation::GreaterThanOrEqual => ">=",
-            fleet::ast::BinaryOperation::LessThan => "<",
-            fleet::ast::BinaryOperation::LessThanOrEqual => "<=",
-            fleet::ast::BinaryOperation::Equal => "==",
-            fleet::ast::BinaryOperation::NotEqual => "!=",
-            fleet::ast::BinaryOperation::LogicalAnd => "&&",
-            fleet::ast::BinaryOperation::LogicalOr => "||",
+            BinaryOperation::Add => "+",
+            BinaryOperation::Subtract => "-",
+            BinaryOperation::Multiply => "*",
+            BinaryOperation::Divide => "/",
+            BinaryOperation::Modulo => "%",
+            BinaryOperation::GreaterThan => ">",
+            BinaryOperation::GreaterThanOrEqual => ">=",
+            BinaryOperation::LessThan => "<",
+            BinaryOperation::LessThanOrEqual => "<=",
+            BinaryOperation::Equal => "==",
+            BinaryOperation::NotEqual => "!=",
+            BinaryOperation::LogicalAnd => "&&",
+            BinaryOperation::LogicalOr => "||",
         };
         let left_str = self.visit_expression(left);
         let right_str = self.visit_expression(right);

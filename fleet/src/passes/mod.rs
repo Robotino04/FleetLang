@@ -1,3 +1,4 @@
+pub mod ast_json_dump;
 pub mod err_missing_type_in_parameter;
 pub mod err_too_few_iterators;
 pub mod find_containing_node;
