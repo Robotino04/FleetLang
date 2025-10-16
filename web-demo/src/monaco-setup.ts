@@ -19,7 +19,7 @@ monaco.editor.defineTheme("mocha", convertVsCodeThemeToStandalone(mochaTheme));
 const defaultProperties: monaco.editor.IStandaloneEditorConstructionOptions = {
   theme: "mocha",
   automaticLayout: true,
-  "semanticHighlighting.enabled": true,
+  "semanticHighlighting.enabled": false, // too lazy to figure out the correct scopes and theming stuff
   tabSize: 4,
   autoClosingBrackets: "always",
   parameterHints: {
