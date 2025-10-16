@@ -82,6 +82,9 @@ monaco.languages.setMonarchTokensProvider("fleet", {
         ["keyword.control.fleet", "", "entity.name.function.fleet"],
       ],
 
+      // Function calls
+      [/\b([a-zA-Z_]\w*)(?=\s*\()/, "variable.function.fleet"],
+
       // Keywords, types, builtins, boolean constants
       [
         /\b[a-zA-Z_]\w*\b/,
@@ -91,20 +94,17 @@ monaco.languages.setMonarchTokensProvider("fleet", {
             "@types": "entity.name.type.fleet",
             "@builtins": "variable.language.fleet",
             "@booleanConstants": "constant.language.boolean.fleet",
-            "@default": "variable.other.identifier.fleet",
+            "@default": "variable.other.readwrite.fleet",
           },
         },
       ],
-
-      // Function calls
-      [/\b([a-zA-Z_]\w*)(?=\s*\()/, "variable.function.fleet"],
 
       // Whitespace
       { include: "@whitespace" },
 
       // Punctuation
       [/[{}()\[\]]/, "punctuation.section.brackets.fleet"],
-      [/[:;,.@]/, "punctuation.separator.fleet"],
+      [/[:;,\.@]/, "punctuation.separator.fleet"],
 
       // Operators (multi-character first)
       [/(==|!=|<=|>=|&&|\|\||->)/, "keyword.operator.fleet"],
