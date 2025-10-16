@@ -12,9 +12,41 @@ import initWasm, { compile_to_c } from "@assets/wasm/fleetls_wasm.js";
 import latteTheme from "@assets/themes/latte.json";
 import mochaTheme from "@assets/themes/mocha.json";
 import { convertVsCodeThemeToStandalone } from "./theming";
+import examplePrograms from "@assets/examples.json";
 
 monaco.editor.defineTheme("latte", convertVsCodeThemeToStandalone(latteTheme));
 monaco.editor.defineTheme("mocha", convertVsCodeThemeToStandalone(mochaTheme));
+
+function setThemeCssVars(themeName: string) {
+  let colors;
+  if (themeName === "latte") {
+    colors = latteTheme.colors;
+    document.body.classList.add("light-theme");
+    document.body.classList.remove("dark-theme");
+    document.body.style.setProperty(
+      "--theme-bg",
+      colors["breadcrumb.background"] || "#eff1f5",
+    ); // Catppuccin Latte base
+  } else {
+    colors = mochaTheme.colors;
+    document.body.classList.add("dark-theme");
+    document.body.classList.remove("light-theme");
+    document.body.style.setProperty(
+      "--theme-bg",
+      colors["breadcrumb.background"] || "#1e1e2e",
+    ); // Catppuccin Mocha base
+  }
+  document.body.style.setProperty(
+    "--theme-fg",
+    colors["foreground"] || (themeName === "latte" ? "#4c4f69" : "#cdd6f4"),
+  );
+
+  document.body.style.setProperty(
+    "--theme-border",
+    colors["activityBar.foreground"] ||
+      (themeName === "latte" ? "#8839ef" : "#cba6f7"),
+  );
+}
 
 const defaultProperties: monaco.editor.IStandaloneEditorConstructionOptions = {
   theme: "mocha",
@@ -33,12 +65,44 @@ const defaultProperties: monaco.editor.IStandaloneEditorConstructionOptions = {
   fontLigatures: true,
 };
 
+setThemeCssVars(defaultProperties.theme || "mocha");
+
 // Create Monaco Editor instances
-const editor = monaco.editor.create(document.getElementById("editor")!, {
-  value: "let main = () -> i32 {\n    return 42;\n}\n",
+
+// Example programs
+const editorContainer = document.getElementById("editor");
+const exampleSelector = document.getElementById(
+  "example-selector",
+) as HTMLSelectElement;
+for (let i = 0; i < examplePrograms.length; i++) {
+  const option = document.createElement("option");
+  option.text = examplePrograms[i].title;
+  option.value = i.toString();
+  exampleSelector.add(option);
+}
+
+const editor = monaco.editor.create(editorContainer!, {
+  value:
+    examplePrograms[exampleSelector ? Number(exampleSelector.value) : 0].code,
   language: "fleet",
   ...defaultProperties,
 });
+
+// Listen for theme changes (if you add a theme switcher in future)
+// For now, update CSS vars if theme changes programmatically
+const originalSetTheme = monaco.editor.setTheme;
+monaco.editor.setTheme = function (themeName: string) {
+  setThemeCssVars(themeName);
+  originalSetTheme.call(monaco.editor, themeName);
+};
+
+// Load selected example into editor
+if (exampleSelector) {
+  exampleSelector.addEventListener("change", (e) => {
+    const idx = Number(exampleSelector.value);
+    editor.setValue(examplePrograms[idx].code);
+  });
+}
 
 function createTemporaryOutputMessage(
   percentage: number,
@@ -101,6 +165,8 @@ async function setupCompileToC() {
   updateOutput();
 }
 
-const server = await setupLanguageServer();
-await setupCompileToC();
-await server.start();
+(async () => {
+  const server = await setupLanguageServer();
+  await setupCompileToC();
+  await server.start();
+})();

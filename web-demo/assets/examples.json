@@ -1,0 +1,92 @@
+[
+  {
+    "title": "Return 0",
+    "description": "Even the simplest possible Fleet program includes the main() function.",
+    "code": "let main = () -> i32 {\n    return 0;\n}"
+  },
+  {
+    "title": "Chained Unary Operators",
+    "description": "Unary operators can be chained.",
+    "code": "let main = () -> bool {\n    return !-~-5;\n}"
+  },
+  {
+    "title": "Arithmetic Simplification",
+    "description": "Example of a program with binary arithmetic operators. The unnecessary brackets are automatically removed.",
+    "code": "// fleetc --format\nlet main = () -> i32 {\n    return (( 2 * 3 ) + ((3))) / 2 - 1;\n}"
+  },
+  {
+    "title": "Short-Circuit OR",
+    "description": "Demonstration of short-circuit evaluation of logical OR",
+    "code": "let main = () -> i32 {\n    let a: i32 = 0;\n    a as bool || (a = 3) as bool || (a = 4) as bool;\n    return a;\n}"
+  },
+  {
+    "title": "If-Elif-Else Statement",
+    "description": "An if-elif-else statement.",
+    "code": "let main = () -> i32 {\n    if false {\n        return 0;\n    }\n    elif true {\n        return 3;\n    }\n    else {\n        return 2;\n    }\n}"
+  },
+  {
+    "title": "Missing Return in Elif",
+    "description": "One of the elif blocks has no return statement at the end. FleetC detects this and throws an error.",
+    "code": "let main = () -> i32 {\n    let x = 42;\n    if x == 7 {\n        return 7;\n    }\n    elif x < 0 {\n        return -1;\n    }\n    elif x > 100 {\n        // oops, no return statement\n    }\n    else {\n        return 0;\n    }\n}"
+  },
+  {
+    "title": "Variable Shadowing",
+    "description": "Example of variable shadowing. This evaluates to 3 because the inner j is independent of the outer one.",
+    "code": "let main = () -> i32 {\n    let j: i32 = 3;\n    {\n        let j: i32 = j + 1;\n    }\n    return j;\n}"
+  },
+  {
+    "title": "While Loop Sum to 10",
+    "description": "A simple while-loop that sums all natural numbers up to and including 10.",
+    "code": "let main = () -> i32 {\n    let sum = 0; // Type can be automatically inferred as i32\n    let current_number = 1;\n    while current_number <= 10 {\n        sum = sum + current_number;\n        current_number = current_number + 1;\n    }\n    return sum;\n}"
+  },
+  {
+    "title": "For Loop Sum to 10",
+    "description": "The same program as before, but using a for-loop.",
+    "code": "let main = () -> i32 {\n    let sum = 0;\n    for (let i = 1; i <= 10; i = i + 1) {\n        sum = sum + i;\n    }\n    return sum;\n}"
+  },
+  {
+    "title": "Break in Loop (Sum < 75)",
+    "description": "Demonstration of the break statement. The code sums all natural numbers under 50, but exits the loop once the sum exceeds 75.",
+    "code": "let main = () -> i32 {\n    let sum: i32 = 0;\n    for (let i: i32 = 0; i < 50; i = i + 1) {\n        if sum > 75 {\n            break; // Sum is over 75, so we jump\n        }\n        sum = sum + i;\n    }\n    // here\n    return sum;\n}"
+  },
+  {
+    "title": "Unsigned vs Signed Conflict",
+    "description": "Conflict between two type specializations",
+    "code": "let main = () -> u32 {\n    let a = 21; // {number}\n    a = -a; // {signed number}\n    return a; // expects u32 which is unsigned\n}"
+  },
+  {
+    "title": "Function Call",
+    "description": "The square function is called with an argument of 15.",
+    "code": "let square = (number: i32) -> i32 {\n    return number * number;\n}\nlet main = () -> i32 {\n    let square_result = square(15);\n    return square_result;\n}"
+  },
+  {
+    "title": "Hello World (Manual)",
+    "description": "The Hello World in Fleet.",
+    "code": "let putchar_impl = (char: i32) -> i32 @extern \"putchar\";\n\n// putchar from the C standard library has a\n// strange signature which is adjusted here.\nlet putchar = (char: u8) -> () {\n    putchar_impl(char as i32);\n}\n\nlet main = () -> i32 {\n    putchar('H');\n    putchar('e');\n    putchar('l');\n    putchar('l');\n    putchar('o');\n    putchar(',');\n    putchar(' ');\n    putchar('W');\n    putchar('o');\n    putchar('r');\n    putchar('l');\n    putchar('d');\n    putchar('!');\n    putchar('\\n');\n    return 0;\n}"
+  },
+  {
+    "title": "Hello World (Array)",
+    "description": "Hello World using an array",
+    "code": "let putchar_impl = (char: i32) -> i32 @extern \"putchar\";\n\nlet putchar = (char: u8) -> () {\n    putchar_impl(char as i32);\n}\n\nlet main = () -> i32 {\n    let string: u8[14] = ['H', 'e', 'l', 'l', 'o', ',', ' ', 'W', 'o', 'r', 'l', 'd', '!', '\\n'];\n    for (let i = 0; i < @length(string); i = i + 1) {\n        putchar(string[i]);\n    }\n    return 0;\n}"
+  },
+  {
+    "title": "GPU Dot Product",
+    "description": "Dot product on the GPU.",
+    "code": "let main = () -> i32 {\n    let a = [1, 2, 3];\n    let b = [9, 8, 7];\n    let c = [0, 0, 0];\n\n    on self.gpus[0][i = 3] (c[i]) {\n        c[i] = a[i] * b[i];\n    }\n\n    return c[0] + c[1] + c[2];\n}"
+  },
+  {
+    "title": "GPU Dot Product with @zero()",
+    "description": "Dot product on the GPU, but using @zero() to initialize c.",
+    "code": "let main = () -> i32 {\n    let a = [1, 2, 3];\n    let b = [9, 8, 7];\n\n    let c: idk[3] = @zero();\n\n    on self.gpus[0][i = 3] (c[i]) {\n        c[i] = a[i] * b[i];\n    }\n\n    return c[0] + c[1] + c[2];\n}"
+  },
+  {
+    "title": "3D Vector Addition",
+    "description": "Addition of two 3-dimensional vectors.",
+    "code": "let Vec3 = struct {\n    x: f32,\n    y: f32,\n    z: f32,\n};\n\nlet add_vector = (a: Vec3, b: Vec3) -> Vec3 {\n    return Vec3 {\n        x: a.x + b.x,\n        y: a.y + b.y,\n        z: a.z + b.z,\n    };\n}\n\nlet main = () -> i32 {\n    let a = Vec3 {\n        x: 5,\n        y: 17,\n        z: -9,\n    };\n    let b = idk {\n        x: 12,\n        y: 88,\n        z: 2,\n    };\n\n    let sum = add_vector(a, b);\n\n    return sum.x as i32;\n}"
+  },
+  {
+    "title": "AST Demo Function",
+    "description": "A simple, pointless Fleet program to demonstrate a real AST.",
+    "code": "// fleetc -o ./generated/ast_test_output.json -d ast-json\nlet square_if_positive = (x: i32) -> i32 {\n    if x > 0 {\n        return x * x;\n    }\n    else {\n        return x;\n    }\n}\n\nlet main = () -> i32 {\n    let number1 = 4;\n    let number2 = -8;\n    number1 = number1 * number2 + 5;\n    return square_if_positive(number1 - 7);\n}"
+  }
+]
