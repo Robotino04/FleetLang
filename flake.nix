@@ -16,6 +16,7 @@
         pkgs = (import nixpkgs) {
           inherit system;
         };
+        lib = pkgs.lib;
 
         naersk' = pkgs.callPackage naersk {};
 
@@ -37,8 +38,21 @@
           ];
         };
 
+        shared_rust_src = lib.fileset.unions [
+          ./Cargo.lock
+          ./Cargo.toml
+          ./fleet
+          ./fleetc
+          ./fleetls
+          ./fleetls-lib
+          ./fl_runtime/fl_runtime.h
+        ];
+
         shared_attrs = rec {
-          src = ./.;
+          src = lib.fileset.toSource {
+            root = ./.;
+            fileset = shared_rust_src;
+          };
           preBuild = ''
             mkdir -p fl_runtime/
             cp "${fl_runtime}/share/fl_runtime_declarations.bc" fl_runtime/
@@ -79,8 +93,75 @@
           # needs to be here for tests
           LSAN_OPTIONS = "suppressions=${./lsan.supp}";
         };
-      in {
-        defaultPackage = naersk'.buildPackage shared_attrs;
+      in rec {
+        defaultPackage = packages.fleet;
+        packages = {
+          fleet = naersk'.buildPackage shared_attrs;
+
+          fleetls-wasm = naersk'.buildPackage (
+            shared_attrs
+            // {
+              pname = "fleetls-wasm";
+
+              src = lib.fileset.toSource {
+                root = ./.;
+                fileset = lib.fileset.union shared_rust_src ./fleetls-wasm;
+              };
+
+              release = false;
+              copyLibs = true;
+              copyBins = false;
+              overrideMain = old: {
+                preConfigure = ''
+                  cargo_build_options="$cargo_build_options --profile wasm-release --target wasm32-unknown-unknown --package fleetls-wasm"
+                '';
+                nativeBuildInputs =
+                  old.nativeBuildInputs
+                  ++ [
+                    llvmPackages.bintools # lld for wasm-streams
+                  ];
+              };
+            }
+          );
+          fleetls-wasm-bindgened = pkgs.stdenv.mkDerivation {
+            pname = "fleetls-wasm-bindgened";
+            version = "0.1";
+            src = ./fleetls-wasm;
+
+            nativeBuildInputs = [
+              pkgs.wasm-bindgen-cli
+              pkgs.binaryen
+            ];
+
+            buildPhase = ''
+              mkdir -p $out/lib
+              make RELEASE_PATH=${packages.fleetls-wasm}/lib/ OUT_PATH=$out/lib/ -o FORCE release # override always compiling with cargo
+            '';
+            installPhase = ''
+              # do nothing because buildPhase already installed things
+            '';
+          };
+
+          web-demo = pkgs.buildNpmPackage {
+            name = "fleetls-web-demo";
+
+            src = ./web-demo;
+            npmDepsHash = "sha256-LYaMyNV7wVtuI+7YXYrKp4572J3ODO5mkpr/OkNXr8o=";
+
+            npmBuildScript = "build";
+
+            preBuild = ''
+              mkdir -p assets/wasm/
+              cp -r ${packages.fleetls-wasm-bindgened}/lib/* assets/wasm/
+            '';
+
+            installPhase = ''
+              mkdir -p $out/
+              mv dist/* $out/
+              #cp -r package.json node_modules $out/
+            '';
+          };
+        };
         devShell = naersk'.buildPackage (
           shared_attrs
           // {
@@ -104,6 +185,7 @@
 
               pkgs.viu
 
+              # TODO: read from the web-demo package
               pkgs.wasm-bindgen-cli
               pkgs.binaryen
               pkgs.nodejs

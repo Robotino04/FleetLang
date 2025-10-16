@@ -1,6 +1,5 @@
 use std::{
-    sync::{Arc, Mutex, atomic::AtomicBool},
-    time::Duration,
+    rc::Rc, sync::{atomic::AtomicBool, Arc, Mutex}, time::Duration
 };
 
 use fleetls_lib::{
@@ -10,6 +9,7 @@ use fleetls_lib::{
             insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
         },
         passes::pass_manager::{CCodeOutput, Errors, InputSource, PassManager},
+        tokenizer::FileName,
     },
     tower_lsp_server::{LspService, Server},
 };
@@ -49,7 +49,10 @@ pub fn compile_to_c(src: String) -> Option<String> {
     insert_compile_passes(&mut pm);
     insert_c_passes(&mut pm);
 
-    pm.state.insert(InputSource(src));
+    pm.state.insert(InputSource {
+        source: src,
+        file_name: FileName(Rc::new("web-ui.fl".to_string())),
+    });
     pm.state.insert(Errors::default());
 
     match pm.run() {
