@@ -1,14 +1,15 @@
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
 import "./monaco-imports";
-
-// IDEA: import "monaco-editor/esm/vs/editor/contrib/documentSymbols/browser/documentSymbols";
-// IDEA: import "monaco-editor/esm/vs/editor/contrib/documentSymbols/browser/outlineModel";
+import * as d3 from "d3";
 
 import Server from "./server";
 import { IntoServer, FromServer } from "./codec";
 import { MonacoLspTransport } from "./monaco-lsp-transport";
 import "./monaco-fleet-lang";
-import initWasm, { compile_to_c } from "@assets/wasm/fleetls_wasm.js";
+import initWasm, {
+  compile_to_c,
+  extract_ast,
+} from "@assets/wasm/fleetls_wasm.js";
 import latteTheme from "@assets/themes/latte.json";
 import mochaTheme from "@assets/themes/mocha.json";
 import { convertVsCodeThemeToStandalone } from "./theming";
@@ -68,40 +69,68 @@ const defaultProperties: monaco.editor.IStandaloneEditorConstructionOptions = {
 setThemeCssVars(defaultProperties.theme || "mocha");
 
 // Create Monaco Editor instances
-
-// Example programs
 const editorContainer = document.getElementById("editor");
-const exampleSelector = document.getElementById(
-  "example-selector",
-) as HTMLSelectElement;
-for (let i = 0; i < examplePrograms.length; i++) {
-  const option = document.createElement("option");
-  option.text = examplePrograms[i].title;
-  option.value = i.toString();
-  exampleSelector.add(option);
-}
-
 const editor = monaco.editor.create(editorContainer!, {
-  value:
-    examplePrograms[exampleSelector ? Number(exampleSelector.value) : 0].code,
+  value: examplePrograms[0].code,
   language: "fleet",
   ...defaultProperties,
 });
 
-// Listen for theme changes (if you add a theme switcher in future)
-// For now, update CSS vars if theme changes programmatically
-const originalSetTheme = monaco.editor.setTheme;
-monaco.editor.setTheme = function (themeName: string) {
-  setThemeCssVars(themeName);
-  originalSetTheme.call(monaco.editor, themeName);
-};
+function setupExampleSelector() {
+  const exampleSelector = document.getElementById(
+    "example-selector",
+  ) as HTMLSelectElement;
+  for (let i = 0; i < examplePrograms.length; i++) {
+    const option = document.createElement("option");
+    option.text = examplePrograms[i].title;
+    option.value = i.toString();
+    exampleSelector.add(option);
+  }
 
-// Load selected example into editor
-if (exampleSelector) {
-  exampleSelector.addEventListener("change", (e) => {
-    const idx = Number(exampleSelector.value);
-    editor.setValue(examplePrograms[idx].code);
-  });
+  // Listen for theme changes (if you add a theme switcher in future)
+  // For now, update CSS vars if theme changes programmatically
+  const originalSetTheme = monaco.editor.setTheme;
+  monaco.editor.setTheme = function (themeName: string) {
+    setThemeCssVars(themeName);
+    originalSetTheme.call(monaco.editor, themeName);
+  };
+
+  // Load selected example into editor
+  if (exampleSelector) {
+    exampleSelector.addEventListener("change", (e) => {
+      const idx = Number(exampleSelector.value);
+      editor.setValue(examplePrograms[idx].code);
+    });
+  }
+}
+function setupOutputSelector() {
+  const outputSelector = document.getElementById(
+    "output-selector",
+  ) as HTMLSelectElement;
+
+  const ast_view = document.getElementById("ast-view")!!;
+  const c_view = document.getElementById("output-editor")!!;
+
+  ast_view.setAttribute("width", "100%");
+  ast_view.setAttribute("height", "100%");
+  ast_view.style.width = "100%";
+  ast_view.style.height = "100%";
+  ast_view.style.display = "none";
+
+  if (outputSelector) {
+    outputSelector.addEventListener("change", (e) => {
+      switch (outputSelector.value) {
+        case "c":
+          ast_view.style.display = "none";
+          c_view.style.display = "block";
+          break;
+        case "ast":
+          c_view.style.display = "none";
+          ast_view.style.display = "block";
+          break;
+      }
+    });
+  }
 }
 
 function createTemporaryOutputMessage(
@@ -165,17 +194,129 @@ async function setupCompileToC() {
   updateOutput();
 }
 
-const darkModePreference = window.matchMedia("(prefers-color-scheme: dark)");
-darkModePreference.addEventListener("change", (e) => {
-  if (e.matches) {
-    monaco.editor.setTheme("mocha");
-  } else {
-    monaco.editor.setTheme("latte");
+interface Tree {
+  name: string;
+  children: Tree[];
+}
+
+type TreeArray = (string | TreeArray)[];
+
+function updateAstView(dataArray: TreeArray) {
+  // Convert your array to a tree object suitable for D3
+  function arrayToTree(array: TreeArray): any {
+    const [name, ...rest] = array;
+    const children = rest.map((item) =>
+      Array.isArray(item) ? arrayToTree(item) : { name: item },
+    );
+    return { name, children };
   }
-});
+
+  const treeData = arrayToTree(dataArray);
+
+  const width = 600;
+  const height = 400;
+
+  document.querySelectorAll("#ast-view *").forEach((child) => child.remove());
+
+  const svg = d3
+    .select("#ast-view")
+    .attr("width", width)
+    .attr("height", height);
+
+  const g = svg.append("g").attr("transform", "translate(50, 50)");
+  const linkGroup = g.append("g").classed("links", true);
+  const nodeGroup = g.append("g").classed("nodes", true);
+
+  const root = d3.hierarchy(treeData);
+  const treeLayout = d3.tree<Tree>().nodeSize([80, 50]);
+  treeLayout(root);
+
+  const offsetX = width / 2;
+  const offsetY = height / 2;
+
+  const nodeEnter = nodeGroup
+    .selectAll("g.node")
+    .data(root.descendants())
+    .join("g")
+    .classed("node", true)
+    .attr("transform", (d) => `translate(${d.x}, ${d.y})`);
+
+  nodeEnter
+    .append("text")
+    .text((d) => d.data.name)
+    .attr("text-anchor", "middle")
+    .attr("dy", "0.35em")
+    .attr("fill", "var(--theme-fg)")
+    .style("font-family", "sans-serif")
+    .style("font-size", "12px")
+    .each(function (d) {
+      const bbox = (this as SVGTextElement).getBBox();
+      d3.select(this.parentNode as any)
+        .insert("rect", "text")
+        .attr("x", bbox.x - 4)
+        .attr("y", bbox.y - 2)
+        .attr("width", bbox.width + 8)
+        .attr("height", bbox.height + 4)
+        .attr("rx", 4)
+        .attr("fill", "var(--theme-bg)");
+    });
+
+  linkGroup
+    .selectAll("line.link")
+    .data(root.links())
+    .join("line")
+    .classed("link", true)
+    .style("stroke", "var(--theme-fg)")
+    .attr("x1", (d) => d.source.x!!)
+    .attr("y1", (d) => d.source.y!!)
+    .attr("x2", (d) => d.target.x!!)
+    .attr("y2", (d) => d.target.y!!);
+
+  const zoom = d3
+    .zoom<SVGSVGElement, unknown>()
+    .scaleExtent([0.1, 2])
+    .on("zoom", (event) => {
+      g.attr("transform", event.transform);
+    });
+
+  const initialTransform = d3.zoomIdentity.translate(offsetX, offsetY);
+  g.attr("transform", initialTransform.toString());
+
+  svg.call(zoom as any);
+  svg.call(zoom.transform as any, initialTransform);
+}
+
+async function setupAstView() {
+  const updateOutput = () => {
+    const src = editor.getValue();
+    let c = "[]";
+    try {
+      c = extract_ast(src) || c;
+    } catch (e) {}
+    console.log(c);
+    updateAstView(JSON.parse(c));
+  };
+  editor.onDidChangeModelContent(updateOutput);
+  updateOutput();
+}
+
+function setupDarkmode() {
+  const darkModePreference = window.matchMedia("(prefers-color-scheme: dark)");
+  darkModePreference.addEventListener("change", (e) => {
+    if (e.matches) {
+      monaco.editor.setTheme("mocha");
+    } else {
+      monaco.editor.setTheme("latte");
+    }
+  });
+}
 
 (async () => {
+  setupDarkmode();
+  setupExampleSelector();
+  setupOutputSelector();
   const server = await setupLanguageServer();
   await setupCompileToC();
+  await setupAstView();
   await server.start();
 })();

@@ -1,5 +1,7 @@
 use std::{
-    rc::Rc, sync::{atomic::AtomicBool, Arc, Mutex}, time::Duration
+    rc::Rc,
+    sync::{Arc, Mutex, atomic::AtomicBool},
+    time::Duration,
 };
 
 use fleetls_lib::{
@@ -8,7 +10,10 @@ use fleetls_lib::{
         infra::{
             insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
         },
-        passes::pass_manager::{CCodeOutput, Errors, InputSource, PassManager},
+        passes::{
+            ast_json_dump::{AstJsonDumpPass, AstJsonOutput},
+            pass_manager::{CCodeOutput, Errors, InputSource, PassManager},
+        },
         tokenizer::FileName,
     },
     tower_lsp_server::{LspService, Server},
@@ -38,6 +43,24 @@ impl ServerConfig {
             into_server,
             from_server,
         }
+    }
+}
+
+#[wasm_bindgen]
+pub fn extract_ast(src: String) -> Option<String> {
+    let mut pm = PassManager::default();
+    insert_minimal_pipeline(&mut pm);
+    pm.insert::<AstJsonDumpPass>();
+
+    pm.state.insert(InputSource {
+        source: src,
+        file_name: FileName(Rc::new("web-ui.fl".to_string())),
+    });
+    pm.state.insert(Errors::default());
+
+    match pm.run() {
+        Ok(()) => Some(pm.state.get::<AstJsonOutput>()?.0.clone()),
+        Err(_) => None,
     }
 }
 
