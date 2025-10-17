@@ -43,57 +43,66 @@
         }
 
         #editor,
-        #output-editor {
+        #output-editor,
+        #right-panel {
             width: 50vw;
-            height: 100vh;
+            height: 100%;
         }
 
-        #example-selector {
-            font-size: 1rem;
-            padding: 4px 12px;
-            border-radius: 6px;
-            border: 1px solid var(--theme-border, #cba6f7);
-            background: var(--theme-bg, #181825);
-            color: var(--theme-fg, #cdd6f4);
-            margin-right: 8px;
-            margin-bottom: 4px;
-        }
-
-        label[for="example-selector"] {
-            color: var(--theme-fg, #cdd6f4);
-            font-weight: 500;
-        }
-
-        body.light-theme #example-selector {
-            border-color: var(--theme-border, #8839ef);
-            background: var(--theme-bg, #dce0e8);
-            color: var(--theme-fg, #4c4f69);
-        }
-
-        body.light-theme label[for="example-selector"] {
-            color: var(--theme-fg, #4c4f69);
-        }
 
         .topbar {
             padding: 8px;
             background: var(--theme-bg, #181825);
             border-bottom: 1px solid var(--theme-border, #cba6f7);
+            display: flex;
+            flex-direction: row;
+
+            select {
+                font-size: 1rem;
+                padding: 4px 12px;
+                border-radius: 6px;
+                border: 1px solid var(--theme-border, #cba6f7);
+                background: var(--theme-bg, #181825);
+                color: var(--theme-fg, #cdd6f4);
+                margin-right: 8px;
+            }
+
+            label {
+                color: var(--theme-fg, #cdd6f4);
+                font-weight: 500;
+            }
+
+            #output-selector-group {
+                margin-left: auto;
+            }
         }
     </style>
-  <script type="module" crossorigin src="/FleetLang/assets/index-DDx86MSU.js"></script>
+  <script type="module" crossorigin src="/FleetLang/assets/index-CAzrdFQe.js"></script>
   <link rel="stylesheet" crossorigin href="/FleetLang/assets/index-m9q51zDj.css">
 </head>
 
 <body>
     <div class="topbar">
-        <label for="example-selector">Load example:&nbsp;</label>
-        <select id="example-selector">
-        </select>
+        <div id="example-selector-group">
+            <label for="example-selector">Load example:&nbsp;</label>
+            <select id="example-selector">
+            </select>
+        </div>
+
+        <div id="output-selector-group">
+            <label for="output-selector">Select Output Format:&nbsp;</label>
+            <select id="output-selector">
+                <option value="c">C Code</option>
+                <option value="ast">AST</option>
+            </select>
+        </div>
     </div>
-    <svg id="ast-view" width="600" height="400"></svg>
     <div id="container">
         <div id="editor"></div>
-        <div id="output-editor"></div>
+        <div id="right-panel">
+            <svg id="ast-view"></svg>
+            <div id="output-editor"></div>
+        </div>
     </div>
 </body>
 
