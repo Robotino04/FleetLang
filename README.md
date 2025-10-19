@@ -1,5 +1,10 @@
 # Fleet
 
+> [!WARNING]
+> You are currently viewing the `archive/original-release` branch.  
+> This branch contains the original, unmaintained version of the project and is no longer actively updated.  
+> For the latest stable version, please switch to the `main` branch.
+
 ## FleetC
 The reference implementation of Fleet.
 
