@@ -22,9 +22,9 @@ vim.filetype.add({
 vim.lsp.config["fleetls"] = {
     filetypes = { "fleet" },
     root_markers = { '.git' },
-    cmd =  vim.lsp.rpc.connect("127.0.0.1", 1234),
+    -- cmd =  vim.lsp.rpc.connect("127.0.0.1", 1234),
     -- cmd = { "sh", "-c", "tee fleetls.in | target/debug/fleetls stdio > fleetls.out 2> fleetls.err" },
-    -- cmd = { "target/debug/fleetls", "stdio"},
+    cmd = { "target/debug/fleetls", "stdio"},
     settings = {
 
     },

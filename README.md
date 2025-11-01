@@ -104,10 +104,6 @@ If something doesn't make sense or isn't accurate anymore, feel free to reach ou
 - import of some sort
 - llvm crashes if skip isn't last statement in block
 
-##### Meta
-- make sure web demo compiles and works
-- Make sure README is up-to-date and actually good.
-
 #### Easy
 - if expressions
 - consistent error language style
