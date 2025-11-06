@@ -56,6 +56,26 @@ This should compile the project to `target/debug/{fleetc,fleetls}`.
 Tests can only be run on Linux for now as they rely on loading `libvulkan` and `libstdc++` at runtime.
 If you aren't using nix, you need to ensure those libraries are installed and can be found by dlopen.
 
+### Windows
+If you want to run Fleet on Windows, it'll be a lot of setup.
+Instead, consider using WSL and following these instructions:
+1. Install wsl2 by installing "Ubuntu" from the Microsoft Store and following the instructions when first opening it.
+2. Install the [Nix package manager](https://wiki.nixos.org/wiki/Nix_(package_manager)) in single-user mode.
+3. Enable Flakes by writing `experimental-features = nix-command flakes` into `~/.config/nix/nix.conf`.
+4. Clone this repository:
+   ```sh
+   git clone https://github.com/Robotino04/FleetLang.git
+   ```
+5. Enter the development shell and compile everything:
+   ```sh
+   nix run --impure github:nix-community/nixGL -- bash # make vulkan work through WSL
+   nix develop . # enter dev shell with all dependencies
+   cargo build --all
+   ```
+
+At this point, you are done.
+If you want to use VS Code for writing Fleet, make sure you run VS Code inside WSL and install the extensions on WSL as well.
+
 
 ## Setup (FleetLS)
 For Neovim users, there is a `load.vim` file that sets up the Fleet filetype and configures nvim-lspconfig to automatically launch FleetLS. It also has commented-out options for connecting to FleetLS over TCP which can be useful for easily reading debug output. 
@@ -115,6 +135,12 @@ If something doesn't make sense or isn't accurate anymore, feel free to reach ou
 - allow on-statements without iterators again
 - add lint to make variables and functions snake_case and types CamelCase
 - allow struct initializers to have any order
+- Invalid IR:
+  ```rust
+  let test = (x: u64) -> i32 {
+      return x as i32;
+  }
+  ```
 
 #### Medium
 - real mutability/constant system
@@ -126,6 +152,12 @@ If something doesn't make sense or isn't accurate anymore, feel free to reach ou
 - special-case small 2D and 3D GPU dispatches that fit in the size limits
 - parse statements even without semicolons (for FleetLS)
 - array index bounds checking
+- Unstable formatting:
+  ```rust
+  if (@sqrt(seed) < 1){
+
+  }
+  ```
 
 #### Hard
 - tuple types
