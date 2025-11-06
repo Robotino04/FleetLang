@@ -68,8 +68,8 @@ Instead, consider using WSL and following these instructions:
    ```
 5. Enter the development shell and compile everything:
    ```sh
-   nix run --impure github:nix-community/nixGL -- bash # make vulkan work through WSL
    nix develop . # enter dev shell with all dependencies
+   nix run --impure github:nix-community/nixGL#nixVulkanIntel -- bash # make vulkan work through WSL
    cargo build --all
    ```
 
