@@ -1,3 +1,5 @@
+[![Main](https://github.com/Robotino04/FleetLang/actions/workflows/main.yml/badge.svg)](https://github.com/Robotino04/FleetLang/actions/workflows/main.yml)
+
 # Fleet
 
 ## FleetC
@@ -19,6 +21,8 @@ Features:
 - signature help
 - hover information
 - lots of crashes
+
+There is a [Web-Demo](https://robotino04.github.io/FleetLang/) available which runs a VSCode-style editor in your browser, giving you access to all the features of FleetLS. You can also observe how the generated C-Code corresponds to the Fleet one and even take a look at the generated AST. Unfortunately, you can't execute the programs yet.
 
 
 ## Building
@@ -61,6 +65,7 @@ If you aren't using nix, you need to ensure those libraries are installed and ca
 ### Windows
 If you want to run Fleet on Windows, it'll be a lot of setup.
 Instead, consider using WSL and following the normal [development instructions](#development-setup):
+If you plan to use VS Code for writing Fleet, make sure you run VS Code inside WSL and install the extensions on WSL as well.
 
 ### Development Setup
 1. Install the [Nix package manager](https://wiki.nixos.org/wiki/Nix_(package_manager)).
@@ -77,7 +82,6 @@ Instead, consider using WSL and following the normal [development instructions](
    ```
 
 At this point, you are done.
-If you want to use VS Code for writing Fleet, make sure you run VS Code inside WSL and install the extensions on WSL as well.
 
 
 ## Setup (FleetLS)
