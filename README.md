@@ -29,6 +29,8 @@ Features:
 > nix build .
 > ```
 > This will perform all steps listed below and write the binaries into `./result/bin/{fleetc,fleetls}`.
+>
+> Note that the resulting binaries use Vulkan and therefore need to be run with [NixGL](https://github.com/nix-community/nixGL) if you aren't using a NixOS host.
 
 FleetC uses LLVM as a backend, and it is therefore required to have a static build of libllvm 18. If this isn't found, Cargo should detect it and give instructions on how to acquire libllvm.
 Some other libraries are also linked by `inkwell` (the LLVM crate) and may need to be installed as well. Even if you aren't using the Nix flake, it can still serve as a reference for which libraries are required.
@@ -58,18 +60,19 @@ If you aren't using nix, you need to ensure those libraries are installed and ca
 
 ### Windows
 If you want to run Fleet on Windows, it'll be a lot of setup.
-Instead, consider using WSL and following these instructions:
-1. Install wsl2 by installing "Ubuntu" from the Microsoft Store and following the instructions when first opening it.
-2. Install the [Nix package manager](https://wiki.nixos.org/wiki/Nix_(package_manager)) in single-user mode.
-3. Enable Flakes by writing `experimental-features = nix-command flakes` into `~/.config/nix/nix.conf`.
-4. Clone this repository:
+Instead, consider using WSL and following the normal [development instructions](#development-setup):
+
+### Development Setup
+1. Install the [Nix package manager](https://wiki.nixos.org/wiki/Nix_(package_manager)).
+2. Enable flakes by writing `experimental-features = nix-command flakes` into `~/.config/nix/nix.conf`.
+3. Clone this repository:
    ```sh
    git clone https://github.com/Robotino04/FleetLang.git
    ```
-5. Enter the development shell and compile everything:
+4. Enter the development shell and compile everything:
    ```sh
    nix develop . # enter dev shell with all dependencies
-   nix run --impure github:nix-community/nixGL#nixVulkanIntel -- bash # make vulkan work through WSL
+   nix run --impure github:nix-community/nixGL#nixVulkanIntel -- bash # make vulkan work on non-NixOS hosts
    cargo build --all
    ```
 
