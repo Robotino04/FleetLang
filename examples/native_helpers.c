@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include "raylib.h"
+#include <math.h>
 
 void eputchar(uint8_t c) {
     fprintf(stderr, "%c", c);
@@ -46,9 +47,9 @@ void helper_submit_frame(struct Image800x600 image, float samples) {
         for (int y = 0; y < IMAGE_HEIGHT; y++) {
             struct ImageColor c = image.value[x].row[y];
             Color rayColor = {
-                (unsigned char)(c.r / samples * 255.0f),
-                (unsigned char)(c.g / samples * 255.0f),
-                (unsigned char)(c.b / samples * 255.0f),
+                (unsigned char)fmaxf(fminf(sqrtf(c.r / samples) * 255.0f, 255), 0),
+                (unsigned char)fmaxf(fminf(sqrtf(c.g / samples) * 255.0f, 255), 0),
+                (unsigned char)fmaxf(fminf(sqrtf(c.b / samples) * 255.0f, 255), 0),
                 255
             };
             DrawPixel(x, IMAGE_HEIGHT - y, rayColor);
