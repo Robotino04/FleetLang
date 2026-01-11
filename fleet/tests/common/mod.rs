@@ -117,8 +117,8 @@ fn assert_error_at_position(errors: &Vec<FleetError>, error_start: SourceLocatio
             .flat_map(|err| err
                 .highlight_groups()
                 .iter()
-                .map(|range| (range, err.severity)))
-            .any(|(range, severity)| range.range.start == error_start
+                .map(|range| (range, err.main_severity)))
+            .any(|(range, severity)| range.0.range.start == error_start
                 && severity == ErrorSeverity::Error),
         "Expected an error at {error_start:?}. Got {errors:#?}"
     );
@@ -131,8 +131,8 @@ fn assert_warning_at_position(errors: &Vec<FleetError>, warning_start: SourceLoc
             .flat_map(|warn| warn
                 .highlight_groups()
                 .iter()
-                .map(|range| (range, warn.severity)))
-            .any(|(range, severity)| range.range.start == warning_start
+                .map(|range| (range, warn.main_severity)))
+            .any(|(range, severity)| range.0.range.start == warning_start
                 && severity == ErrorSeverity::Warning),
         "Expected a warning at {warning_start:?}. Got {errors:#?}"
     );
@@ -142,7 +142,7 @@ pub fn assert_no_fatal_errors(errors: &Vec<FleetError>) {
     assert!(
         !errors
             .iter()
-            .any(|err| err.severity == ErrorSeverity::Error),
+            .any(|err| err.main_severity == ErrorSeverity::Error),
         "There are fatal errors: {errors:#?}"
     );
 }

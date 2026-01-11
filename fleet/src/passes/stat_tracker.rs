@@ -5,6 +5,7 @@ use std::{
     vec::Vec,
 };
 
+use itertools::Itertools;
 use log::info;
 
 use crate::{
@@ -411,7 +412,11 @@ impl AstVisitor for StatTracker<'_> {
             {
                 self.errors.push({
                     FleetError::try_new(
-                        stat.non_terminating_ranges.clone(),
+                        stat.non_terminating_ranges
+                            .iter()
+                            .cloned()
+                            .map(|r| (r, ErrorSeverity::Error))
+                            .collect_vec(),
                         "All code paths must return.",
                         ErrorSeverity::Error,
                     )

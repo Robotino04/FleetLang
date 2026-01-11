@@ -123,10 +123,10 @@ fn main() {
 
     let print_all_errors_and_message = |msg, mut errors: Vec<FleetError>| {
         // error -> warning -> node, then sort by file location
-        errors.sort_by_key(|err| err.highlight_groups().first().unwrap().range.start);
-        errors.sort_by_key(|err| err.severity);
+        errors.sort_by_key(|err| err.highlight_groups().first().unwrap().0.range.start);
+        errors.sort_by_key(|err| err.main_severity);
 
-        if let Some(worst_severity) = errors.iter().map(|err| err.severity).max() {
+        if let Some(worst_severity) = errors.iter().map(|err| err.main_severity).max() {
             for error in &errors {
                 // double newline
                 eprintln!("{}\n", error.to_string_ansi(&src));
@@ -295,7 +295,7 @@ fn main() {
     let errors = errors.get(&pm.state).clone();
     if errors
         .iter()
-        .any(|err| err.severity == ErrorSeverity::Error)
+        .any(|err| err.main_severity == ErrorSeverity::Error)
     {
         print_all_errors_and_message("Compilation has errors", errors.into());
         panic!("these errors should have resulted in a PassError::InvalidInput");

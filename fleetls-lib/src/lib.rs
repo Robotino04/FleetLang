@@ -992,21 +992,24 @@ impl LanguageServer for Backend {
                     items: errors
                         .iter()
                         .flat_map(|error| {
-                            error.highlight_groups().iter().map(|range| Diagnostic {
-                                range: source_range_to_lsp_range(range.clone()),
-                                severity: Some(match error.severity {
-                                    ErrorSeverity::Error => DiagnosticSeverity::ERROR,
-                                    ErrorSeverity::Warning => DiagnosticSeverity::WARNING,
-                                    ErrorSeverity::Note => DiagnosticSeverity::HINT,
-                                }),
-                                code: None,
-                                code_description: None,
-                                source: Some("FleetLS".to_string()),
-                                message: error.message.clone(),
-                                related_information: None,
-                                tags: None,
-                                data: None,
-                            })
+                            error
+                                .highlight_groups()
+                                .iter()
+                                .map(|(range, severity)| Diagnostic {
+                                    range: source_range_to_lsp_range(range.clone()),
+                                    severity: Some(match severity {
+                                        ErrorSeverity::Error => DiagnosticSeverity::ERROR,
+                                        ErrorSeverity::Warning => DiagnosticSeverity::WARNING,
+                                        ErrorSeverity::Note => DiagnosticSeverity::HINT,
+                                    }),
+                                    code: None,
+                                    code_description: None,
+                                    source: Some("FleetLS".to_string()),
+                                    message: error.message.clone(),
+                                    related_information: None,
+                                    tags: None,
+                                    data: None,
+                                })
                         })
                         .collect(),
                 },

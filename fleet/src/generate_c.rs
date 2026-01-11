@@ -103,7 +103,7 @@ impl Pass for CCodeGenerator<'_> {
         if self
             .errors
             .iter()
-            .any(|err| err.severity == ErrorSeverity::Error)
+            .any(|err| err.main_severity == ErrorSeverity::Error)
         {
             return Err(PassError::InvalidInput {
                 producing_pass: Self::name(),

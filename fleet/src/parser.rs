@@ -216,7 +216,7 @@ macro_rules! recover_until {
                 if let (Some(start), Some(end)) = ($start_of_recovery, recovery_end) {
                     $self.errors.push(
                         FleetError::try_new(
-                            vec![start.range.start().until(end.range.end())],
+                            vec![(start.range.start().until(end.range.end()), ErrorSeverity::Warning)],
                             format!(
                                 "Recovered by skipping until one of [{}]",
                                 stringify!($($recovery_stops), +)

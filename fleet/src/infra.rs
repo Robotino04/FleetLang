@@ -35,25 +35,25 @@ pub enum ErrorSeverity {
 #[derive(Clone, Debug)]
 pub struct FleetError {
     /// ranges are guaranteed to be sorted and non-overlapping
-    highlight_groups: Vec<NamedSourceRange>,
+    highlight_groups: Vec<(NamedSourceRange, ErrorSeverity)>,
     pub message: String,
-    pub severity: ErrorSeverity,
+    pub main_severity: ErrorSeverity,
 }
 
 impl FleetError {
     /// Returns [None] if `highlight_groups` contains overlapping ranges or is empty
     pub fn try_new(
-        mut highlight_groups: Vec<NamedSourceRange>,
+        mut highlight_groups: Vec<(NamedSourceRange, ErrorSeverity)>,
         message: impl ToString,
-        severity: ErrorSeverity,
+        main_severity: ErrorSeverity,
     ) -> Option<Self> {
-        highlight_groups.sort_by_key(|hl| hl.range.start);
+        highlight_groups.sort_by_key(|(hl, _severity)| hl.range.start);
 
         if highlight_groups.is_empty() {
             return None;
         }
 
-        for (a, b) in highlight_groups.iter().tuple_windows() {
+        for ((a, _), (b, _)) in highlight_groups.iter().tuple_windows() {
             if a.range.end > b.range.start {
                 return None;
             }
@@ -62,7 +62,7 @@ impl FleetError {
         Some(Self {
             highlight_groups,
             message: message.to_string(),
-            severity,
+            main_severity,
         })
     }
     pub fn from_range(
@@ -71,16 +71,16 @@ impl FleetError {
         severity: ErrorSeverity,
     ) -> Self {
         Self {
-            highlight_groups: vec![range],
+            highlight_groups: vec![(range, severity)],
             message: msg.to_string(),
-            severity,
+            main_severity: severity,
         }
     }
     pub fn from_token(token: &Token, msg: impl ToString, severity: ErrorSeverity) -> Self {
         Self {
-            highlight_groups: vec![token.range.clone()],
+            highlight_groups: vec![(token.range.clone(), severity)],
             message: msg.to_string(),
-            severity,
+            main_severity: severity,
         }
     }
     pub fn from_node<I: Into<AstNode> + Clone>(
@@ -89,13 +89,13 @@ impl FleetError {
         severity: ErrorSeverity,
     ) -> Self {
         Self {
-            highlight_groups: vec![find_node_bounds(node)],
+            highlight_groups: vec![(find_node_bounds(node), severity)],
             message: msg.to_string(),
-            severity,
+            main_severity: severity,
         }
     }
 
-    pub fn highlight_groups(&self) -> &Vec<NamedSourceRange> {
+    pub fn highlight_groups(&self) -> &Vec<(NamedSourceRange, ErrorSeverity)> {
         &self.highlight_groups
     }
 
@@ -109,21 +109,21 @@ impl FleetError {
     pub fn start(&self) -> NamedSourceLocation {
         self.highlight_groups
             .iter()
-            .map(|range| range.start())
+            .map(|(range, _severity)| range.start())
             .min()
             .expect("FleetError without highlight group")
     }
     pub fn end(&self) -> NamedSourceLocation {
         self.highlight_groups
             .iter()
-            .map(|range| range.end())
+            .map(|(range, _severity)| range.end())
             .max()
             .expect("FleetError without highlight group")
     }
 
     fn to_string_impl(&self, source: &str, use_ansi: bool) -> String {
-        let (enable_color, disable_color) = {
-            let nr = match self.severity {
+        let color_gen = |severity: ErrorSeverity| {
+            let nr = match severity {
                 ErrorSeverity::Error => 31,
                 ErrorSeverity::Warning => 33,
                 ErrorSeverity::Note => 34,
@@ -162,7 +162,7 @@ impl FleetError {
 
                 let mut offset = 0;
 
-                for named_range in &self.highlight_groups {
+                for (named_range, severity) in &self.highlight_groups {
                     let SourceRange {
                         start: hl_start,
                         end: hl_end,
@@ -183,6 +183,8 @@ impl FleetError {
                     } else {
                         text.len()
                     };
+
+                    let (enable_color, disable_color) = color_gen(*severity);
 
                     let new_text = format!(
                         "{}{enable_color}{}{disable_color}{}",
@@ -215,9 +217,10 @@ impl FleetError {
             "Message of error ends with newline: {self:#?}"
         );
 
+        let (enable_color, disable_color) = color_gen(self.main_severity);
         let mut output = format!(
             "{enable_color}[{}] {}:{}:{}: {}{disable_color}",
-            match self.severity {
+            match self.main_severity {
                 ErrorSeverity::Error => "ERROR",
                 ErrorSeverity::Warning => "WARNING",
                 ErrorSeverity::Note => "NOTE",
@@ -294,7 +297,7 @@ pub fn format(source: InputSource) -> Result<String, PassError> {
         .get::<ParseErrorsOnly>()
         .unwrap()
         .iter()
-        .any(|err| err.severity == ErrorSeverity::Error)
+        .any(|err| err.main_severity == ErrorSeverity::Error)
     {
         return Err(PassError::InvalidInput {
             producing_pass: "Formatting function".to_string(),

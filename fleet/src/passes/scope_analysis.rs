@@ -26,6 +26,7 @@ use crate::{
     infra::{ErrorSeverity, FleetError},
     parser::IdGenerator,
     passes::{
+        find_node_bounds::find_node_bounds,
         pass_manager::{
             Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData,
             VariableData,
@@ -33,6 +34,7 @@ use crate::{
         runtime_type::RuntimeType,
         union_find_set::UnionFindSetPtr,
     },
+    tokenizer::NamedSourceRange,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -48,6 +50,7 @@ pub struct Variable {
     pub is_constant: bool,
     pub id: VariableID,
     pub definition_node_id: NodeID,
+    pub definition_range: NamedSourceRange,
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +60,7 @@ pub struct Function {
     pub parameter_types: Option<Vec<Rc<RefCell<Variable>>>>,
     pub id: FunctionID,
     pub definition_node_id: NodeID,
+    pub definition_range: NamedSourceRange,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -84,10 +88,10 @@ pub struct VariableScopeStack {
 
 #[derive(Debug, Error)]
 #[error(
-    "Variable named {:?} was already present. Tried inserting {var:#?}", var.name
+    "Variable named {:?} was already present.", present_var.borrow().name
 )]
 pub struct ScopeInsertAlreadyPresentError {
-    var: Variable,
+    present_var: Rc<RefCell<Variable>>,
 }
 
 impl VariableScopeStack {
@@ -236,8 +240,10 @@ impl VariableScopeStack {
     }
 
     pub fn try_insert(&mut self, var: Variable) -> Result<(), ScopeInsertAlreadyPresentError> {
-        if self.current.borrow().variable_map.contains_key(&var.name) {
-            Err(ScopeInsertAlreadyPresentError { var })
+        if let Some(present_var) = self.current.borrow().variable_map.get(&var.name) {
+            Err(ScopeInsertAlreadyPresentError {
+                present_var: present_var.clone(),
+            })
         } else {
             self.current
                 .borrow_mut()
@@ -402,7 +408,7 @@ impl<'a> ScopeAnalyzer<'a> {
         let FunctionDefinition {
             let_token: _,
             name,
-            name_token: _,
+            name_token,
             equal_token: _,
             open_paren_token: _,
             parameters: _,
@@ -425,6 +431,7 @@ impl<'a> ScopeAnalyzer<'a> {
                     parameter_types: None,
                     id: self.id_generator.next_function_id(),
                     definition_node_id: *id,
+                    definition_range: name_token.range.clone(),
                 })),
             )
             .is_some()
@@ -556,7 +563,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
     ) -> Self::SimpleBindingOutput {
         let simple_binding_clone = simple_binding.clone();
         let SimpleBinding {
-            name_token: _,
+            name_token,
             name,
             type_,
             id,
@@ -567,25 +574,36 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             self.comptime_deps.add_dependency(*id, dep);
             self.comptime_deps.mark_comptime_required(dep);
         }
-        if self
-            .variable_scopes
-            .try_insert(Variable {
+        if let Err(ScopeInsertAlreadyPresentError { present_var }) =
+            self.variable_scopes.try_insert(Variable {
                 name: name.clone(),
                 type_: None,
                 is_constant: false,
                 id: self.id_generator.next_variable_id(),
                 definition_node_id: *id,
+                definition_range: name_token.range.clone(),
             })
-            .is_err()
         {
-            self.errors.push(FleetError::from_node(
-                &simple_binding_clone,
-                format!(
-                    "A variable named {} was already defined in this scope",
-                    name.clone()
-                ),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(
+                FleetError::try_new(
+                    vec![
+                        (
+                            find_node_bounds(&simple_binding_clone),
+                            ErrorSeverity::Error,
+                        ),
+                        (
+                            present_var.borrow().definition_range.clone(),
+                            ErrorSeverity::Note,
+                        ),
+                    ],
+                    format!(
+                        "A variable named `{}` was already defined in this scope",
+                        name.clone()
+                    ),
+                    ErrorSeverity::Error,
+                )
+                .unwrap(),
+            );
         }
 
         self.referenced_variable.insert(

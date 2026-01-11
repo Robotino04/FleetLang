@@ -218,8 +218,8 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                     self.errors.push({
                         FleetError::try_new(
                             vec![
-                                open_paren_token.range.clone(),
-                                close_paren_token.range.clone(),
+                                (open_paren_token.range.clone(), ErrorSeverity::Note),
+                                (close_paren_token.range.clone(), ErrorSeverity::Note),
                             ],
                             "Unnecessary parentheses".to_string(),
                             ErrorSeverity::Note,
@@ -385,8 +385,8 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                     self.errors.push({
                         FleetError::try_new(
                             vec![
-                                open_paren_token.range.clone(),
-                                close_paren_token.range.clone(),
+                                (open_paren_token.range.clone(), ErrorSeverity::Note),
+                                (close_paren_token.range.clone(), ErrorSeverity::Note),
                             ],
                             "Unnecessary parentheses".to_string(),
                             ErrorSeverity::Note,

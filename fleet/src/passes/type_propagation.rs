@@ -111,7 +111,7 @@ impl<'a> TypePropagator<'a> {
         let FunctionDefinition {
             let_token: _,
             name,
-            name_token: _,
+            name_token,
             equal_token: _,
             open_paren_token: _,
             parameters,
@@ -148,6 +148,7 @@ impl<'a> TypePropagator<'a> {
             parameter_types: Some(parameter_types),
             id: self.id_generator.next_function_id(),
             definition_node_id: *id,
+            definition_range: name_token.range.clone(),
         };
     }
     fn register_type_alias(&mut self, type_alias: &mut TypeAlias) {
