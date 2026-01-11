@@ -12,7 +12,6 @@ use crate::{
         err_missing_type_in_parameter::ErrMissingTypeInParam,
         err_too_few_iterators::ErrTooFewIterators,
         find_node_bounds::find_node_bounds,
-        first_token_mapper::FirstTokenMapper,
         fix_non_block_statements::FixNonBlockStatements,
         fix_trailing_comma::FixTrailingComma,
         lvalue_reducer::LValueReducer,
@@ -23,7 +22,7 @@ use crate::{
         store_pass::StorePass,
         type_propagation::TypePropagator,
     },
-    tokenizer::{FileName, SourceLocation, SourceRange, Token, Tokenizer},
+    tokenizer::{NamedSourceLocation, NamedSourceRange, SourceRange, Token, Tokenizer},
 };
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -36,28 +35,26 @@ pub enum ErrorSeverity {
 #[derive(Clone, Debug)]
 pub struct FleetError {
     /// ranges are guaranteed to be sorted and non-overlapping
-    highlight_groups: Vec<SourceRange>,
+    highlight_groups: Vec<NamedSourceRange>,
     pub message: String,
     pub severity: ErrorSeverity,
-    pub file_name: FileName,
 }
 
 impl FleetError {
     /// Returns [None] if `highlight_groups` contains overlapping ranges or is empty
     pub fn try_new(
-        mut highlight_groups: Vec<SourceRange>,
+        mut highlight_groups: Vec<NamedSourceRange>,
         message: impl ToString,
         severity: ErrorSeverity,
-        file_name: FileName,
     ) -> Option<Self> {
-        highlight_groups.sort_by_key(|hl| hl.start);
+        highlight_groups.sort_by_key(|hl| hl.range.start);
 
         if highlight_groups.is_empty() {
             return None;
         }
 
         for (a, b) in highlight_groups.iter().tuple_windows() {
-            if a.end > b.start {
+            if a.range.end > b.range.start {
                 return None;
             }
         }
@@ -66,28 +63,24 @@ impl FleetError {
             highlight_groups,
             message: message.to_string(),
             severity,
-            file_name,
         })
     }
     pub fn from_range(
-        range: SourceRange,
+        range: NamedSourceRange,
         msg: impl ToString,
         severity: ErrorSeverity,
-        file_name: FileName,
     ) -> Self {
         Self {
             highlight_groups: vec![range],
             message: msg.to_string(),
             severity,
-            file_name,
         }
     }
     pub fn from_token(token: &Token, msg: impl ToString, severity: ErrorSeverity) -> Self {
         Self {
-            highlight_groups: vec![token.range],
+            highlight_groups: vec![token.range.clone()],
             message: msg.to_string(),
             severity,
-            file_name: token.file_name.clone(),
         }
     }
     pub fn from_node<I: Into<AstNode> + Clone>(
@@ -95,20 +88,14 @@ impl FleetError {
         msg: impl ToString,
         severity: ErrorSeverity,
     ) -> Self {
-        let mut filename_mapper = FirstTokenMapper::new(|token| token.file_name.clone());
-        node.clone().into().visit(&mut filename_mapper);
-
         Self {
             highlight_groups: vec![find_node_bounds(node)],
             message: msg.to_string(),
             severity,
-            file_name: filename_mapper
-                .result()
-                .expect("Cannot create FleetError from empty node"),
         }
     }
 
-    pub fn highlight_groups(&self) -> &Vec<SourceRange> {
+    pub fn highlight_groups(&self) -> &Vec<NamedSourceRange> {
         &self.highlight_groups
     }
 
@@ -119,17 +106,17 @@ impl FleetError {
         self.to_string_impl(source, true)
     }
 
-    pub fn start(&self) -> SourceLocation {
+    pub fn start(&self) -> NamedSourceLocation {
         self.highlight_groups
             .iter()
-            .map(|range| range.start)
+            .map(|range| range.start())
             .min()
             .expect("FleetError without highlight group")
     }
-    pub fn end(&self) -> SourceLocation {
+    pub fn end(&self) -> NamedSourceLocation {
         self.highlight_groups
             .iter()
-            .map(|range| range.end)
+            .map(|range| range.end())
             .max()
             .expect("FleetError without highlight group")
     }
@@ -155,7 +142,7 @@ impl FleetError {
         let num_before_error_lines = 3;
         let num_after_error_lines = 3;
 
-        let max_line_number_len = (self_end.line + num_after_error_lines).to_string().len();
+        let max_line_number_len = (self_end.line() + num_after_error_lines).to_string().len();
 
         let pad_with_line_number =
             |(line, text): (usize, &str)| format!("{line:<max_line_number_len$}| {text}");
@@ -165,22 +152,23 @@ impl FleetError {
             .enumerate()
             .map(|(line, text)| (line + 1, text));
 
-        let before_err = source_lines.clone().take(self_start.line - 1);
+        let before_err = source_lines.clone().take(self_start.line() - 1);
         let err = source_lines
             .clone()
-            .skip(self_start.line - 1)
-            .take(self_end.line - self_start.line + 1)
+            .skip(self_start.line() - 1)
+            .take(self_end.line() - self_start.line() + 1)
             .map(|(line, text)| {
                 let mut text = text.to_string();
 
                 let mut offset = 0;
 
-                for SourceRange {
-                    start: hl_start,
-                    end: hl_end,
-                } in &self.highlight_groups
-                {
-                    assert!(hl_start < hl_end);
+                for named_range in &self.highlight_groups {
+                    let SourceRange {
+                        start: hl_start,
+                        end: hl_end,
+                    } = named_range.range;
+
+                    assert!(hl_start <= hl_end);
                     if line > hl_end.line || line < hl_start.line {
                         continue;
                     }
@@ -210,10 +198,10 @@ impl FleetError {
                 pad_with_line_number((line, &text))
             })
             .join("\n");
-        let after_err = source_lines.skip(self_end.line);
+        let after_err = source_lines.skip(self_end.line());
 
         let before_err_trunc = before_err
-            .skip(self_start.line.saturating_sub(num_before_error_lines + 1))
+            .skip(self_start.line().saturating_sub(num_before_error_lines + 1))
             .skip_while(|(_line, text)| text.trim() == "")
             .map(pad_with_line_number)
             .join("\n");
@@ -234,9 +222,9 @@ impl FleetError {
                 ErrorSeverity::Warning => "WARNING",
                 ErrorSeverity::Note => "NOTE",
             },
-            self.file_name.0,
-            self.start().line,
-            self.start().column,
+            self.start().name.0,
+            self.start().line(),
+            self.start().column(),
             self.message
         );
 

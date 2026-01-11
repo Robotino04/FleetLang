@@ -148,6 +148,7 @@ If something doesn't make sense or isn't accurate anymore, feel free to reach ou
       return x as i32;
   }
   ```
+- lint against `as idk`
 
 #### Medium
 - real mutability/constant system

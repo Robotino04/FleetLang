@@ -118,7 +118,7 @@ fn assert_error_at_position(errors: &Vec<FleetError>, error_start: SourceLocatio
                 .highlight_groups()
                 .iter()
                 .map(|range| (range, err.severity)))
-            .any(|(range, severity)| range.start == error_start
+            .any(|(range, severity)| range.range.start == error_start
                 && severity == ErrorSeverity::Error),
         "Expected an error at {error_start:?}. Got {errors:#?}"
     );
@@ -132,7 +132,7 @@ fn assert_warning_at_position(errors: &Vec<FleetError>, warning_start: SourceLoc
                 .highlight_groups()
                 .iter()
                 .map(|range| (range, warn.severity)))
-            .any(|(range, severity)| range.start == warning_start
+            .any(|(range, severity)| range.range.start == warning_start
                 && severity == ErrorSeverity::Warning),
         "Expected a warning at {warning_start:?}. Got {errors:#?}"
     );

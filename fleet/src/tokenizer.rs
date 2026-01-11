@@ -13,13 +13,11 @@ use crate::{
 #[derive(Clone, PartialEq, Debug)]
 pub struct Token {
     pub type_: TokenType,
-    pub range: SourceRange,
+    pub range: NamedSourceRange,
 
     // https://langdev.stackexchange.com/questions/2289/preserving-comments-in-ast
     pub leading_trivia: Vec<Trivia>,
     pub trailing_trivia: Vec<Trivia>,
-
-    pub file_name: FileName,
 }
 
 /*
@@ -30,7 +28,7 @@ impl Debug for Token {
 }
 */
 
-NewtypeDeref!(pub FileName, Rc<String>, Clone, PartialEq, Eq);
+NewtypeDeref!(pub FileName, Rc<String>, Clone, PartialEq, Eq, Hash);
 
 impl From<String> for FileName {
     fn from(value: String) -> Self {
@@ -156,6 +154,10 @@ impl PartialOrd for SourceLocation {
 }
 
 impl SourceLocation {
+    pub fn named(self, name: FileName) -> NamedSourceLocation {
+        NamedSourceLocation { name, loc: self }
+    }
+
     pub fn start() -> SourceLocation {
         SourceLocation {
             index: 0,
@@ -172,11 +174,15 @@ impl SourceLocation {
         }
     }
 
-    pub fn until(self, other: SourceLocation) -> SourceRange {
+    pub fn until(self, other: impl Into<SourceLocation>) -> SourceRange {
         SourceRange {
             start: self,
-            end: other,
+            end: other.into(),
         }
+    }
+    pub fn until_named(self, other: impl Into<NamedSourceLocation>) -> NamedSourceRange {
+        let other = other.into();
+        self.until(other.loc).named(other.name)
     }
     pub fn prev_inline(self) -> SourceLocation {
         SourceLocation {
@@ -203,6 +209,57 @@ impl SourceLocation {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct NamedSourceLocation {
+    pub loc: SourceLocation,
+    pub name: FileName,
+}
+impl Ord for NamedSourceLocation {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.loc.cmp(&other.loc) {
+            x @ (Ordering::Less | Ordering::Greater) => x,
+            Ordering::Equal => self.name.cmp(&other.name),
+        }
+    }
+}
+impl PartialOrd for NamedSourceLocation {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl From<NamedSourceLocation> for SourceLocation {
+    fn from(value: NamedSourceLocation) -> Self {
+        value.loc
+    }
+}
+
+impl NamedSourceLocation {
+    pub fn index(&self) -> usize {
+        self.loc.index
+    }
+    pub fn line(&self) -> usize {
+        self.loc.line
+    }
+    pub fn column(&self) -> usize {
+        self.loc.column
+    }
+
+    pub fn until(self, other: impl Into<SourceLocation>) -> NamedSourceRange {
+        self.loc.until(other).named(self.name)
+    }
+    pub fn prev_inline(self) -> NamedSourceLocation {
+        self.loc.prev_inline().named(self.name)
+    }
+    pub fn offset(
+        self,
+        offset: usize,
+        src: &impl Index<usize, Output = char>,
+    ) -> NamedSourceLocation {
+        self.loc.offset(offset, src).named(self.name)
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SourceRange {
     /// inclusive
@@ -212,24 +269,90 @@ pub struct SourceRange {
 }
 
 impl SourceRange {
+    pub fn empty_start() -> Self {
+        SourceLocation::start().until(SourceLocation::start())
+    }
+
+    pub fn named(self, name: FileName) -> NamedSourceRange {
+        NamedSourceRange { name, range: self }
+    }
+
     pub fn contains(&self, other: SourceLocation) -> bool {
         self.start <= other && other < self.end
     }
 
     /// Constructs the smallest [SourceRange] that includes both `self` and `other`
-    pub fn extend_with(self, other: SourceRange) -> Self {
+    pub fn extend_with(self, other: impl Into<SourceRange>) -> Self {
+        let other = other.into();
         Self {
             start: self.start.min(other.start),
             end: self.end.max(other.end),
         }
     }
 
-    pub fn intersects(&self, other: SourceRange) -> bool {
+    pub fn maybe_extend(self, other: Option<impl Into<SourceRange>>) -> Self {
+        match other {
+            Some(other) => self.extend_with(other),
+            None => self,
+        }
+    }
+
+    pub fn intersects(&self, other: impl Into<SourceRange>) -> bool {
+        let other = other.into();
         self.start < other.end && other.start < self.end
     }
 
     pub fn num_chars(&self) -> usize {
         self.end.index - self.start.index
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct NamedSourceRange {
+    pub name: FileName,
+    pub range: SourceRange,
+}
+
+impl From<NamedSourceRange> for SourceRange {
+    fn from(value: NamedSourceRange) -> Self {
+        value.range
+    }
+}
+
+impl NamedSourceRange {
+    pub fn split(&self) -> (NamedSourceLocation, NamedSourceLocation) {
+        (self.start(), self.end())
+    }
+
+    pub fn start(&self) -> NamedSourceLocation {
+        self.range.start.named(self.name.clone())
+    }
+    pub fn end(&self) -> NamedSourceLocation {
+        self.range.end.named(self.name.clone())
+    }
+
+    pub fn contains(&self, other: SourceLocation) -> bool {
+        self.range.contains(other)
+    }
+
+    /// Constructs the smallest [NamedSourceRange] that includes both `self` and `other`
+    pub fn extend_with(self, other: impl Into<SourceRange>) -> Self {
+        self.range.extend_with(other).named(self.name)
+    }
+
+    pub fn maybe_extend(self, other: Option<impl Into<SourceRange>>) -> Self {
+        match other {
+            Some(other) => self.extend_with(other),
+            None => self,
+        }
+    }
+
+    pub fn intersects(&self, other: impl Into<SourceRange>) -> bool {
+        self.range.intersects(other)
+    }
+
+    pub fn num_chars(&self) -> usize {
+        self.range.num_chars()
     }
 }
 
@@ -243,7 +366,7 @@ pub struct Tokenizer<'state> {
     current_location: SourceLocation,
 
     unk_char_accumulator: String,
-    unk_char_range: SourceRange,
+    unk_char_range: NamedSourceRange,
 
     trivia_accumulator: Vec<Trivia>,
 }
@@ -271,12 +394,12 @@ impl PassFactory for Tokenizer<'_> {
             tokens: tokens.get_mut(state),
 
             chars: source.get(state).source.chars().collect(),
-            file_name,
+            file_name: file_name.clone(),
 
             current_location: SourceLocation::start(),
 
             unk_char_accumulator: "".to_string(),
-            unk_char_range: SourceLocation::start().until(SourceLocation::start()),
+            unk_char_range: SourceRange::empty_start().named(file_name),
 
             trivia_accumulator: vec![],
         })
@@ -316,28 +439,27 @@ impl<'errors> Tokenizer<'errors> {
 
     fn unknown_character(&mut self, c: char) {
         if self.unk_char_accumulator.is_empty() {
-            self.unk_char_range.start = self.current_location;
+            self.unk_char_range.range.start = self.current_location;
             self.advance();
-            self.unk_char_range.end = self.current_location;
+            self.unk_char_range.range.end = self.current_location;
             self.unk_char_accumulator = c.to_string();
-        } else if self.unk_char_range.end.index == self.current_location.index {
+        } else if self.unk_char_range.end().index() == self.current_location.index {
             self.unk_char_accumulator
                 .push(self.chars[self.current_location.index]);
 
             self.advance();
-            self.unk_char_range.end = self.current_location;
+            self.unk_char_range.range.end = self.current_location;
         } else {
             self.tokens.push(Token {
                 type_: TokenType::UnknownCharacters(self.unk_char_accumulator.clone()),
-                range: self.unk_char_range,
+                range: self.unk_char_range.clone(),
                 leading_trivia: vec![],
                 trailing_trivia: vec![],
-                file_name: self.file_name.clone(),
             });
 
-            self.unk_char_range.start = self.current_location;
+            self.unk_char_range.range.start = self.current_location;
             self.advance();
-            self.unk_char_range.end = self.current_location;
+            self.unk_char_range.range.end = self.current_location;
             self.unk_char_accumulator = c.to_string();
         }
         error!("Unexpected character {c:?}");
@@ -351,12 +473,13 @@ impl<'errors> Tokenizer<'errors> {
             self.advance();
         }
         let token = Token {
-            range: start.until(self.current_location),
+            range: start
+                .until(self.current_location)
+                .named(self.file_name.clone()),
             type_: t,
 
             leading_trivia: self.trivia_accumulator.clone(),
             trailing_trivia: vec![],
-            file_name: self.file_name.clone(),
         };
         self.trivia_accumulator.clear();
         token
@@ -542,10 +665,11 @@ impl<'errors> Tokenizer<'errors> {
 
                             if self.current_location.index + 1 >= self.chars.len() {
                                 self.errors.push(FleetError::from_range(
-                                    start_location.until(content_end_location),
+                                    start_location
+                                        .until(content_end_location)
+                                        .named(self.file_name.clone()),
                                     "Unclosed block comment".to_string(),
                                     ErrorSeverity::Error,
-                                    self.file_name.clone(),
                                 ));
                             } else {
                                 self.advance(); // *
@@ -593,7 +717,9 @@ impl<'errors> Tokenizer<'errors> {
                         .collect::<String>();
 
                     self.tokens.push(Token {
-                        range: start_location.until(self.current_location),
+                        range: start_location
+                            .until(self.current_location)
+                            .named(self.file_name.clone()),
                         type_: match lexeme.as_str() {
                             "on" => TokenType::Keyword(Keyword::On),
                             "self" => TokenType::Keyword(Keyword::Self_),
@@ -633,7 +759,6 @@ impl<'errors> Tokenizer<'errors> {
 
                         leading_trivia: self.trivia_accumulator.clone(),
                         trailing_trivia: vec![],
-                        file_name: self.file_name.clone(),
                     });
                     self.trivia_accumulator.clear();
                 }
@@ -667,15 +792,18 @@ impl<'errors> Tokenizer<'errors> {
                         .collect::<String>();
 
                     self.tokens.push(Token {
-                        range: start_location.until(self.current_location),
+                        range: start_location
+                            .until(self.current_location)
+                            .named(self.file_name.clone()),
                         type_: if is_float {
                             TokenType::Float(
                                 lexeme.parse().unwrap_or_else(|_| {
                                     self.errors.push(FleetError::from_range(
-                                        start_location.until(self.current_location),
+                                        start_location
+                                            .until(self.current_location)
+                                            .named(self.file_name.clone()),
                                         format!("Unable to parse {lexeme:?} as a float"),
                                         ErrorSeverity::Error,
-                                        self.file_name.clone(),
                                     ));
 
                                     0.0
@@ -686,10 +814,11 @@ impl<'errors> Tokenizer<'errors> {
                             TokenType::Integer(
                                 lexeme.parse().unwrap_or_else(|_| {
                                     self.errors.push(FleetError::from_range(
-                                        start_location.until(self.current_location),
+                                        start_location
+                                            .until(self.current_location)
+                                            .named(self.file_name.clone()),
                                         format!("Unable to parse {lexeme:?} as a float"),
                                         ErrorSeverity::Error,
-                                        self.file_name.clone(),
                                     ));
                                     0
                                 }),
@@ -699,7 +828,6 @@ impl<'errors> Tokenizer<'errors> {
 
                         leading_trivia: self.trivia_accumulator.clone(),
                         trailing_trivia: vec![],
-                        file_name: self.file_name.clone(),
                     });
                     self.trivia_accumulator.clear();
                 }
@@ -737,21 +865,19 @@ impl<'errors> Tokenizer<'errors> {
                         let start = range.start.offset(esc_error_offset + 1, &self.chars);
                         let end = start.offset(2, &self.chars);
                         self.errors.push(FleetError::from_range(
-                            start.until(end),
+                            start.until(end).named(self.file_name.clone()),
                             "Unknown escape sequence ".to_string()
                                 + &raw_lexeme.chars().skip(esc_error_offset).take(2).join(""),
                             ErrorSeverity::Error,
-                            self.file_name.clone(),
                         ));
                     }
 
                     self.tokens.push(Token {
-                        range,
+                        range: range.named(self.file_name.clone()),
                         type_: TokenType::StringLiteral(lexeme),
 
                         leading_trivia: self.trivia_accumulator.clone(),
                         trailing_trivia: vec![],
-                        file_name: self.file_name.clone(),
                     });
                     self.trivia_accumulator.clear();
                 }
@@ -789,30 +915,27 @@ impl<'errors> Tokenizer<'errors> {
                         let start = range.start.offset(esc_error_offset + 1, &self.chars);
                         let end = start.offset(2, &self.chars);
                         self.errors.push(FleetError::from_range(
-                            start.until(end),
+                            start.until(end).named(self.file_name.clone()),
                             "Unknown escape sequence ".to_string()
                                 + &raw_lexeme.chars().skip(esc_error_offset).take(2).join(""),
                             ErrorSeverity::Error,
-                            self.file_name.clone(),
                         ));
                     }
 
                     if lexeme.len() != 1 {
                         self.errors.push(FleetError::from_range(
-                            range,
+                            range.named(self.file_name.clone()),
                             "Character literals may only contain a single character",
                             ErrorSeverity::Error,
-                            self.file_name.clone(),
                         ));
                     }
 
                     self.tokens.push(Token {
-                        range,
+                        range: range.named(self.file_name.clone()),
                         type_: TokenType::CharLiteral(lexeme),
 
                         leading_trivia: self.trivia_accumulator.clone(),
                         trailing_trivia: vec![],
-                        file_name: self.file_name.clone(),
                     });
                     self.trivia_accumulator.clear();
                 }
@@ -844,7 +967,6 @@ impl<'errors> Tokenizer<'errors> {
                 range: self.unk_char_range,
                 leading_trivia: vec![],
                 trailing_trivia: vec![],
-                file_name: self.file_name.clone(),
             });
         }
 
@@ -876,9 +998,9 @@ impl<'errors> Tokenizer<'errors> {
             return;
         };
 
-        let same_line = last_token.range.end.line == trivia.range.end.line;
-        let trailing_with_newline =
-            last_token.range.end.line + 1 == trivia.range.end.line && trivia.range.end.column == 0;
+        let same_line = last_token.range.end().line() == trivia.range.end.line;
+        let trailing_with_newline = last_token.range.end().line() + 1 == trivia.range.end.line
+            && trivia.range.end.column == 0;
 
         if same_line || trailing_with_newline {
             info!("Flushing {trivia:?} to {last_token:#?}");

@@ -28,27 +28,26 @@ use crate::{
         runtime_type::RuntimeType,
         scope_analysis::{FunctionID, VariableID},
     },
-    tokenizer::{Keyword, SourceRange, Token, TokenType},
+    tokenizer::{Keyword, NamedSourceRange, Token, TokenType},
 };
 
 #[derive(Error, Debug)]
 #[error(
     "{file_name}:{start_line}:{start_column} - {end_line}:{end_column}: {msg}",
-    start_line = .range.start.line,
-    start_column = .range.start.column,
-    end_line = .range.end.line,
-    end_column = .range.end.column
+    file_name = .range.name.0,
+    start_line = .range.start().line(),
+    start_column = .range.start().column(),
+    end_line = .range.end().line(),
+    end_column = .range.end().column()
 )]
 pub struct ParserError {
-    pub file_name: String,
     pub msg: String,
-    pub range: SourceRange,
+    pub range: NamedSourceRange,
 }
 
 impl From<FleetError> for ParserError {
     fn from(value: FleetError) -> Self {
         Self {
-            file_name: "unknown_file.fl".to_string(), // TODO: track filename in FleetError
             range: value.start().until(value.end()),
             msg: value.message,
         }
@@ -217,13 +216,12 @@ macro_rules! recover_until {
                 if let (Some(start), Some(end)) = ($start_of_recovery, recovery_end) {
                     $self.errors.push(
                         FleetError::try_new(
-                            vec![start.range.start.until(end.range.end)],
+                            vec![start.range.start().until(end.range.end())],
                             format!(
                                 "Recovered by skipping until one of [{}]",
                                 stringify!($($recovery_stops), +)
                             ),
                             ErrorSeverity::Warning,
-                            start.file_name,
                         )
                         .unwrap(),
                     )

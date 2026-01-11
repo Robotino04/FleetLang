@@ -123,7 +123,7 @@ fn main() {
 
     let print_all_errors_and_message = |msg, mut errors: Vec<FleetError>| {
         // error -> warning -> node, then sort by file location
-        errors.sort_by_key(|err| err.highlight_groups().first().unwrap().start);
+        errors.sort_by_key(|err| err.highlight_groups().first().unwrap().range.start);
         errors.sort_by_key(|err| err.severity);
 
         if let Some(worst_severity) = errors.iter().map(|err| err.severity).max() {

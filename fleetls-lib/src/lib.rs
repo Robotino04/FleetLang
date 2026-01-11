@@ -109,13 +109,15 @@ struct AnalysisData<'a> {
     comptime_deps: &'a ComptimeDeps,
 }
 
-pub fn source_loc_to_position(loc: SourceLocation) -> Position {
+pub fn source_loc_to_position(loc: impl Into<SourceLocation>) -> Position {
+    let loc = loc.into();
     Position {
         line: loc.line as u32 - 1,
         character: loc.column as u32,
     }
 }
-pub fn source_range_to_lsp_range(range: SourceRange) -> Range {
+pub fn source_range_to_lsp_range(range: impl Into<SourceRange>) -> Range {
+    let range = range.into();
     Range {
         start: source_loc_to_position(range.start),
         end: source_loc_to_position(range.end),
@@ -991,7 +993,7 @@ impl LanguageServer for Backend {
                         .iter()
                         .flat_map(|error| {
                             error.highlight_groups().iter().map(|range| Diagnostic {
-                                range: source_range_to_lsp_range(*range),
+                                range: source_range_to_lsp_range(range.clone()),
                                 severity: Some(match error.severity {
                                     ErrorSeverity::Error => DiagnosticSeverity::ERROR,
                                     ErrorSeverity::Warning => DiagnosticSeverity::WARNING,
@@ -1145,12 +1147,12 @@ impl LanguageServer for Backend {
                 }),
                 range: hovered_token.map(|token| Range {
                     start: Position {
-                        line: token.range.start.line as u32 - 1,
-                        character: token.range.start.column as u32,
+                        line: token.range.start().line() as u32 - 1,
+                        character: token.range.start().column() as u32,
                     },
                     end: Position {
-                        line: token.range.end.line as u32 - 1,
-                        character: token.range.end.column as u32,
+                        line: token.range.end().line() as u32 - 1,
+                        character: token.range.end().column() as u32,
                     },
                 }),
             }))
@@ -1389,24 +1391,29 @@ impl LanguageServer for Backend {
                         .iter()
                         .find_position(|(arg, _token)| arg.get_id() == argument.get_id())
                         .map(|(i, _)| i as u32)
-                        .unwrap_or(if cpos_sl <= function_call.open_paren_token.range.start {
-                            0
-                        } else {
-                            function_call
-                                .arguments
-                                .len()
-                                .min(parameter_types.len().saturating_sub(1))
-                                as u32
-                        })
+                        .unwrap_or(
+                            if cpos_sl <= function_call.open_paren_token.range.range.start {
+                                0
+                            } else {
+                                function_call
+                                    .arguments
+                                    .len()
+                                    .min(parameter_types.len().saturating_sub(1))
+                                    as u32
+                            },
+                        )
                 })
-                .unwrap_or(if cpos_sl <= function_call.open_paren_token.range.start {
-                    0
-                } else {
-                    function_call
-                        .arguments
-                        .len()
-                        .min(parameter_types.len().saturating_sub(1)) as u32
-                });
+                .unwrap_or(
+                    if cpos_sl <= function_call.open_paren_token.range.range.start {
+                        0
+                    } else {
+                        function_call
+                            .arguments
+                            .len()
+                            .min(parameter_types.len().saturating_sub(1))
+                            as u32
+                    },
+                );
 
             Ok(Some(SignatureHelp {
                 signatures: vec![SignatureInformation {

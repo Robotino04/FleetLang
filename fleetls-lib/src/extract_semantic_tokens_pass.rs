@@ -55,13 +55,13 @@ impl<'inputs> ExtractSemanticTokensPass<'inputs> {
     ) {
         self.build_comment_tokens_from_trivia(&token.leading_trivia);
         self.semantic_tokens.push(SemanticToken {
-            delta_line: token_delta_line(self.previous_token_start, token.range.start),
-            delta_start: token_delta_start(self.previous_token_start, token.range.start),
+            delta_line: token_delta_line(self.previous_token_start, token.range.range.start),
+            delta_start: token_delta_start(self.previous_token_start, token.range.range.start),
             length: token.range.num_chars() as u32,
             token_type: self.find_token_type_index(token_type),
             token_modifiers_bitset: self.build_token_modifier_bitset(token_modifiers),
         });
-        self.previous_token_start = token.range.start;
+        self.previous_token_start = token.range.range.start;
         self.build_comment_tokens_from_trivia(&token.trailing_trivia);
     }
 

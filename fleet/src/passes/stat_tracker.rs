@@ -22,7 +22,6 @@ use crate::{
     },
     infra::{ErrorSeverity, FleetError},
     passes::{
-        first_token_mapper::FirstTokenMapper,
         pass_manager::{
             Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, StatData, TypeSets,
             VariableData,
@@ -30,7 +29,7 @@ use crate::{
         runtime_type::RuntimeType,
         scope_analysis::{Function, FunctionID, Variable},
     },
-    tokenizer::{FileName, SourceLocation, SourceRange},
+    tokenizer::{NamedSourceRange, SourceLocation},
 };
 
 use super::find_node_bounds::find_node_bounds;
@@ -144,13 +143,13 @@ impl MergableStat for AccessRecord {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NodeStats {
     pub terminates_function: YesNoMaybe,
-    pub non_terminating_ranges: Vec<SourceRange>,
+    pub non_terminating_ranges: Vec<NamedSourceRange>,
     pub uses_gpu: YesNoMaybe,
     pub accessed_items: AccessRecord,
 }
 
 impl NodeStats {
-    pub fn default_with_range(ntr: Vec<SourceRange>) -> Self {
+    pub fn default_with_range(ntr: Vec<NamedSourceRange>) -> Self {
         Self {
             terminates_function: YesNoMaybe::No,
             non_terminating_ranges: ntr,
@@ -314,15 +313,17 @@ impl AstVisitor for StatTracker<'_> {
             self.stats.insert(program.id, main_stat);
         } else {
             self.errors.push(FleetError::from_range(
-                SourceLocation::start().until(
-                    program
-                        .top_level_statements
-                        .first()
-                        .map_or(SourceLocation::start(), |tls| find_node_bounds(tls).end),
-                ),
+                SourceLocation::start()
+                    .named(program.file_name.clone())
+                    .until(
+                        program
+                            .top_level_statements
+                            .first()
+                            .map(|tls| find_node_bounds(tls).range.start)
+                            .unwrap_or(SourceLocation::start()),
+                    ),
                 "No main function was found.".to_string(),
                 ErrorSeverity::Error,
-                program.file_name.clone(),
             ));
         }
     }
@@ -389,7 +390,6 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         body: &mut StatementFunctionBody,
     ) -> Self::FunctionBodyOutput {
-        let mut body_clone = body.clone();
         let StatementFunctionBody { statement, id } = body;
         let stat = self.visit_statement(statement);
 
@@ -409,17 +409,11 @@ impl AstVisitor for StatTracker<'_> {
                 .get(current_function.borrow().return_type.unwrap())
                 != RuntimeType::Unit
             {
-                let mut filename_mapper = FirstTokenMapper::new(|token| token.file_name.clone());
-                filename_mapper.visit_statement_function_body(&mut body_clone);
-
                 self.errors.push({
                     FleetError::try_new(
                         stat.non_terminating_ranges.clone(),
                         "All code paths must return.",
                         ErrorSeverity::Error,
-                        filename_mapper
-                            .result()
-                            .expect("Cannot create FleetError from empty node"),
                     )
                     .unwrap()
                 });
@@ -562,18 +556,13 @@ impl AstVisitor for StatTracker<'_> {
         } = stmt;
 
         let mut body_stat = NodeStats::default_with_range(vec![bounds]);
-        let mut unreachable_range: Option<(SourceRange, FileName)> = None;
+        let mut unreachable_range: Option<NamedSourceRange> = None;
         for stmt in body {
             if body_stat.terminates_function == YesNoMaybe::Yes {
-                if let Some((prev_range, file_name)) = unreachable_range {
-                    unreachable_range =
-                        Some((prev_range.extend_with(find_node_bounds(stmt)), file_name));
+                if let Some(prev_range) = unreachable_range {
+                    unreachable_range = Some(prev_range.extend_with(find_node_bounds(stmt)));
                 } else {
-                    let mut filename_mapper =
-                        FirstTokenMapper::new(|token| token.file_name.clone());
-                    filename_mapper.visit_statement(stmt);
-                    unreachable_range =
-                        Some((find_node_bounds(stmt), filename_mapper.result().unwrap()));
+                    unreachable_range = Some(find_node_bounds(stmt));
                 }
             }
             body_stat = body_stat.serial(self.visit_statement(stmt));
@@ -581,15 +570,15 @@ impl AstVisitor for StatTracker<'_> {
         if body_stat.non_terminating_ranges.is_empty()
             && body_stat.terminates_function != YesNoMaybe::Yes
         {
-            body_stat =
-                body_stat.serial(NodeStats::default_with_range(vec![close_brace_token.range]));
+            body_stat = body_stat.serial(NodeStats::default_with_range(vec![
+                close_brace_token.range.clone(),
+            ]));
         }
-        if let Some((range, file_name)) = unreachable_range {
+        if let Some(range) = unreachable_range {
             self.errors.push(FleetError::from_range(
                 range,
                 "This code is unreachable".to_string(),
                 ErrorSeverity::Warning,
-                file_name,
             ));
         }
         self.stats.insert(*id, body_stat.clone());
@@ -665,7 +654,7 @@ impl AstVisitor for StatTracker<'_> {
         } else {
             // always merge with empty to indicate that this if statement isn't complete
             if_stats = if_stats.parallel(NodeStats::default_with_range(vec![
-                bounds.end.prev_inline().until(bounds.end),
+                bounds.end().prev_inline().until(bounds.end()),
             ]));
         }
 
@@ -716,12 +705,14 @@ impl AstVisitor for StatTracker<'_> {
             .as_mut()
             .map(|condition| self.visit_expression(condition))
             .unwrap_or(NodeStats::default_with_range(vec![
-                second_semicolon_token.range,
+                second_semicolon_token.range.clone(),
             ]));
         let inc_stat = incrementer
             .as_mut()
             .map(|incrementer| self.visit_expression(incrementer))
-            .unwrap_or(NodeStats::default_with_range(vec![close_paren_token.range]));
+            .unwrap_or(NodeStats::default_with_range(vec![
+                close_paren_token.range.clone(),
+            ]));
 
         self.loop_count += 1;
         let body_stat = self.visit_statement(body);
@@ -1197,7 +1188,7 @@ impl AstVisitor for StatTracker<'_> {
             id,
         }: &mut StructType,
     ) -> Self::TypeOutput {
-        let mut stat = NodeStats::default_with_range(vec![struct_token.range]);
+        let mut stat = NodeStats::default_with_range(vec![struct_token.range.clone()]);
         for (
             StructMemberDefinition {
                 name: _,
@@ -1222,7 +1213,7 @@ impl AstVisitor for StatTracker<'_> {
             id,
         }: &mut AliasType,
     ) -> Self::TypeOutput {
-        let stat = NodeStats::default_with_range(vec![name_token.range]);
+        let stat = NodeStats::default_with_range(vec![name_token.range.clone()]);
         self.stats.insert(*id, stat.clone());
         stat
     }

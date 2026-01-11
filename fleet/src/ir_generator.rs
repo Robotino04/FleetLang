@@ -631,12 +631,16 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
             if let Err(err) = self.module.link_in_module(runtime_module_declarations) {
                 self.errors.push(FleetError::from_range(
-                    SourceLocation::start().until(
-                        program
-                            .top_level_statements
-                            .first()
-                            .map_or(SourceLocation::start(), |tls| find_node_bounds(tls).end),
-                    ),
+                    SourceLocation::start()
+                        .named(program.file_name.clone())
+                        .until(
+                            program
+                                .top_level_statements
+                                .first()
+                                .map_or(SourceLocation::start(), |tls| {
+                                    find_node_bounds(tls).range.end
+                                }),
+                        ),
                     format!(
                         "Linking with runtime library declarations failed: {}\nModule dump:\n{}",
                         unescape(err.to_str().unwrap(), QuoteType::Double)
@@ -644,7 +648,6 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         self.module.print_to_string().to_str().unwrap()
                     ),
                     ErrorSeverity::Error,
-                    program.file_name.clone(),
                 ));
             }
         }
@@ -782,12 +785,16 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         if let Err(err) = self.module.verify() {
             self.errors.push(FleetError::from_range(
-                SourceLocation::start().until(
-                    program
-                        .top_level_statements
-                        .first()
-                        .map_or(SourceLocation::start(), |tls| find_node_bounds(tls).end),
-                ),
+                SourceLocation::start()
+                    .named(program.file_name.clone())
+                    .until(
+                        program
+                            .top_level_statements
+                            .first()
+                            .map_or(SourceLocation::start(), |tls| {
+                                find_node_bounds(tls).range.end
+                            }),
+                    ),
                 format!(
                     "LLVM module is invalid: {}\nModule dump:\n{}",
                     unescape(err.to_str().unwrap(), QuoteType::Double)
@@ -795,7 +802,6 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     self.module.print_to_string().to_str().unwrap()
                 ),
                 ErrorSeverity::Error,
-                program.file_name.clone(),
             ));
         }
 

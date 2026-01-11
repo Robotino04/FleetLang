@@ -126,19 +126,17 @@ impl PartialAstVisitor for FixTrailingComma<'_> {
             let mut replace_pass = LastTokenMapper::new(|token| {
                 (
                     std::mem::take(&mut token.trailing_trivia),
-                    token.range.end,
-                    token.file_name.clone(),
+                    token.range.end(),
                 )
             });
             replace_pass.visit_type(type_);
-            let (trivia, token_end, file_name) = replace_pass.result().unwrap();
+            let (trivia, token_end) = replace_pass.result().unwrap();
 
             *comma = Some(Token {
                 type_: TokenType::Comma,
-                range: token_end.until(token_end),
+                range: token_end.clone().until(token_end),
                 leading_trivia: vec![],
                 trailing_trivia: trivia,
-                file_name,
             });
         }
     }
@@ -179,19 +177,17 @@ impl PartialAstVisitor for FixTrailingComma<'_> {
             let mut replace_pass = LastTokenMapper::new(|token| {
                 (
                     std::mem::take(&mut token.trailing_trivia),
-                    token.range.end,
-                    token.file_name.clone(),
+                    token.range.end(),
                 )
             });
             replace_pass.visit_expression(value);
-            let (trivia, token_end, file_name) = replace_pass.result().unwrap();
+            let (trivia, token_end) = replace_pass.result().unwrap();
 
             *comma = Some(Token {
                 type_: TokenType::Comma,
-                range: token_end.until(token_end),
+                range: token_end.clone().until(token_end),
                 leading_trivia: vec![],
                 trailing_trivia: trivia,
-                file_name,
             });
         }
     }

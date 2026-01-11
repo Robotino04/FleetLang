@@ -1264,16 +1264,11 @@ impl AstVisitor for TypePropagator<'_> {
     ) -> Self::ExpressionOutput {
         let expression_clone = expression.clone();
         let VariableAccessExpression {
-            name,
+            name: _,
             name_token: _,
             id,
         } = expression;
         let Some(ref_variable) = self.referenced_variable.get(id) else {
-            self.errors.push(FleetError::from_node(
-                &expression_clone,
-                format!("No variable named {name:?} is defined"),
-                ErrorSeverity::Error,
-            ));
             return self.type_sets.insert_set(RuntimeType::Unknown);
         };
         if self.require_constant && !ref_variable.borrow().is_constant {
@@ -1889,11 +1884,6 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         } = lvalue;
         let Some(ref_variable) = self.referenced_variable.get(id) else {
-            self.errors.push(FleetError::from_node(
-                &lvalue_clone,
-                format!("No variable named {name:?} is defined"),
-                ErrorSeverity::Error,
-            ));
             return self.type_sets.insert_set(RuntimeType::Unknown);
         };
         if ref_variable.borrow().is_constant {
@@ -2144,7 +2134,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         let mut hash = DefaultHasher::new();
         struct_token.range.hash(&mut hash);
-        struct_token.file_name.hash(&mut hash);
+
         let struct_t = self.type_sets.insert_set(RuntimeType::Struct {
             members: rt_members,
             source_hash: Some(hash.finish()),
