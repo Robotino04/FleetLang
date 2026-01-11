@@ -51,7 +51,7 @@ use crate::{
             Errors, FunctionData, GlobalState, Pass, PassError, PassFactory, PassResult,
             PrecompiledGlslFunctions, ScopeData, StatData, TypeData, TypeSets, VariableData,
         },
-        runtime_type::RuntimeType,
+        runtime_type::{RuntimeType, RuntimeTypeKind},
         scope_analysis::{FunctionID, VariableID},
         stat_tracker::YesNoMaybe,
         top_level_binding_finder::TopLevelBindingFinder,
@@ -346,81 +346,87 @@ impl<'a> IrGenerator<'_> {
         expected_type: UnionFindSetPtr<RuntimeType>,
         error_node: &I,
     ) -> Result<RuntimeValueIR<'a>> {
-        Ok(match self.type_sets.get(expected_type) {
-            RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64 => {
-                RuntimeValueIR::SignedInt(value.unwrap().into_int_value())
-            }
-            RuntimeType::U8 | RuntimeType::U16 | RuntimeType::U32 | RuntimeType::U64 => {
-                RuntimeValueIR::UnsignedInt(value.unwrap().into_int_value())
-            }
-            RuntimeType::F32 | RuntimeType::F64 => {
+        Ok(match &self.type_sets.get(expected_type).kind {
+            RuntimeTypeKind::I8
+            | RuntimeTypeKind::I16
+            | RuntimeTypeKind::I32
+            | RuntimeTypeKind::I64 => RuntimeValueIR::SignedInt(value.unwrap().into_int_value()),
+            RuntimeTypeKind::U8
+            | RuntimeTypeKind::U16
+            | RuntimeTypeKind::U32
+            | RuntimeTypeKind::U64 => RuntimeValueIR::UnsignedInt(value.unwrap().into_int_value()),
+            RuntimeTypeKind::F32 | RuntimeTypeKind::F64 => {
                 RuntimeValueIR::Float(value.unwrap().into_float_value())
             }
-            RuntimeType::Boolean => RuntimeValueIR::Bool(value.unwrap().into_int_value()),
-            RuntimeType::Unit => {
+            RuntimeTypeKind::Boolean => RuntimeValueIR::Bool(value.unwrap().into_int_value()),
+            RuntimeTypeKind::Unit => {
                 assert!(value.is_none());
                 RuntimeValueIR::Unit
             }
 
-            RuntimeType::ArrayOf { .. } => {
+            RuntimeTypeKind::ArrayOf { .. } => {
                 RuntimeValueIR::Array(value.unwrap().into_pointer_value())
             }
-            RuntimeType::Struct { .. } => {
+            RuntimeTypeKind::Struct { .. } => {
                 RuntimeValueIR::Struct(value.unwrap().into_pointer_value())
             }
-            RuntimeType::Number { .. } | RuntimeType::Unknown | RuntimeType::Error => self
-                .report_error(FleetError::from_node(
+            RuntimeTypeKind::Number { .. } | RuntimeTypeKind::Unknown | RuntimeTypeKind::Error => {
+                self.report_error(FleetError::from_node(
                     error_node,
                     format!(
                         "this has unknown or error type: {}",
-                        self.type_sets.get(expected_type).stringify(&self.type_sets)
+                        self.type_sets
+                            .get(expected_type)
+                            .kind
+                            .stringify(&self.type_sets)
                     ),
                     ErrorSeverity::Error,
-                ))?,
+                ))?
+            }
         })
     }
 
     fn runtime_type_to_llvm_impl<I: Into<AstNode> + Clone>(
         &self,
-        type_ptr: &RuntimeType,
+        type_ptr: &RuntimeTypeKind,
         error_node: &I,
     ) -> ::core::result::Result<AnyTypeEnum<'a>, FleetError> {
         Ok(match type_ptr {
-            RuntimeType::I8 | RuntimeType::U8 => self.context.i8_type().into(),
-            RuntimeType::I16 | RuntimeType::U16 => self.context.i16_type().into(),
-            RuntimeType::I32 | RuntimeType::U32 => self.context.i32_type().into(),
-            RuntimeType::I64 | RuntimeType::U64 => self.context.i64_type().into(),
-            RuntimeType::F32 => self.context.f32_type().into(),
-            RuntimeType::F64 => self.context.f64_type().into(),
-            RuntimeType::Number { .. } => {
+            RuntimeTypeKind::I8 | RuntimeTypeKind::U8 => self.context.i8_type().into(),
+            RuntimeTypeKind::I16 | RuntimeTypeKind::U16 => self.context.i16_type().into(),
+            RuntimeTypeKind::I32 | RuntimeTypeKind::U32 => self.context.i32_type().into(),
+            RuntimeTypeKind::I64 | RuntimeTypeKind::U64 => self.context.i64_type().into(),
+            RuntimeTypeKind::F32 => self.context.f32_type().into(),
+            RuntimeTypeKind::F64 => self.context.f64_type().into(),
+            RuntimeTypeKind::Number { .. } => {
                 return Err(FleetError::from_node(
                     error_node,
                     "Undetermined numbers should have caused errors earlier",
                     ErrorSeverity::Error,
                 ));
             }
-            RuntimeType::Unit => self.context.void_type().into(),
-            RuntimeType::Boolean => self.context.bool_type().into(),
-            RuntimeType::Unknown => {
+            RuntimeTypeKind::Unit => self.context.void_type().into(),
+            RuntimeTypeKind::Boolean => self.context.bool_type().into(),
+            RuntimeTypeKind::Unknown => {
                 return Err(FleetError::from_node(
                     error_node,
                     "Unknown types should have caused errors earlier",
                     ErrorSeverity::Error,
                 ));
             }
-            RuntimeType::Error => {
+            RuntimeTypeKind::Error => {
                 return Err(FleetError::from_node(
                     error_node,
                     "Error types should have caused errors earlier",
                     ErrorSeverity::Error,
                 ));
             }
-            RuntimeType::ArrayOf {
+            RuntimeTypeKind::ArrayOf {
                 subtype: inner_type,
                 size,
             } => {
-                let inner_type_ir =
-                    self.runtime_type_to_llvm_impl(self.type_sets.get(*inner_type), error_node);
+                let inner_type_ir = self
+                    .runtime_type_to_llvm_impl(&self.type_sets.get(*inner_type).kind, error_node);
 
                 let Some(size) = size else {
                     return Err(FleetError::from_node(
@@ -448,7 +454,7 @@ impl<'a> IrGenerator<'_> {
                     }
                 }
             }
-            RuntimeType::Struct {
+            RuntimeTypeKind::Struct {
                 members,
                 source_hash: _,
             } => self
@@ -460,7 +466,7 @@ impl<'a> IrGenerator<'_> {
                         .map(|(_name, type_)| {
                             Ok(
                                 match (self.runtime_type_to_llvm_impl(
-                                    self.type_sets.get(type_),
+                                    &self.type_sets.get(type_).kind,
                                     error_node,
                                 )?)
                                 .into_basic_type()
@@ -494,7 +500,7 @@ impl<'a> IrGenerator<'_> {
         type_ptr: UnionFindSetPtr<RuntimeType>,
         error_node: &I,
     ) -> Result<AnyTypeEnum<'a>> {
-        match self.runtime_type_to_llvm_impl(&self.type_sets.get(type_ptr).clone(), error_node) {
+        match self.runtime_type_to_llvm_impl(&self.type_sets.get(type_ptr).kind, error_node) {
             Ok(ok) => Ok(ok),
             Err(err) => self.report_error(err),
         }
@@ -1756,11 +1762,13 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         RuntimeValueIR::Float(type_.const_float(*value as f64))
                     }
 
-                    AnyTypeEnum::IntType(type_) if self.type_sets.get(rt_type_ptr).is_signed() => {
+                    AnyTypeEnum::IntType(type_)
+                        if self.type_sets.get(rt_type_ptr).kind.is_signed() =>
+                    {
                         RuntimeValueIR::SignedInt(type_.const_int(*value, true))
                     }
                     AnyTypeEnum::IntType(type_)
-                        if self.type_sets.get(rt_type_ptr).is_unsigned() =>
+                        if self.type_sets.get(rt_type_ptr).kind.is_unsigned() =>
                     {
                         RuntimeValueIR::UnsignedInt(type_.const_int(*value, false))
                     }
@@ -1809,7 +1817,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .type_data
             .get(id)
             .expect("type data should exist before running ir_generator");
-        let RuntimeType::ArrayOf { .. } = *self.type_sets.get(type_) else {
+        let RuntimeTypeKind::ArrayOf { .. } = self.type_sets.get(type_).kind else {
             return self.report_error(FleetError::from_node(
                 &expression_clone,
                 "This array doesn't have an ArrayOf(_) type",
@@ -1869,7 +1877,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         } = expression;
 
         let type_ = self.visit_type(type_)?;
-        let RuntimeType::Struct { .. } = *self.type_sets.get(type_) else {
+        let RuntimeTypeKind::Struct { .. } = self.type_sets.get(type_).kind else {
             return self.report_error(FleetError::from_node(
                 &expression_clone,
                 "This struct doesn't have a Struct(_) type",
@@ -2045,26 +2053,32 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .expect("type data must exist before calling ir_generator");
                 let expected_type_ir = self.runtime_type_to_llvm(expected_type, &expr_clone)?;
 
-                Ok(match self.type_sets.get(expected_type) {
-                    RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64 => {
+                Ok(match &self.type_sets.get(expected_type).kind {
+                    RuntimeTypeKind::I8
+                    | RuntimeTypeKind::I16
+                    | RuntimeTypeKind::I32
+                    | RuntimeTypeKind::I64 => {
                         RuntimeValueIR::SignedInt(expected_type_ir.into_int_type().const_zero())
                     }
-                    RuntimeType::U8 | RuntimeType::U16 | RuntimeType::U32 | RuntimeType::U64 => {
+                    RuntimeTypeKind::U8
+                    | RuntimeTypeKind::U16
+                    | RuntimeTypeKind::U32
+                    | RuntimeTypeKind::U64 => {
                         RuntimeValueIR::UnsignedInt(expected_type_ir.into_int_type().const_zero())
                     }
-                    RuntimeType::F32 | RuntimeType::F64 => {
+                    RuntimeTypeKind::F32 | RuntimeTypeKind::F64 => {
                         RuntimeValueIR::Float(expected_type_ir.into_float_type().const_zero())
                     }
-                    RuntimeType::Boolean => {
+                    RuntimeTypeKind::Boolean => {
                         RuntimeValueIR::Bool(expected_type_ir.into_int_type().const_zero())
                     }
-                    RuntimeType::Unit => self.report_error(FleetError::from_node(
+                    RuntimeTypeKind::Unit => self.report_error(FleetError::from_node(
                         &expr_clone,
                         "@zero cannot have Unit type",
                         ErrorSeverity::Error,
                     ))?,
 
-                    RuntimeType::ArrayOf { .. } => {
+                    RuntimeTypeKind::ArrayOf { .. } => {
                         let ptr = self
                             .builder
                             .build_alloca(expected_type_ir.into_array_type(), "zero_temporary")?;
@@ -2078,7 +2092,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
                         RuntimeValueIR::Array(ptr)
                     }
-                    RuntimeType::Struct { .. } => {
+                    RuntimeTypeKind::Struct { .. } => {
                         let ptr = self
                             .builder
                             .build_alloca(expected_type_ir.into_struct_type(), "zero_temporary")?;
@@ -2092,15 +2106,19 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
                         RuntimeValueIR::Struct(ptr)
                     }
-                    RuntimeType::Number { .. } | RuntimeType::Unknown | RuntimeType::Error => self
-                        .report_error(FleetError::from_node(
-                            &expr_clone,
-                            format!(
-                                "@zero compiler function has unknown or error type: {}",
-                                self.type_sets.get(expected_type).stringify(&self.type_sets)
-                            ),
-                            ErrorSeverity::Error,
-                        ))?,
+                    RuntimeTypeKind::Number { .. }
+                    | RuntimeTypeKind::Unknown
+                    | RuntimeTypeKind::Error => self.report_error(FleetError::from_node(
+                        &expr_clone,
+                        format!(
+                            "@zero compiler function has unknown or error type: {}",
+                            self.type_sets
+                                .get(expected_type)
+                                .kind
+                                .stringify(&self.type_sets)
+                        ),
+                        ErrorSeverity::Error,
+                    ))?,
                 })
             }
             "sqrt" => {
@@ -2131,7 +2149,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         &expr_clone,
                         format!(
                             "@sqrt compiler function has unknown or error type: {}",
-                            self.type_sets.get(expected_type).stringify(&self.type_sets)
+                            self.type_sets
+                                .get(expected_type)
+                                .kind
+                                .stringify(&self.type_sets)
                         ),
                         ErrorSeverity::Error,
                     ))?,
@@ -2165,7 +2186,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         &expr_clone,
                         format!(
                             "@sin compiler function has unknown or error type: {}",
-                            self.type_sets.get(expected_type).stringify(&self.type_sets)
+                            self.type_sets
+                                .get(expected_type)
+                                .kind
+                                .stringify(&self.type_sets)
                         ),
                         ErrorSeverity::Error,
                     ))?,
@@ -2199,7 +2223,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         &expr_clone,
                         format!(
                             "@cos compiler function has unknown or error type: {}",
-                            self.type_sets.get(expected_type).stringify(&self.type_sets)
+                            self.type_sets
+                                .get(expected_type)
+                                .kind
+                                .stringify(&self.type_sets)
                         ),
                         ErrorSeverity::Error,
                     ))?,
@@ -2215,19 +2242,22 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .get(id)
                     .expect("type data must exist before calling ir_generator");
 
-                let length = match self.type_sets.get(array_type) {
-                    RuntimeType::ArrayOf {
+                let length = match &self.type_sets.get(array_type).kind {
+                    RuntimeTypeKind::ArrayOf {
                         subtype: _,
                         size: Some(length),
                     } => *length,
-                    RuntimeType::ArrayOf {
+                    RuntimeTypeKind::ArrayOf {
                         subtype: _,
                         size: None,
                     } => self.report_error(FleetError::from_node(
                         &expr_clone,
                         format!(
                             "@length called with unsized array value of type {}",
-                            self.type_sets.get(array_type).stringify(&self.type_sets)
+                            self.type_sets
+                                .get(array_type)
+                                .kind
+                                .stringify(&self.type_sets)
                         ),
                         ErrorSeverity::Error,
                     ))?,
@@ -2235,7 +2265,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         &expr_clone,
                         format!(
                             "@length called with non-array typed value of type {}",
-                            self.type_sets.get(array_type).stringify(&self.type_sets)
+                            self.type_sets
+                                .get(array_type)
+                                .kind
+                                .stringify(&self.type_sets)
                         ),
                         ErrorSeverity::Error,
                     ))?,
@@ -2246,12 +2279,12 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 Ok(match args.first().unwrap().1 {
                     RuntimeValueIR::Array(_value) => match ir_type {
                         AnyTypeEnum::IntType(type_)
-                            if self.type_sets.get(expected_type).is_signed() =>
+                            if self.type_sets.get(expected_type).kind.is_signed() =>
                         {
                             RuntimeValueIR::SignedInt(type_.const_int(length as u64, true))
                         }
                         AnyTypeEnum::IntType(type_)
-                            if self.type_sets.get(expected_type).is_unsigned() =>
+                            if self.type_sets.get(expected_type).kind.is_unsigned() =>
                         {
                             RuntimeValueIR::UnsignedInt(type_.const_int(length as u64, false))
                         }
@@ -2269,7 +2302,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         &expr_clone,
                         format!(
                             "@length called with non-array typed value of type {}",
-                            self.type_sets.get(array_type).stringify(&self.type_sets)
+                            self.type_sets
+                                .get(array_type)
+                                .kind
+                                .stringify(&self.type_sets)
                         ),
                         ErrorSeverity::Error,
                     ))?,
@@ -2311,10 +2347,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             )?
         };
 
-        let result_type = array_type.unwrap_arrayof().0;
+        let result_type = array_type.kind.unwrap_arrayof().0;
 
-        let result = if let RuntimeType::ArrayOf { .. } | RuntimeType::Struct { .. } =
-            self.type_sets.get(array_type.unwrap_arrayof().0)
+        let result = if let RuntimeTypeKind::ArrayOf { .. } | RuntimeTypeKind::Struct { .. } =
+            self.type_sets.get(array_type.kind.unwrap_arrayof().0).kind
         {
             index_ptr.into()
         } else {
@@ -2346,10 +2382,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let value_type_ir = self.runtime_type_to_llvm(value_type, &**value)?;
         let value_type = self.type_sets.get(value_type);
 
-        let RuntimeType::Struct {
+        let RuntimeTypeKind::Struct {
             members,
             source_hash: _,
-        } = value_type
+        } = &value_type.kind
         else {
             return self.report_error(FleetError::from_node(
                 expr,
@@ -2375,8 +2411,8 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             "struct_Access",
         )?;
 
-        let result = if let RuntimeType::ArrayOf { .. } | RuntimeType::Struct { .. } =
-            self.type_sets.get(*member_type)
+        let result = if let RuntimeTypeKind::ArrayOf { .. } | RuntimeTypeKind::Struct { .. } =
+            self.type_sets.get(*member_type).kind
         {
             index_ptr.into()
         } else {
@@ -2440,7 +2476,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let result_type_ir = self.runtime_type_to_llvm(result_type_ptr, &expr_clone)?;
         let result_type = self.type_sets.get(result_type_ptr);
 
-        let result = if let RuntimeType::ArrayOf { .. } | RuntimeType::Struct { .. } = result_type {
+        let result = if let RuntimeTypeKind::ArrayOf { .. } | RuntimeTypeKind::Struct { .. } =
+            result_type.kind
+        {
             Some(storage.0.into())
         } else {
             Some(self.builder.build_load(
@@ -2538,30 +2576,34 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .get(id)
             .expect("type data should exist before calling ir_generator");
 
-        let target_type_str = self.type_sets.get(value_type).stringify(&self.type_sets);
+        let target_type_str = self
+            .type_sets
+            .get(value_type)
+            .kind
+            .stringify(&self.type_sets);
 
         match (
-            self.type_sets.get(value_type),
-            self.type_sets.get(target_type),
+            &self.type_sets.get(value_type).kind,
+            &self.type_sets.get(target_type).kind,
         ) {
             (
-                RuntimeType::I8
-                | RuntimeType::I16
-                | RuntimeType::I32
-                | RuntimeType::I64
-                | RuntimeType::U8
-                | RuntimeType::U16
-                | RuntimeType::U32
-                | RuntimeType::U64
-                | RuntimeType::Boolean,
-                RuntimeType::I8
-                | RuntimeType::I16
-                | RuntimeType::I32
-                | RuntimeType::I64
-                | RuntimeType::U8
-                | RuntimeType::U16
-                | RuntimeType::U32
-                | RuntimeType::U64,
+                RuntimeTypeKind::I8
+                | RuntimeTypeKind::I16
+                | RuntimeTypeKind::I32
+                | RuntimeTypeKind::I64
+                | RuntimeTypeKind::U8
+                | RuntimeTypeKind::U16
+                | RuntimeTypeKind::U32
+                | RuntimeTypeKind::U64
+                | RuntimeTypeKind::Boolean,
+                RuntimeTypeKind::I8
+                | RuntimeTypeKind::I16
+                | RuntimeTypeKind::I32
+                | RuntimeTypeKind::I64
+                | RuntimeTypeKind::U8
+                | RuntimeTypeKind::U16
+                | RuntimeTypeKind::U32
+                | RuntimeTypeKind::U64,
             ) => {
                 let expected_type = self.visit_type(type_)?;
                 let expected_type_ir = self
@@ -2599,25 +2641,25 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
                 let expected_type = self.type_sets.get(expected_type);
 
-                if expected_type.is_signed() {
+                if expected_type.kind.is_signed() {
                     Ok(RuntimeValueIR::SignedInt(ir_value))
-                } else if expected_type.is_unsigned() {
+                } else if expected_type.kind.is_unsigned() {
                     Ok(RuntimeValueIR::UnsignedInt(ir_value))
                 } else {
                     unreachable!("casting target has to be signed or unsigned here")
                 }
             }
             (
-                RuntimeType::I8
-                | RuntimeType::I16
-                | RuntimeType::I32
-                | RuntimeType::I64
-                | RuntimeType::U8
-                | RuntimeType::U16
-                | RuntimeType::U32
-                | RuntimeType::U64
-                | RuntimeType::Boolean,
-                RuntimeType::F32 | RuntimeType::F64,
+                RuntimeTypeKind::I8
+                | RuntimeTypeKind::I16
+                | RuntimeTypeKind::I32
+                | RuntimeTypeKind::I64
+                | RuntimeTypeKind::U8
+                | RuntimeTypeKind::U16
+                | RuntimeTypeKind::U32
+                | RuntimeTypeKind::U64
+                | RuntimeTypeKind::Boolean,
+                RuntimeTypeKind::F32 | RuntimeTypeKind::F64,
             ) => {
                 let expected_type = self.visit_type(type_)?;
                 let expected_type = self
@@ -2645,8 +2687,11 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 }))
             }
             (
-                RuntimeType::F32 | RuntimeType::F64,
-                RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64,
+                RuntimeTypeKind::F32 | RuntimeTypeKind::F64,
+                RuntimeTypeKind::I8
+                | RuntimeTypeKind::I16
+                | RuntimeTypeKind::I32
+                | RuntimeTypeKind::I64,
             ) => {
                 let expected_type = self.visit_type(type_)?;
                 let expected_type = self
@@ -2662,8 +2707,11 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 ))
             }
             (
-                RuntimeType::F32 | RuntimeType::F64,
-                RuntimeType::U8 | RuntimeType::U16 | RuntimeType::U32 | RuntimeType::U64,
+                RuntimeTypeKind::F32 | RuntimeTypeKind::F64,
+                RuntimeTypeKind::U8
+                | RuntimeTypeKind::U16
+                | RuntimeTypeKind::U32
+                | RuntimeTypeKind::U64,
             ) => {
                 let expected_type = self.visit_type(type_)?;
                 let expected_type = self
@@ -2678,7 +2726,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     )?,
                 ))
             }
-            (RuntimeType::F32 | RuntimeType::F64, RuntimeType::F64) => {
+            (RuntimeTypeKind::F32 | RuntimeTypeKind::F64, RuntimeTypeKind::F64) => {
                 let expected_type = self.visit_type(type_)?;
                 let expected_type = self
                     .runtime_type_to_llvm(expected_type, expr)?
@@ -2690,7 +2738,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     &format!("as_{target_type_str}"),
                 )?))
             }
-            (RuntimeType::F32 | RuntimeType::F64, RuntimeType::F32) => {
+            (RuntimeTypeKind::F32 | RuntimeTypeKind::F64, RuntimeTypeKind::F32) => {
                 let expected_type = self.visit_type(type_)?;
                 let expected_type = self
                     .runtime_type_to_llvm(expected_type, expr)?
@@ -2704,13 +2752,13 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             }
             (
                 _,
-                RuntimeType::ArrayOf {
+                RuntimeTypeKind::ArrayOf {
                     subtype: _,
                     size: _,
                 },
             )
             | (
-                RuntimeType::ArrayOf {
+                RuntimeTypeKind::ArrayOf {
                     subtype: _,
                     size: _,
                 },
@@ -2722,13 +2770,13 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             )),
             (
                 _,
-                RuntimeType::Struct {
+                RuntimeTypeKind::Struct {
                     members: _,
                     source_hash: _,
                 },
             )
             | (
-                RuntimeType::Struct {
+                RuntimeTypeKind::Struct {
                     members: _,
                     source_hash: _,
                 },
@@ -2739,16 +2787,16 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 ErrorSeverity::Error,
             )),
             (
-                RuntimeType::I8
-                | RuntimeType::I16
-                | RuntimeType::I32
-                | RuntimeType::I64
-                | RuntimeType::U8
-                | RuntimeType::U16
-                | RuntimeType::U32
-                | RuntimeType::U64
-                | RuntimeType::Boolean,
-                RuntimeType::Boolean,
+                RuntimeTypeKind::I8
+                | RuntimeTypeKind::I16
+                | RuntimeTypeKind::I32
+                | RuntimeTypeKind::I64
+                | RuntimeTypeKind::U8
+                | RuntimeTypeKind::U16
+                | RuntimeTypeKind::U32
+                | RuntimeTypeKind::U64
+                | RuntimeTypeKind::Boolean,
+                RuntimeTypeKind::Boolean,
             ) => {
                 if let RuntimeValueIR::Bool(value)
                 | RuntimeValueIR::SignedInt(value)
@@ -2768,7 +2816,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     ))
                 }
             }
-            (RuntimeType::F32 | RuntimeType::F64, RuntimeType::Boolean) => {
+            (RuntimeTypeKind::F32 | RuntimeTypeKind::F64, RuntimeTypeKind::Boolean) => {
                 let value = value.unwrap_float();
 
                 Ok(RuntimeValueIR::Bool(self.builder.build_float_compare(
@@ -2778,34 +2826,33 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     "as_bool",
                 )?))
             }
-            (_, RuntimeType::Unit) => Ok(RuntimeValueIR::Unit),
-            (RuntimeType::Unit, _) => self.report_error(FleetError::from_node(
+            (_, RuntimeTypeKind::Unit) => Ok(RuntimeValueIR::Unit),
+            (RuntimeTypeKind::Unit, _) => self.report_error(FleetError::from_node(
                 type_,
                 "cannot cast from Unit to anything",
                 ErrorSeverity::Error,
             )),
 
-            (_, RuntimeType::Unknown) | (RuntimeType::Unknown, _) => {
+            (_, RuntimeTypeKind::Unknown) | (RuntimeTypeKind::Unknown, _) => {
                 self.report_error(FleetError::from_node(
                     type_,
                     "ir_generator shouldn't run if there are unknown types",
                     ErrorSeverity::Error,
                 ))
             }
-            (_, RuntimeType::Error) | (RuntimeType::Error, _) => {
+            (_, RuntimeTypeKind::Error) | (RuntimeTypeKind::Error, _) => {
                 self.report_error(FleetError::from_node(
                     type_,
                     "ir_generator shouldn't run if there are error types",
                     ErrorSeverity::Error,
                 ))
             }
-            (_, RuntimeType::Number { .. }) | (RuntimeType::Number { .. }, _) => {
-                self.report_error(FleetError::from_node(
+            (_, RuntimeTypeKind::Number { .. }) | (RuntimeTypeKind::Number { .. }, _) => self
+                .report_error(FleetError::from_node(
                     type_,
                     "ir_generator shouldn't run if there are undetermined number types",
                     ErrorSeverity::Error,
-                ))
-            }
+                )),
         }
     }
 
@@ -3386,10 +3433,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let value_type_ir = self.runtime_type_to_llvm(value_type, &**value)?;
         let value_type = self.type_sets.get(value_type);
 
-        let RuntimeType::Struct {
+        let RuntimeTypeKind::Struct {
             members,
             source_hash: _,
-        } = value_type
+        } = &value_type.kind
         else {
             return self.report_error(FleetError::from_node(
                 lvalue,
@@ -3443,13 +3490,13 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .expect("type data should exist before calling ir_generator");
         let infered_type = self.type_sets.get(*infered_type_ptr);
 
-        if *runtime_type != *infered_type {
+        if runtime_type.kind != infered_type.kind {
             return self.report_error(FleetError::from_node(
                 &type_clone,
                 format!(
                     "[INTERNAL ERROR] Inferred type {} of SimpleType doesn't match its actual type {}",
-                    infered_type.stringify(&self.type_sets),
-                    runtime_type.stringify(&self.type_sets),
+                    infered_type.kind.stringify(&self.type_sets),
+                    runtime_type.kind.stringify(&self.type_sets),
                 ),
                 ErrorSeverity::Error,
             ));
@@ -3472,8 +3519,8 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .expect("type data should exist before calling ir_generator");
 
         assert_eq!(
-            RuntimeType::Unit,
-            *self.type_sets.get(*infered_type),
+            RuntimeTypeKind::Unit,
+            self.type_sets.get(*infered_type).kind,
             "Inferred type (right) of UnitType doesn't match its actual type (left)"
         );
         Ok(*infered_type)

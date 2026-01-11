@@ -25,7 +25,7 @@ use crate::{
         pass_manager::{
             Errors, GlobalState, InputSource, Pass, PassError, PassFactory, PassResult,
         },
-        runtime_type::RuntimeType,
+        runtime_type::{RuntimeType, RuntimeTypeKind},
         scope_analysis::{FunctionID, VariableID},
     },
     tokenizer::{Keyword, NamedSourceRange, Token, TokenType},
@@ -1253,61 +1253,127 @@ impl<'state> Parser<'state> {
 
     pub fn parse_primary_type(&mut self) -> Result<Type> {
         match self.current_token_type() {
-            Some(TokenType::Keyword(Keyword::I8)) => Ok(Type::Simple(SimpleType {
-                token: expect!(self, TokenType::Keyword(Keyword::I8))?,
-                type_: RuntimeType::I8,
-                id: self.id_generator.next_node_id(),
-            })),
-            Some(TokenType::Keyword(Keyword::I16)) => Ok(Type::Simple(SimpleType {
-                token: expect!(self, TokenType::Keyword(Keyword::I16))?,
-                type_: RuntimeType::I16,
-                id: self.id_generator.next_node_id(),
-            })),
-            Some(TokenType::Keyword(Keyword::I32)) => Ok(Type::Simple(SimpleType {
-                token: expect!(self, TokenType::Keyword(Keyword::I32))?,
-                type_: RuntimeType::I32,
-                id: self.id_generator.next_node_id(),
-            })),
-            Some(TokenType::Keyword(Keyword::I64)) => Ok(Type::Simple(SimpleType {
-                token: expect!(self, TokenType::Keyword(Keyword::I64))?,
-                type_: RuntimeType::I64,
-                id: self.id_generator.next_node_id(),
-            })),
-            Some(TokenType::Keyword(Keyword::U8)) => Ok(Type::Simple(SimpleType {
-                token: expect!(self, TokenType::Keyword(Keyword::U8))?,
-                type_: RuntimeType::U8,
-                id: self.id_generator.next_node_id(),
-            })),
-            Some(TokenType::Keyword(Keyword::U16)) => Ok(Type::Simple(SimpleType {
-                token: expect!(self, TokenType::Keyword(Keyword::U16))?,
-                type_: RuntimeType::U16,
-                id: self.id_generator.next_node_id(),
-            })),
-            Some(TokenType::Keyword(Keyword::U32)) => Ok(Type::Simple(SimpleType {
-                token: expect!(self, TokenType::Keyword(Keyword::U32))?,
-                type_: RuntimeType::U32,
-                id: self.id_generator.next_node_id(),
-            })),
-            Some(TokenType::Keyword(Keyword::U64)) => Ok(Type::Simple(SimpleType {
-                token: expect!(self, TokenType::Keyword(Keyword::U64))?,
-                type_: RuntimeType::U64,
-                id: self.id_generator.next_node_id(),
-            })),
-            Some(TokenType::Keyword(Keyword::F32)) => Ok(Type::Simple(SimpleType {
-                token: expect!(self, TokenType::Keyword(Keyword::F32))?,
-                type_: RuntimeType::F32,
-                id: self.id_generator.next_node_id(),
-            })),
-            Some(TokenType::Keyword(Keyword::F64)) => Ok(Type::Simple(SimpleType {
-                token: expect!(self, TokenType::Keyword(Keyword::F64))?,
-                type_: RuntimeType::F64,
-                id: self.id_generator.next_node_id(),
-            })),
-            Some(TokenType::Keyword(Keyword::Bool)) => Ok(Type::Simple(SimpleType {
-                token: expect!(self, TokenType::Keyword(Keyword::Bool))?,
-                type_: RuntimeType::Boolean,
-                id: self.id_generator.next_node_id(),
-            })),
+            Some(TokenType::Keyword(Keyword::I8)) => {
+                let token = expect!(self, TokenType::Keyword(Keyword::I8))?;
+                Ok(Type::Simple(SimpleType {
+                    type_: RuntimeType {
+                        kind: RuntimeTypeKind::I8,
+                        definition_range: Some(token.range.clone()),
+                    },
+                    token,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
+            Some(TokenType::Keyword(Keyword::I16)) => {
+                let token = expect!(self, TokenType::Keyword(Keyword::I16))?;
+                Ok(Type::Simple(SimpleType {
+                    type_: RuntimeType {
+                        kind: RuntimeTypeKind::I16,
+                        definition_range: Some(token.range.clone()),
+                    },
+                    token,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
+            Some(TokenType::Keyword(Keyword::I32)) => {
+                let token = expect!(self, TokenType::Keyword(Keyword::I32))?;
+                Ok(Type::Simple(SimpleType {
+                    type_: RuntimeType {
+                        kind: RuntimeTypeKind::I32,
+                        definition_range: Some(token.range.clone()),
+                    },
+                    token,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
+            Some(TokenType::Keyword(Keyword::I64)) => {
+                let token = expect!(self, TokenType::Keyword(Keyword::I64))?;
+                Ok(Type::Simple(SimpleType {
+                    type_: RuntimeType {
+                        kind: RuntimeTypeKind::I64,
+                        definition_range: Some(token.range.clone()),
+                    },
+                    token,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
+            Some(TokenType::Keyword(Keyword::U8)) => {
+                let token = expect!(self, TokenType::Keyword(Keyword::U8))?;
+                Ok(Type::Simple(SimpleType {
+                    type_: RuntimeType {
+                        kind: RuntimeTypeKind::U8,
+                        definition_range: Some(token.range.clone()),
+                    },
+                    token,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
+            Some(TokenType::Keyword(Keyword::U16)) => {
+                let token = expect!(self, TokenType::Keyword(Keyword::U16))?;
+                Ok(Type::Simple(SimpleType {
+                    type_: RuntimeType {
+                        kind: RuntimeTypeKind::U16,
+                        definition_range: Some(token.range.clone()),
+                    },
+                    token,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
+            Some(TokenType::Keyword(Keyword::U32)) => {
+                let token = expect!(self, TokenType::Keyword(Keyword::U32))?;
+                Ok(Type::Simple(SimpleType {
+                    type_: RuntimeType {
+                        kind: RuntimeTypeKind::U32,
+                        definition_range: Some(token.range.clone()),
+                    },
+                    token,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
+            Some(TokenType::Keyword(Keyword::U64)) => {
+                let token = expect!(self, TokenType::Keyword(Keyword::U64))?;
+                Ok(Type::Simple(SimpleType {
+                    type_: RuntimeType {
+                        kind: RuntimeTypeKind::U64,
+                        definition_range: Some(token.range.clone()),
+                    },
+                    token,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
+            Some(TokenType::Keyword(Keyword::F32)) => {
+                let token = expect!(self, TokenType::Keyword(Keyword::F32))?;
+                Ok(Type::Simple(SimpleType {
+                    type_: RuntimeType {
+                        kind: RuntimeTypeKind::F32,
+                        definition_range: Some(token.range.clone()),
+                    },
+                    token,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
+            Some(TokenType::Keyword(Keyword::F64)) => {
+                let token = expect!(self, TokenType::Keyword(Keyword::F64))?;
+                Ok(Type::Simple(SimpleType {
+                    type_: RuntimeType {
+                        kind: RuntimeTypeKind::F64,
+                        definition_range: Some(token.range.clone()),
+                    },
+                    token,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
+            Some(TokenType::Keyword(Keyword::Bool)) => {
+                let token = expect!(self, TokenType::Keyword(Keyword::Bool))?;
+                Ok(Type::Simple(SimpleType {
+                    type_: RuntimeType {
+                        kind: RuntimeTypeKind::Boolean,
+                        definition_range: Some(token.range.clone()),
+                    },
+                    token,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
             Some(TokenType::Keyword(Keyword::Idk)) => Ok(Type::Idk(IdkType {
                 token: expect!(self, TokenType::Keyword(Keyword::Idk))?,
                 id: self.id_generator.next_node_id(),

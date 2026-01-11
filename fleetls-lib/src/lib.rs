@@ -145,7 +145,7 @@ impl Backend {
         let Some(type_) = type_data.get(&id) else {
             return "/* Node type missing */".to_string();
         };
-        type_sets.get(*type_).stringify(type_sets)
+        type_sets.get(*type_).kind.stringify(type_sets)
     }
     fn generate_node_hover(
         &self,
@@ -197,7 +197,7 @@ impl Backend {
                                 return "/* Not processed by ScopeAnalyzer */".to_string();
                             };
                             let return_type = type_sets.get(return_type);
-                            return_type.stringify(type_sets)
+                            return_type.kind.stringify(type_sets)
                         })
                 ),
                 "function definition".to_string(),
@@ -263,7 +263,7 @@ impl Backend {
                             };
 
                             let type_ = type_sets.get(type_);
-                            type_.stringify(type_sets)
+                            type_.kind.stringify(type_sets)
                         })
                 ),
                 "simple binding".to_string(),
@@ -549,7 +549,7 @@ impl Backend {
                             "/* Return type not processed by ScopeAnalyzer */".to_string(),
                         );
                     };
-                    let return_type = type_sets.get(return_type).stringify(type_sets);
+                    let return_type = type_sets.get(return_type).kind.stringify(type_sets);
                     let parameters =
                         if let Some(param_types) = ref_func.borrow().parameter_types.as_ref() {
                             Itertools::intersperse(
@@ -558,6 +558,7 @@ impl Backend {
                                         + ": "
                                         + &type_sets
                                             .get(param.borrow().type_.unwrap())
+                                            .kind
                                             .stringify(type_sets)
                                 }),
                                 ", ".to_string(),
@@ -611,7 +612,7 @@ impl Backend {
                             "/* Return type not processed by ScopeAnalyzer */".to_string(),
                         );
                     };
-                    let return_type = type_sets.get(return_type).stringify(type_sets);
+                    let return_type = type_sets.get(return_type).kind.stringify(type_sets);
                     let parameters =
                         if let Some(param_types) = ref_func.borrow().parameter_types.as_ref() {
                             Itertools::intersperse(
@@ -620,6 +621,7 @@ impl Backend {
                                         + ": "
                                         + &type_sets
                                             .get(param.borrow().type_.unwrap())
+                                            .kind
                                             .stringify(type_sets)
                                 }),
                                 ", ".to_string(),
@@ -751,7 +753,7 @@ impl Backend {
                 id: _,
             }) => (
                 analysis_data
-                    .map(|data| type_.stringify(data.type_sets))
+                    .map(|data| type_.kind.stringify(data.type_sets))
                     .unwrap_or("/* No type data available */".to_string()),
                 "type".to_string(),
             ),
@@ -906,6 +908,8 @@ impl Backend {
 
         let variable_data = pm.state.get::<VariableData>();
         let function_data = pm.state.get::<FunctionData>();
+        let type_data = pm.state.get::<TypeData>();
+        let type_sets = pm.state.get::<TypeSets>();
 
         let find_pass = FindContainingNodePass::new(SourceLocation {
             index: 0,
@@ -942,9 +946,15 @@ impl Backend {
                     .definition_range
                     .clone(),
             ),
-            //AstNode::StructAccessExpression(struct_access_expression) => todo!(),
-            //AstNode::StructAccessLValue(struct_access_lvalue) => todo!(),
-            // TODO: AstNode::AliasType(alias_type) => todo!(),
+            //TODO: AstNode::StructAccessExpression(struct_access_expression) => todo!(),
+            //TODO: AstNode::StructAccessLValue(struct_access_lvalue) => todo!(),
+            AstNode::AliasType(AliasType { id, .. }) => Some(
+                type_sets
+                    .as_ref()?
+                    .get(*type_data.as_ref()?.get(id)?)
+                    .definition_range
+                    .clone()?,
+            ),
             _ => None,
         }))
     }

@@ -28,7 +28,7 @@ use crate::{
             Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData, TypeData,
             TypeSets, VariableData,
         },
-        runtime_type::RuntimeType,
+        runtime_type::{RuntimeType, RuntimeTypeKind},
         scope_analysis::Function,
         union_find_set::{UnionFindSet, UnionFindSetPtr},
     },
@@ -125,7 +125,12 @@ impl<'a> TypePropagator<'a> {
         let return_type = return_type
             .as_mut()
             .map(|t| self.visit_type(t))
-            .unwrap_or_else(|| self.type_sets.insert_set(RuntimeType::Unknown));
+            .unwrap_or_else(|| {
+                self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Unknown,
+                    definition_range: None,
+                })
+            });
         let parameter_types = parameters
             .iter_mut()
             .map(|(param, _comma)| {
@@ -156,14 +161,17 @@ impl<'a> TypePropagator<'a> {
         let TypeAlias {
             let_token: _,
             name,
-            name_token: _,
+            name_token,
             equal_token: _,
             type_: _,
             semicolon_token: _,
             id: _,
         } = type_alias;
 
-        let type_ = self.type_sets.insert_set(RuntimeType::Unknown);
+        let type_ = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::Unknown,
+            definition_range: Some(name_token.range.clone()),
+        });
 
         if self.type_aliases.insert(name.clone(), type_).is_some() {
             self.errors.push(FleetError::from_node(
@@ -189,7 +197,7 @@ impl<'a> TypePropagator<'a> {
                     "Expected {} to be {}. Got value of type {} instead",
                     expression_type.as_ref(),
                     expected_name.as_ref(),
-                    actual_type.stringify(&self.type_sets)
+                    actual_type.kind.stringify(&self.type_sets)
                 ),
                 ErrorSeverity::Error,
             ));
@@ -209,24 +217,24 @@ impl<'a> TypePropagator<'a> {
 
         for (name, variable) in &scope.variable_map {
             let actual_type = self.type_sets.get_mut(variable.borrow().type_.unwrap());
-            actual_type.specialize_number_size();
+            actual_type.kind.specialize_number_size();
 
             // release the borrow
             let actual_type = actual_type.clone();
 
             // TODO: once we track variable definitions, use that here
-            if let RuntimeType::Unknown
-            | RuntimeType::Number { .. }
-            | RuntimeType::ArrayOf {
+            if let RuntimeTypeKind::Unknown
+            | RuntimeTypeKind::Number { .. }
+            | RuntimeTypeKind::ArrayOf {
                 subtype: _,
                 size: None,
-            } = actual_type
+            } = actual_type.kind
             {
                 self.errors.push(FleetError::from_node(
                     error_node,
                     format!(
                         "The type of {name:?} cannot be inferred completely. Best effort: {}",
-                        actual_type.stringify(&self.type_sets)
+                        actual_type.kind.stringify(&self.type_sets)
                     ),
                     ErrorSeverity::Error,
                 ));
@@ -235,7 +243,7 @@ impl<'a> TypePropagator<'a> {
     }
 
     fn stringify_type_ptr(&self, ptr: UnionFindSetPtr<RuntimeType>) -> String {
-        self.type_sets.get(ptr).stringify(&self.type_sets)
+        self.type_sets.get(ptr).kind.stringify(&self.type_sets)
     }
 }
 
@@ -261,7 +269,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         // specify all int sizes
         for type_ in self.type_sets.data.values_mut() {
-            type_.specialize_number_size();
+            type_.kind.specialize_number_size();
         }
     }
 
@@ -315,12 +323,12 @@ impl AstVisitor for TypePropagator<'_> {
 
         let type_ = self.visit_type(type_);
 
-        self.type_sets.get_mut(type_).specialize_number_size();
+        self.type_sets.get_mut(type_).kind.specialize_number_size();
 
         let aliased_type = *self.type_aliases.get(name).unwrap();
 
         // ignore failures because this should always succeed for valid programs
-        let _ = RuntimeType::merge_types(type_, aliased_type, &mut self.type_sets);
+        let _ = RuntimeTypeKind::merge_types(type_, aliased_type, &mut self.type_sets);
     }
 
     fn visit_statement_function_body(
@@ -358,9 +366,12 @@ impl AstVisitor for TypePropagator<'_> {
         let defined_type = if let Some((_colon, type_)) = type_ {
             self.visit_type(type_)
         } else {
-            self.type_sets.insert_set(RuntimeType::Unknown)
+            self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Unknown,
+                definition_range: None,
+            })
         };
-        if *self.type_sets.get(defined_type) == RuntimeType::Unit {
+        if self.type_sets.get(defined_type).kind == RuntimeTypeKind::Unit {
             self.errors.push(FleetError::from_node(
                 &type_
                     .as_ref()
@@ -422,7 +433,7 @@ impl AstVisitor for TypePropagator<'_> {
         ) in iterators.collect_vec()
         {
             let iterator_type = self.visit_simple_binding(binding);
-            if !RuntimeType::merge_types(iterator_type, max_value_type, &mut self.type_sets) {
+            if !RuntimeTypeKind::merge_types(iterator_type, max_value_type, &mut self.type_sets) {
                 let iterator_type_str = self.stringify_type_ptr(iterator_type);
                 let max_value_type_str = self.stringify_type_ptr(max_value_type);
 
@@ -456,10 +467,13 @@ impl AstVisitor for TypePropagator<'_> {
                     ErrorSeverity::Error,
                 ));
             }
-            if !RuntimeType::merge_types(
-                self.type_sets.insert_set(RuntimeType::Number {
-                    signed: Some(false),
-                    integer: Some(true),
+            if !RuntimeTypeKind::merge_types(
+                self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Number {
+                        signed: Some(false),
+                        integer: Some(true),
+                    },
+                    definition_range: None,
                 }),
                 iterator_type,
                 &mut self.type_sets,
@@ -513,7 +527,12 @@ impl AstVisitor for TypePropagator<'_> {
         let this_type = value
             .as_mut()
             .map(|value| self.visit_expression(value))
-            .unwrap_or_else(|| self.type_sets.insert_set(RuntimeType::Unit));
+            .unwrap_or_else(|| {
+                self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Unit,
+                    definition_range: None,
+                })
+            });
 
         let expected_type = self
             .current_function
@@ -523,7 +542,7 @@ impl AstVisitor for TypePropagator<'_> {
             .return_type
             .unwrap();
 
-        if !RuntimeType::merge_types(this_type, expected_type, &mut self.type_sets) {
+        if !RuntimeTypeKind::merge_types(this_type, expected_type, &mut self.type_sets) {
             let expected_type_str = self.stringify_type_ptr(expected_type);
             let this_type_str = self.stringify_type_ptr(this_type);
 
@@ -558,7 +577,7 @@ impl AstVisitor for TypePropagator<'_> {
         let value_type = self.visit_expression(value);
         let defined_type = self.visit_simple_binding(binding);
 
-        if !RuntimeType::merge_types(value_type, defined_type, &mut self.type_sets) {
+        if !RuntimeTypeKind::merge_types(value_type, defined_type, &mut self.type_sets) {
             let defined_type_str = self.stringify_type_ptr(defined_type);
             let value_type_str = self.stringify_type_ptr(value_type);
 
@@ -587,7 +606,7 @@ impl AstVisitor for TypePropagator<'_> {
         let cond_type = self.visit_expression(condition);
 
         self.generate_mismatched_type_error_if(
-            !self.type_sets.get(cond_type).is_boolean(),
+            !self.type_sets.get(cond_type).kind.is_boolean(),
             condition,
             "if condition",
             "of type bool",
@@ -598,7 +617,7 @@ impl AstVisitor for TypePropagator<'_> {
         for (_elif_token, elif_condition, elif_body) in elifs {
             let elif_type = self.visit_expression(elif_condition);
             self.generate_mismatched_type_error_if(
-                !self.type_sets.get(elif_type).is_boolean(),
+                !self.type_sets.get(elif_type).kind.is_boolean(),
                 elif_condition,
                 "elif condition",
                 "of type bool",
@@ -624,7 +643,7 @@ impl AstVisitor for TypePropagator<'_> {
         let cond_type = self.visit_expression(condition);
 
         self.generate_mismatched_type_error_if(
-            !self.type_sets.get(cond_type).is_boolean(),
+            !self.type_sets.get(cond_type).kind.is_boolean(),
             condition,
             "while condition",
             "of type bool",
@@ -652,7 +671,7 @@ impl AstVisitor for TypePropagator<'_> {
         if let Some(con) = condition {
             let cond_type = self.visit_expression(con);
             self.generate_mismatched_type_error_if(
-                !self.type_sets.get(cond_type).is_boolean(),
+                !self.type_sets.get(cond_type).kind.is_boolean(),
                 con,
                 "for condition",
                 "of type bool",
@@ -709,7 +728,7 @@ impl AstVisitor for TypePropagator<'_> {
         let index_type = self.visit_expression(index);
 
         self.generate_mismatched_type_error_if(
-            !self.type_sets.get(index_type).is_numeric(),
+            !self.type_sets.get(index_type).kind.is_numeric(),
             index,
             "thread index",
             "numeric",
@@ -733,7 +752,7 @@ impl AstVisitor for TypePropagator<'_> {
         let index_type = self.visit_expression(gpu_index);
 
         self.generate_mismatched_type_error_if(
-            !self.type_sets.get(index_type).is_numeric(),
+            !self.type_sets.get(index_type).kind.is_numeric(),
             gpu_index,
             "gpu index",
             "numeric",
@@ -750,17 +769,20 @@ impl AstVisitor for TypePropagator<'_> {
             token: _,
             id,
         } = expression;
-        let type_ = self.type_sets.insert_set(match value {
-            LiteralKind::Number(_) => RuntimeType::Number {
-                signed: None,
-                integer: None,
+        let type_ = self.type_sets.insert_set(RuntimeType {
+            kind: match value {
+                LiteralKind::Number(_) => RuntimeTypeKind::Number {
+                    signed: None,
+                    integer: None,
+                },
+                LiteralKind::Char(_) => RuntimeTypeKind::U8,
+                LiteralKind::Float(_) => RuntimeTypeKind::Number {
+                    signed: Some(true),
+                    integer: Some(false),
+                },
+                LiteralKind::Bool(_) => RuntimeTypeKind::Boolean,
             },
-            LiteralKind::Char(_) => RuntimeType::U8,
-            LiteralKind::Float(_) => RuntimeType::Number {
-                signed: Some(true),
-                integer: Some(false),
-            },
-            LiteralKind::Bool(_) => RuntimeType::Boolean,
+            definition_range: None,
         });
         self.node_types.insert(*id, type_);
 
@@ -778,11 +800,14 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         } = expression;
 
-        let element_type = self.type_sets.insert_set(RuntimeType::Unknown);
+        let element_type = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::Unknown,
+            definition_range: None,
+        });
         for (item, _comma) in &mut *elements {
             let this_item_type = self.visit_expression(item);
 
-            if !RuntimeType::merge_types(element_type, this_item_type, &mut self.type_sets) {
+            if !RuntimeTypeKind::merge_types(element_type, this_item_type, &mut self.type_sets) {
                 let this_item_type_str = self.stringify_type_ptr(this_item_type);
                 let element_type_str = self.stringify_type_ptr(element_type);
 
@@ -797,9 +822,12 @@ impl AstVisitor for TypePropagator<'_> {
             }
         }
 
-        let type_ = self.type_sets.insert_set(RuntimeType::ArrayOf {
-            subtype: element_type,
-            size: Some(elements.len()),
+        let type_ = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::ArrayOf {
+                subtype: element_type,
+                size: Some(elements.len()),
+            },
+            definition_range: None,
         });
         self.node_types.insert(*id, type_);
         type_
@@ -822,12 +850,12 @@ impl AstVisitor for TypePropagator<'_> {
 
         let mut member_types = vec![];
 
-        let defined_members = match self.type_sets.get(defined_type) {
-            RuntimeType::Struct {
+        let defined_members = match &self.type_sets.get(defined_type).kind {
+            RuntimeTypeKind::Struct {
                 members,
                 source_hash: _,
             } => Some(members.clone()),
-            RuntimeType::Unknown => None,
+            RuntimeTypeKind::Unknown => None,
             _ => {
                 let defined_type_str = self.stringify_type_ptr(defined_type);
 
@@ -873,7 +901,8 @@ impl AstVisitor for TypePropagator<'_> {
                         ErrorSeverity::Error,
                     ));
                 }
-                if !RuntimeType::merge_types(this_type, this_defined_type, &mut self.type_sets) {
+                if !RuntimeTypeKind::merge_types(this_type, this_defined_type, &mut self.type_sets)
+                {
                     let this_type_str = self.stringify_type_ptr(this_type);
                     let this_defined_type_str = self.stringify_type_ptr(this_defined_type);
 
@@ -889,12 +918,15 @@ impl AstVisitor for TypePropagator<'_> {
             }
         }
 
-        let constructed_type = self.type_sets.insert_set(RuntimeType::Struct {
-            members: member_types,
-            source_hash: None,
+        let constructed_type = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::Struct {
+                members: member_types,
+                source_hash: None,
+            },
+            definition_range: None,
         });
 
-        if !RuntimeType::merge_types(defined_type, constructed_type, &mut self.type_sets) {
+        if !RuntimeTypeKind::merge_types(defined_type, constructed_type, &mut self.type_sets) {
             let defined_type_str = self.stringify_type_ptr(defined_type);
             let constructed_type = self.stringify_type_ptr(constructed_type);
 
@@ -937,7 +969,10 @@ impl AstVisitor for TypePropagator<'_> {
                 self.visit_expression(arg);
             }
 
-            return self.type_sets.insert_set(RuntimeType::Error);
+            return self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Error,
+                definition_range: None,
+            });
         };
 
         let num_expected_arguments = ref_function
@@ -966,13 +1001,15 @@ impl AstVisitor for TypePropagator<'_> {
             match types {
                 EitherOrBoth::Both((arg_type, arg), param) => {
                     // function arguments shouldn't get specialized by calling the function
-                    let param_type = param
-                        .borrow()
-                        .type_
-                        .unwrap_or_else(|| self.type_sets.insert_set(RuntimeType::Unknown));
+                    let param_type = param.borrow().type_.unwrap_or_else(|| {
+                        self.type_sets.insert_set(RuntimeType {
+                            kind: RuntimeTypeKind::Unknown,
+                            definition_range: None,
+                        })
+                    });
                     let param_type = self.type_sets.detach(param_type);
 
-                    if !RuntimeType::merge_types(*arg_type, param_type, &mut self.type_sets) {
+                    if !RuntimeTypeKind::merge_types(*arg_type, param_type, &mut self.type_sets) {
                         let param_type_str = self.stringify_type_ptr(param_type);
                         let arg_type_str = self.stringify_type_ptr(*arg_type);
 
@@ -997,10 +1034,12 @@ impl AstVisitor for TypePropagator<'_> {
                     ));
                 }
                 EitherOrBoth::Right(param) => {
-                    let param_type = param
-                        .borrow()
-                        .type_
-                        .unwrap_or_else(|| self.type_sets.insert_set(RuntimeType::Unknown));
+                    let param_type = param.borrow().type_.unwrap_or_else(|| {
+                        self.type_sets.insert_set(RuntimeType {
+                            kind: RuntimeTypeKind::Unknown,
+                            definition_range: None,
+                        })
+                    });
                     let param_type_str = self.stringify_type_ptr(param_type);
 
                     self.errors.push(FleetError::from_token(
@@ -1044,42 +1083,69 @@ impl AstVisitor for TypePropagator<'_> {
             Vec<(UnionFindSetPtr<RuntimeType>, String)>,
             UnionFindSetPtr<RuntimeType>,
         ) = match name.as_str() {
-            "zero" => (vec![], self.type_sets.insert_set(RuntimeType::Unknown)),
+            "zero" => (
+                vec![],
+                self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Unknown,
+                    definition_range: None,
+                }),
+            ),
             "sqrt" => {
-                let type_ = self.type_sets.insert_set(RuntimeType::Number {
-                    signed: Some(true),
-                    integer: Some(false),
+                let type_ = self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Number {
+                        signed: Some(true),
+                        integer: Some(false),
+                    },
+                    definition_range: None,
                 });
                 (vec![(type_, "value".to_string())], type_)
             }
             "sin" => {
-                let type_ = self.type_sets.insert_set(RuntimeType::Number {
-                    signed: Some(true),
-                    integer: Some(false),
+                let type_ = self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Number {
+                        signed: Some(true),
+                        integer: Some(false),
+                    },
+                    definition_range: None,
                 });
                 (vec![(type_, "value".to_string())], type_)
             }
             "cos" => {
-                let type_ = self.type_sets.insert_set(RuntimeType::Number {
-                    signed: Some(true),
-                    integer: Some(false),
+                let type_ = self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Number {
+                        signed: Some(true),
+                        integer: Some(false),
+                    },
+                    definition_range: None,
                 });
                 (vec![(type_, "value".to_string())], type_)
             }
             "length" => {
-                let element_type = self.type_sets.insert_set(RuntimeType::Unknown);
-                let in_type = self.type_sets.insert_set(RuntimeType::ArrayOf {
-                    subtype: element_type,
-                    size: None,
+                let element_type = self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Unknown,
+                    definition_range: None,
                 });
-                let out_type = self.type_sets.insert_set(RuntimeType::Number {
-                    signed: None,
-                    integer: Some(true),
+                let in_type = self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::ArrayOf {
+                        subtype: element_type,
+                        size: None,
+                    },
+                    definition_range: None,
+                });
+                let out_type = self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Number {
+                        signed: None,
+                        integer: Some(true),
+                    },
+                    definition_range: None,
                 });
                 (vec![(in_type, "value".to_string())], out_type)
             }
             "comptime" => {
-                let type_ = self.type_sets.insert_set(RuntimeType::Unknown);
+                let type_ = self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Unknown,
+                    definition_range: None,
+                });
                 (vec![(type_, "value".to_string())], type_)
             }
             _ => {
@@ -1094,7 +1160,10 @@ impl AstVisitor for TypePropagator<'_> {
                     self.visit_expression(arg);
                 }
 
-                return self.type_sets.insert_set(RuntimeType::Error);
+                return self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Error,
+                    definition_range: None,
+                });
             }
         };
 
@@ -1111,7 +1180,7 @@ impl AstVisitor for TypePropagator<'_> {
         {
             match types {
                 EitherOrBoth::Both((arg_type, arg), (param_type, param_name)) => {
-                    if !RuntimeType::merge_types(arg_type, *param_type, &mut self.type_sets) {
+                    if !RuntimeTypeKind::merge_types(arg_type, *param_type, &mut self.type_sets) {
                         let param_type_str = self.stringify_type_ptr(*param_type);
                         let arg_type_str = self.stringify_type_ptr(arg_type);
 
@@ -1168,22 +1237,29 @@ impl AstVisitor for TypePropagator<'_> {
         let array_type = self.visit_expression(array);
         let index_type = self.visit_expression(index);
 
-        let &RuntimeType::ArrayOf { subtype, size: _ } = self.type_sets.get(array_type) else {
+        let RuntimeTypeKind::ArrayOf { subtype, size: _ } = self.type_sets.get(array_type).kind
+        else {
             self.errors.push(FleetError::from_node(
                 &**array,
                 "Trying to index into non-array typed value",
                 ErrorSeverity::Error,
             ));
-            let err_type = self.type_sets.insert_set(RuntimeType::Error);
+            let err_type = self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Error,
+                definition_range: None,
+            });
             self.node_types.insert(*id, err_type);
             return err_type;
         };
 
-        if !RuntimeType::merge_types(
+        if !RuntimeTypeKind::merge_types(
             index_type,
-            self.type_sets.insert_set(RuntimeType::Number {
-                signed: Some(false),
-                integer: Some(true),
+            self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Number {
+                    signed: Some(false),
+                    integer: Some(true),
+                },
+                definition_range: None,
             }),
             &mut self.type_sets,
         ) {
@@ -1212,19 +1288,22 @@ impl AstVisitor for TypePropagator<'_> {
     ) -> Self::ExpressionOutput {
         let value_type = self.visit_expression(value);
 
-        let RuntimeType::Struct {
+        let RuntimeTypeKind::Struct {
             members,
             source_hash: _,
-        } = self.type_sets.get(value_type)
+        } = &self.type_sets.get(value_type).kind
         else {
-            if *self.type_sets.get(value_type) != RuntimeType::Error {
+            if self.type_sets.get(value_type).kind != RuntimeTypeKind::Error {
                 self.errors.push(FleetError::from_node(
                     &**value,
                     "Trying to use struct access on non-struct typed value",
                     ErrorSeverity::Error,
                 ));
             }
-            let err_type = self.type_sets.insert_set(RuntimeType::Error);
+            let err_type = self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Error,
+                definition_range: None,
+            });
             self.node_types.insert(*id, err_type);
             return err_type;
         };
@@ -1238,7 +1317,10 @@ impl AstVisitor for TypePropagator<'_> {
                 ErrorSeverity::Error,
             ));
 
-            self.type_sets.insert_set(RuntimeType::Error)
+            self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Error,
+                definition_range: None,
+            })
         };
 
         self.node_types.insert(*id, type_);
@@ -1270,7 +1352,10 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         } = expression;
         let Some(ref_variable) = self.referenced_variable.get(id) else {
-            return self.type_sets.insert_set(RuntimeType::Unknown);
+            return self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Unknown,
+                definition_range: None,
+            });
         };
         if self.require_constant && !ref_variable.borrow().is_constant {
             self.errors.push(FleetError::from_node(
@@ -1299,33 +1384,45 @@ impl AstVisitor for TypePropagator<'_> {
         let type_ = self.visit_expression(operand);
 
         let is_ok = match operation {
-            UnaryOperation::BitwiseNot => RuntimeType::merge_types(
+            UnaryOperation::BitwiseNot => RuntimeTypeKind::merge_types(
                 type_,
-                self.type_sets.insert_set(RuntimeType::Number {
-                    signed: None,
-                    integer: Some(true),
+                self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Number {
+                        signed: None,
+                        integer: Some(true),
+                    },
+                    definition_range: None,
                 }),
                 &mut self.type_sets,
             ),
             UnaryOperation::LogicalNot => {
-                RuntimeType::merge_types(
+                RuntimeTypeKind::merge_types(
                     type_,
-                    self.type_sets.insert_set(RuntimeType::Number {
-                        signed: None,
-                        integer: None,
+                    self.type_sets.insert_set(RuntimeType {
+                        kind: RuntimeTypeKind::Number {
+                            signed: None,
+                            integer: None,
+                        },
+                        definition_range: None,
                     }),
                     &mut self.type_sets,
-                ) || RuntimeType::merge_types(
+                ) || RuntimeTypeKind::merge_types(
                     type_,
-                    self.type_sets.insert_set(RuntimeType::Boolean),
+                    self.type_sets.insert_set(RuntimeType {
+                        kind: RuntimeTypeKind::Boolean,
+                        definition_range: None,
+                    }),
                     &mut self.type_sets,
                 )
             }
-            UnaryOperation::Negate => RuntimeType::merge_types(
+            UnaryOperation::Negate => RuntimeTypeKind::merge_types(
                 type_,
-                self.type_sets.insert_set(RuntimeType::Number {
-                    signed: Some(true),
-                    integer: None,
+                self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Number {
+                        signed: Some(true),
+                        integer: None,
+                    },
+                    definition_range: None,
                 }),
                 &mut self.type_sets,
             ),
@@ -1346,7 +1443,10 @@ impl AstVisitor for TypePropagator<'_> {
         }
         let this_type = match operation {
             UnaryOperation::BitwiseNot => type_,
-            UnaryOperation::LogicalNot => self.type_sets.insert_set(RuntimeType::Boolean),
+            UnaryOperation::LogicalNot => self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Boolean,
+                definition_range: None,
+            }),
             UnaryOperation::Negate => type_,
         };
 
@@ -1366,7 +1466,7 @@ impl AstVisitor for TypePropagator<'_> {
         let from_ptr = self.visit_expression(operand);
         let to_ptr = self.visit_type(type_);
 
-        use RuntimeType::*;
+        use RuntimeTypeKind::*;
         enum CastResult {
             Possible,
             Redundant,
@@ -1379,8 +1479,8 @@ impl AstVisitor for TypePropagator<'_> {
             self_errors: &mut Vec<FleetError>,
             types: &mut UnionFindSet<RuntimeType>,
         ) -> CastResult {
-            let from_clone = types.get(from_ptr).clone();
-            let to_clone = types.get(to_ptr).clone();
+            let from_clone = types.get(from_ptr).kind.clone();
+            let to_clone = types.get(to_ptr).kind.clone();
             match (&from_clone, &to_clone) {
                 (_, Error) | (Error, _) => CastResult::Possible,
 
@@ -1410,7 +1510,7 @@ impl AstVisitor for TypePropagator<'_> {
                     Number { .. } | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64,
                     Number { .. } | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64,
                 ) => {
-                    let _ = RuntimeType::merge_types(from_ptr, to_ptr, types);
+                    let _ = RuntimeTypeKind::merge_types(from_ptr, to_ptr, types);
                     CastResult::Possible
                 }
 
@@ -1441,7 +1541,7 @@ impl AstVisitor for TypePropagator<'_> {
                         size: b_size,
                     },
                 ) if a_size == b_size || a_size.is_none() || b_size.is_none() => {
-                    let _ = RuntimeType::merge_types(from_ptr, to_ptr, types);
+                    let _ = RuntimeTypeKind::merge_types(from_ptr, to_ptr, types);
                     let res = perform_cast(
                         expression_clone.clone(),
                         from_ptr,
@@ -1623,7 +1723,7 @@ impl AstVisitor for TypePropagator<'_> {
                     CastResult::Impossible
                 }
                 (Unknown, Unknown) => {
-                    if !RuntimeType::merge_types(from_ptr, to_ptr, types) {
+                    if !RuntimeTypeKind::merge_types(from_ptr, to_ptr, types) {
                         self_errors.push(FleetError::from_node(
                             &expression_clone,
                             format!(
@@ -1647,7 +1747,7 @@ impl AstVisitor for TypePropagator<'_> {
                 }
                 (_, Unknown) => CastResult::Possible,
                 (Unknown, _) => {
-                    if !RuntimeType::merge_types(from_ptr, to_ptr, types) {
+                    if !RuntimeTypeKind::merge_types(from_ptr, to_ptr, types) {
                         self_errors.push(FleetError::from_node(
                             &expression_clone,
                             format!(
@@ -1698,34 +1798,48 @@ impl AstVisitor for TypePropagator<'_> {
             | BinaryOperation::GreaterThan
             | BinaryOperation::GreaterThanOrEqual
             | BinaryOperation::LessThan
-            | BinaryOperation::LessThanOrEqual => RuntimeType::merge_types(
+            | BinaryOperation::LessThanOrEqual => RuntimeTypeKind::merge_types(
                 left_type,
-                self.type_sets.insert_set(RuntimeType::Number {
-                    signed: None,
-                    integer: None,
+                self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Number {
+                        signed: None,
+                        integer: None,
+                    },
+                    definition_range: None,
                 }),
                 &mut self.type_sets,
             ),
             BinaryOperation::Equal | BinaryOperation::NotEqual => {
-                RuntimeType::merge_types(
+                RuntimeTypeKind::merge_types(
                     left_type,
-                    self.type_sets.insert_set(RuntimeType::Number {
-                        signed: None,
-                        integer: None,
+                    self.type_sets.insert_set(RuntimeType {
+                        kind: RuntimeTypeKind::Number {
+                            signed: None,
+                            integer: None,
+                        },
+                        definition_range: None,
                     }),
                     &mut self.type_sets,
-                ) || RuntimeType::merge_types(
+                ) || RuntimeTypeKind::merge_types(
                     left_type,
-                    self.type_sets.insert_set(RuntimeType::Boolean),
+                    self.type_sets.insert_set(RuntimeType {
+                        kind: RuntimeTypeKind::Boolean,
+                        definition_range: None,
+                    }),
                     &mut self.type_sets,
                 )
             }
 
-            BinaryOperation::LogicalAnd | BinaryOperation::LogicalOr => RuntimeType::merge_types(
-                left_type,
-                self.type_sets.insert_set(RuntimeType::Boolean),
-                &mut self.type_sets,
-            ),
+            BinaryOperation::LogicalAnd | BinaryOperation::LogicalOr => {
+                RuntimeTypeKind::merge_types(
+                    left_type,
+                    self.type_sets.insert_set(RuntimeType {
+                        kind: RuntimeTypeKind::Boolean,
+                        definition_range: None,
+                    }),
+                    &mut self.type_sets,
+                )
+            }
         };
 
         let is_right_ok = match operation {
@@ -1737,37 +1851,51 @@ impl AstVisitor for TypePropagator<'_> {
             | BinaryOperation::GreaterThan
             | BinaryOperation::GreaterThanOrEqual
             | BinaryOperation::LessThan
-            | BinaryOperation::LessThanOrEqual => RuntimeType::merge_types(
+            | BinaryOperation::LessThanOrEqual => RuntimeTypeKind::merge_types(
                 right_type,
-                self.type_sets.insert_set(RuntimeType::Number {
-                    signed: None,
-                    integer: None,
+                self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Number {
+                        signed: None,
+                        integer: None,
+                    },
+                    definition_range: None,
                 }),
                 &mut self.type_sets,
             ),
             BinaryOperation::Equal | BinaryOperation::NotEqual => {
-                RuntimeType::merge_types(
+                RuntimeTypeKind::merge_types(
                     right_type,
-                    self.type_sets.insert_set(RuntimeType::Number {
-                        signed: None,
-                        integer: None,
+                    self.type_sets.insert_set(RuntimeType {
+                        kind: RuntimeTypeKind::Number {
+                            signed: None,
+                            integer: None,
+                        },
+                        definition_range: None,
                     }),
                     &mut self.type_sets,
-                ) || RuntimeType::merge_types(
+                ) || RuntimeTypeKind::merge_types(
                     right_type,
-                    self.type_sets.insert_set(RuntimeType::Boolean),
+                    self.type_sets.insert_set(RuntimeType {
+                        kind: RuntimeTypeKind::Boolean,
+                        definition_range: None,
+                    }),
                     &mut self.type_sets,
                 )
             }
 
-            BinaryOperation::LogicalAnd | BinaryOperation::LogicalOr => RuntimeType::merge_types(
-                right_type,
-                self.type_sets.insert_set(RuntimeType::Boolean),
-                &mut self.type_sets,
-            ),
+            BinaryOperation::LogicalAnd | BinaryOperation::LogicalOr => {
+                RuntimeTypeKind::merge_types(
+                    right_type,
+                    self.type_sets.insert_set(RuntimeType {
+                        kind: RuntimeTypeKind::Boolean,
+                        definition_range: None,
+                    }),
+                    &mut self.type_sets,
+                )
+            }
         };
 
-        if !RuntimeType::merge_types(left_type, right_type, &mut self.type_sets)
+        if !RuntimeTypeKind::merge_types(left_type, right_type, &mut self.type_sets)
             || !is_left_ok
             || !is_right_ok
         {
@@ -1822,7 +1950,10 @@ impl AstVisitor for TypePropagator<'_> {
                 ));
             }
 
-            let this_type = self.type_sets.insert_set(RuntimeType::Error);
+            let this_type = self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Error,
+                definition_range: None,
+            });
             self.node_types.insert(*id, this_type);
             this_type
         } else {
@@ -1839,7 +1970,10 @@ impl AstVisitor for TypePropagator<'_> {
                 | BinaryOperation::Equal
                 | BinaryOperation::NotEqual
                 | BinaryOperation::LogicalAnd
-                | BinaryOperation::LogicalOr => self.type_sets.insert_set(RuntimeType::Boolean),
+                | BinaryOperation::LogicalOr => self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Boolean,
+                    definition_range: None,
+                }),
             };
             self.node_types.insert(*id, this_type);
             this_type
@@ -1860,7 +1994,7 @@ impl AstVisitor for TypePropagator<'_> {
         let left_type = self.visit_lvalue(lvalue);
         let right_type = self.visit_expression(right);
 
-        if !RuntimeType::merge_types(left_type, right_type, &mut self.type_sets) {
+        if !RuntimeTypeKind::merge_types(left_type, right_type, &mut self.type_sets) {
             let right_type_str = self.stringify_type_ptr(right_type);
             let left_type_str = self.stringify_type_ptr(left_type);
 
@@ -1885,7 +2019,10 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         } = lvalue;
         let Some(ref_variable) = self.referenced_variable.get(id) else {
-            return self.type_sets.insert_set(RuntimeType::Unknown);
+            return self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Unknown,
+                definition_range: None,
+            });
         };
         if ref_variable.borrow().is_constant {
             self.errors.push(FleetError::from_node(
@@ -1913,22 +2050,29 @@ impl AstVisitor for TypePropagator<'_> {
         let array_type = self.visit_lvalue(array);
         let index_type = self.visit_expression(index);
 
-        let RuntimeType::ArrayOf { subtype, size: _ } = *self.type_sets.get(array_type) else {
+        let RuntimeTypeKind::ArrayOf { subtype, size: _ } = self.type_sets.get(array_type).kind
+        else {
             self.errors.push(FleetError::from_node(
                 &**array,
                 "Trying to index into non-array typed value",
                 ErrorSeverity::Error,
             ));
-            let err_type = self.type_sets.insert_set(RuntimeType::Error);
+            let err_type = self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Error,
+                definition_range: None,
+            });
             self.node_types.insert(*id, err_type);
             return err_type;
         };
 
-        if !RuntimeType::merge_types(
+        if !RuntimeTypeKind::merge_types(
             index_type,
-            self.type_sets.insert_set(RuntimeType::Number {
-                signed: Some(false),
-                integer: Some(true),
+            self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Number {
+                    signed: Some(false),
+                    integer: Some(true),
+                },
+                definition_range: None,
             }),
             &mut self.type_sets,
         ) {
@@ -1957,19 +2101,22 @@ impl AstVisitor for TypePropagator<'_> {
     ) -> Self::LValueOutput {
         let value_type = self.visit_lvalue(value);
 
-        let RuntimeType::Struct {
+        let RuntimeTypeKind::Struct {
             members,
             source_hash: _,
-        } = self.type_sets.get(value_type)
+        } = &self.type_sets.get(value_type).kind
         else {
-            if *self.type_sets.get(value_type) != RuntimeType::Error {
+            if self.type_sets.get(value_type).kind != RuntimeTypeKind::Error {
                 self.errors.push(FleetError::from_node(
                     &**value,
                     "Trying to use struct access on non-struct typed value",
                     ErrorSeverity::Error,
                 ));
             }
-            let err_type = self.type_sets.insert_set(RuntimeType::Error);
+            let err_type = self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Error,
+                definition_range: None,
+            });
             self.node_types.insert(*id, err_type);
             return err_type;
         };
@@ -1983,7 +2130,10 @@ impl AstVisitor for TypePropagator<'_> {
                 ErrorSeverity::Error,
             ));
 
-            self.type_sets.insert_set(RuntimeType::Error)
+            self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Error,
+                definition_range: None,
+            })
         };
 
         self.node_types.insert(*id, type_);
@@ -2025,8 +2175,8 @@ impl AstVisitor for TypePropagator<'_> {
     fn visit_unit_type(
         &mut self,
         UnitType {
-            open_paren_token: _,
-            close_paren_token: _,
+            open_paren_token,
+            close_paren_token,
             id,
         }: &mut UnitType,
     ) -> Self::TypeOutput {
@@ -2034,16 +2184,27 @@ impl AstVisitor for TypePropagator<'_> {
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
         }
-        let t = self.type_sets.insert_set(RuntimeType::Unit);
+        let t = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::Unit,
+            definition_range: Some(
+                open_paren_token
+                    .range
+                    .clone()
+                    .extend_with(close_paren_token.range.clone()),
+            ),
+        });
         self.node_types.insert(*id, t);
         t
     }
 
-    fn visit_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> Self::TypeOutput {
+    fn visit_idk_type(&mut self, IdkType { token, id }: &mut IdkType) -> Self::TypeOutput {
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
         }
-        let t = self.type_sets.insert_set(RuntimeType::Unknown);
+        let t = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::Unknown,
+            definition_range: Some(token.range.clone()),
+        });
         self.node_types.insert(*id, t);
         t
     }
@@ -2052,9 +2213,9 @@ impl AstVisitor for TypePropagator<'_> {
         &mut self,
         ArrayType {
             subtype,
-            open_bracket_token: _,
+            open_bracket_token,
             size,
-            close_bracket_token: _,
+            close_bracket_token,
             id,
         }: &mut ArrayType,
     ) -> Self::TypeOutput {
@@ -2063,7 +2224,7 @@ impl AstVisitor for TypePropagator<'_> {
         }
         let subtype_t = self.visit_type(subtype);
 
-        if matches!(self.type_sets.get(subtype_t), RuntimeType::Unit) {
+        if matches!(self.type_sets.get(subtype_t).kind, RuntimeTypeKind::Unit) {
             self.errors.push(FleetError::from_node(
                 &**subtype,
                 "Cannot have array of Unit".to_string(),
@@ -2088,9 +2249,17 @@ impl AstVisitor for TypePropagator<'_> {
             None => None,
         };
 
-        let t = self.type_sets.insert_set(RuntimeType::ArrayOf {
-            subtype: subtype_t,
-            size,
+        let t = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::ArrayOf {
+                subtype: subtype_t,
+                size,
+            },
+            definition_range: Some(
+                open_bracket_token
+                    .range
+                    .clone()
+                    .extend_with(close_bracket_token.range.clone()),
+            ),
         });
         self.node_types.insert(*id, t);
         t
@@ -2102,7 +2271,7 @@ impl AstVisitor for TypePropagator<'_> {
             struct_token,
             open_brace_token: _,
             members,
-            close_brace_token: _,
+            close_brace_token,
             id,
         }: &mut StructType,
     ) -> Self::TypeOutput {
@@ -2122,7 +2291,7 @@ impl AstVisitor for TypePropagator<'_> {
         {
             let subtype = self.visit_type(type_);
 
-            if matches!(self.type_sets.get(subtype), RuntimeType::Unit) {
+            if matches!(self.type_sets.get(subtype).kind, RuntimeTypeKind::Unit) {
                 self.errors.push(FleetError::from_node(
                     type_,
                     "Structs cannot contain Unit".to_string(),
@@ -2136,9 +2305,17 @@ impl AstVisitor for TypePropagator<'_> {
         let mut hash = DefaultHasher::new();
         struct_token.range.hash(&mut hash);
 
-        let struct_t = self.type_sets.insert_set(RuntimeType::Struct {
-            members: rt_members,
-            source_hash: Some(hash.finish()),
+        let struct_t = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::Struct {
+                members: rt_members,
+                source_hash: Some(hash.finish()),
+            },
+            definition_range: Some(
+                struct_token
+                    .range
+                    .clone()
+                    .extend_with(close_brace_token.range.clone()),
+            ),
         });
         self.node_types.insert(*id, struct_t);
         struct_t
@@ -2148,7 +2325,7 @@ impl AstVisitor for TypePropagator<'_> {
         let alias_type_clone = alias_type.clone();
         let AliasType {
             name,
-            name_token: _,
+            name_token,
             id,
         } = alias_type;
 
@@ -2159,7 +2336,10 @@ impl AstVisitor for TypePropagator<'_> {
                 ErrorSeverity::Error,
             ));
 
-            let type_ = self.type_sets.insert_set(RuntimeType::Error);
+            let type_ = self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Error,
+                definition_range: Some(name_token.range.clone()),
+            });
             self.node_types.insert(*id, type_);
             return type_;
         };

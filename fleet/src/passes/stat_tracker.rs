@@ -27,7 +27,7 @@ use crate::{
             Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, StatData, TypeSets,
             VariableData,
         },
-        runtime_type::RuntimeType,
+        runtime_type::RuntimeTypeKind,
         scope_analysis::{Function, FunctionID, Variable},
     },
     tokenizer::{NamedSourceRange, SourceLocation},
@@ -405,10 +405,11 @@ impl AstVisitor for StatTracker<'_> {
                 .as_ref()
                 .expect("Function body analyzed for termination without a containing function");
 
-            if *self
+            if self
                 .type_sets
                 .get(current_function.borrow().return_type.unwrap())
-                != RuntimeType::Unit
+                .kind
+                != RuntimeTypeKind::Unit
             {
                 self.errors.push({
                     FleetError::try_new(

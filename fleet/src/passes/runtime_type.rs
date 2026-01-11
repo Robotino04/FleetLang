@@ -1,9 +1,17 @@
 use itertools::{EitherOrBoth, Itertools};
 
-use crate::passes::union_find_set::{UnionFindSet, UnionFindSetMergeResult, UnionFindSetPtr};
+use crate::{
+    passes::union_find_set::{UnionFindSet, UnionFindSetMergeResult, UnionFindSetPtr},
+    tokenizer::NamedSourceRange,
+};
 
+#[derive(Clone, Debug)]
+pub struct RuntimeType {
+    pub kind: RuntimeTypeKind,
+    pub definition_range: Option<NamedSourceRange>,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RuntimeType {
+pub enum RuntimeTypeKind {
     Number {
         signed: Option<bool>,
         integer: Option<bool>,
@@ -33,7 +41,7 @@ pub enum RuntimeType {
     },
 }
 
-impl RuntimeType {
+impl RuntimeTypeKind {
     pub fn unwrap_arrayof(&self) -> (UnionFindSetPtr<RuntimeType>, Option<usize>) {
         if let Self::ArrayOf { subtype, size } = self {
             (*subtype, *size)
@@ -44,7 +52,7 @@ impl RuntimeType {
 
     pub fn stringify(&self, types: &UnionFindSet<RuntimeType>) -> String {
         match self {
-            RuntimeType::Number { signed, integer } => format!(
+            RuntimeTypeKind::Number { signed, integer } => format!(
                 "{{{}{}}}",
                 match signed {
                     Some(true) => "signed ",
@@ -57,29 +65,29 @@ impl RuntimeType {
                     None => "number",
                 }
             ),
-            RuntimeType::I8 => "i8".to_string(),
-            RuntimeType::I16 => "i16".to_string(),
-            RuntimeType::I32 => "i32".to_string(),
-            RuntimeType::I64 => "i64".to_string(),
-            RuntimeType::U8 => "u8".to_string(),
-            RuntimeType::U16 => "u16".to_string(),
-            RuntimeType::U32 => "u32".to_string(),
-            RuntimeType::U64 => "u64".to_string(),
-            RuntimeType::F32 => "f32".to_string(),
-            RuntimeType::F64 => "f64".to_string(),
-            RuntimeType::Unit => "()".to_string(),
-            RuntimeType::Boolean => "bool".to_string(),
-            RuntimeType::Unknown => "{unknown}".to_string(),
-            RuntimeType::Error => "{error}".to_string(),
-            RuntimeType::ArrayOf {
+            RuntimeTypeKind::I8 => "i8".to_string(),
+            RuntimeTypeKind::I16 => "i16".to_string(),
+            RuntimeTypeKind::I32 => "i32".to_string(),
+            RuntimeTypeKind::I64 => "i64".to_string(),
+            RuntimeTypeKind::U8 => "u8".to_string(),
+            RuntimeTypeKind::U16 => "u16".to_string(),
+            RuntimeTypeKind::U32 => "u32".to_string(),
+            RuntimeTypeKind::U64 => "u64".to_string(),
+            RuntimeTypeKind::F32 => "f32".to_string(),
+            RuntimeTypeKind::F64 => "f64".to_string(),
+            RuntimeTypeKind::Unit => "()".to_string(),
+            RuntimeTypeKind::Boolean => "bool".to_string(),
+            RuntimeTypeKind::Unknown => "{unknown}".to_string(),
+            RuntimeTypeKind::Error => "{error}".to_string(),
+            RuntimeTypeKind::ArrayOf {
                 subtype,
                 size: None,
-            } => format!("{}[]", types.get(*subtype).stringify(types)),
-            RuntimeType::ArrayOf {
+            } => format!("{}[]", types.get(*subtype).kind.stringify(types)),
+            RuntimeTypeKind::ArrayOf {
                 subtype,
                 size: Some(size),
-            } => format!("{}[{}]", types.get(*subtype).stringify(types), size),
-            RuntimeType::Struct {
+            } => format!("{}[{}]", types.get(*subtype).kind.stringify(types), size),
+            RuntimeTypeKind::Struct {
                 members,
                 source_hash,
             } => format!(
@@ -90,7 +98,7 @@ impl RuntimeType {
                         .iter()
                         .map(|(name, type_)| format!(
                             "{name}: {},",
-                            types.get(*type_).stringify(types)
+                            types.get(*type_).kind.stringify(types)
                         ))
                         .join("\n")
                 )
@@ -99,7 +107,7 @@ impl RuntimeType {
     }
     pub fn could_be_float(&self) -> bool {
         match self {
-            RuntimeType::Number {
+            RuntimeTypeKind::Number {
                 integer: None,
                 signed: None | Some(true),
             } => true,
@@ -108,33 +116,33 @@ impl RuntimeType {
     }
     pub fn is_float(&self) -> bool {
         match self {
-            RuntimeType::Number {
+            RuntimeTypeKind::Number {
                 integer: None | Some(false),
                 signed: None | Some(true),
             } => true,
-            RuntimeType::Number {
+            RuntimeTypeKind::Number {
                 integer: _,
                 signed: _,
             } => false,
-            RuntimeType::I8 => false,
-            RuntimeType::I16 => false,
-            RuntimeType::I32 => false,
-            RuntimeType::I64 => false,
-            RuntimeType::U8 => false,
-            RuntimeType::U16 => false,
-            RuntimeType::U32 => false,
-            RuntimeType::U64 => false,
-            RuntimeType::F32 => true,
-            RuntimeType::F64 => true,
-            RuntimeType::Unit => false,
-            RuntimeType::Boolean => false,
-            RuntimeType::Unknown => false,
-            RuntimeType::Error => false,
-            RuntimeType::ArrayOf {
+            RuntimeTypeKind::I8 => false,
+            RuntimeTypeKind::I16 => false,
+            RuntimeTypeKind::I32 => false,
+            RuntimeTypeKind::I64 => false,
+            RuntimeTypeKind::U8 => false,
+            RuntimeTypeKind::U16 => false,
+            RuntimeTypeKind::U32 => false,
+            RuntimeTypeKind::U64 => false,
+            RuntimeTypeKind::F32 => true,
+            RuntimeTypeKind::F64 => true,
+            RuntimeTypeKind::Unit => false,
+            RuntimeTypeKind::Boolean => false,
+            RuntimeTypeKind::Unknown => false,
+            RuntimeTypeKind::Error => false,
+            RuntimeTypeKind::ArrayOf {
                 subtype: _,
                 size: _,
             } => false,
-            RuntimeType::Struct {
+            RuntimeTypeKind::Struct {
                 members: _,
                 source_hash: _,
             } => false,
@@ -142,7 +150,7 @@ impl RuntimeType {
     }
     pub fn could_be_signed(&self) -> bool {
         match self {
-            RuntimeType::Number {
+            RuntimeTypeKind::Number {
                 integer: _,
                 signed: None,
             } => true,
@@ -151,33 +159,33 @@ impl RuntimeType {
     }
     pub fn is_signed(&self) -> bool {
         match self {
-            RuntimeType::Number {
+            RuntimeTypeKind::Number {
                 signed: None | Some(true),
                 integer: _,
             } => true,
-            RuntimeType::Number {
+            RuntimeTypeKind::Number {
                 integer: _,
                 signed: _,
             } => false,
-            RuntimeType::I8 => true,
-            RuntimeType::I16 => true,
-            RuntimeType::I32 => true,
-            RuntimeType::I64 => true,
-            RuntimeType::U8 => false,
-            RuntimeType::U16 => false,
-            RuntimeType::U32 => false,
-            RuntimeType::U64 => false,
-            RuntimeType::F32 => true,
-            RuntimeType::F64 => true,
-            RuntimeType::Unit => false,
-            RuntimeType::Boolean => false,
-            RuntimeType::Unknown => false,
-            RuntimeType::Error => false,
-            RuntimeType::ArrayOf {
+            RuntimeTypeKind::I8 => true,
+            RuntimeTypeKind::I16 => true,
+            RuntimeTypeKind::I32 => true,
+            RuntimeTypeKind::I64 => true,
+            RuntimeTypeKind::U8 => false,
+            RuntimeTypeKind::U16 => false,
+            RuntimeTypeKind::U32 => false,
+            RuntimeTypeKind::U64 => false,
+            RuntimeTypeKind::F32 => true,
+            RuntimeTypeKind::F64 => true,
+            RuntimeTypeKind::Unit => false,
+            RuntimeTypeKind::Boolean => false,
+            RuntimeTypeKind::Unknown => false,
+            RuntimeTypeKind::Error => false,
+            RuntimeTypeKind::ArrayOf {
                 subtype: _,
                 size: _,
             } => false,
-            RuntimeType::Struct {
+            RuntimeTypeKind::Struct {
                 members: _,
                 source_hash: _,
             } => false,
@@ -185,7 +193,7 @@ impl RuntimeType {
     }
     pub fn could_be_unsigned(&self) -> bool {
         match self {
-            RuntimeType::Number {
+            RuntimeTypeKind::Number {
                 integer: None | Some(true), // only ints can be unsigned
                 signed: None,
             } => true,
@@ -194,33 +202,33 @@ impl RuntimeType {
     }
     pub fn is_unsigned(&self) -> bool {
         match self {
-            RuntimeType::Number {
+            RuntimeTypeKind::Number {
                 signed: None | Some(false),
                 integer: _,
             } => true,
-            RuntimeType::Number {
+            RuntimeTypeKind::Number {
                 integer: _,
                 signed: _,
             } => false,
-            RuntimeType::I8 => false,
-            RuntimeType::I16 => false,
-            RuntimeType::I32 => false,
-            RuntimeType::I64 => false,
-            RuntimeType::U8 => true,
-            RuntimeType::U16 => true,
-            RuntimeType::U32 => true,
-            RuntimeType::U64 => true,
-            RuntimeType::F32 => false,
-            RuntimeType::F64 => false,
-            RuntimeType::Unit => false,
-            RuntimeType::Boolean => false,
-            RuntimeType::Unknown => false,
-            RuntimeType::Error => false,
-            RuntimeType::ArrayOf {
+            RuntimeTypeKind::I8 => false,
+            RuntimeTypeKind::I16 => false,
+            RuntimeTypeKind::I32 => false,
+            RuntimeTypeKind::I64 => false,
+            RuntimeTypeKind::U8 => true,
+            RuntimeTypeKind::U16 => true,
+            RuntimeTypeKind::U32 => true,
+            RuntimeTypeKind::U64 => true,
+            RuntimeTypeKind::F32 => false,
+            RuntimeTypeKind::F64 => false,
+            RuntimeTypeKind::Unit => false,
+            RuntimeTypeKind::Boolean => false,
+            RuntimeTypeKind::Unknown => false,
+            RuntimeTypeKind::Error => false,
+            RuntimeTypeKind::ArrayOf {
                 subtype: _,
                 size: _,
             } => false,
-            RuntimeType::Struct {
+            RuntimeTypeKind::Struct {
                 members: _,
                 source_hash: _,
             } => false,
@@ -228,7 +236,7 @@ impl RuntimeType {
     }
     pub fn could_be_integer(&self) -> bool {
         match self {
-            RuntimeType::Number {
+            RuntimeTypeKind::Number {
                 integer: None,
                 signed: _,
             } => true,
@@ -237,33 +245,33 @@ impl RuntimeType {
     }
     pub fn is_integer(&self) -> bool {
         match self {
-            RuntimeType::Number {
+            RuntimeTypeKind::Number {
                 integer: Some(true),
                 signed: _,
             } => true,
-            RuntimeType::Number {
+            RuntimeTypeKind::Number {
                 integer: _,
                 signed: _,
             } => false,
-            RuntimeType::I8 => true,
-            RuntimeType::I16 => true,
-            RuntimeType::I32 => true,
-            RuntimeType::I64 => true,
-            RuntimeType::U8 => true,
-            RuntimeType::U16 => true,
-            RuntimeType::U32 => true,
-            RuntimeType::U64 => true,
-            RuntimeType::F32 => false,
-            RuntimeType::F64 => false,
-            RuntimeType::Unit => false,
-            RuntimeType::Boolean => false,
-            RuntimeType::Unknown => false,
-            RuntimeType::Error => false,
-            RuntimeType::ArrayOf {
+            RuntimeTypeKind::I8 => true,
+            RuntimeTypeKind::I16 => true,
+            RuntimeTypeKind::I32 => true,
+            RuntimeTypeKind::I64 => true,
+            RuntimeTypeKind::U8 => true,
+            RuntimeTypeKind::U16 => true,
+            RuntimeTypeKind::U32 => true,
+            RuntimeTypeKind::U64 => true,
+            RuntimeTypeKind::F32 => false,
+            RuntimeTypeKind::F64 => false,
+            RuntimeTypeKind::Unit => false,
+            RuntimeTypeKind::Boolean => false,
+            RuntimeTypeKind::Unknown => false,
+            RuntimeTypeKind::Error => false,
+            RuntimeTypeKind::ArrayOf {
                 subtype: _,
                 size: _,
             } => false,
-            RuntimeType::Struct {
+            RuntimeTypeKind::Struct {
                 members: _,
                 source_hash: _,
             } => false,
@@ -271,29 +279,29 @@ impl RuntimeType {
     }
     pub fn is_numeric(&self) -> bool {
         match self {
-            RuntimeType::Number {
+            RuntimeTypeKind::Number {
                 integer: _,
                 signed: _,
             } => true,
-            RuntimeType::I8 => true,
-            RuntimeType::I16 => true,
-            RuntimeType::I32 => true,
-            RuntimeType::I64 => true,
-            RuntimeType::U8 => true,
-            RuntimeType::U16 => true,
-            RuntimeType::U32 => true,
-            RuntimeType::U64 => true,
-            RuntimeType::F32 => true,
-            RuntimeType::F64 => true,
-            RuntimeType::Unit => false,
-            RuntimeType::Boolean => false,
-            RuntimeType::Unknown => false,
-            RuntimeType::Error => false,
-            RuntimeType::ArrayOf {
+            RuntimeTypeKind::I8 => true,
+            RuntimeTypeKind::I16 => true,
+            RuntimeTypeKind::I32 => true,
+            RuntimeTypeKind::I64 => true,
+            RuntimeTypeKind::U8 => true,
+            RuntimeTypeKind::U16 => true,
+            RuntimeTypeKind::U32 => true,
+            RuntimeTypeKind::U64 => true,
+            RuntimeTypeKind::F32 => true,
+            RuntimeTypeKind::F64 => true,
+            RuntimeTypeKind::Unit => false,
+            RuntimeTypeKind::Boolean => false,
+            RuntimeTypeKind::Unknown => false,
+            RuntimeTypeKind::Error => false,
+            RuntimeTypeKind::ArrayOf {
                 subtype: _,
                 size: _,
             } => false,
-            RuntimeType::Struct {
+            RuntimeTypeKind::Struct {
                 members: _,
                 source_hash: _,
             } => false,
@@ -301,29 +309,29 @@ impl RuntimeType {
     }
     pub fn is_boolean(&self) -> bool {
         match self {
-            RuntimeType::Number {
+            RuntimeTypeKind::Number {
                 signed: _,
                 integer: _,
             } => false,
-            RuntimeType::I8 => false,
-            RuntimeType::I16 => false,
-            RuntimeType::I32 => false,
-            RuntimeType::I64 => false,
-            RuntimeType::U8 => false,
-            RuntimeType::U16 => false,
-            RuntimeType::U32 => false,
-            RuntimeType::U64 => false,
-            RuntimeType::F32 => false,
-            RuntimeType::F64 => false,
-            RuntimeType::Boolean => true,
-            RuntimeType::Unit => false,
-            RuntimeType::Unknown => false,
-            RuntimeType::Error => false,
-            RuntimeType::ArrayOf {
+            RuntimeTypeKind::I8 => false,
+            RuntimeTypeKind::I16 => false,
+            RuntimeTypeKind::I32 => false,
+            RuntimeTypeKind::I64 => false,
+            RuntimeTypeKind::U8 => false,
+            RuntimeTypeKind::U16 => false,
+            RuntimeTypeKind::U32 => false,
+            RuntimeTypeKind::U64 => false,
+            RuntimeTypeKind::F32 => false,
+            RuntimeTypeKind::F64 => false,
+            RuntimeTypeKind::Boolean => true,
+            RuntimeTypeKind::Unit => false,
+            RuntimeTypeKind::Unknown => false,
+            RuntimeTypeKind::Error => false,
+            RuntimeTypeKind::ArrayOf {
                 subtype: _,
                 size: _,
             } => false,
-            RuntimeType::Struct {
+            RuntimeTypeKind::Struct {
                 members: _,
                 source_hash: _,
             } => false,
@@ -332,21 +340,21 @@ impl RuntimeType {
 
     /// true means the specialization succeeded
     pub fn specialize_number_size(&mut self) -> bool {
-        if let RuntimeType::Number { .. } = self {
+        if let RuntimeTypeKind::Number { .. } = self {
             match *self {
-                RuntimeType::Number {
+                RuntimeTypeKind::Number {
                     signed: None | Some(true),
                     integer: None | Some(true),
-                } => *self = RuntimeType::I32,
-                RuntimeType::Number {
+                } => *self = RuntimeTypeKind::I32,
+                RuntimeTypeKind::Number {
                     signed: Some(false),
                     integer: None | Some(true),
-                } => *self = RuntimeType::U32,
-                RuntimeType::Number {
+                } => *self = RuntimeTypeKind::U32,
+                RuntimeTypeKind::Number {
                     signed: Some(true),
                     integer: Some(false),
-                } => *self = RuntimeType::F32,
-                RuntimeType::Number {
+                } => *self = RuntimeTypeKind::F32,
+                RuntimeTypeKind::Number {
                     signed: Some(false),
                     integer: Some(false),
                 } => panic!("Unsigned floats shouldn't ever exist"),
@@ -365,28 +373,36 @@ impl RuntimeType {
         b: UnionFindSetPtr<RuntimeType>,
         types: &mut UnionFindSet<RuntimeType>,
     ) -> bool {
-        if *types.get(a) == RuntimeType::Error || *types.get(b) == RuntimeType::Error {
+        if types.get(a).kind == RuntimeTypeKind::Error
+            || types.get(b).kind == RuntimeTypeKind::Error
+        {
             return false;
         }
 
-        types.try_merge(a, b, |mut a, b, types| {
+        types.try_merge(a, b, |mut a_full, b_full, types| {
             use UnionFindSetMergeResult::*;
-            if b == RuntimeType::Unknown {
-                return Merged(a);
+            let a = &mut a_full.kind;
+            let b = &b_full.kind;
+
+            if *b == RuntimeTypeKind::Unknown {
+                return Merged(a_full);
             }
-            if b == RuntimeType::Error {
+            if *b == RuntimeTypeKind::Error {
                 unreachable!("Should have been checked above")
             }
             match a {
-                _ if a == b => Merged(a),
+                _ if a == b => Merged(a_full),
 
-                RuntimeType::Number { signed, integer } => {
+                RuntimeTypeKind::Number { signed, integer } => {
                     if !match signed {
                         Some(true) => b.could_be_signed(),
                         Some(false) => b.could_be_unsigned(),
                         None => true,
                     } {
-                        return NotMerged { a, b };
+                        return NotMerged {
+                            a: a_full,
+                            b: b_full,
+                        };
                     }
 
                     if !match integer {
@@ -394,125 +410,161 @@ impl RuntimeType {
                         Some(false) => b.could_be_float(),
                         None => b.is_numeric(),
                     } {
-                        return NotMerged { a, b };
+                        return NotMerged {
+                            a: a_full,
+                            b: b_full,
+                        };
                     }
 
                     match b {
-                        RuntimeType::Number {
+                        RuntimeTypeKind::Number {
                             signed: b_signed,
                             integer: b_integer,
-                        } => Merged(RuntimeType::Number {
-                            signed: match (signed, b_signed) {
-                                (None, None) => None,
-                                (None, Some(x)) => Some(x),
-                                (Some(x), None) => Some(x),
-                                (Some(x), Some(y)) => {
-                                    assert_eq!(x, y);
-                                    Some(x)
-                                }
+                        } => Merged(RuntimeType {
+                            kind: RuntimeTypeKind::Number {
+                                signed: match (*signed, *b_signed) {
+                                    (None, None) => None,
+                                    (None, Some(x)) => Some(x),
+                                    (Some(x), None) => Some(x),
+                                    (Some(x), Some(y)) => {
+                                        assert_eq!(x, y);
+                                        Some(x)
+                                    }
+                                },
+                                integer: match (*integer, *b_integer) {
+                                    (None, None) => None,
+                                    (None, Some(x)) => Some(x),
+                                    (Some(x), None) => Some(x),
+                                    (Some(x), Some(y)) => {
+                                        assert_eq!(x, y);
+                                        Some(x)
+                                    }
+                                },
                             },
-                            integer: match (integer, b_integer) {
-                                (None, None) => None,
-                                (None, Some(x)) => Some(x),
-                                (Some(x), None) => Some(x),
-                                (Some(x), Some(y)) => {
-                                    assert_eq!(x, y);
-                                    Some(x)
-                                }
-                            },
+                            definition_range: a_full.definition_range.or(b_full.definition_range),
                         }),
                         // we already checked that signedness and int/float are compatible, so
                         // this has to be a number. It also has to be a fully specialized one
                         // because partially specialized ones are handled above.
-                        _ => Merged(b),
+                        _ => Merged(b_full),
                     }
                 }
 
-                RuntimeType::I8 | RuntimeType::I16 | RuntimeType::I32 | RuntimeType::I64 => {
-                    if let RuntimeType::Number { .. } = b
+                RuntimeTypeKind::I8
+                | RuntimeTypeKind::I16
+                | RuntimeTypeKind::I32
+                | RuntimeTypeKind::I64 => {
+                    if let RuntimeTypeKind::Number { .. } = b
                         && b.could_be_integer()
                         && b.could_be_signed()
                     {
-                        Merged(a)
+                        Merged(a_full)
                     } else if a == b {
-                        Merged(a)
+                        Merged(a_full)
                     } else {
-                        NotMerged { a, b }
+                        NotMerged {
+                            a: a_full,
+                            b: b_full,
+                        }
                     }
                 }
-                RuntimeType::U8 | RuntimeType::U16 | RuntimeType::U32 | RuntimeType::U64 => {
-                    if let RuntimeType::Number { .. } = b
+                RuntimeTypeKind::U8
+                | RuntimeTypeKind::U16
+                | RuntimeTypeKind::U32
+                | RuntimeTypeKind::U64 => {
+                    if let RuntimeTypeKind::Number { .. } = b
                         && b.could_be_integer()
                         && b.could_be_unsigned()
                     {
-                        Merged(a)
+                        Merged(a_full)
                     } else if a == b {
-                        Merged(a)
+                        Merged(a_full)
                     } else {
-                        NotMerged { a, b }
+                        NotMerged {
+                            a: a_full,
+                            b: b_full,
+                        }
                     }
                 }
 
-                RuntimeType::F32 | RuntimeType::F64 => {
+                RuntimeTypeKind::F32 | RuntimeTypeKind::F64 => {
                     if b.could_be_float() {
-                        Merged(a)
+                        Merged(a_full)
                     } else {
-                        NotMerged { a, b }
+                        NotMerged {
+                            a: a_full,
+                            b: b_full,
+                        }
                     }
                 }
 
-                RuntimeType::Boolean => {
+                RuntimeTypeKind::Boolean => {
                     if b.is_boolean() {
-                        Merged(b)
+                        Merged(b_full)
                     } else {
-                        NotMerged { a, b }
+                        NotMerged {
+                            a: a_full,
+                            b: b_full,
+                        }
                     }
                 }
-                RuntimeType::Unit => {
-                    if b == RuntimeType::Unit {
-                        Merged(b)
+                RuntimeTypeKind::Unit => {
+                    if *b == RuntimeTypeKind::Unit {
+                        Merged(b_full)
                     } else {
-                        NotMerged { a, b }
+                        NotMerged {
+                            a: a_full,
+                            b: b_full,
+                        }
                     }
                 }
-                RuntimeType::Unknown => Merged(b),
-                RuntimeType::Error => Merged(a),
-                RuntimeType::ArrayOf {
+                RuntimeTypeKind::Unknown => Merged(b_full),
+                RuntimeTypeKind::Error => Merged(a_full),
+                RuntimeTypeKind::ArrayOf {
                     subtype: a_subtype,
-                    size: ref mut a_size,
+                    size: a_size,
                 } => {
-                    if let RuntimeType::ArrayOf {
+                    if let RuntimeTypeKind::ArrayOf {
                         subtype: b_subtype,
                         size: b_size,
                     } = b
                     {
-                        if !RuntimeType::merge_types(a_subtype, b_subtype, types) {
-                            return NotMerged { a, b };
+                        if !RuntimeTypeKind::merge_types(*a_subtype, *b_subtype, types) {
+                            return NotMerged {
+                                a: a_full,
+                                b: b_full,
+                            };
                         }
-                        match (*a_size, b_size) {
+                        match (*a_size, *b_size) {
                             (None, None) => {}
                             (None, Some(_)) => {
-                                *a_size = b_size;
+                                *a_size = *b_size;
                             }
                             (Some(_), None) => {}
                             (Some(a_size), Some(b_size)) => {
                                 if a_size != b_size {
-                                    return NotMerged { a, b };
+                                    return NotMerged {
+                                        a: a_full,
+                                        b: b_full,
+                                    };
                                 }
                             }
                         }
 
-                        Merged(a)
+                        Merged(a_full)
                     } else {
-                        NotMerged { a, b }
+                        NotMerged {
+                            a: a_full,
+                            b: b_full,
+                        }
                     }
                 }
-                RuntimeType::Struct {
-                    ref members,
+                RuntimeTypeKind::Struct {
+                    members,
                     source_hash,
                 } => {
-                    if let RuntimeType::Struct {
-                        members: ref members_2,
+                    if let RuntimeTypeKind::Struct {
+                        members: members_2,
                         source_hash: source_hash_2,
                     } = b
                         && (source_hash == source_hash_2
@@ -525,29 +577,48 @@ impl RuntimeType {
                                     (member1_name, member1_type),
                                     (member2_name, member2_type),
                                 ) => {
-                                    if !RuntimeType::merge_types(
+                                    if !RuntimeTypeKind::merge_types(
                                         *member1_type,
                                         *member2_type,
                                         types,
                                     ) {
-                                        return NotMerged { a, b };
+                                        return NotMerged {
+                                            a: a_full,
+                                            b: b_full,
+                                        };
                                     }
                                     if member1_name != member2_name {
-                                        return NotMerged { a, b };
+                                        return NotMerged {
+                                            a: a_full,
+                                            b: b_full,
+                                        };
                                     }
                                 }
-                                EitherOrBoth::Left(_) => return NotMerged { a, b },
-                                EitherOrBoth::Right(_) => return NotMerged { a, b },
+                                EitherOrBoth::Left(_) => {
+                                    return NotMerged {
+                                        a: a_full,
+                                        b: b_full,
+                                    };
+                                }
+                                EitherOrBoth::Right(_) => {
+                                    return NotMerged {
+                                        a: a_full,
+                                        b: b_full,
+                                    };
+                                }
                             }
                         }
 
                         if source_hash.is_some() {
-                            Merged(a)
+                            Merged(a_full)
                         } else {
-                            Merged(b)
+                            Merged(b_full)
                         }
                     } else {
-                        NotMerged { a, b }
+                        NotMerged {
+                            a: a_full,
+                            b: b_full,
+                        }
                     }
                 }
             }

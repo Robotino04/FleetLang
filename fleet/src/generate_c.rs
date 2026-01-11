@@ -27,7 +27,7 @@ use crate::{
             PassResult, PrecompiledGlslFunctions, ScopeData, StatData, StructAliasMap, TypeData,
             TypeSets, VariableData,
         },
-        runtime_type::RuntimeType,
+        runtime_type::{RuntimeType, RuntimeTypeKind},
         scope_analysis::{Function, Variable},
         top_level_binding_finder::TopLevelBindingFinder,
         union_find_set::UnionFindSetPtr,
@@ -133,32 +133,32 @@ impl CCodeGenerator<'_> {
                 .1
     }
 
-    fn runtime_type_to_c_impl(&self, type_: &RuntimeType) -> (String, String) {
+    fn runtime_type_to_c_impl(&self, type_: &RuntimeTypeKind) -> (String, String) {
         match type_ {
-            RuntimeType::I8 => ("int8_t".to_string(), "".to_string()),
-            RuntimeType::I16 => ("int16_t".to_string(), "".to_string()),
-            RuntimeType::I32 => ("int32_t".to_string(), "".to_string()),
-            RuntimeType::I64 => ("int64_t".to_string(), "".to_string()),
-            RuntimeType::U8 => ("uint8_t".to_string(), "".to_string()),
-            RuntimeType::U16 => ("uint16_t".to_string(), "".to_string()),
-            RuntimeType::U32 => ("uint32_t".to_string(), "".to_string()),
-            RuntimeType::U64 => ("uint64_t".to_string(), "".to_string()),
-            RuntimeType::F32 => ("float".to_string(), "".to_string()),
-            RuntimeType::F64 => ("double".to_string(), "".to_string()),
-            RuntimeType::Boolean => ("bool".to_string(), "".to_string()),
-            RuntimeType::Unit => ("void".to_string(), "".to_string()),
-            RuntimeType::Number { .. } => {
+            RuntimeTypeKind::I8 => ("int8_t".to_string(), "".to_string()),
+            RuntimeTypeKind::I16 => ("int16_t".to_string(), "".to_string()),
+            RuntimeTypeKind::I32 => ("int32_t".to_string(), "".to_string()),
+            RuntimeTypeKind::I64 => ("int64_t".to_string(), "".to_string()),
+            RuntimeTypeKind::U8 => ("uint8_t".to_string(), "".to_string()),
+            RuntimeTypeKind::U16 => ("uint16_t".to_string(), "".to_string()),
+            RuntimeTypeKind::U32 => ("uint32_t".to_string(), "".to_string()),
+            RuntimeTypeKind::U64 => ("uint64_t".to_string(), "".to_string()),
+            RuntimeTypeKind::F32 => ("float".to_string(), "".to_string()),
+            RuntimeTypeKind::F64 => ("double".to_string(), "".to_string()),
+            RuntimeTypeKind::Boolean => ("bool".to_string(), "".to_string()),
+            RuntimeTypeKind::Unit => ("void".to_string(), "".to_string()),
+            RuntimeTypeKind::Number { .. } => {
                 unreachable!(
                     "undetermined numbers should have caused errors before calling c_generator"
                 )
             }
-            RuntimeType::Unknown => {
+            RuntimeTypeKind::Unknown => {
                 unreachable!("unknown types should have caused errors before calling c_generator")
             }
-            RuntimeType::Error => {
+            RuntimeTypeKind::Error => {
                 unreachable!("unknown types should have caused errors before calling c_generator")
             }
-            RuntimeType::ArrayOf { subtype, size } => {
+            RuntimeTypeKind::ArrayOf { subtype, size } => {
                 let (type_, after_id) = self.runtime_type_to_c(*subtype);
                 let Some(size) = size else {
                     unreachable!("arrays should all have a size before calling c_generator");
@@ -167,7 +167,7 @@ impl CCodeGenerator<'_> {
 
                 (self.as_struct_type(type_result), "".to_string())
             }
-            RuntimeType::Struct {
+            RuntimeTypeKind::Struct {
                 members,
                 source_hash: _,
             } => (
@@ -185,35 +185,35 @@ impl CCodeGenerator<'_> {
         }
     }
     fn runtime_type_to_c(&self, type_: UnionFindSetPtr<RuntimeType>) -> (String, String) {
-        self.runtime_type_to_c_impl(self.type_sets.get(type_))
+        self.runtime_type_to_c_impl(&self.type_sets.get(type_).kind)
     }
-    fn runtime_type_to_byte_size_impl(&self, type_: &RuntimeType) -> usize {
+    fn runtime_type_to_byte_size_impl(&self, type_: &RuntimeTypeKind) -> usize {
         match type_ {
-            RuntimeType::I8 | RuntimeType::U8 => 1,
-            RuntimeType::I16 | RuntimeType::U16 => 2,
-            RuntimeType::I32 | RuntimeType::U32 => 4,
-            RuntimeType::I64 | RuntimeType::U64 => 8,
-            RuntimeType::F32 => 4,
-            RuntimeType::F64 => 8,
-            RuntimeType::Number { .. } => {
+            RuntimeTypeKind::I8 | RuntimeTypeKind::U8 => 1,
+            RuntimeTypeKind::I16 | RuntimeTypeKind::U16 => 2,
+            RuntimeTypeKind::I32 | RuntimeTypeKind::U32 => 4,
+            RuntimeTypeKind::I64 | RuntimeTypeKind::U64 => 8,
+            RuntimeTypeKind::F32 => 4,
+            RuntimeTypeKind::F64 => 8,
+            RuntimeTypeKind::Number { .. } => {
                 unreachable!(
                     "undetermined numbers should have caused errors before calling c_generator"
                 )
             }
-            RuntimeType::Boolean => 1,
-            RuntimeType::Unit => 0,
-            RuntimeType::Unknown => {
+            RuntimeTypeKind::Boolean => 1,
+            RuntimeTypeKind::Unit => 0,
+            RuntimeTypeKind::Unknown => {
                 unreachable!("unknown types should have caused errors before calling c_generator")
             }
-            RuntimeType::Error => {
+            RuntimeTypeKind::Error => {
                 unreachable!("unknown types should have caused errors before calling c_generator")
             }
-            RuntimeType::ArrayOf { subtype, size } => {
+            RuntimeTypeKind::ArrayOf { subtype, size } => {
                 let subtype_size = self.runtime_type_to_byte_size(*subtype);
                 let size = size.expect("arrays should all have a size before calling c_generator");
                 size * subtype_size
             }
-            RuntimeType::Struct {
+            RuntimeTypeKind::Struct {
                 members,
                 source_hash: _,
             } => members
@@ -223,7 +223,7 @@ impl CCodeGenerator<'_> {
         }
     }
     fn runtime_type_to_byte_size(&self, type_: UnionFindSetPtr<RuntimeType>) -> usize {
-        self.runtime_type_to_byte_size_impl(self.type_sets.get(type_))
+        self.runtime_type_to_byte_size_impl(&self.type_sets.get(type_).kind)
     }
 
     fn generate_function_declaration(&self, function: &Function, mangle: bool) -> String {
@@ -608,7 +608,8 @@ impl AstVisitor for CCodeGenerator<'_> {
             })
             .chain(Some((
                 iterator_size_buffer,
-                iterator_end_values.len() * self.runtime_type_to_byte_size_impl(&RuntimeType::I32),
+                iterator_end_values.len()
+                    * self.runtime_type_to_byte_size_impl(&RuntimeTypeKind::I32),
             )))
             .collect_vec()
             .into_iter()
@@ -978,12 +979,16 @@ impl AstVisitor for CCodeGenerator<'_> {
             let nr = x.to_string();
             let zeroes = if x.round() == x { ".0" } else { "" };
 
-            let suffix = if *self.type_sets.get(
-                *self
-                    .type_data
-                    .get(id)
-                    .expect("type data must be available before calling c_generator"),
-            ) == RuntimeType::F32
+            let suffix = if self
+                .type_sets
+                .get(
+                    *self
+                        .type_data
+                        .get(id)
+                        .expect("type data must be available before calling c_generator"),
+                )
+                .kind
+                == RuntimeTypeKind::F32
             {
                 "f"
             } else {
@@ -1005,6 +1010,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                                 .get(id)
                                 .expect("type data must be available before calling c_generator"),
                         )
+                        .kind
                         .is_float()
                     {
                         format_float(*value as f64)
@@ -1035,10 +1041,10 @@ impl AstVisitor for CCodeGenerator<'_> {
 
         let (type_, after_id) = self.runtime_type_to_c(inferred_type);
 
-        let RuntimeType::ArrayOf {
+        let RuntimeTypeKind::ArrayOf {
             subtype: _,
             size: _,
-        } = *self.type_sets.get(inferred_type)
+        } = self.type_sets.get(inferred_type).kind
         else {
             unreachable!("array expressions must have type ArrayOf(_)")
         };
@@ -1076,10 +1082,10 @@ impl AstVisitor for CCodeGenerator<'_> {
 
         let (type_, after_id) = self.runtime_type_to_c(inferred_type);
 
-        let RuntimeType::Struct {
+        let RuntimeTypeKind::Struct {
             members: _,
             source_hash: _,
-        } = *self.type_sets.get(inferred_type)
+        } = self.type_sets.get(inferred_type).kind
         else {
             unreachable!("struct expressions must have type Struct(_)")
         };
@@ -1179,21 +1185,21 @@ impl AstVisitor for CCodeGenerator<'_> {
 
                 let expected_type = self.type_sets.get(expected_type);
 
-                if expected_type.is_numeric() {
+                if expected_type.kind.is_numeric() {
                     PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(({type_}{after_id})(0))"),
                     }
-                } else if expected_type.is_boolean() {
+                } else if expected_type.kind.is_boolean() {
                     PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: "false".to_string(),
                     }
-                } else if let RuntimeType::ArrayOf { .. } | RuntimeType::Struct { .. } =
-                    expected_type
+                } else if let RuntimeTypeKind::ArrayOf { .. } | RuntimeTypeKind::Struct { .. } =
+                    expected_type.kind
                 {
                     let tmp = self.unique_temporary("zero");
-                    let size = self.runtime_type_to_byte_size_impl(expected_type);
+                    let size = self.runtime_type_to_byte_size_impl(&expected_type.kind);
                     PreStatementValue {
                         pre_statements: formatdoc!(
                             "
@@ -1208,7 +1214,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                         &expr_clone,
                         format!(
                             "@zero isn't implemented for type {} in c backend",
-                            expected_type.stringify(&self.type_sets)
+                            expected_type.kind.stringify(&self.type_sets)
                         ),
                         ErrorSeverity::Error,
                     ));
@@ -1226,12 +1232,12 @@ impl AstVisitor for CCodeGenerator<'_> {
 
                 let expected_type = self.type_sets.get(expected_type);
 
-                match expected_type {
-                    RuntimeType::F32 => PreStatementValue {
+                match expected_type.kind {
+                    RuntimeTypeKind::F32 => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(sqrtf({}))", args.first().unwrap()),
                     },
-                    RuntimeType::F64 => PreStatementValue {
+                    RuntimeTypeKind::F64 => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(sqrt({}))", args.first().unwrap()),
                     },
@@ -1240,7 +1246,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                             &expr_clone,
                             format!(
                                 "@sqrt isn't implemented for type {} in c backend",
-                                expected_type.stringify(&self.type_sets)
+                                expected_type.kind.stringify(&self.type_sets)
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -1259,12 +1265,12 @@ impl AstVisitor for CCodeGenerator<'_> {
 
                 let expected_type = self.type_sets.get(expected_type);
 
-                match expected_type {
-                    RuntimeType::F32 => PreStatementValue {
+                match expected_type.kind {
+                    RuntimeTypeKind::F32 => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(sinf({}))", args.first().unwrap()),
                     },
-                    RuntimeType::F64 => PreStatementValue {
+                    RuntimeTypeKind::F64 => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(sin({}))", args.first().unwrap()),
                     },
@@ -1273,7 +1279,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                             &expr_clone,
                             format!(
                                 "@sin isn't implemented for type {} in c backend",
-                                expected_type.stringify(&self.type_sets)
+                                expected_type.kind.stringify(&self.type_sets)
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -1292,12 +1298,12 @@ impl AstVisitor for CCodeGenerator<'_> {
 
                 let expected_type = self.type_sets.get(expected_type);
 
-                match expected_type {
-                    RuntimeType::F32 => PreStatementValue {
+                match expected_type.kind {
+                    RuntimeTypeKind::F32 => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(cosf({}))", args.first().unwrap()),
                     },
-                    RuntimeType::F64 => PreStatementValue {
+                    RuntimeTypeKind::F64 => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(cos({}))", args.first().unwrap()),
                     },
@@ -1306,7 +1312,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                             &expr_clone,
                             format!(
                                 "@cos isn't implemented for type {} in c backend",
-                                expected_type.stringify(&self.type_sets)
+                                expected_type.kind.stringify(&self.type_sets)
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -1325,15 +1331,15 @@ impl AstVisitor for CCodeGenerator<'_> {
 
                 let array_type = self.type_sets.get(array_type);
 
-                match array_type {
-                    RuntimeType::ArrayOf {
+                match array_type.kind {
+                    RuntimeTypeKind::ArrayOf {
                         subtype: _,
                         size: Some(size),
                     } => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("{size}"),
                     },
-                    RuntimeType::ArrayOf {
+                    RuntimeTypeKind::ArrayOf {
                         subtype: _,
                         size: None,
                     } => {
@@ -1341,7 +1347,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                             &expr_clone,
                             format!(
                                 "@length called with unsized array value of type {}",
-                                array_type.stringify(&self.type_sets)
+                                array_type.kind.stringify(&self.type_sets)
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -1355,7 +1361,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                             &expr_clone,
                             format!(
                                 "@length called with non-array typed value of type {}",
-                                array_type.stringify(&self.type_sets)
+                                array_type.kind.stringify(&self.type_sets)
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -1564,6 +1570,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                                 .get(&left.get_id())
                                 .expect("type data must exist before calling c_generator"),
                         )
+                        .kind
                         .is_float()
                     {
                         format!("(fmod(({left_out_value}), ({right_out_value})))")

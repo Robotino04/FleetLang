@@ -34,7 +34,7 @@ use crate::{
             PrecompiledGlslFunctions, ScopeData, StatData, StructAliasMap, TypeData, TypeSets,
             VariableData,
         },
-        runtime_type::RuntimeType,
+        runtime_type::{RuntimeType, RuntimeTypeKind},
         scope_analysis::{Function, Variable},
         union_find_set::UnionFindSetPtr,
     },
@@ -484,42 +484,42 @@ impl<'state> GLSLCodeGenerator<'state> {
     }
 
     fn runtime_type_to_glsl(&self, type_: UnionFindSetPtr<RuntimeType>) -> (String, String) {
-        match self.type_sets.get(type_) {
-            RuntimeType::I8 => ("int8_t".to_string(), "".to_string()),
-            RuntimeType::I16 => ("int16_t".to_string(), "".to_string()),
-            RuntimeType::I32 => ("int32_t".to_string(), "".to_string()),
-            RuntimeType::I64 => ("int64_t".to_string(), "".to_string()),
-            RuntimeType::U8 => ("uint8_t".to_string(), "".to_string()),
-            RuntimeType::U16 => ("uint16_t".to_string(), "".to_string()),
-            RuntimeType::U32 => ("uint32_t".to_string(), "".to_string()),
-            RuntimeType::U64 => ("uint64_t".to_string(), "".to_string()),
-            RuntimeType::F32 => ("float".to_string(), "".to_string()),
-            RuntimeType::F64 => ("double".to_string(), "".to_string()),
-            RuntimeType::Boolean => ("bool".to_string(), "".to_string()),
-            RuntimeType::Unit => ("void".to_string(), "".to_string()),
-            RuntimeType::Number { .. } => {
+        match &self.type_sets.get(type_).kind {
+            RuntimeTypeKind::I8 => ("int8_t".to_string(), "".to_string()),
+            RuntimeTypeKind::I16 => ("int16_t".to_string(), "".to_string()),
+            RuntimeTypeKind::I32 => ("int32_t".to_string(), "".to_string()),
+            RuntimeTypeKind::I64 => ("int64_t".to_string(), "".to_string()),
+            RuntimeTypeKind::U8 => ("uint8_t".to_string(), "".to_string()),
+            RuntimeTypeKind::U16 => ("uint16_t".to_string(), "".to_string()),
+            RuntimeTypeKind::U32 => ("uint32_t".to_string(), "".to_string()),
+            RuntimeTypeKind::U64 => ("uint64_t".to_string(), "".to_string()),
+            RuntimeTypeKind::F32 => ("float".to_string(), "".to_string()),
+            RuntimeTypeKind::F64 => ("double".to_string(), "".to_string()),
+            RuntimeTypeKind::Boolean => ("bool".to_string(), "".to_string()),
+            RuntimeTypeKind::Unit => ("void".to_string(), "".to_string()),
+            RuntimeTypeKind::Number { .. } => {
                 unreachable!(
                     "undetermined numbers should have caused errors before calling glsl_generator"
                 )
             }
-            RuntimeType::Unknown => {
+            RuntimeTypeKind::Unknown => {
                 unreachable!(
                     "unknown types should have caused errors before calling glsl_generator"
                 )
             }
-            RuntimeType::Error => {
+            RuntimeTypeKind::Error => {
                 unreachable!(
                     "unknown types should have caused errors before calling glsl_generator"
                 )
             }
-            RuntimeType::ArrayOf { subtype, size } => {
+            RuntimeTypeKind::ArrayOf { subtype, size } => {
                 let (type_, after_id) = self.runtime_type_to_glsl(*subtype);
                 let Some(size) = size else {
                     unreachable!("arrays should all have a size before calling glsl_generator");
                 };
                 (type_, format!("[{size}]{after_id}"))
             }
-            RuntimeType::Struct {
+            RuntimeTypeKind::Struct {
                 members,
                 source_hash: _,
             } => (
@@ -537,43 +537,46 @@ impl<'state> GLSLCodeGenerator<'state> {
         }
     }
     #[allow(unused)]
-    fn runtime_type_to_byte_size(&self, type_: &RuntimeType) -> usize {
+    fn runtime_type_to_byte_size(&self, type_: &RuntimeTypeKind) -> usize {
         match type_ {
-            RuntimeType::I8 | RuntimeType::U8 => 1,
-            RuntimeType::I16 | RuntimeType::U16 => 2,
-            RuntimeType::I32 | RuntimeType::U32 => 4,
-            RuntimeType::I64 | RuntimeType::U64 => 8,
-            RuntimeType::F32 => 4,
-            RuntimeType::F64 => 8,
-            RuntimeType::Number { .. } => {
+            RuntimeTypeKind::I8 | RuntimeTypeKind::U8 => 1,
+            RuntimeTypeKind::I16 | RuntimeTypeKind::U16 => 2,
+            RuntimeTypeKind::I32 | RuntimeTypeKind::U32 => 4,
+            RuntimeTypeKind::I64 | RuntimeTypeKind::U64 => 8,
+            RuntimeTypeKind::F32 => 4,
+            RuntimeTypeKind::F64 => 8,
+            RuntimeTypeKind::Number { .. } => {
                 unreachable!(
                     "undetermined numbers should have caused errors before calling glsl_generator"
                 )
             }
-            RuntimeType::Boolean => 1,
-            RuntimeType::Unit => 0,
-            RuntimeType::Unknown => {
+            RuntimeTypeKind::Boolean => 1,
+            RuntimeTypeKind::Unit => 0,
+            RuntimeTypeKind::Unknown => {
                 unreachable!(
                     "unknown types should have caused errors before calling glsl_generator"
                 )
             }
-            RuntimeType::Error => {
+            RuntimeTypeKind::Error => {
                 unreachable!(
                     "unknown types should have caused errors before calling glsl_generator"
                 )
             }
-            RuntimeType::ArrayOf { subtype, size } => {
-                let subtype_size = self.runtime_type_to_byte_size(self.type_sets.get(*subtype));
+            RuntimeTypeKind::ArrayOf { subtype, size } => {
+                let subtype_size =
+                    self.runtime_type_to_byte_size(&self.type_sets.get(*subtype).kind);
                 let size =
                     size.expect("arrays should all have a size before calling glsl_generator");
                 size * subtype_size
             }
-            RuntimeType::Struct {
+            RuntimeTypeKind::Struct {
                 members,
                 source_hash: _,
             } => members
                 .iter()
-                .map(|(_member, type_)| self.runtime_type_to_byte_size(self.type_sets.get(*type_)))
+                .map(|(_member, type_)| {
+                    self.runtime_type_to_byte_size(&self.type_sets.get(*type_).kind)
+                })
                 .sum(),
         }
     }
@@ -845,10 +848,10 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
         let type_ = ref_var.borrow().type_.unwrap();
 
-        if let RuntimeType::ArrayOf {
+        if let RuntimeTypeKind::ArrayOf {
             subtype: _,
             size: Some(size),
-        } = *self.type_sets.get(type_)
+        } = self.type_sets.get(type_).kind
         {
             let lvalue_gen = self.visit_simple_binding(binding);
             let lvalue_temporary = self.mangle_variable(&ref_var.borrow());
@@ -1095,11 +1098,12 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
         let (type_, after_id) = self.runtime_type_to_glsl(inferred_type);
 
-        let RuntimeType::ArrayOf { subtype, size: _ } = *self.type_sets.get(inferred_type) else {
+        let RuntimeTypeKind::ArrayOf { subtype, size: _ } = self.type_sets.get(inferred_type).kind
+        else {
             unreachable!("array expressions must have type ArrayOf(_)")
         };
 
-        if let RuntimeType::ArrayOf { subtype: _, size } = self.type_sets.get(subtype) {
+        if let RuntimeTypeKind::ArrayOf { subtype: _, size } = self.type_sets.get(subtype).kind {
             let size = size.expect("arrays must have their size set before calling glsl_generator");
             let (pre_statements, definitions, temporaries): (Vec<_>, Vec<_>, Vec<_>) = elements
                 .iter_mut()
@@ -1181,10 +1185,10 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
         let (type_, after_id) = self.runtime_type_to_glsl(inferred_type);
 
-        let RuntimeType::Struct {
+        let RuntimeTypeKind::Struct {
             members: _,
             source_hash: _,
-        } = *self.type_sets.get(inferred_type)
+        } = self.type_sets.get(inferred_type).kind
         else {
             unreachable!("struct expressions must have type Struct(_)")
         };
@@ -1297,24 +1301,24 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                 let (type_, after_id) = self.runtime_type_to_glsl(expected_type);
                 let expected_type = self.type_sets.get(expected_type);
 
-                if expected_type.is_numeric() {
+                if expected_type.kind.is_numeric() {
                     PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("({type_}{after_id}(0))"),
                     }
-                } else if expected_type.is_boolean() {
+                } else if expected_type.kind.is_boolean() {
                     PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: "false".to_string(),
                     }
-                } else if let RuntimeType::ArrayOf { subtype, size } = expected_type {
+                } else if let RuntimeTypeKind::ArrayOf { subtype, size } = expected_type.kind {
                     let size = size.unwrap();
-                    if !self.type_sets.get(*subtype).is_numeric() {
+                    if !self.type_sets.get(subtype).kind.is_numeric() {
                         self.errors.push(FleetError::from_node(
                             &expr_clone,
                             format!(
                                 "@zero isn't implemented for array type {} in glsl backend (only 1D arrays with numbers are supported currently)",
-                                expected_type.stringify(&self.type_sets)
+                                expected_type.kind.stringify(&self.type_sets)
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -1337,7 +1341,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                         &expr_clone,
                         format!(
                             "@zero isn't implemented for type {} in glsl backend",
-                            expected_type.stringify(&self.type_sets)
+                            expected_type.kind.stringify(&self.type_sets)
                         ),
                         ErrorSeverity::Error,
                     ));
@@ -1355,8 +1359,8 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
                 let expected_type = self.type_sets.get(expected_type);
 
-                match expected_type {
-                    RuntimeType::F32 | RuntimeType::F64 => PreStatementValue {
+                match expected_type.kind {
+                    RuntimeTypeKind::F32 | RuntimeTypeKind::F64 => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(sqrt({}))", args.first().unwrap()),
                     },
@@ -1365,7 +1369,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                             &expr_clone,
                             format!(
                                 "@sqrt isn't implemented for type {} in c backend",
-                                expected_type.stringify(&self.type_sets)
+                                expected_type.kind.stringify(&self.type_sets)
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -1384,8 +1388,8 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
                 let expected_type = self.type_sets.get(expected_type);
 
-                match expected_type {
-                    RuntimeType::F32 | RuntimeType::F64 => PreStatementValue {
+                match expected_type.kind {
+                    RuntimeTypeKind::F32 | RuntimeTypeKind::F64 => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(sin({}))", args.first().unwrap()),
                     },
@@ -1394,7 +1398,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                             &expr_clone,
                             format!(
                                 "@sin isn't implemented for type {} in c backend",
-                                expected_type.stringify(&self.type_sets)
+                                expected_type.kind.stringify(&self.type_sets)
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -1413,8 +1417,8 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
                 let expected_type = self.type_sets.get(expected_type);
 
-                match expected_type {
-                    RuntimeType::F32 | RuntimeType::F64 => PreStatementValue {
+                match expected_type.kind {
+                    RuntimeTypeKind::F32 | RuntimeTypeKind::F64 => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("(cos({}))", args.first().unwrap()),
                     },
@@ -1423,7 +1427,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                             &expr_clone,
                             format!(
                                 "@cos isn't implemented for type {} in c backend",
-                                expected_type.stringify(&self.type_sets)
+                                expected_type.kind.stringify(&self.type_sets)
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -1442,15 +1446,15 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
                 let array_type = self.type_sets.get(array_type);
 
-                match array_type {
-                    RuntimeType::ArrayOf {
+                match array_type.kind {
+                    RuntimeTypeKind::ArrayOf {
                         subtype: _,
                         size: Some(size),
                     } => PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: format!("{size}"),
                     },
-                    RuntimeType::ArrayOf {
+                    RuntimeTypeKind::ArrayOf {
                         subtype: _,
                         size: None,
                     } => {
@@ -1458,7 +1462,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                             &expr_clone,
                             format!(
                                 "@length called with unsized array value of type {}",
-                                array_type.stringify(&self.type_sets)
+                                array_type.kind.stringify(&self.type_sets)
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -1472,7 +1476,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                             &expr_clone,
                             format!(
                                 "@length called with non-array typed value of type {}",
-                                array_type.stringify(&self.type_sets)
+                                array_type.kind.stringify(&self.type_sets)
                             ),
                             ErrorSeverity::Error,
                         ));
@@ -1583,10 +1587,10 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         let type_ = self.type_sets.get(ref_var.borrow().type_.unwrap());
 
         // TODO: Why is this here?
-        if let RuntimeType::ArrayOf {
+        if let RuntimeTypeKind::ArrayOf {
             subtype: _,
             size: _,
-        } = *type_
+        } = type_.kind
         {
             PreStatementValue {
                 pre_statements: "".to_string(),
@@ -1690,6 +1694,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                                 .get(&left.get_id())
                                 .expect("type data must exist before calling glsl_generator"),
                         )
+                        .kind
                         .is_float()
                     {
                         format!("(mod(({left_out_value}), ({right_out_value})))")
@@ -1723,10 +1728,10 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             .get(id)
             .expect("Types must exist before calling glsl_generator");
 
-        if let RuntimeType::ArrayOf {
+        if let RuntimeTypeKind::ArrayOf {
             subtype: _,
             size: Some(size),
-        } = *self.type_sets.get(type_)
+        } = self.type_sets.get(type_).kind
         {
             let lvalue_temporary = self.unique_temporary("lvalue");
             let PreStatementValue {
