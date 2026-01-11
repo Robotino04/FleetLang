@@ -24,20 +24,25 @@ use fleet::{
         },
         scope_analysis::ComptimeDeps,
     },
-    tokenizer::{SourceLocation, SourceRange, Token},
+    tokenizer::{FileName, NamedSourceRange, SourceLocation, SourceRange, Token},
 };
 use indoc::indoc;
 use itertools::Itertools;
 use log::info;
 use std::{
     collections::HashMap,
+    rc::Rc,
+    str::FromStr,
     sync::{
         Arc, LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
     },
 };
-use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::{Client, LanguageServer, lsp_types::*};
+use tower_lsp_server::{
+    jsonrpc::Result,
+    lsp_types::request::{GotoDeclarationParams, GotoDeclarationResponse},
+};
 
 use crate::extract_semantic_tokens_pass::ExtractSemanticTokensPass;
 
@@ -863,6 +868,86 @@ impl Backend {
     fn read_document(&self, text_document: &TextDocumentIdentifier) -> Option<String> {
         Some(self.documents.read().ok()?.get(&text_document.uri)?.clone())
     }
+
+    async fn get_definition_location(
+        &self,
+        text_document: &TextDocumentIdentifier,
+        position: Position,
+    ) -> Result<Option<NamedSourceRange>> {
+        let Some(src) = self.read_document(text_document) else {
+            return Err(tower_lsp_server::jsonrpc::Error {
+                code: tower_lsp_server::jsonrpc::ErrorCode::InvalidParams,
+                message: format!(
+                    "The requested document {:?} doesn't exist on the server.",
+                    text_document
+                )
+                .into(),
+                data: None,
+            });
+        };
+
+        let mut pm = PassManager::default();
+        insert_minimal_pipeline(&mut pm);
+        insert_compile_passes(&mut pm);
+
+        pm.state.insert_default::<Errors>();
+        pm.state.insert(InputSource {
+            source: src.to_string(),
+            file_name: FileName(Rc::new(text_document.uri.as_str().to_string())),
+        });
+
+        if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
+            return Err(tower_lsp_server::jsonrpc::Error {
+                code: tower_lsp_server::jsonrpc::ErrorCode::ServerError(0),
+                message: format!("Compilation failed: {err}").into(),
+                data: None,
+            });
+        };
+
+        let variable_data = pm.state.get::<VariableData>();
+        let function_data = pm.state.get::<FunctionData>();
+
+        let find_pass = FindContainingNodePass::new(SourceLocation {
+            index: 0,
+            line: position.line as usize + 1,
+            column: position.character as usize,
+        });
+
+        let Ok((node_hierarchy, _hovered_token)) =
+            find_pass.visit_program(&mut pm.state.get_mut().unwrap())
+        else {
+            return Ok(None);
+        };
+
+        Ok(node_hierarchy.iter().rev().find_map(|node| match node {
+            AstNode::FunctionCallExpression(FunctionCallExpression { id, .. }) => Some(
+                function_data
+                    .as_ref()?
+                    .get(id)?
+                    .borrow()
+                    .definition_range
+                    .clone(),
+            ),
+            AstNode::VariableAccessExpression(VariableAccessExpression { id, .. })
+            | AstNode::VariableAssignmentExpression(VariableAssignmentExpression { id, .. })
+            | AstNode::VariableLValue(VariableLValue {
+                name: _,
+                name_token: _,
+                id,
+            }) => Some(
+                variable_data
+                    .as_ref()?
+                    .get(id)?
+                    .borrow()
+                    .definition_range
+                    .clone(),
+            ),
+            //AstNode::StructAccessExpression(struct_access_expression) => todo!(),
+            //AstNode::StructAccessLValue(struct_access_lvalue) => todo!(),
+            // TODO: AstNode::AliasType(alias_type) => todo!(),
+            _ => None,
+        }))
+    }
 }
 
 impl LanguageServer for Backend {
@@ -915,6 +1000,16 @@ impl LanguageServer for Backend {
                         work_done_progress: None,
                     },
                 }),
+                definition_provider: Some(OneOf::Right(DefinitionOptions {
+                    work_done_progress_options: WorkDoneProgressOptions {
+                        work_done_progress: None,
+                    },
+                })),
+                declaration_provider: Some(DeclarationCapability::Options(DeclarationOptions {
+                    work_done_progress_options: WorkDoneProgressOptions {
+                        work_done_progress: None,
+                    },
+                })),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -1055,6 +1150,63 @@ impl LanguageServer for Backend {
             .write()
             .unwrap()
             .remove(&params.text_document.uri);
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        info!("{}", "-".repeat(80));
+        info!("{params:#?}");
+
+        let Some(pos) = self
+            .get_definition_location(
+                &params.text_document_position_params.text_document,
+                params.text_document_position_params.position,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(GotoDefinitionResponse::Scalar(Location {
+            uri: Uri::from_str(pos.name.as_str()).map_err(|_| {
+                tower_lsp_server::jsonrpc::Error {
+                    code: tower_lsp_server::jsonrpc::ErrorCode::InternalError,
+                    message: format!("{:?} is not a valid Uri", pos.name).into(),
+                    data: None,
+                }
+            })?,
+            range: source_range_to_lsp_range(pos),
+        })))
+    }
+    async fn goto_declaration(
+        &self,
+        params: GotoDeclarationParams,
+    ) -> Result<Option<GotoDeclarationResponse>> {
+        info!("{}", "-".repeat(80));
+        info!("{params:#?}");
+
+        let Some(pos) = self
+            .get_definition_location(
+                &params.text_document_position_params.text_document,
+                params.text_document_position_params.position,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(GotoDeclarationResponse::Scalar(Location {
+            uri: Uri::from_str(pos.name.as_str()).map_err(|_| {
+                tower_lsp_server::jsonrpc::Error {
+                    code: tower_lsp_server::jsonrpc::ErrorCode::InternalError,
+                    message: format!("{:?} is not a valid Uri", pos.name).into(),
+                    data: None,
+                }
+            })?,
+            range: source_range_to_lsp_range(pos),
+        })))
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {

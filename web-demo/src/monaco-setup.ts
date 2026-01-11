@@ -64,6 +64,9 @@ const defaultProperties: monaco.editor.IStandaloneEditorConstructionOptions = {
     "'Maple Mono NF', 'Maple Mono', 'Fira Code', 'Source Code Pro', 'JetBrains Mono', 'Consolas', 'Courier New', 'Monaco', 'Inconsolata', 'Ubuntu Mono', 'Cascadia Code', 'IBM Plex Mono', 'Roboto Mono', 'Hack', 'Anonymous Pro', 'Menlo', 'Operator Mono', monospace",
   fontSize: 15,
   fontLigatures: true,
+  gotoLocation: {
+    multiple: "gotoAndPeek",
+  },
 };
 
 setThemeCssVars(defaultProperties.theme || "mocha");

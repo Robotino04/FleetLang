@@ -1,6 +1,10 @@
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
 import { IntoServer, FromServer } from "./codec";
 import {
+  Declaration,
+  DeclarationParams,
+  Definition,
+  DefinitionParams,
   DidChangeTextDocumentParams,
   DidCloseTextDocumentParams,
   DidOpenTextDocumentParams,
@@ -10,7 +14,9 @@ import {
   Hover,
   HoverParams,
   InitializeParams,
+  Location,
   MarkupContent,
+  Range,
   SemanticTokensParams,
   SemanticTokensPartialResult,
   SignatureHelp,
@@ -72,6 +78,14 @@ export class MonacoLspTransport {
         } as DidCloseTextDocumentParams,
       } as any);
     });
+
+    const transform_range = (range: Range) =>
+      new monaco.Range(
+        range.start.line + 1,
+        range.start.character + 1,
+        range.end.line + 1,
+        range.end.character + 1,
+      );
 
     // Register Monaco providers for LSP features
     // Semantic Tokens Provider
@@ -138,6 +152,74 @@ export class MonacoLspTransport {
         releaseDocumentSemanticTokens: () => {},
       },
     );
+
+    monaco.languages.registerDeclarationProvider(model.getLanguageId(), {
+      provideDeclaration: async (
+        model,
+        position,
+        _token,
+      ): Promise<monaco.languages.Definition | null> => {
+        const uri = model.uri.toString();
+        const response = await this.sendRequest("textDocument/declaration", {
+          textDocument: { uri },
+          position: {
+            line: position.lineNumber - 1,
+            character: position.column - 1,
+          },
+        } as DeclarationParams);
+        const result = response?.result as Declaration;
+
+        const transform_location = (def: Location) =>
+          ({
+            range: transform_range(def.range),
+            uri: monaco.Uri.parse(def.uri),
+          }) as monaco.languages.Location;
+
+        if (result) {
+          if (Array.isArray(result)) {
+            return result.map(transform_location);
+          } else {
+            return transform_location(result);
+          }
+        } else {
+          return null;
+        }
+      },
+    });
+
+    monaco.languages.registerDefinitionProvider(model.getLanguageId(), {
+      provideDefinition: async (
+        model,
+        position,
+        _token,
+      ): Promise<monaco.languages.Definition | null> => {
+        const uri = model.uri.toString();
+        const response = await this.sendRequest("textDocument/definition", {
+          textDocument: { uri },
+          position: {
+            line: position.lineNumber - 1,
+            character: position.column - 1,
+          },
+        } as DefinitionParams);
+        const result = response?.result as Definition;
+
+        const transform_location = (def: Location) =>
+          ({
+            range: transform_range(def.range),
+            uri: monaco.Uri.parse(def.uri),
+          }) as monaco.languages.Location;
+
+        if (result) {
+          if (Array.isArray(result)) {
+            return result.map(transform_location);
+          } else {
+            return transform_location(result);
+          }
+        } else {
+          return null;
+        }
+      },
+    });
 
     // Signature Help Provider
     monaco.languages.registerSignatureHelpProvider(model.getLanguageId(), {
@@ -216,12 +298,7 @@ export class MonacoLspTransport {
           const result = response?.result as TextEdit[];
           if (Array.isArray(result)) {
             return result.map((edit) => ({
-              range: new monaco.Range(
-                edit.range.start.line + 1,
-                edit.range.start.character + 1,
-                edit.range.end.line + 1,
-                edit.range.end.character + 1,
-              ),
+              range: transform_range(edit.range),
               text: edit.newText,
             }));
           }
