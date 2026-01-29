@@ -273,7 +273,7 @@ impl Backend {
                 semicolon_token: _,
                 id: _,
             }) => (
-                self.generate_node_hover(expression, analysis_data).0,
+                self.generate_node_hover(*expression, analysis_data).0,
                 "expression statement".to_string(),
             ),
             AstNode::OnStatement(OnStatement {
@@ -288,14 +288,14 @@ impl Backend {
             }) => (
                 format!(
                     "on {}{} ({})",
-                    self.generate_node_hover(executor, analysis_data).0,
+                    self.generate_node_hover(*executor, analysis_data).0,
                     iterators
                         .iter()
                         .map(|it| format!(
                             "[{} = {}]",
                             self.generate_node_hover(it.binding.clone(), analysis_data)
                                 .0,
-                            self.generate_node_hover(it.max_value.clone(), analysis_data)
+                            self.generate_node_hover(*it.max_value.clone(), analysis_data)
                                 .0,
                         ))
                         .collect::<String>(),
@@ -323,7 +323,7 @@ impl Backend {
             }) => (
                 format!(
                     "let {} = ...", // TODO: once we have consteval, display that here
-                    self.generate_node_hover(binding, analysis_data).0
+                    self.generate_node_hover(*binding, analysis_data).0
                 ),
                 "variable definition".to_string(),
             ),
@@ -381,7 +381,7 @@ impl Backend {
                 format!(
                     "{}.threads[{}]",
                     self.generate_node_hover(host, analysis_data).0,
-                    self.generate_node_hover(index, analysis_data).0
+                    self.generate_node_hover(*index, analysis_data).0
                 ),
                 "thread executor".to_string(),
             ),
@@ -397,7 +397,7 @@ impl Backend {
                 format!(
                     "{}.gpus[{}]",
                     self.generate_node_hover(host, analysis_data).0,
-                    self.generate_node_hover(gpu_index, analysis_data).0,
+                    self.generate_node_hover(*gpu_index, analysis_data).0,
                 ),
                 "gpu executor".to_string(),
             ),

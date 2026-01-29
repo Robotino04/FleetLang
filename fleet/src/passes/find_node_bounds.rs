@@ -40,7 +40,10 @@ where
             return_type: _,
             body,
             id: _,
-        }) => let_token.range.clone().extend_with(find_node_bounds(body)),
+        }) => let_token
+            .range
+            .clone()
+            .extend_with(find_node_bounds(&**body)),
         AstNode::TypeAlias(TypeAlias {
             let_token,
             name: _,
@@ -87,7 +90,7 @@ where
         }) => semicolon_token
             .range
             .clone()
-            .extend_with(find_node_bounds(expression)),
+            .extend_with(find_node_bounds(&**expression)),
 
         AstNode::OnStatement(OnStatement {
             on_token,

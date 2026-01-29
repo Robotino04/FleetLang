@@ -504,7 +504,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             id: _,
         } = stmt;
 
-        let Executor::GPU(gpu_executor) = executor else {
+        let Executor::GPU(gpu_executor) = &**executor else {
             todo!()
         };
 

@@ -537,7 +537,7 @@ impl<'a> IrGenerator<'_> {
             })?;
         let return_type_ir = self.runtime_type_to_llvm(return_type, function)?;
 
-        let name = match &function.body {
+        let name = match &*function.body {
             FunctionBody::Extern(ExternFunctionBody {
                 at_token: _,
                 extern_token: _,
@@ -904,7 +904,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 }
             }
         } else {
-            match function.body {
+            match *function.body {
                 FunctionBody::Extern(_) => {}
                 FunctionBody::Statement(_) => {
                     unreachable!("non-terminating functions should have caused errors earlier")
@@ -912,7 +912,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             }
         }
 
-        match &function.body {
+        match &*function.body {
             FunctionBody::Extern(ExternFunctionBody { .. }) => {
                 for block in ir_function.get_basic_block_iter() {
                     block.remove_from_function().unwrap();
@@ -1044,7 +1044,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             id: _,
         } = on_stmt;
 
-        let Executor::GPU(gpu_executor) = executor else {
+        let Executor::GPU(gpu_executor) = &**executor else {
             todo!()
         };
 
@@ -1254,7 +1254,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         if cfg!(not(feature = "gpu_backend")) {
             self.errors.push(FleetError::from_node(
-                executor,
+                &**executor,
                 "The GPU backend is disabled for this build of Fleet",
                 ErrorSeverity::Error,
             ));
@@ -1410,7 +1410,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             let ir_value = self.visit_expression(retvalue)?;
             let value_type = *self.type_data.get(&retvalue.get_id()).unwrap();
             let value_type = self
-                .runtime_type_to_llvm(value_type, retvalue)?
+                .runtime_type_to_llvm(value_type, &**retvalue)?
                 .into_basic_type()
                 .unwrap();
 
@@ -1448,7 +1448,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             let size = self
                 .runtime_type_to_llvm(
                     *self.type_data.get(&vardef_stmt.value.get_id()).unwrap(),
-                    &vardef_stmt.value,
+                    &*vardef_stmt.value,
                 )?
                 .size_of()
                 .unwrap();
@@ -1907,20 +1907,20 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             let item_ir = self.visit_expression(value)?;
             let item_type = self.type_data.get(&value.get_id()).unwrap();
             let item_type = match self
-                .runtime_type_to_llvm(*item_type, value)?
+                .runtime_type_to_llvm(*item_type, &**value)?
                 .into_basic_type()
             {
                 Ok(ok) => ok,
                 Err(Either::Left(_fn_type)) => {
                     return self.report_error(FleetError::from_node(
-                        value,
+                        &**value,
                         "Struct cannot contain functions",
                         ErrorSeverity::Error,
                     ));
                 }
                 Err(Either::Right(_void_type)) => {
                     return self.report_error(FleetError::from_node(
-                        value,
+                        &**value,
                         "Struct cannot contain unti values",
                         ErrorSeverity::Error,
                     ));

@@ -307,7 +307,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.visit_function_body(body);
 
-        self.require_fully_specialized_scope(&fdef_clone, body);
+        self.require_fully_specialized_scope(&fdef_clone, &**body);
     }
 
     fn visit_type_alias(&mut self, type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
@@ -607,7 +607,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.generate_mismatched_type_error_if(
             !self.type_sets.get(cond_type).kind.is_boolean(),
-            condition,
+            &**condition,
             "if condition",
             "of type bool",
             self.type_sets.get(cond_type).clone(),
@@ -644,7 +644,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.generate_mismatched_type_error_if(
             !self.type_sets.get(cond_type).kind.is_boolean(),
-            condition,
+            &**condition,
             "while condition",
             "of type bool",
             self.type_sets.get(cond_type).clone(),
@@ -672,7 +672,7 @@ impl AstVisitor for TypePropagator<'_> {
             let cond_type = self.visit_expression(con);
             self.generate_mismatched_type_error_if(
                 !self.type_sets.get(cond_type).kind.is_boolean(),
-                con,
+                &**con,
                 "for condition",
                 "of type bool",
                 self.type_sets.get(cond_type).clone(),
@@ -729,7 +729,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.generate_mismatched_type_error_if(
             !self.type_sets.get(index_type).kind.is_numeric(),
-            index,
+            &**index,
             "thread index",
             "numeric",
             self.type_sets.get(index_type).clone(),
@@ -753,7 +753,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.generate_mismatched_type_error_if(
             !self.type_sets.get(index_type).kind.is_numeric(),
-            gpu_index,
+            &**gpu_index,
             "gpu index",
             "numeric",
             self.type_sets.get(index_type).clone(),
@@ -892,7 +892,7 @@ impl AstVisitor for TypePropagator<'_> {
             {
                 if *name != this_defined_name {
                     self.errors.push(FleetError::from_node(
-                        value,
+                        &**value,
                         format!(
                             "Member {} has name {name:?}, but was expected \
                             to have name {this_defined_type:?}.",
@@ -907,7 +907,7 @@ impl AstVisitor for TypePropagator<'_> {
                     let this_defined_type_str = self.stringify_type_ptr(this_defined_type);
 
                     self.errors.push(FleetError::from_node(
-                        value,
+                        &**value,
                         format!(
                             "Member {name:?} has type {this_type_str}, but was expected \
                             to have type {this_defined_type_str}.",

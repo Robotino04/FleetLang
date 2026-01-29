@@ -362,7 +362,7 @@ impl<'state> Parser<'state> {
             close_paren_token,
             right_arrow_token,
             return_type,
-            body,
+            body: Box::new(body),
             id: self.id_generator.next_node_id(),
         })
     }
@@ -439,7 +439,7 @@ impl<'state> Parser<'state> {
                         open_bracket_token: expect!(self, TokenType::OpenBracket)?,
                         binding: self.parse_simple_binding()?,
                         equal_token: expect!(self, TokenType::EqualSign)?,
-                        max_value: self.parse_expression()?,
+                        max_value: Box::new(self.parse_expression()?),
                         close_bracket_token: expect!(self, TokenType::CloseBracket)?,
                     });
                 }
@@ -466,7 +466,7 @@ impl<'state> Parser<'state> {
 
                 Ok(Statement::On(OnStatement {
                     on_token,
-                    executor,
+                    executor: Box::new(executor),
                     iterators,
                     open_paren_token,
                     bindings,
@@ -513,7 +513,7 @@ impl<'state> Parser<'state> {
                 let value = if let Some(TokenType::Semicolon) = self.current_token_type() {
                     None
                 } else {
-                    Some(self.parse_expression()?)
+                    Some(Box::new(self.parse_expression()?))
                 };
 
                 Ok(Statement::Return(ReturnStatement {
@@ -528,9 +528,9 @@ impl<'state> Parser<'state> {
 
                 Ok(Statement::VariableDefinition(VariableDefinitionStatement {
                     let_token,
-                    binding: self.parse_simple_binding()?,
+                    binding: Box::new(self.parse_simple_binding()?),
                     equals_token: expect!(self, TokenType::EqualSign)?,
-                    value: self.parse_expression()?,
+                    value: Box::new(self.parse_expression()?),
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
                     id: self.id_generator.next_node_id(),
                 }))
@@ -559,7 +559,7 @@ impl<'state> Parser<'state> {
 
                 Ok(Statement::If(IfStatement {
                     if_token,
-                    condition,
+                    condition: Box::new(condition),
                     if_body: Box::new(if_body),
                     elifs,
                     else_,
@@ -572,7 +572,7 @@ impl<'state> Parser<'state> {
                 let body = self.parse_statement()?;
                 Ok(Statement::WhileLoop(WhileLoopStatement {
                     while_token,
-                    condition,
+                    condition: Box::new(condition),
                     body: Box::new(body),
                     id: self.id_generator.next_node_id(),
                 }))
@@ -586,7 +586,7 @@ impl<'state> Parser<'state> {
                 let condition = if matches!(self.current_token_type(), Some(TokenType::Semicolon)) {
                     None
                 } else {
-                    Some(self.parse_expression()?)
+                    Some(Box::new(self.parse_expression()?))
                 };
                 let second_semicolon_token = expect!(self, TokenType::Semicolon)?;
 
@@ -594,7 +594,7 @@ impl<'state> Parser<'state> {
                     if matches!(self.current_token_type(), Some(TokenType::CloseParen)) {
                         None
                     } else {
-                        Some(self.parse_expression()?)
+                        Some(Box::new(self.parse_expression()?))
                     };
                 let close_paren_token = expect!(self, TokenType::CloseParen)?;
 
@@ -622,7 +622,7 @@ impl<'state> Parser<'state> {
                 id: self.id_generator.next_node_id(),
             })),
             _ => Ok(Statement::Expression(ExpressionStatement {
-                expression: self.parse_expression()?,
+                expression: Box::new(self.parse_expression()?),
                 semicolon_token: expect!(self, TokenType::Semicolon)?,
                 id: self.id_generator.next_node_id(),
             })),
@@ -770,7 +770,7 @@ impl<'state> Parser<'state> {
             while this.current_token_type() != Some(TokenType::CloseBrace) {
                 let (name_token, name) = expect!(this, TokenType::Identifier(name) => (this.current_token().unwrap(), name))?;
                 let colon_token = expect!(this, TokenType::Colon)?;
-                let value = this.parse_expression()?;
+                let value = Box::new(this.parse_expression()?);
 
                 let member = StructMemberValue {
                     name,
@@ -1207,7 +1207,7 @@ impl<'state> Parser<'state> {
                     dot_token,
                     thread_token: expect!(self, = TokenType::Identifier("threads".to_string()))?,
                     open_bracket_token: expect!(self, TokenType::OpenBracket)?,
-                    index: self.parse_expression()?,
+                    index: Box::new(self.parse_expression()?),
                     close_bracket_token: expect!(self, TokenType::CloseBracket)?,
                     id: self.id_generator.next_node_id(),
                 }))
@@ -1217,7 +1217,7 @@ impl<'state> Parser<'state> {
                 dot_token,
                 gpus_token: expect!(self, = TokenType::Identifier("gpus".to_string()))?,
                 open_bracket_token: expect!(self, TokenType::OpenBracket)?,
-                gpu_index: self.parse_expression()?,
+                gpu_index: Box::new(self.parse_expression()?),
                 close_bracket_token: expect!(self, TokenType::CloseBracket)?,
                 id: self.id_generator.next_node_id(),
             })),

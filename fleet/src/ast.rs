@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub enum AstNode {
     Program(Program),
     FunctionDefinition(FunctionDefinition),
@@ -562,7 +562,7 @@ pub struct Program {
 generate_ast_requirements!(Program, unwrap_program);
 
 #[derive(Clone, Debug)]
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub enum TopLevelStatement {
     Function(FunctionDefinition),
     TypeAlias(TypeAlias),
@@ -607,7 +607,7 @@ pub struct FunctionDefinition {
     pub right_arrow_token: Token,
     pub return_type: Option<Type>,
 
-    pub body: FunctionBody,
+    pub body: Box<FunctionBody>,
 
     pub id: NodeID,
 }
@@ -644,7 +644,6 @@ pub struct StatementFunctionBody {
 generate_ast_requirements!(StatementFunctionBody, unwrap_statement_function_body);
 
 #[derive(Clone, Debug)]
-#[allow(clippy::large_enum_variant)]
 pub enum FunctionBody {
     Statement(StatementFunctionBody),
     Extern(ExternFunctionBody),
@@ -771,7 +770,7 @@ impl HasID for Type {
 
 #[derive(Clone, Debug)]
 pub struct ExpressionStatement {
-    pub expression: Expression,
+    pub expression: Box<Expression>,
     pub semicolon_token: Token,
     pub id: NodeID,
 }
@@ -782,14 +781,14 @@ pub struct OnStatementIterator {
     pub open_bracket_token: Token,
     pub binding: SimpleBinding,
     pub equal_token: Token,
-    pub max_value: Expression,
+    pub max_value: Box<Expression>,
     pub close_bracket_token: Token,
 }
 
 #[derive(Clone, Debug)]
 pub struct OnStatement {
     pub on_token: Token,
-    pub executor: Executor,
+    pub executor: Box<Executor>,
     pub iterators: Vec<OnStatementIterator>,
     pub open_paren_token: Token,
     pub bindings: Vec<(LValue, Option<Token>)>,
@@ -811,7 +810,7 @@ generate_ast_requirements!(BlockStatement, unwrap_block_statement);
 #[derive(Clone, Debug)]
 pub struct ReturnStatement {
     pub return_token: Token,
-    pub value: Option<Expression>,
+    pub value: Option<Box<Expression>>,
     pub semicolon_token: Token,
     pub id: NodeID,
 }
@@ -820,9 +819,9 @@ generate_ast_requirements!(ReturnStatement, unwrap_return_statement);
 #[derive(Clone, Debug)]
 pub struct VariableDefinitionStatement {
     pub let_token: Token,
-    pub binding: SimpleBinding,
+    pub binding: Box<SimpleBinding>,
     pub equals_token: Token,
-    pub value: Expression,
+    pub value: Box<Expression>,
     pub semicolon_token: Token,
     pub id: NodeID,
 }
@@ -834,7 +833,7 @@ generate_ast_requirements!(
 #[derive(Clone, Debug)]
 pub struct IfStatement {
     pub if_token: Token,
-    pub condition: Expression,
+    pub condition: Box<Expression>,
     pub if_body: Box<Statement>,
     pub elifs: Vec<(Token, Expression, Statement)>,
     pub else_: Option<(Token, Box<Statement>)>,
@@ -845,7 +844,7 @@ generate_ast_requirements!(IfStatement, unwrap_if_statement);
 #[derive(Clone, Debug)]
 pub struct WhileLoopStatement {
     pub while_token: Token,
-    pub condition: Expression,
+    pub condition: Box<Expression>,
     pub body: Box<Statement>,
     pub id: NodeID,
 }
@@ -856,9 +855,9 @@ pub struct ForLoopStatement {
     pub for_token: Token,
     pub open_paren_token: Token,
     pub initializer: Box<Statement>,
-    pub condition: Option<Expression>,
+    pub condition: Option<Box<Expression>>,
     pub second_semicolon_token: Token,
-    pub incrementer: Option<Expression>,
+    pub incrementer: Option<Box<Expression>>,
     pub close_paren_token: Token,
     pub body: Box<Statement>,
     pub id: NodeID,
@@ -963,7 +962,7 @@ pub struct ThreadExecutor {
     pub dot_token: Token,
     pub thread_token: Token,
     pub open_bracket_token: Token,
-    pub index: Expression,
+    pub index: Box<Expression>,
     pub close_bracket_token: Token,
     pub id: NodeID,
 }
@@ -975,7 +974,7 @@ pub struct GPUExecutor {
     pub dot_token: Token,
     pub gpus_token: Token,
     pub open_bracket_token: Token,
-    pub gpu_index: Expression,
+    pub gpu_index: Box<Expression>,
     pub close_bracket_token: Token,
     pub id: NodeID,
 }
@@ -1068,7 +1067,7 @@ pub struct StructMemberValue {
     pub name: String,
     pub name_token: Token,
     pub colon_token: Token,
-    pub value: Expression,
+    pub value: Box<Expression>,
 }
 
 #[derive(Clone, Debug)]
