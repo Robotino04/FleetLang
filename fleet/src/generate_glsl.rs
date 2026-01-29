@@ -12,7 +12,7 @@ use itertools::Itertools;
 use log::warn;
 
 #[cfg(feature = "gpu_backend")]
-use crate::ast::AstNode;
+use crate::ast::AstNodeRef;
 use crate::{
     ast::{
         AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
@@ -458,10 +458,10 @@ impl<'state> GLSLCodeGenerator<'state> {
     }
 
     #[cfg(feature = "gpu_backend")]
-    pub fn compile_on_statement_shader<I: Into<AstNode> + Clone>(
+    pub fn compile_on_statement_shader<'node, I: Into<AstNodeRef<'node>>>(
         mut self,
         source: &str,
-        error_node: &I,
+        error_node: I,
     ) -> Result<shaderc::CompilationArtifact> {
         let compiler = shaderc::Compiler::new().unwrap();
         let mut options = shaderc::CompileOptions::new().unwrap();

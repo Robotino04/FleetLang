@@ -45,7 +45,7 @@ impl Pass for FixNonBlockStatements<'_> {
 
 impl FixNonBlockStatements<'_> {
     fn create_fake_block_arround(&mut self, node: &mut Statement) -> Statement {
-        let range = find_node_bounds(node);
+        let range = find_node_bounds(&*node);
 
         Statement::Block(BlockStatement {
             open_brace_token: Token {
@@ -144,12 +144,12 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
         for (_token, elif_condition, elif_body) in elifs {
             if !matches!(elif_body, Statement::Block { .. }) {
                 self.errors.push(FleetError::from_node(
-                    elif_body,
+                    &*elif_body,
                     "Elif statements must always have a block as the body.",
                     ErrorSeverity::Error,
                 ));
                 self.errors.push(FleetError::from_node(
-                    elif_body,
+                    &*elif_body,
                     "Formatting will fix this",
                     ErrorSeverity::Note,
                 ));

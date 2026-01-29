@@ -10,7 +10,7 @@ use itertools::{EitherOrBoth, Itertools};
 use crate::{
     ast::{
         AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
-        AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
+        AstNodeRef, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
         CastExpression, CompilerExpression, Expression, ExpressionStatement, ExternFunctionBody,
         ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor,
         GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression,
@@ -182,10 +182,10 @@ impl<'a> TypePropagator<'a> {
         }
     }
 
-    fn generate_mismatched_type_error_if<I: Into<AstNode> + Clone>(
+    fn generate_mismatched_type_error_if<'node, I: Into<AstNodeRef<'node>>>(
         &mut self,
         condition: bool,
-        node: &I,
+        node: I,
         expression_type: impl AsRef<str>,
         expected_name: impl AsRef<str>,
         actual_type: RuntimeType,
@@ -204,9 +204,9 @@ impl<'a> TypePropagator<'a> {
         }
     }
 
-    fn require_fully_specialized_scope<I: Into<AstNode> + Clone>(
+    fn require_fully_specialized_scope<'node, I: Into<AstNodeRef<'node>>>(
         &mut self,
-        error_node: &I,
+        error_node: I,
         scope_node: &impl HasID,
     ) {
         let scope = self
@@ -214,6 +214,8 @@ impl<'a> TypePropagator<'a> {
             .get(&scope_node.get_id())
             .unwrap()
             .borrow();
+
+        let error_node = error_node.into();
 
         for (name, variable) in &scope.variable_map {
             let actual_type = self.type_sets.get_mut(variable.borrow().type_.unwrap());
@@ -438,7 +440,7 @@ impl AstVisitor for TypePropagator<'_> {
                 let max_value_type_str = self.stringify_type_ptr(max_value_type);
 
                 self.errors.push(FleetError::from_node(
-                    binding,
+                    &*binding,
                     format!(
                         "Iterator is defined as type {iterator_type_str}, \
                         but has max value of type {max_value_type_str}",
@@ -462,7 +464,7 @@ impl AstVisitor for TypePropagator<'_> {
                 .is_constant;
             if !is_iterator_const {
                 self.errors.push(FleetError::from_node(
-                    binding,
+                    &*binding,
                     "The iterator of an on-statement cannot be mutable",
                     ErrorSeverity::Error,
                 ));
@@ -479,7 +481,7 @@ impl AstVisitor for TypePropagator<'_> {
                 &mut self.type_sets,
             ) {
                 self.errors.push(FleetError::from_node(
-                    binding,
+                    &*binding,
                     "Iterators can only be unsigned integers for now",
                     ErrorSeverity::Error,
                 ));
@@ -1014,7 +1016,7 @@ impl AstVisitor for TypePropagator<'_> {
                         let arg_type_str = self.stringify_type_ptr(*arg_type);
 
                         self.errors.push(FleetError::from_node(
-                            *arg,
+                            &**arg,
                             format!(
                                 "{name:?} expects a value of type {} as argument {:?} (Nr. {}). Got {}",
                                 param_type_str,
@@ -1028,7 +1030,7 @@ impl AstVisitor for TypePropagator<'_> {
                 }
                 EitherOrBoth::Left((_arg_type, arg)) => {
                     self.errors.push(FleetError::from_node(
-                        *arg,
+                        &**arg,
                         format!("{name:?} only has {num_expected_arguments} parameters"),
                         ErrorSeverity::Error,
                     ));

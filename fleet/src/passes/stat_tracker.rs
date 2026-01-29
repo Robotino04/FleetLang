@@ -454,7 +454,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_simple_binding(&mut self, binding: &mut SimpleBinding) -> Self::SimpleBindingOutput {
-        let bounds = find_node_bounds(binding);
+        let bounds = find_node_bounds(&*binding);
         let SimpleBinding {
             name_token: _,
             name: _,
@@ -484,7 +484,7 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         stmt: &mut ExpressionStatement,
     ) -> Self::StatementOutput {
-        let bounds = find_node_bounds(stmt);
+        let bounds = find_node_bounds(&*stmt);
         let ExpressionStatement {
             expression,
             semicolon_token: _,
@@ -553,7 +553,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_block_statement(&mut self, stmt: &mut BlockStatement) -> Self::StatementOutput {
-        let bounds = find_node_bounds(stmt);
+        let bounds = find_node_bounds(&*stmt);
         let BlockStatement {
             open_brace_token: _,
             body,
@@ -566,9 +566,9 @@ impl AstVisitor for StatTracker<'_> {
         for stmt in body {
             if body_stat.terminates_function == YesNoMaybe::Yes {
                 if let Some(prev_range) = unreachable_range {
-                    unreachable_range = Some(prev_range.extend_with(find_node_bounds(stmt)));
+                    unreachable_range = Some(prev_range.extend_with(find_node_bounds(&*stmt)));
                 } else {
-                    unreachable_range = Some(find_node_bounds(stmt));
+                    unreachable_range = Some(find_node_bounds(&*stmt));
                 }
             }
             body_stat = body_stat.serial(self.visit_statement(stmt));
@@ -592,7 +592,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_return_statement(&mut self, stmt: &mut ReturnStatement) -> Self::StatementOutput {
-        let bounds = find_node_bounds(stmt);
+        let bounds = find_node_bounds(&*stmt);
         let ReturnStatement {
             return_token: _,
             value,
@@ -618,7 +618,7 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         stmt: &mut VariableDefinitionStatement,
     ) -> Self::StatementOutput {
-        let bounds = find_node_bounds(stmt);
+        let bounds = find_node_bounds(&*stmt);
         let VariableDefinitionStatement {
             let_token: _,
             binding,
@@ -636,7 +636,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_if_statement(&mut self, stmt: &mut IfStatement) -> Self::StatementOutput {
-        let bounds = find_node_bounds(stmt);
+        let bounds = find_node_bounds(&*stmt);
         let IfStatement {
             if_token: _,
             condition,
@@ -732,7 +732,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
-        let stat = NodeStats::default_with_range(vec![find_node_bounds(break_stmt)]);
+        let stat = NodeStats::default_with_range(vec![find_node_bounds(&*break_stmt)]);
         self.stats.insert(break_stmt.id, stat.clone());
         if self.loop_count == 0 {
             self.errors.push(FleetError::from_node(
@@ -746,7 +746,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
-        let stat = NodeStats::default_with_range(vec![find_node_bounds(skip_stmt)]);
+        let stat = NodeStats::default_with_range(vec![find_node_bounds(&*skip_stmt)]);
         self.stats.insert(skip_stmt.id, stat.clone());
         if self.loop_count == 0 {
             self.errors.push(FleetError::from_node(
@@ -763,7 +763,7 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         executor_host: &mut SelfExecutorHost,
     ) -> Self::ExecutorHostOutput {
-        let stat = NodeStats::default_with_range(vec![find_node_bounds(executor_host)]);
+        let stat = NodeStats::default_with_range(vec![find_node_bounds(&*executor_host)]);
         self.stats.insert(executor_host.id, stat.clone());
         stat
     }
@@ -788,7 +788,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_gpu_executor(&mut self, executor: &mut GPUExecutor) -> Self::ExecutorOutput {
-        let bounds = find_node_bounds(executor);
+        let bounds = find_node_bounds(&*executor);
         let GPUExecutor {
             host,
             dot_token: _,
@@ -811,7 +811,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_literal_expression(&mut self, expr: &mut LiteralExpression) -> Self::ExpressionOutput {
-        let bounds = find_node_bounds(expr);
+        let bounds = find_node_bounds(&*expr);
         let LiteralExpression {
             value: _,
             token: _,
@@ -824,7 +824,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_array_expression(&mut self, expr: &mut ArrayExpression) -> Self::ExpressionOutput {
-        let bounds = find_node_bounds(expr);
+        let bounds = find_node_bounds(&*expr);
         let ArrayExpression {
             open_bracket_token: _,
             elements,
@@ -841,7 +841,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_struct_expression(&mut self, expr: &mut StructExpression) -> Self::ExpressionOutput {
-        let bounds = find_node_bounds(expr);
+        let bounds = find_node_bounds(&*expr);
         let StructExpression {
             type_,
             open_brace_token: _,
@@ -872,7 +872,7 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         function_call: &mut FunctionCallExpression,
     ) -> Self::ExpressionOutput {
-        let bounds = find_node_bounds(function_call);
+        let bounds = find_node_bounds(&*function_call);
         let FunctionCallExpression {
             name: _,
             name_token: _,
@@ -911,7 +911,7 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         expr: &mut CompilerExpression,
     ) -> Self::ExpressionOutput {
-        let bounds = find_node_bounds(expr);
+        let bounds = find_node_bounds(&*expr);
         let CompilerExpression {
             at_token: _,
             name: _,
@@ -980,7 +980,7 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         expr: &mut VariableAccessExpression,
     ) -> Self::ExpressionOutput {
-        let bounds = find_node_bounds(expr);
+        let bounds = find_node_bounds(&*expr);
         let VariableAccessExpression {
             name: _,
             name_token: _,
@@ -1066,7 +1066,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
-        let bounds = find_node_bounds(lvalue);
+        let bounds = find_node_bounds(&*lvalue);
         let VariableLValue {
             name: _,
             name_token: _,
@@ -1135,7 +1135,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_simple_type(&mut self, type_: &mut SimpleType) -> Self::TypeOutput {
-        let bounds = find_node_bounds(type_);
+        let bounds = find_node_bounds(&*type_);
         let SimpleType {
             token: _,
             type_: _,
@@ -1147,7 +1147,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_unit_type(&mut self, type_: &mut UnitType) -> Self::TypeOutput {
-        let bounds = find_node_bounds(type_);
+        let bounds = find_node_bounds(&*type_);
         let UnitType {
             open_paren_token: _,
             close_paren_token: _,
@@ -1159,7 +1159,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_idk_type(&mut self, type_: &mut IdkType) -> Self::TypeOutput {
-        let bounds = find_node_bounds(type_);
+        let bounds = find_node_bounds(&*type_);
         let IdkType { token: _, id } = type_;
         let stat = NodeStats::default_with_range(vec![bounds]);
         self.stats.insert(*id, stat.clone());

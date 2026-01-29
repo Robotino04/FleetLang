@@ -63,6 +63,127 @@ pub enum AstNode {
     AliasType(AliasType),
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum AstNodeRef<'a> {
+    Program(&'a Program),
+    FunctionDefinition(&'a FunctionDefinition),
+    TypeAlias(&'a TypeAlias),
+
+    ExternFunctionBody(&'a ExternFunctionBody),
+    StatementFunctionBody(&'a StatementFunctionBody),
+
+    SimpleBinding(&'a SimpleBinding),
+
+    ExpressionStatement(&'a ExpressionStatement),
+    OnStatement(&'a OnStatement),
+    BlockStatement(&'a BlockStatement),
+    ReturnStatement(&'a ReturnStatement),
+    VariableDefinitionStatement(&'a VariableDefinitionStatement),
+    IfStatement(&'a IfStatement),
+    WhileLoopStatement(&'a WhileLoopStatement),
+    ForLoopStatement(&'a ForLoopStatement),
+    BreakStatement(&'a BreakStatement),
+    SkipStatement(&'a SkipStatement),
+
+    SelfExecutorHost(&'a SelfExecutorHost),
+
+    ThreadExecutor(&'a ThreadExecutor),
+    GPUExecutor(&'a GPUExecutor),
+
+    LiteralExpression(&'a LiteralExpression),
+    ArrayExpression(&'a ArrayExpression),
+    StructExpression(&'a StructExpression),
+    FunctionCallExpression(&'a FunctionCallExpression),
+    CompilerExpression(&'a CompilerExpression),
+    ArrayIndexExpression(&'a ArrayIndexExpression),
+    StructAccessExpression(&'a StructAccessExpression),
+    GroupingExpression(&'a GroupingExpression),
+    VariableAccessExpression(&'a VariableAccessExpression),
+    UnaryExpression(&'a UnaryExpression),
+    CastExpression(&'a CastExpression),
+    BinaryExpression(&'a BinaryExpression),
+    VariableAssignmentExpression(&'a VariableAssignmentExpression),
+
+    VariableLValue(&'a VariableLValue),
+    ArrayIndexLValue(&'a ArrayIndexLValue),
+    StructAccessLValue(&'a StructAccessLValue),
+    GroupingLValue(&'a GroupingLValue),
+
+    SimpleType(&'a SimpleType),
+    UnitType(&'a UnitType),
+    IdkType(&'a IdkType),
+    ArrayType(&'a ArrayType),
+    StructType(&'a StructType),
+    AliasType(&'a AliasType),
+}
+
+impl<'a> From<&'a mut AstNode> for AstNodeRef<'a> {
+    fn from(value: &'a mut AstNode) -> Self {
+        (&*value).into()
+    }
+}
+
+impl<'a> From<&'a AstNode> for AstNodeRef<'a> {
+    fn from(value: &'a AstNode) -> Self {
+        match value {
+            AstNode::Program(program) => program.into(),
+            AstNode::FunctionDefinition(function_definition) => function_definition.into(),
+            AstNode::TypeAlias(type_alias) => type_alias.into(),
+            AstNode::ExternFunctionBody(extern_function_body) => extern_function_body.into(),
+            AstNode::StatementFunctionBody(statement_function_body) => {
+                statement_function_body.into()
+            }
+            AstNode::SimpleBinding(simple_binding) => simple_binding.into(),
+            AstNode::ExpressionStatement(expression_statement) => expression_statement.into(),
+            AstNode::OnStatement(on_statement) => on_statement.into(),
+            AstNode::BlockStatement(block_statement) => block_statement.into(),
+            AstNode::ReturnStatement(return_statement) => return_statement.into(),
+            AstNode::VariableDefinitionStatement(variable_definition_statement) => {
+                variable_definition_statement.into()
+            }
+            AstNode::IfStatement(if_statement) => if_statement.into(),
+            AstNode::WhileLoopStatement(while_loop_statement) => while_loop_statement.into(),
+            AstNode::ForLoopStatement(for_loop_statement) => for_loop_statement.into(),
+            AstNode::BreakStatement(break_statement) => break_statement.into(),
+            AstNode::SkipStatement(skip_statement) => skip_statement.into(),
+            AstNode::SelfExecutorHost(self_executor_host) => self_executor_host.into(),
+            AstNode::ThreadExecutor(thread_executor) => thread_executor.into(),
+            AstNode::GPUExecutor(gpuexecutor) => gpuexecutor.into(),
+            AstNode::LiteralExpression(literal_expression) => literal_expression.into(),
+            AstNode::ArrayExpression(array_expression) => array_expression.into(),
+            AstNode::StructExpression(struct_expression) => struct_expression.into(),
+            AstNode::FunctionCallExpression(function_call_expression) => {
+                function_call_expression.into()
+            }
+            AstNode::CompilerExpression(compiler_expression) => compiler_expression.into(),
+            AstNode::ArrayIndexExpression(array_index_expression) => array_index_expression.into(),
+            AstNode::StructAccessExpression(struct_access_expression) => {
+                struct_access_expression.into()
+            }
+            AstNode::GroupingExpression(grouping_expression) => grouping_expression.into(),
+            AstNode::VariableAccessExpression(variable_access_expression) => {
+                variable_access_expression.into()
+            }
+            AstNode::UnaryExpression(unary_expression) => unary_expression.into(),
+            AstNode::CastExpression(cast_expression) => cast_expression.into(),
+            AstNode::BinaryExpression(binary_expression) => binary_expression.into(),
+            AstNode::VariableAssignmentExpression(variable_assignment_expression) => {
+                variable_assignment_expression.into()
+            }
+            AstNode::VariableLValue(variable_lvalue) => variable_lvalue.into(),
+            AstNode::ArrayIndexLValue(array_index_lvalue) => array_index_lvalue.into(),
+            AstNode::StructAccessLValue(struct_access_lvalue) => struct_access_lvalue.into(),
+            AstNode::GroupingLValue(grouping_lvalue) => grouping_lvalue.into(),
+            AstNode::SimpleType(simple_type) => simple_type.into(),
+            AstNode::UnitType(unit_type) => unit_type.into(),
+            AstNode::IdkType(idk_type) => idk_type.into(),
+            AstNode::ArrayType(array_type) => array_type.into(),
+            AstNode::StructType(struct_type) => struct_type.into(),
+            AstNode::AliasType(alias_type) => alias_type.into(),
+        }
+    }
+}
+
 impl AstNode {
     pub fn visit(&mut self, visitor: &mut impl AstVisitor) {
         match self {
@@ -270,6 +391,120 @@ impl HasID for AstNode {
         }
     }
 }
+
+impl<'a> HasID for AstNodeRef<'a> {
+    fn get_id(&self) -> NodeID {
+        match self {
+            AstNodeRef::Program(program) => program.get_id(),
+            AstNodeRef::FunctionDefinition(function_definition) => function_definition.get_id(),
+            AstNodeRef::TypeAlias(type_alias) => type_alias.get_id(),
+
+            AstNodeRef::ExternFunctionBody(extern_function_body) => extern_function_body.get_id(),
+            AstNodeRef::StatementFunctionBody(statement_function_body) => {
+                statement_function_body.get_id()
+            }
+
+            AstNodeRef::SimpleBinding(simple_binding) => simple_binding.get_id(),
+
+            AstNodeRef::SelfExecutorHost(executor_host) => executor_host.get_id(),
+            AstNodeRef::ThreadExecutor(executor) => executor.get_id(),
+            AstNodeRef::GPUExecutor(executor) => executor.get_id(),
+
+            AstNodeRef::ExpressionStatement(expression_statement) => expression_statement.get_id(),
+            AstNodeRef::OnStatement(on_statement) => on_statement.get_id(),
+            AstNodeRef::BlockStatement(block_statement) => block_statement.get_id(),
+            AstNodeRef::ReturnStatement(return_statement) => return_statement.get_id(),
+            AstNodeRef::VariableDefinitionStatement(vardef) => vardef.get_id(),
+            AstNodeRef::IfStatement(if_statement) => if_statement.get_id(),
+            AstNodeRef::WhileLoopStatement(while_loop_statement) => while_loop_statement.get_id(),
+            AstNodeRef::ForLoopStatement(for_loop_statement) => for_loop_statement.get_id(),
+            AstNodeRef::BreakStatement(break_statement) => break_statement.get_id(),
+            AstNodeRef::SkipStatement(skip_statement) => skip_statement.get_id(),
+
+            AstNodeRef::LiteralExpression(literal_expression) => literal_expression.get_id(),
+            AstNodeRef::ArrayExpression(array_expression) => array_expression.get_id(),
+            AstNodeRef::StructExpression(struct_expression) => struct_expression.get_id(),
+            AstNodeRef::FunctionCallExpression(function_call_expression) => {
+                function_call_expression.get_id()
+            }
+            AstNodeRef::CompilerExpression(compiler_expression) => compiler_expression.get_id(),
+            AstNodeRef::ArrayIndexExpression(array_index_expression) => {
+                array_index_expression.get_id()
+            }
+            AstNodeRef::StructAccessExpression(struct_access_expression) => {
+                struct_access_expression.get_id()
+            }
+            AstNodeRef::GroupingExpression(grouping_expression) => grouping_expression.get_id(),
+            AstNodeRef::VariableAccessExpression(variable_access_expression) => {
+                variable_access_expression.get_id()
+            }
+            AstNodeRef::UnaryExpression(unary_expression) => unary_expression.get_id(),
+            AstNodeRef::CastExpression(cast_expression) => cast_expression.get_id(),
+            AstNodeRef::BinaryExpression(binary_expression) => binary_expression.get_id(),
+            AstNodeRef::VariableAssignmentExpression(variable_assignment_expression) => {
+                variable_assignment_expression.get_id()
+            }
+
+            AstNodeRef::VariableLValue(var_lvalue) => var_lvalue.get_id(),
+            AstNodeRef::ArrayIndexLValue(array_lvalue) => array_lvalue.get_id(),
+            AstNodeRef::StructAccessLValue(struct_lvalue) => struct_lvalue.get_id(),
+            AstNodeRef::GroupingLValue(grouping_lvalue) => grouping_lvalue.get_id(),
+
+            AstNodeRef::SimpleType(simple_type) => simple_type.get_id(),
+            AstNodeRef::UnitType(unit_type) => unit_type.get_id(),
+            AstNodeRef::IdkType(idk_type) => idk_type.get_id(),
+            AstNodeRef::ArrayType(array_type) => array_type.get_id(),
+            AstNodeRef::StructType(struct_type) => struct_type.get_id(),
+            AstNodeRef::AliasType(alias_type) => alias_type.get_id(),
+        }
+    }
+}
+
+macro_rules! impl_enum_node {
+    { $Self:tt $(, $variant:ident)* $(,)? } => {
+        impl HasID for $Self {
+            fn get_id(&self) -> NodeID {
+                match self {
+                    $(
+                        $Self::$variant (value) => value.get_id(),
+                    )*
+                }
+            }
+        }
+
+        impl From<$Self> for AstNode {
+            fn from(value: $Self) -> Self {
+                match value {
+                    $(
+                        $Self::$variant (value) => value.into(),
+                    )*
+                }
+            }
+        }
+
+        impl<'a> From<&'a $Self> for AstNodeRef<'a> {
+            fn from(value: &'a $Self) -> Self {
+                match value {
+                    $(
+                        $Self::$variant (value) => value.into(),
+                    )*
+                }
+            }
+        }
+
+        impl<'a> From<&'a mut $Self> for AstNodeRef<'a> {
+            fn from(value: &'a mut $Self) -> Self {
+                match value {
+                    $(
+                        $Self::$variant (value) => value.into(),
+                    )*
+                }
+            }
+        }
+
+    };
+}
+
 macro_rules! generate_ast_requirements {
     ($Self:tt, $unwrap_name:ident) => {
         impl AstNode {
@@ -282,6 +517,20 @@ macro_rules! generate_ast_requirements {
             }
         }
 
+        impl<'a> AstNodeRef<'a> {
+            pub fn $unwrap_name(self) -> &'a $Self {
+                if let AstNodeRef::$Self(contents) = self {
+                    contents
+                } else {
+                    panic!(
+                        "Expected AstNodeRef::{}, found {:#?}",
+                        stringify!($Self),
+                        self
+                    )
+                }
+            }
+        }
+
         impl HasID for $Self {
             fn get_id(&self) -> NodeID {
                 self.id
@@ -290,6 +539,18 @@ macro_rules! generate_ast_requirements {
 
         impl From<$Self> for AstNode {
             fn from(value: $Self) -> Self {
+                Self::$Self(value)
+            }
+        }
+
+        impl<'a> From<&'a $Self> for AstNodeRef<'a> {
+            fn from(value: &'a $Self) -> Self {
+                Self::$Self(value)
+            }
+        }
+
+        impl<'a> From<&'a mut $Self> for AstNodeRef<'a> {
+            fn from(value: &'a mut $Self) -> Self {
                 Self::$Self(value)
             }
         }
@@ -568,22 +829,10 @@ pub enum TopLevelStatement {
     TypeAlias(TypeAlias),
 }
 
-impl From<TopLevelStatement> for AstNode {
-    fn from(value: TopLevelStatement) -> Self {
-        match value {
-            TopLevelStatement::Function(function_definition) => function_definition.into(),
-            TopLevelStatement::TypeAlias(type_alias) => type_alias.into(),
-        }
-    }
-}
-
-impl HasID for TopLevelStatement {
-    fn get_id(&self) -> NodeID {
-        match self {
-            TopLevelStatement::Function(function) => function.get_id(),
-            TopLevelStatement::TypeAlias(alias) => alias.get_id(),
-        }
-    }
+impl_enum_node! {
+    TopLevelStatement,
+    Function,
+    TypeAlias,
 }
 
 #[derive(Clone, Debug)]
@@ -649,22 +898,10 @@ pub enum FunctionBody {
     Extern(ExternFunctionBody),
 }
 
-impl From<FunctionBody> for AstNode {
-    fn from(value: FunctionBody) -> Self {
-        match value {
-            FunctionBody::Statement(statement) => statement.into(),
-            FunctionBody::Extern(extern_function_body) => extern_function_body.into(),
-        }
-    }
-}
-
-impl HasID for FunctionBody {
-    fn get_id(&self) -> NodeID {
-        match self {
-            FunctionBody::Statement(statement) => statement.get_id(),
-            FunctionBody::Extern(extern_function_body) => extern_function_body.get_id(),
-        }
-    }
+impl_enum_node! {
+    FunctionBody,
+    Statement,
+    Extern,
 }
 
 #[derive(Clone, Debug)]
@@ -742,30 +979,14 @@ pub enum Type {
     Alias(AliasType),
 }
 
-impl From<Type> for AstNode {
-    fn from(value: Type) -> Self {
-        match value {
-            Type::Simple(simple_type) => simple_type.into(),
-            Type::Unit(unit_type) => unit_type.into(),
-            Type::Idk(idk_type) => idk_type.into(),
-            Type::Array(array_type) => array_type.into(),
-            Type::Struct(struct_type) => struct_type.into(),
-            Type::Alias(alias_type) => alias_type.into(),
-        }
-    }
-}
-
-impl HasID for Type {
-    fn get_id(&self) -> NodeID {
-        match self {
-            Type::Simple(simple_type) => simple_type.get_id(),
-            Type::Unit(unit_type) => unit_type.get_id(),
-            Type::Idk(idk_type) => idk_type.get_id(),
-            Type::Array(array_type) => array_type.get_id(),
-            Type::Struct(struct_type) => struct_type.get_id(),
-            Type::Alias(alias_type) => alias_type.get_id(),
-        }
-    }
+impl_enum_node! {
+    Type,
+    Simple,
+    Unit,
+    Idk,
+    Array,
+    Struct,
+    Alias,
 }
 
 #[derive(Clone, Debug)]
@@ -894,38 +1115,18 @@ pub enum Statement {
     Skip(SkipStatement),
 }
 
-impl HasID for Statement {
-    fn get_id(&self) -> NodeID {
-        match self {
-            Statement::Expression(exp) => exp.get_id(),
-            Statement::On(on) => on.get_id(),
-            Statement::Block(block) => block.get_id(),
-            Statement::Return(return_) => return_.get_id(),
-            Statement::VariableDefinition(vardef) => vardef.get_id(),
-            Statement::If(if_) => if_.get_id(),
-            Statement::WhileLoop(while_loop_statement) => while_loop_statement.get_id(),
-            Statement::ForLoop(for_loop_statement) => for_loop_statement.get_id(),
-            Statement::Break(break_statement) => break_statement.get_id(),
-            Statement::Skip(skip_statement) => skip_statement.get_id(),
-        }
-    }
-}
-
-impl From<Statement> for AstNode {
-    fn from(value: Statement) -> Self {
-        match value {
-            Statement::Expression(exp) => exp.into(),
-            Statement::On(on) => on.into(),
-            Statement::Block(block) => block.into(),
-            Statement::Return(return_) => return_.into(),
-            Statement::VariableDefinition(vardef) => vardef.into(),
-            Statement::If(if_) => if_.into(),
-            Statement::WhileLoop(while_loop_statement) => while_loop_statement.into(),
-            Statement::ForLoop(for_loop_statement) => for_loop_statement.into(),
-            Statement::Break(break_statement) => break_statement.into(),
-            Statement::Skip(skip_statement) => skip_statement.into(),
-        }
-    }
+impl_enum_node! {
+    Statement,
+    Expression,
+    On,
+    Block,
+    Return,
+    VariableDefinition,
+    If,
+    WhileLoop,
+    ForLoop,
+    Break,
+    Skip
 }
 
 #[derive(Clone, Debug)]
@@ -940,20 +1141,9 @@ pub enum ExecutorHost {
     Self_(SelfExecutorHost),
 }
 
-impl HasID for ExecutorHost {
-    fn get_id(&self) -> NodeID {
-        match self {
-            ExecutorHost::Self_(host) => host.get_id(),
-        }
-    }
-}
-
-impl From<ExecutorHost> for AstNode {
-    fn from(value: ExecutorHost) -> Self {
-        match value {
-            ExecutorHost::Self_(self_executor_host) => self_executor_host.into(),
-        }
-    }
+impl_enum_node! {
+    ExecutorHost,
+    Self_,
 }
 
 #[derive(Clone, Debug)]
@@ -986,22 +1176,10 @@ pub enum Executor {
     GPU(GPUExecutor),
 }
 
-impl HasID for Executor {
-    fn get_id(&self) -> NodeID {
-        match self {
-            Executor::Thread(executor) => executor.get_id(),
-            Executor::GPU(gpuexecutor) => gpuexecutor.get_id(),
-        }
-    }
-}
-
-impl From<Executor> for AstNode {
-    fn from(value: Executor) -> Self {
-        match value {
-            Executor::Thread(thread_executor) => thread_executor.into(),
-            Executor::GPU(gpuexecutor) => gpuexecutor.into(),
-        }
-    }
+impl_enum_node! {
+    Executor,
+    Thread,
+    GPU,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1285,48 +1463,21 @@ impl Expression {
     }
 }
 
-impl HasID for Expression {
-    fn get_id(&self) -> NodeID {
-        match self {
-            Expression::Literal(expr) => expr.get_id(),
-            Expression::Array(expr) => expr.get_id(),
-            Expression::Struct(expr) => expr.get_id(),
-            Expression::FunctionCall(expr) => expr.get_id(),
-            Expression::CompilerExpression(expr) => expr.get_id(),
-            Expression::ArrayIndex(expr) => expr.get_id(),
-            Expression::StructAccess(expr) => expr.get_id(),
-            Expression::Grouping(expr) => expr.get_id(),
-            Expression::VariableAccess(expr) => expr.get_id(),
-            Expression::Unary(expr) => expr.get_id(),
-            Expression::Cast(expr) => expr.get_id(),
-            Expression::Binary(expr) => expr.get_id(),
-            Expression::VariableAssignment(expr) => expr.get_id(),
-        }
-    }
-}
-
-impl From<Expression> for AstNode {
-    fn from(value: Expression) -> Self {
-        match value {
-            Expression::Literal(literal_expression) => literal_expression.into(),
-            Expression::Array(array_expression) => array_expression.into(),
-            Expression::Struct(struct_expression) => struct_expression.into(),
-            Expression::FunctionCall(function_call_expression) => function_call_expression.into(),
-            Expression::CompilerExpression(compiler_expression) => compiler_expression.into(),
-            Expression::ArrayIndex(array_index_expression) => array_index_expression.into(),
-            Expression::StructAccess(struct_access_expression) => struct_access_expression.into(),
-            Expression::Grouping(grouping_expression) => grouping_expression.into(),
-            Expression::VariableAccess(variable_access_expression) => {
-                variable_access_expression.into()
-            }
-            Expression::Unary(unary_expression) => unary_expression.into(),
-            Expression::Cast(cast_expression) => cast_expression.into(),
-            Expression::Binary(binary_expression) => binary_expression.into(),
-            Expression::VariableAssignment(variable_assignment_expression) => {
-                variable_assignment_expression.into()
-            }
-        }
-    }
+impl_enum_node! {
+    Expression,
+    Literal,
+    Array,
+    Struct,
+    FunctionCall,
+    CompilerExpression,
+    ArrayIndex,
+    StructAccess,
+    Grouping,
+    VariableAccess,
+    Unary,
+    Cast,
+    Binary,
+    VariableAssignment,
 }
 
 #[derive(Clone, Debug)]
@@ -1397,26 +1548,13 @@ impl LValue {
         }
     }
 }
-impl HasID for LValue {
-    fn get_id(&self) -> NodeID {
-        match self {
-            LValue::Variable(variable_lvalue) => variable_lvalue.get_id(),
-            LValue::ArrayIndex(array_index_lvalue) => array_index_lvalue.get_id(),
-            LValue::StructAccess(struct_access_lvalue) => struct_access_lvalue.get_id(),
-            LValue::Grouping(grouping_lvalue) => grouping_lvalue.get_id(),
-        }
-    }
-}
 
-impl From<LValue> for AstNode {
-    fn from(value: LValue) -> Self {
-        match value {
-            LValue::Variable(variable_lvalue) => variable_lvalue.into(),
-            LValue::ArrayIndex(array_index_lvalue) => array_index_lvalue.into(),
-            LValue::StructAccess(struct_access_lvalue) => struct_access_lvalue.into(),
-            LValue::Grouping(grouping_lvalue) => grouping_lvalue.into(),
-        }
-    }
+impl_enum_node! {
+    LValue,
+    Variable,
+    ArrayIndex,
+    StructAccess,
+    Grouping,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

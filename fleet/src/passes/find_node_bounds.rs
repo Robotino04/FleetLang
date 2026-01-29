@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNodeRef,
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
@@ -13,12 +13,12 @@ use crate::{
     tokenizer::{NamedSourceRange, SourceRange},
 };
 
-pub fn find_node_bounds<I>(node: &I) -> NamedSourceRange
+pub fn find_node_bounds<'a, I>(node: I) -> NamedSourceRange
 where
-    I: Into<AstNode> + Clone,
+    I: Into<AstNodeRef<'a>>,
 {
-    match &node.clone().into() {
-        AstNode::Program(Program {
+    match node.into() {
+        AstNodeRef::Program(Program {
             top_level_statements: functions,
             id: _,
             file_name,
@@ -28,7 +28,7 @@ where
             .reduce(|a, b| a.extend_with(b))
             .unwrap_or(SourceRange::empty_start().named(file_name.clone())),
 
-        AstNode::FunctionDefinition(FunctionDefinition {
+        AstNodeRef::FunctionDefinition(FunctionDefinition {
             let_token,
             name: _,
             name_token: _,
@@ -44,7 +44,7 @@ where
             .range
             .clone()
             .extend_with(find_node_bounds(&**body)),
-        AstNode::TypeAlias(TypeAlias {
+        AstNodeRef::TypeAlias(TypeAlias {
             let_token,
             name: _,
             name_token: _,
@@ -57,7 +57,7 @@ where
             .clone()
             .extend_with(semicolon_token.range.clone()),
 
-        AstNode::ExternFunctionBody(ExternFunctionBody {
+        AstNodeRef::ExternFunctionBody(ExternFunctionBody {
             at_token,
             extern_token: _,
             symbol: _,
@@ -69,10 +69,10 @@ where
             .clone()
             .extend_with(semicolon_token.range.clone()),
 
-        AstNode::StatementFunctionBody(StatementFunctionBody { statement, id: _ }) => {
+        AstNodeRef::StatementFunctionBody(StatementFunctionBody { statement, id: _ }) => {
             find_node_bounds(statement)
         }
-        AstNode::SimpleBinding(SimpleBinding {
+        AstNodeRef::SimpleBinding(SimpleBinding {
             name_token,
             name: _,
             type_,
@@ -83,7 +83,7 @@ where
                 .map(|(_colon, type_)| find_node_bounds(type_)),
         ),
 
-        AstNode::ExpressionStatement(ExpressionStatement {
+        AstNodeRef::ExpressionStatement(ExpressionStatement {
             expression,
             semicolon_token,
             id: _,
@@ -92,7 +92,7 @@ where
             .clone()
             .extend_with(find_node_bounds(&**expression)),
 
-        AstNode::OnStatement(OnStatement {
+        AstNodeRef::OnStatement(OnStatement {
             on_token,
             executor: _,
             iterators: _,
@@ -106,7 +106,7 @@ where
             .clone()
             .extend_with(find_node_bounds(&**body)),
 
-        AstNode::BlockStatement(BlockStatement {
+        AstNodeRef::BlockStatement(BlockStatement {
             open_brace_token,
             body: _,
             close_brace_token,
@@ -116,7 +116,7 @@ where
             .clone()
             .extend_with(close_brace_token.range.clone()),
 
-        AstNode::ReturnStatement(ReturnStatement {
+        AstNodeRef::ReturnStatement(ReturnStatement {
             return_token,
             value: _,
             semicolon_token,
@@ -126,7 +126,7 @@ where
             .clone()
             .extend_with(semicolon_token.range.clone()),
 
-        AstNode::VariableDefinitionStatement(VariableDefinitionStatement {
+        AstNodeRef::VariableDefinitionStatement(VariableDefinitionStatement {
             let_token,
             binding: _,
             equals_token: _,
@@ -138,7 +138,7 @@ where
             .clone()
             .extend_with(semicolon_token.range.clone()),
 
-        AstNode::IfStatement(IfStatement {
+        AstNodeRef::IfStatement(IfStatement {
             if_token,
             condition: _,
             if_body,
@@ -160,7 +160,7 @@ where
                     .map(|(_elif_token, _condition, elif_body)| find_node_bounds(elif_body)),
             ),
 
-        AstNode::WhileLoopStatement(WhileLoopStatement {
+        AstNodeRef::WhileLoopStatement(WhileLoopStatement {
             while_token,
             condition: _,
             body,
@@ -170,7 +170,7 @@ where
             .clone()
             .extend_with(find_node_bounds(&**body)),
 
-        AstNode::ForLoopStatement(ForLoopStatement {
+        AstNodeRef::ForLoopStatement(ForLoopStatement {
             for_token,
             open_paren_token: _,
             initializer: _,
@@ -185,7 +185,7 @@ where
             .clone()
             .extend_with(find_node_bounds(&**body)),
 
-        AstNode::BreakStatement(BreakStatement {
+        AstNodeRef::BreakStatement(BreakStatement {
             break_token,
             semicolon_token,
             id: _,
@@ -194,7 +194,7 @@ where
             .clone()
             .extend_with(semicolon_token.range.clone()),
 
-        AstNode::SkipStatement(SkipStatement {
+        AstNodeRef::SkipStatement(SkipStatement {
             skip_token,
             semicolon_token,
             id: _,
@@ -203,8 +203,8 @@ where
             .clone()
             .extend_with(semicolon_token.range.clone()),
 
-        AstNode::SelfExecutorHost(SelfExecutorHost { token, id: _ }) => token.range.clone(),
-        AstNode::ThreadExecutor(ThreadExecutor {
+        AstNodeRef::SelfExecutorHost(SelfExecutorHost { token, id: _ }) => token.range.clone(),
+        AstNodeRef::ThreadExecutor(ThreadExecutor {
             host,
             dot_token: _,
             thread_token: _,
@@ -217,7 +217,7 @@ where
             .clone()
             .extend_with(find_node_bounds(host)),
 
-        AstNode::GPUExecutor(GPUExecutor {
+        AstNodeRef::GPUExecutor(GPUExecutor {
             host,
             dot_token: _,
             gpus_token: _,
@@ -230,7 +230,7 @@ where
             .clone()
             .extend_with(find_node_bounds(host)),
 
-        AstNode::UnaryExpression(UnaryExpression {
+        AstNodeRef::UnaryExpression(UnaryExpression {
             operator_token,
             operation: _,
             operand,
@@ -240,18 +240,18 @@ where
             .clone()
             .extend_with(find_node_bounds(&**operand)),
 
-        AstNode::CastExpression(CastExpression {
+        AstNodeRef::CastExpression(CastExpression {
             operand,
             as_token: _,
             type_,
             id: _,
         }) => find_node_bounds(&**operand).extend_with(find_node_bounds(type_)),
-        AstNode::LiteralExpression(LiteralExpression {
+        AstNodeRef::LiteralExpression(LiteralExpression {
             value: _,
             token,
             id: _,
         }) => token.range.clone(),
-        AstNode::ArrayExpression(ArrayExpression {
+        AstNodeRef::ArrayExpression(ArrayExpression {
             open_bracket_token,
             elements: _,
             close_bracket_token,
@@ -261,7 +261,7 @@ where
             .clone()
             .extend_with(close_bracket_token.range.clone()),
 
-        AstNode::StructExpression(StructExpression {
+        AstNodeRef::StructExpression(StructExpression {
             type_,
             open_brace_token: _,
             members: _,
@@ -272,14 +272,14 @@ where
             .clone()
             .extend_with(find_node_bounds(type_)),
 
-        AstNode::BinaryExpression(BinaryExpression {
+        AstNodeRef::BinaryExpression(BinaryExpression {
             left,
             operator_token: _,
             operation: _,
             right,
             id: _,
         }) => find_node_bounds(&**left).extend_with(find_node_bounds(&**right)),
-        AstNode::GroupingExpression(GroupingExpression {
+        AstNodeRef::GroupingExpression(GroupingExpression {
             open_paren_token,
             subexpression: _,
             close_paren_token,
@@ -289,7 +289,7 @@ where
             .clone()
             .extend_with(close_paren_token.range.clone()),
 
-        AstNode::FunctionCallExpression(FunctionCallExpression {
+        AstNodeRef::FunctionCallExpression(FunctionCallExpression {
             name: _,
             name_token,
             open_paren_token: _,
@@ -301,7 +301,7 @@ where
             .clone()
             .extend_with(close_paren_token.range.clone()),
 
-        AstNode::CompilerExpression(CompilerExpression {
+        AstNodeRef::CompilerExpression(CompilerExpression {
             at_token,
             name: _,
             name_token: _,
@@ -314,7 +314,7 @@ where
             .clone()
             .extend_with(close_paren_token.range.clone()),
 
-        AstNode::ArrayIndexExpression(ArrayIndexExpression {
+        AstNodeRef::ArrayIndexExpression(ArrayIndexExpression {
             array,
             open_bracket_token: _,
             index: _,
@@ -325,7 +325,7 @@ where
             .clone()
             .extend_with(find_node_bounds(&**array)),
 
-        AstNode::StructAccessExpression(StructAccessExpression {
+        AstNodeRef::StructAccessExpression(StructAccessExpression {
             value,
             dot_token: _,
             member_name: _,
@@ -335,23 +335,23 @@ where
             .range
             .clone()
             .extend_with(find_node_bounds(&**value)),
-        AstNode::VariableAccessExpression(VariableAccessExpression {
+        AstNodeRef::VariableAccessExpression(VariableAccessExpression {
             name: _,
             name_token,
             id: _,
         }) => name_token.range.clone(),
-        AstNode::VariableAssignmentExpression(VariableAssignmentExpression {
+        AstNodeRef::VariableAssignmentExpression(VariableAssignmentExpression {
             lvalue,
             equal_token: _,
             right,
             id: _,
         }) => find_node_bounds(lvalue).extend_with(find_node_bounds(&**right)),
-        AstNode::VariableLValue(VariableLValue {
+        AstNodeRef::VariableLValue(VariableLValue {
             name: _,
             name_token,
             id: _,
         }) => name_token.range.clone(),
-        AstNode::ArrayIndexLValue(ArrayIndexLValue {
+        AstNodeRef::ArrayIndexLValue(ArrayIndexLValue {
             array,
             open_bracket_token: _,
             index: _,
@@ -362,7 +362,7 @@ where
             .clone()
             .extend_with(find_node_bounds(&**array)),
 
-        AstNode::StructAccessLValue(StructAccessLValue {
+        AstNodeRef::StructAccessLValue(StructAccessLValue {
             value,
             dot_token: _,
             member_name: _,
@@ -373,7 +373,7 @@ where
             .clone()
             .extend_with(find_node_bounds(&**value)),
 
-        AstNode::GroupingLValue(GroupingLValue {
+        AstNodeRef::GroupingLValue(GroupingLValue {
             open_paren_token,
             sublvalue: _,
             close_paren_token,
@@ -383,12 +383,12 @@ where
             .clone()
             .extend_with(close_paren_token.range.clone()),
 
-        AstNode::SimpleType(SimpleType {
+        AstNodeRef::SimpleType(SimpleType {
             token,
             type_: _,
             id: _,
         }) => token.range.clone().extend_with(token.range.clone()),
-        AstNode::UnitType(UnitType {
+        AstNodeRef::UnitType(UnitType {
             open_paren_token,
             close_paren_token,
             id: _,
@@ -397,8 +397,8 @@ where
             .clone()
             .extend_with(close_paren_token.range.clone()),
 
-        AstNode::IdkType(IdkType { token, id: _ }) => token.range.clone(),
-        AstNode::ArrayType(ArrayType {
+        AstNodeRef::IdkType(IdkType { token, id: _ }) => token.range.clone(),
+        AstNodeRef::ArrayType(ArrayType {
             subtype,
             open_bracket_token: _,
             size: _,
@@ -409,7 +409,7 @@ where
             .clone()
             .extend_with(find_node_bounds(&**subtype)),
 
-        AstNode::StructType(StructType {
+        AstNodeRef::StructType(StructType {
             struct_token,
             open_brace_token: _,
             members: _,
@@ -420,7 +420,7 @@ where
             .clone()
             .extend_with(close_brace_token.range.clone()),
 
-        AstNode::AliasType(AliasType {
+        AstNodeRef::AliasType(AliasType {
             name: _,
             name_token,
             id: _,

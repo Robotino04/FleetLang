@@ -2,7 +2,7 @@ use itertools::Itertools;
 
 use crate::{
     NewtypeDeref,
-    ast::AstNode,
+    ast::AstNodeRef,
     ast_to_dm::AstToDocumentModelConverter,
     document_model::{DocumentElement, stringify_document},
     generate_c::CCodeGenerator,
@@ -83,8 +83,8 @@ impl FleetError {
             main_severity: severity,
         }
     }
-    pub fn from_node<I: Into<AstNode> + Clone>(
-        node: &I,
+    pub fn from_node<'a, I: Into<AstNodeRef<'a>>>(
+        node: I,
         msg: impl ToString,
         severity: ErrorSeverity,
     ) -> Self {

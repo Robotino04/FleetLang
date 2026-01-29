@@ -30,7 +30,7 @@ use itertools::Itertools;
 
 use crate::{
     ast::{
-        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNodeRef,
         AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
         CastExpression, CompilerExpression, Executor, ExpressionStatement, ExternFunctionBody,
         ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor,
@@ -340,11 +340,11 @@ impl<'a> IrGenerator<'_> {
         }
     }
 
-    fn package_llvm_in_runtime_value<I: Into<AstNode> + Clone>(
+    fn package_llvm_in_runtime_value<'node, I: Into<AstNodeRef<'node>>>(
         &mut self,
         value: Option<BasicValueEnum<'a>>,
         expected_type: UnionFindSetPtr<RuntimeType>,
-        error_node: &I,
+        error_node: I,
     ) -> Result<RuntimeValueIR<'a>> {
         Ok(match &self.type_sets.get(expected_type).kind {
             RuntimeTypeKind::I8
@@ -386,11 +386,13 @@ impl<'a> IrGenerator<'_> {
         })
     }
 
-    fn runtime_type_to_llvm_impl<I: Into<AstNode> + Clone>(
+    fn runtime_type_to_llvm_impl<'node, I: Into<AstNodeRef<'node>>>(
         &self,
         type_ptr: &RuntimeTypeKind,
-        error_node: &I,
+        error_node: I,
     ) -> ::core::result::Result<AnyTypeEnum<'a>, FleetError> {
+        let error_node = error_node.into();
+
         Ok(match type_ptr {
             RuntimeTypeKind::I8 | RuntimeTypeKind::U8 => self.context.i8_type().into(),
             RuntimeTypeKind::I16 | RuntimeTypeKind::U16 => self.context.i16_type().into(),
@@ -495,10 +497,10 @@ impl<'a> IrGenerator<'_> {
                 .into(),
         })
     }
-    fn runtime_type_to_llvm<I: Into<AstNode> + Clone>(
+    fn runtime_type_to_llvm<'node, I: Into<AstNodeRef<'node>>>(
         &mut self,
         type_ptr: UnionFindSetPtr<RuntimeType>,
-        error_node: &I,
+        error_node: I,
     ) -> Result<AnyTypeEnum<'a>> {
         match self.runtime_type_to_llvm_impl(&self.type_sets.get(type_ptr).kind, error_node) {
             Ok(ok) => Ok(ok),
@@ -535,7 +537,7 @@ impl<'a> IrGenerator<'_> {
                     .return_type
                     .unwrap())
             })?;
-        let return_type_ir = self.runtime_type_to_llvm(return_type, function)?;
+        let return_type_ir = self.runtime_type_to_llvm(return_type, &*function)?;
 
         let name = match &*function.body {
             FunctionBody::Extern(ExternFunctionBody {
@@ -832,7 +834,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .unwrap())
             })?;
 
-        let return_type_ir = self.runtime_type_to_llvm(return_type, function)?;
+        let return_type_ir = self.runtime_type_to_llvm(return_type, &*function)?;
         let ir_function = self
             .function_locations
             .get(
@@ -978,7 +980,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .unwrap())
             })?;
 
-        let type_ = self.runtime_type_to_llvm(type_, simple_binding)?;
+        let type_ = self.runtime_type_to_llvm(type_, &*simple_binding)?;
 
         let ptr = match type_.into_basic_type() {
             Ok(type_) => self.builder.build_alloca(type_, &simple_binding.name)?,

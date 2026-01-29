@@ -702,7 +702,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         let prepare_shader = || -> Option<(String, usize)> {
             drop(glsl_generator);
             self.errors.push(FleetError::from_node(
-                executor,
+                &**executor,
                 "The GPU backend is disabled for this build of Fleet",
                 ErrorSeverity::Error,
             ));
