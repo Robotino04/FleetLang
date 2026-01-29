@@ -136,22 +136,22 @@ fn flatten_document_elements_once(element: DocumentElement) -> (DocumentElement,
             let mut res = vec![];
             let mut did_change = false;
             for el in body {
-                use DocumentElement::*;
+                use DocumentElement as DE;
                 match el {
-                    Concatenation(mut child) => {
+                    DE::Concatenation(mut child) => {
                         res.append(&mut child);
                         did_change = true;
                         continue;
                     }
-                    ReverseSpaceEater => {
+                    DE::ReverseSpaceEater => {
                         did_change = consume_spaces(&mut res) || did_change;
                         res.push(el);
                         continue;
                     }
-                    ForcedLineBreak => {
+                    DE::ForcedLineBreak => {
                         did_change = consume_spaces(&mut res) || did_change;
 
-                        if let Some(LineBreakEater) = res.last() {
+                        if let Some(DE::LineBreakEater) = res.last() {
                             did_change = true;
                         } else {
                             res.push(el);
@@ -159,25 +159,25 @@ fn flatten_document_elements_once(element: DocumentElement) -> (DocumentElement,
 
                         continue;
                     }
-                    ReverseLineBreakEater => {
+                    DE::ReverseLineBreakEater => {
                         did_change = consume_linebreaks_and_spaces(&mut res) || did_change;
 
                         res.push(el);
                         continue;
                     }
-                    CollapsableLineBreak {
+                    DE::CollapsableLineBreak {
                         min: min1,
                         max: max1,
                         count: count1,
                     } => {
                         did_change = consume_spaces(&mut res) || did_change;
 
-                        if let Some(LineBreakEater) = res.last() {
+                        if let Some(DE::LineBreakEater) = res.last() {
                             did_change = true;
                             continue;
                         }
 
-                        if let Some(CollapsableLineBreak {
+                        if let Some(DE::CollapsableLineBreak {
                             min: min2,
                             max: max2,
                             count: count2,
@@ -195,35 +195,35 @@ fn flatten_document_elements_once(element: DocumentElement) -> (DocumentElement,
                             continue;
                         }
                     }
-                    ForcedSpace => {
+                    DE::ForcedSpace => {
                         if let Some(
-                            SpaceEater
-                            | LineBreakEater
-                            | ForcedLineBreak
-                            | CollapsableLineBreak { .. },
+                            DE::SpaceEater
+                            | DE::LineBreakEater
+                            | DE::ForcedLineBreak
+                            | DE::CollapsableLineBreak { .. },
                         ) = res.last()
                         {
                             did_change = true;
                             continue;
                         }
                     }
-                    CollapsableSpace {
+                    DE::CollapsableSpace {
                         min: min1,
                         max: max1,
                         count: count1,
                     } => {
                         if let Some(
-                            SpaceEater
-                            | LineBreakEater
-                            | ForcedLineBreak
-                            | CollapsableLineBreak { .. },
+                            DE::SpaceEater
+                            | DE::LineBreakEater
+                            | DE::ForcedLineBreak
+                            | DE::CollapsableLineBreak { .. },
                         ) = res.last()
                         {
                             did_change = true;
                             continue;
                         }
 
-                        if let Some(CollapsableSpace {
+                        if let Some(DE::CollapsableSpace {
                             min: min2,
                             max: max2,
                             count: count2,

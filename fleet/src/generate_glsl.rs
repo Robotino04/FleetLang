@@ -1568,15 +1568,15 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             out_value: right_out_value,
         } = self.visit_expression(&mut *right);
 
-        use BinaryOperation::*;
+        use BinaryOperation as Bo;
         PreStatementValue {
             pre_statements: left_pre_statements + &right_pre_statements,
             out_value: match operation {
-                Add => format!("(({left_out_value}) + ({right_out_value}))"),
-                Subtract => format!("(({left_out_value}) - ({right_out_value}))"),
-                Multiply => format!("(({left_out_value}) * ({right_out_value}))"),
-                Divide => format!("(({left_out_value}) / ({right_out_value}))"),
-                Modulo => {
+                Bo::Add => format!("(({left_out_value}) + ({right_out_value}))"),
+                Bo::Subtract => format!("(({left_out_value}) - ({right_out_value}))"),
+                Bo::Multiply => format!("(({left_out_value}) * ({right_out_value}))"),
+                Bo::Divide => format!("(({left_out_value}) / ({right_out_value}))"),
+                Bo::Modulo => {
                     if self
                         .type_data
                         .get(&left.get_id())
@@ -1588,14 +1588,14 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                         format!("(({left_out_value}) % ({right_out_value}))")
                     }
                 }
-                GreaterThan => format!("(({left_out_value}) > ({right_out_value}))"),
-                GreaterThanOrEqual => format!("(({left_out_value}) >= ({right_out_value}))"),
-                LessThan => format!("(({left_out_value}) < ({right_out_value}))"),
-                LessThanOrEqual => format!("(({left_out_value}) <= ({right_out_value}))"),
-                Equal => format!("(({left_out_value}) == ({right_out_value}))"),
-                NotEqual => format!("(({left_out_value}) != ({right_out_value}))"),
-                LogicalAnd => format!("(({left_out_value}) && ({right_out_value}))"),
-                LogicalOr => format!("(({left_out_value}) || ({right_out_value}))"),
+                Bo::GreaterThan => format!("(({left_out_value}) > ({right_out_value}))"),
+                Bo::GreaterThanOrEqual => format!("(({left_out_value}) >= ({right_out_value}))"),
+                Bo::LessThan => format!("(({left_out_value}) < ({right_out_value}))"),
+                Bo::LessThanOrEqual => format!("(({left_out_value}) <= ({right_out_value}))"),
+                Bo::Equal => format!("(({left_out_value}) == ({right_out_value}))"),
+                Bo::NotEqual => format!("(({left_out_value}) != ({right_out_value}))"),
+                Bo::LogicalAnd => format!("(({left_out_value}) && ({right_out_value}))"),
+                Bo::LogicalOr => format!("(({left_out_value}) || ({right_out_value}))"),
             },
         }
     }

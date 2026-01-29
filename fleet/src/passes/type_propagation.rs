@@ -1470,7 +1470,7 @@ impl AstVisitor for TypePropagator<'_> {
         let from_ptr = self.visit_expression(operand);
         let to_ptr = self.visit_type(type_);
 
-        use RuntimeTypeKind::*;
+        use RuntimeTypeKind as T;
         enum CastResult {
             Possible,
             Redundant,
@@ -1486,20 +1486,20 @@ impl AstVisitor for TypePropagator<'_> {
             let from_clone = types.get(from_ptr).kind.clone();
             let to_clone = types.get(to_ptr).kind.clone();
             match (&from_clone, &to_clone) {
-                (_, Error) | (Error, _) => CastResult::Possible,
+                (_, T::Error) | (T::Error, _) => CastResult::Possible,
 
-                (I8, I8)
-                | (I16, I16)
-                | (I32, I32)
-                | (I64, I64)
-                | (U8, U8)
-                | (U16, U16)
-                | (U32, U32)
-                | (U64, U64)
-                | (F32, F32)
-                | (F64, F64)
-                | (Boolean, Boolean)
-                | (Unit, Unit) => {
+                (T::I8, T::I8)
+                | (T::I16, T::I16)
+                | (T::I32, T::I32)
+                | (T::I64, T::I64)
+                | (T::U8, T::U8)
+                | (T::U16, T::U16)
+                | (T::U32, T::U32)
+                | (T::U64, T::U64)
+                | (T::F32, T::F32)
+                | (T::F64, T::F64)
+                | (T::Boolean, T::Boolean)
+                | (T::Unit, T::Unit) => {
                     self_errors.push(FleetError::from_node(
                         &expression_clone,
                         format!(
@@ -1511,23 +1511,63 @@ impl AstVisitor for TypePropagator<'_> {
                     CastResult::Redundant
                 }
                 (
-                    Number { .. } | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64,
-                    Number { .. } | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64,
+                    T::Number { .. }
+                    | T::I8
+                    | T::I16
+                    | T::I32
+                    | T::I64
+                    | T::U8
+                    | T::U16
+                    | T::U32
+                    | T::U64
+                    | T::F32
+                    | T::F64,
+                    T::Number { .. }
+                    | T::I8
+                    | T::I16
+                    | T::I32
+                    | T::I64
+                    | T::U8
+                    | T::U16
+                    | T::U32
+                    | T::U64
+                    | T::F32
+                    | T::F64,
                 ) => {
                     let _ = RuntimeTypeKind::merge_types(from_ptr, to_ptr, types);
                     CastResult::Possible
                 }
 
                 (
-                    Number { .. } | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64,
-                    Boolean,
+                    T::Number { .. }
+                    | T::I8
+                    | T::I16
+                    | T::I32
+                    | T::I64
+                    | T::U8
+                    | T::U16
+                    | T::U32
+                    | T::U64
+                    | T::F32
+                    | T::F64,
+                    T::Boolean,
                 ) => CastResult::Possible,
                 (
-                    Boolean,
-                    Number { .. } | I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64,
+                    T::Boolean,
+                    T::Number { .. }
+                    | T::I8
+                    | T::I16
+                    | T::I32
+                    | T::I64
+                    | T::U8
+                    | T::U16
+                    | T::U32
+                    | T::U64
+                    | T::F32
+                    | T::F64,
                 ) => CastResult::Possible,
 
-                (_, Unit) | (Unit, _) => {
+                (_, T::Unit) | (T::Unit, _) => {
                     self_errors.push(FleetError::from_node(
                         &expression_clone,
                         "Cannot cast to or from Unit".to_string(),
@@ -1536,11 +1576,11 @@ impl AstVisitor for TypePropagator<'_> {
                     CastResult::Impossible
                 }
                 (
-                    ArrayOf {
+                    T::ArrayOf {
                         subtype: _,
                         size: a_size,
                     },
-                    ArrayOf {
+                    T::ArrayOf {
                         subtype: _,
                         size: b_size,
                     },
@@ -1584,11 +1624,11 @@ impl AstVisitor for TypePropagator<'_> {
                     }
                 }
                 (
-                    ArrayOf {
+                    T::ArrayOf {
                         subtype: _,
                         size: a_size,
                     },
-                    ArrayOf {
+                    T::ArrayOf {
                         subtype: _,
                         size: b_size,
                     },
@@ -1610,7 +1650,7 @@ impl AstVisitor for TypePropagator<'_> {
                 }
                 (
                     _,
-                    ArrayOf {
+                    T::ArrayOf {
                         subtype: _,
                         size: _,
                     },
@@ -1627,7 +1667,7 @@ impl AstVisitor for TypePropagator<'_> {
                     CastResult::Impossible
                 }
                 (
-                    ArrayOf {
+                    T::ArrayOf {
                         subtype: _,
                         size: _,
                     },
@@ -1645,11 +1685,11 @@ impl AstVisitor for TypePropagator<'_> {
                     CastResult::Impossible
                 }
                 (
-                    a @ Struct {
+                    a @ T::Struct {
                         members: a_members,
                         source_hash: a_hash,
                     },
-                    b @ Struct {
+                    b @ T::Struct {
                         members: b_members,
                         source_hash: b_hash,
                     },
@@ -1702,7 +1742,7 @@ impl AstVisitor for TypePropagator<'_> {
                     }
                 }
                 (
-                    Struct {
+                    T::Struct {
                         members: _,
                         source_hash: _,
                     },
@@ -1710,7 +1750,7 @@ impl AstVisitor for TypePropagator<'_> {
                 )
                 | (
                     _,
-                    Struct {
+                    T::Struct {
                         members: _,
                         source_hash: _,
                     },
@@ -1726,7 +1766,7 @@ impl AstVisitor for TypePropagator<'_> {
                     ));
                     CastResult::Impossible
                 }
-                (Unknown, Unknown) => {
+                (T::Unknown, T::Unknown) => {
                     if !RuntimeTypeKind::merge_types(from_ptr, to_ptr, types) {
                         self_errors.push(FleetError::from_node(
                             &expression_clone,
@@ -1749,8 +1789,8 @@ impl AstVisitor for TypePropagator<'_> {
                     ));
                     CastResult::Possible
                 }
-                (_, Unknown) => CastResult::Possible,
-                (Unknown, _) => {
+                (_, T::Unknown) => CastResult::Possible,
+                (T::Unknown, _) => {
                     if !RuntimeTypeKind::merge_types(from_ptr, to_ptr, types) {
                         self_errors.push(FleetError::from_node(
                             &expression_clone,

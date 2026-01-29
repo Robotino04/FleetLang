@@ -1393,7 +1393,7 @@ pub enum Expression {
 impl Expression {
     pub const TOP_PRECEDENCE: usize = usize::MAX;
     pub fn get_precedence(&self) -> usize {
-        use BinaryOperation::*;
+        use BinaryOperation as Bo;
         match self {
             Expression::Literal { .. } => 0,
             Expression::VariableAccess { .. } => 0,
@@ -1411,27 +1411,28 @@ impl Expression {
             Expression::Unary { .. } => 2,
             Expression::Cast { .. } => 3,
             Expression::Binary(BinaryExpression {
-                operation: Multiply | Divide | Modulo,
+                operation: Bo::Multiply | Bo::Divide | Bo::Modulo,
                 ..
             }) => 4,
             Expression::Binary(BinaryExpression {
-                operation: Add | Subtract,
+                operation: Bo::Add | Bo::Subtract,
                 ..
             }) => 5,
             Expression::Binary(BinaryExpression {
-                operation: LessThan | LessThanOrEqual | GreaterThan | GreaterThanOrEqual,
+                operation:
+                    Bo::LessThan | Bo::LessThanOrEqual | Bo::GreaterThan | Bo::GreaterThanOrEqual,
                 ..
             }) => 6,
             Expression::Binary(BinaryExpression {
-                operation: Equal | NotEqual,
+                operation: Bo::Equal | Bo::NotEqual,
                 ..
             }) => 7,
             Expression::Binary(BinaryExpression {
-                operation: LogicalAnd,
+                operation: Bo::LogicalAnd,
                 ..
             }) => 8,
             Expression::Binary(BinaryExpression {
-                operation: LogicalOr,
+                operation: Bo::LogicalOr,
                 ..
             }) => 9,
 
@@ -1439,7 +1440,7 @@ impl Expression {
         }
     }
     pub fn get_associativity(&self) -> Associativity {
-        use BinaryOperation::*;
+        use BinaryOperation as Bo;
         match self {
             Expression::Literal { .. } => Associativity::Both,
             Expression::Array { .. } => Associativity::Both,
@@ -1454,13 +1455,22 @@ impl Expression {
             Expression::Unary { .. } => Associativity::Left,
             Expression::Cast { .. } => Associativity::Left,
             Expression::Binary(BinaryExpression {
-                operation: Add | Multiply,
+                operation: Bo::Add | Bo::Multiply,
                 ..
             }) => Associativity::Both,
             Expression::Binary(BinaryExpression {
                 operation:
-                    Subtract | Divide | Modulo | GreaterThan | GreaterThanOrEqual | LessThan
-                    | LessThanOrEqual | Equal | NotEqual | LogicalAnd | LogicalOr,
+                    Bo::Subtract
+                    | Bo::Divide
+                    | Bo::Modulo
+                    | Bo::GreaterThan
+                    | Bo::GreaterThanOrEqual
+                    | Bo::LessThan
+                    | Bo::LessThanOrEqual
+                    | Bo::Equal
+                    | Bo::NotEqual
+                    | Bo::LogicalAnd
+                    | Bo::LogicalOr,
                 ..
             }) => Associativity::Left,
 

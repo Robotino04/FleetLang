@@ -382,18 +382,18 @@ impl RuntimeTypeKind {
         }
 
         types.try_merge(a, b, |mut a_full, b_full, types| {
-            use UnionFindSetMergeResult::*;
+            use UnionFindSetMergeResult as R;
             let a = &mut a_full.kind;
             let b = &b_full.kind;
 
             if *b == RuntimeTypeKind::Unknown {
-                return Merged(a_full);
+                return R::Merged(a_full);
             }
             if *b == RuntimeTypeKind::Error {
                 unreachable!("Should have been checked above")
             }
             match a {
-                _ if a == b => Merged(a_full),
+                _ if a == b => R::Merged(a_full),
 
                 RuntimeTypeKind::Number { signed, integer } => {
                     if !match signed {
@@ -401,7 +401,7 @@ impl RuntimeTypeKind {
                         Some(false) => b.could_be_unsigned(),
                         None => true,
                     } {
-                        return NotMerged {
+                        return R::NotMerged {
                             a: a_full,
                             b: b_full,
                         };
@@ -412,7 +412,7 @@ impl RuntimeTypeKind {
                         Some(false) => b.could_be_float(),
                         None => b.is_numeric(),
                     } {
-                        return NotMerged {
+                        return R::NotMerged {
                             a: a_full,
                             b: b_full,
                         };
@@ -422,7 +422,7 @@ impl RuntimeTypeKind {
                         RuntimeTypeKind::Number {
                             signed: b_signed,
                             integer: b_integer,
-                        } => Merged(RuntimeType {
+                        } => R::Merged(RuntimeType {
                             kind: RuntimeTypeKind::Number {
                                 signed: match (*signed, *b_signed) {
                                     (None, None) => None,
@@ -448,7 +448,7 @@ impl RuntimeTypeKind {
                         // we already checked that signedness and int/float are compatible, so
                         // this has to be a number. It also has to be a fully specialized one
                         // because partially specialized ones are handled above.
-                        _ => Merged(b_full),
+                        _ => R::Merged(b_full),
                     }
                 }
 
@@ -460,11 +460,11 @@ impl RuntimeTypeKind {
                         && b.could_be_integer()
                         && b.could_be_signed()
                     {
-                        Merged(a_full)
+                        R::Merged(a_full)
                     } else if a == b {
-                        Merged(a_full)
+                        R::Merged(a_full)
                     } else {
-                        NotMerged {
+                        R::NotMerged {
                             a: a_full,
                             b: b_full,
                         }
@@ -478,11 +478,11 @@ impl RuntimeTypeKind {
                         && b.could_be_integer()
                         && b.could_be_unsigned()
                     {
-                        Merged(a_full)
+                        R::Merged(a_full)
                     } else if a == b {
-                        Merged(a_full)
+                        R::Merged(a_full)
                     } else {
-                        NotMerged {
+                        R::NotMerged {
                             a: a_full,
                             b: b_full,
                         }
@@ -491,9 +491,9 @@ impl RuntimeTypeKind {
 
                 RuntimeTypeKind::F32 | RuntimeTypeKind::F64 => {
                     if b.could_be_float() {
-                        Merged(a_full)
+                        R::Merged(a_full)
                     } else {
-                        NotMerged {
+                        R::NotMerged {
                             a: a_full,
                             b: b_full,
                         }
@@ -502,9 +502,9 @@ impl RuntimeTypeKind {
 
                 RuntimeTypeKind::Boolean => {
                     if b.is_boolean() {
-                        Merged(b_full)
+                        R::Merged(b_full)
                     } else {
-                        NotMerged {
+                        R::NotMerged {
                             a: a_full,
                             b: b_full,
                         }
@@ -512,16 +512,16 @@ impl RuntimeTypeKind {
                 }
                 RuntimeTypeKind::Unit => {
                     if *b == RuntimeTypeKind::Unit {
-                        Merged(b_full)
+                        R::Merged(b_full)
                     } else {
-                        NotMerged {
+                        R::NotMerged {
                             a: a_full,
                             b: b_full,
                         }
                     }
                 }
-                RuntimeTypeKind::Unknown => Merged(b_full),
-                RuntimeTypeKind::Error => Merged(a_full),
+                RuntimeTypeKind::Unknown => R::Merged(b_full),
+                RuntimeTypeKind::Error => R::Merged(a_full),
                 RuntimeTypeKind::ArrayOf {
                     subtype: a_subtype,
                     size: a_size,
@@ -532,7 +532,7 @@ impl RuntimeTypeKind {
                     } = b
                     {
                         if !RuntimeTypeKind::merge_types(*a_subtype, *b_subtype, types) {
-                            return NotMerged {
+                            return R::NotMerged {
                                 a: a_full,
                                 b: b_full,
                             };
@@ -545,7 +545,7 @@ impl RuntimeTypeKind {
                             (Some(_), None) => {}
                             (Some(a_size), Some(b_size)) => {
                                 if a_size != b_size {
-                                    return NotMerged {
+                                    return R::NotMerged {
                                         a: a_full,
                                         b: b_full,
                                     };
@@ -553,9 +553,9 @@ impl RuntimeTypeKind {
                             }
                         }
 
-                        Merged(a_full)
+                        R::Merged(a_full)
                     } else {
-                        NotMerged {
+                        R::NotMerged {
                             a: a_full,
                             b: b_full,
                         }
@@ -584,26 +584,26 @@ impl RuntimeTypeKind {
                                         *member2_type,
                                         types,
                                     ) {
-                                        return NotMerged {
+                                        return R::NotMerged {
                                             a: a_full,
                                             b: b_full,
                                         };
                                     }
                                     if member1_name != member2_name {
-                                        return NotMerged {
+                                        return R::NotMerged {
                                             a: a_full,
                                             b: b_full,
                                         };
                                     }
                                 }
                                 EitherOrBoth::Left(_) => {
-                                    return NotMerged {
+                                    return R::NotMerged {
                                         a: a_full,
                                         b: b_full,
                                     };
                                 }
                                 EitherOrBoth::Right(_) => {
-                                    return NotMerged {
+                                    return R::NotMerged {
                                         a: a_full,
                                         b: b_full,
                                     };
@@ -612,12 +612,12 @@ impl RuntimeTypeKind {
                         }
 
                         if source_hash.is_some() {
-                            Merged(a_full)
+                            R::Merged(a_full)
                         } else {
-                            Merged(b_full)
+                            R::Merged(b_full)
                         }
                     } else {
-                        NotMerged {
+                        R::NotMerged {
                             a: a_full,
                             b: b_full,
                         }
@@ -687,70 +687,93 @@ impl Display for ConcreteRuntimeType {
 
 impl ConcreteRuntimeType {
     pub fn is_float(&self) -> bool {
-        use ConcreteRuntimeType::*;
+        use ConcreteRuntimeType as T;
         match self {
-            F32 | F64 => true,
-            I8
-            | I16
-            | I32
-            | I64
-            | U8
-            | U16
-            | U32
-            | U64
-            | Unit
-            | Boolean
-            | ArrayOf { .. }
-            | Struct { .. } => false,
+            T::F32 | T::F64 => true,
+            T::I8
+            | T::I16
+            | T::I32
+            | T::I64
+            | T::U8
+            | T::U16
+            | T::U32
+            | T::U64
+            | T::Unit
+            | T::Boolean
+            | T::ArrayOf { .. }
+            | T::Struct { .. } => false,
         }
     }
     pub fn is_signed(&self) -> bool {
-        use ConcreteRuntimeType::*;
+        use ConcreteRuntimeType as T;
         match self {
-            I8 | I16 | I32 | I64 | F32 | F64 => true,
-            U8 | U16 | U32 | U64 | Unit | Boolean | ArrayOf { .. } | Struct { .. } => false,
+            T::I8 | T::I16 | T::I32 | T::I64 | T::F32 | T::F64 => true,
+            T::U8
+            | T::U16
+            | T::U32
+            | T::U64
+            | T::Unit
+            | T::Boolean
+            | T::ArrayOf { .. }
+            | T::Struct { .. } => false,
         }
     }
     pub fn is_unsigned(&self) -> bool {
-        use ConcreteRuntimeType::*;
+        use ConcreteRuntimeType as T;
         match self {
-            U8 | U16 | U32 | U64 => true,
-            I8 | I16 | I32 | I64 | F32 | F64 | Unit | Boolean | ArrayOf { .. } | Struct { .. } => {
-                false
-            }
+            T::U8 | T::U16 | T::U32 | T::U64 => true,
+            T::I8
+            | T::I16
+            | T::I32
+            | T::I64
+            | T::F32
+            | T::F64
+            | T::Unit
+            | T::Boolean
+            | T::ArrayOf { .. }
+            | T::Struct { .. } => false,
         }
     }
     pub fn is_integer(&self) -> bool {
-        use ConcreteRuntimeType::*;
+        use ConcreteRuntimeType as T;
         match self {
-            I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 => true,
-            F32 | F64 | Unit | Boolean | ArrayOf { .. } | Struct { .. } => false,
+            T::I8 | T::I16 | T::I32 | T::I64 | T::U8 | T::U16 | T::U32 | T::U64 => true,
+            T::F32 | T::F64 | T::Unit | T::Boolean | T::ArrayOf { .. } | T::Struct { .. } => false,
         }
     }
     pub fn is_numeric(&self) -> bool {
-        use ConcreteRuntimeType::*;
+        use ConcreteRuntimeType as T;
         match self {
-            I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64 => true,
-            Unit | Boolean | ArrayOf { .. } | Struct { .. } => false,
+            T::I8
+            | T::I16
+            | T::I32
+            | T::I64
+            | T::U8
+            | T::U16
+            | T::U32
+            | T::U64
+            | T::F32
+            | T::F64 => true,
+            T::Unit | T::Boolean | T::ArrayOf { .. } | T::Struct { .. } => false,
         }
     }
     pub fn is_boolean(&self) -> bool {
-        use ConcreteRuntimeType::*;
+        use ConcreteRuntimeType as T;
         match self {
-            Boolean => true,
-            I8
-            | I16
-            | I32
-            | I64
-            | U8
-            | U16
-            | U32
-            | U64
-            | F32
-            | F64
-            | Unit
-            | ArrayOf { .. }
-            | Struct { .. } => false,
+            T::Boolean => true,
+            T::I8
+            | T::I16
+            | T::I32
+            | T::I64
+            | T::U8
+            | T::U16
+            | T::U32
+            | T::U64
+            | T::F32
+            | T::F64
+            | T::Unit
+            | T::ArrayOf { .. }
+            | T::Struct { .. } => false,
         }
     }
 }
