@@ -324,6 +324,12 @@ pub trait HasID {
     fn get_id(&self) -> NodeID;
 }
 
+impl HasID for NodeID {
+    fn get_id(&self) -> NodeID {
+        *self
+    }
+}
+
 impl HasID for AstNode {
     fn get_id(&self) -> NodeID {
         match self {

@@ -15,10 +15,10 @@ use crate::{
     passes::{
         partial_visitor::PartialAstVisitor,
         pass_manager::{
-            Errors, GlobalState, Pass, PassFactory, PassResult, ScopeData, TypeData, TypeSets,
-            VariableData,
+            ConcreteScopeData, ConcreteTypeData, ConcreteVariableData, Errors, GlobalState, Pass,
+            PassFactory, PassResult,
         },
-        scope_analysis::VariableScopeStack,
+        scope_analysis::ConcreteVariableScopeReader,
     },
 };
 
@@ -27,10 +27,9 @@ pub struct LValueReducer<'state> {
     program: Option<RefMut<'state, Program>>,
     valid_lvalues: Option<Vec<LValue>>,
 
-    variable_data: Ref<'state, VariableData>,
-    type_data: Ref<'state, TypeData>,
-    type_sets: Ref<'state, TypeSets>,
-    scope_data: Ref<'state, ScopeData>,
+    variable_data: Ref<'state, ConcreteVariableData>,
+    type_data: Ref<'state, ConcreteTypeData>,
+    scope_data: Ref<'state, ConcreteScopeData>,
 
     is_top_level_lvalue: bool,
     previous_lvalue_valid: bool,
@@ -47,10 +46,9 @@ impl PassFactory for LValueReducer<'_> {
         Ok(Self::Output {
             errors: state.get_mut_named::<Errors>()?,
             program: Some(state.get_mut_named::<Program>()?),
-            variable_data: state.get_named::<VariableData>()?,
-            scope_data: state.get_named::<ScopeData>()?,
-            type_data: state.get_named::<TypeData>()?,
-            type_sets: state.get_named::<TypeSets>()?,
+            variable_data: state.get_named::<ConcreteVariableData>()?,
+            scope_data: state.get_named::<ConcreteScopeData>()?,
+            type_data: state.get_named::<ConcreteTypeData>()?,
             valid_lvalues: None,
             is_top_level_lvalue: true,
             previous_lvalue_valid: true,
@@ -133,9 +131,7 @@ impl LValueReducer<'_> {
     fn is_literal_expression_equal(&self, a: &LiteralExpression, b: &Expression) -> Option<bool> {
         Some(match b {
             Expression::Literal(b) => {
-                a.value == b.value
-                    && self.type_sets.get(*self.type_data.get(&a.id)?).kind
-                        == self.type_sets.get(*self.type_data.get(&b.id)?).kind
+                a.value == b.value && self.type_data.get(&a.id)? == self.type_data.get(&b.id)?
             }
             Expression::Grouping(b) => self.is_literal_expression_equal(a, &b.subexpression)?,
             _ => false,
@@ -298,10 +294,7 @@ impl LValueReducer<'_> {
     }
 
     fn is_type_equal(&self, a: &Type, b: &Type) -> Option<bool> {
-        Some(
-            self.type_sets.get(*self.type_data.get(&a.get_id())?).kind
-                == self.type_sets.get(*self.type_data.get(&b.get_id())?).kind,
-        )
+        Some(self.type_data.get(&a.get_id())? == self.type_data.get(&b.get_id())?)
     }
 }
 
@@ -317,7 +310,7 @@ impl PartialAstVisitor for LValueReducer<'_> {
             .scope_data
             .get(&a.id)
             .map(|scope| {
-                VariableScopeStack::from_scope(scope.clone())
+                ConcreteVariableScopeReader::from_scope(scope.clone())
                     .get_write_noref(&a.name)
                     .is_some()
             })

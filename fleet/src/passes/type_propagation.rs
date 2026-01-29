@@ -876,7 +876,7 @@ impl AstVisitor for TypePropagator<'_> {
             (
                 StructMemberValue {
                     name,
-                    name_token: _,
+                    name_token,
                     colon_token: _,
                     value,
                 },
@@ -885,11 +885,11 @@ impl AstVisitor for TypePropagator<'_> {
         ) in members.iter_mut().enumerate()
         {
             let this_type = self.visit_expression(value);
-            member_types.push((name.clone(), this_type));
+            member_types.push((name.clone(), name_token.range.clone(), this_type));
 
             // TODO: allow reordering
             if let Some(defined_members) = defined_members.as_ref()
-                && let Some((this_defined_name, this_defined_type)) =
+                && let Some((this_defined_name, _range, this_defined_type)) =
                     defined_members.get(i).cloned()
             {
                 if *name != this_defined_name {
@@ -1310,7 +1310,9 @@ impl AstVisitor for TypePropagator<'_> {
             return err_type;
         };
 
-        let type_ = if let Some((_, member_type)) = members.iter().find(|m| m.0 == *member_name) {
+        let type_ = if let Some((_name, _range, member_type)) =
+            members.iter().find(|m| m.0 == *member_name)
+        {
             *member_type
         } else {
             self.errors.push(FleetError::from_token(
@@ -2123,7 +2125,9 @@ impl AstVisitor for TypePropagator<'_> {
             return err_type;
         };
 
-        let type_ = if let Some((_, member_type)) = members.iter().find(|m| m.0 == *member_name) {
+        let type_ = if let Some((_name, _range, member_type)) =
+            members.iter().find(|m| m.0 == *member_name)
+        {
             *member_type
         } else {
             self.errors.push(FleetError::from_token(
@@ -2284,7 +2288,7 @@ impl AstVisitor for TypePropagator<'_> {
         for (
             StructMemberDefinition {
                 name,
-                name_token: _,
+                name_token,
                 colon_token: _,
                 type_,
             },
@@ -2301,7 +2305,7 @@ impl AstVisitor for TypePropagator<'_> {
                 ));
             }
 
-            rt_members.push((name.clone(), subtype));
+            rt_members.push((name.clone(), name_token.range.clone(), subtype));
         }
 
         let mut hash = DefaultHasher::new();

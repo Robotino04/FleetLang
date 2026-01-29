@@ -26,7 +26,7 @@ use crate::{
             Errors, GlobalState, InputSource, Pass, PassError, PassFactory, PassResult,
         },
         runtime_type::{RuntimeType, RuntimeTypeKind},
-        scope_analysis::{FunctionID, VariableID},
+        scope_analysis::{FunctionID, ScopeID, VariableID},
     },
     tokenizer::{Keyword, NamedSourceRange, Token, TokenType},
 };
@@ -61,6 +61,7 @@ pub struct IdGenerator {
     node_id_counter: NodeID,
     variable_id_counter: VariableID,
     function_id_counter: FunctionID,
+    scope_id_counter: ScopeID,
 }
 
 impl IdGenerator {
@@ -80,6 +81,12 @@ impl IdGenerator {
         self.function_id_counter.0 += 1;
         current_id
     }
+
+    pub fn next_scope_id(&mut self) -> ScopeID {
+        let current_id = self.scope_id_counter;
+        self.scope_id_counter.0 += 1;
+        current_id
+    }
 }
 
 impl Default for IdGenerator {
@@ -88,6 +95,7 @@ impl Default for IdGenerator {
             node_id_counter: NodeID(0),
             variable_id_counter: VariableID(0),
             function_id_counter: FunctionID(0),
+            scope_id_counter: ScopeID(0),
         }
     }
 }

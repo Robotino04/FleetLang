@@ -20,6 +20,7 @@ use crate::{
         scope_analysis::ScopeAnalyzer,
         stat_tracker::StatTracker,
         store_pass::StorePass,
+        type_concretisation_pass::TypeConcretisationPass,
         type_propagation::TypePropagator,
     },
     tokenizer::{NamedSourceLocation, NamedSourceRange, SourceRange, Token, Tokenizer},
@@ -27,6 +28,7 @@ use crate::{
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum ErrorSeverity {
+    // TODO: add internal error severity
     Note,
     Warning,
     Error,
@@ -263,6 +265,7 @@ pub fn insert_minimal_pipeline(pm: &mut PassManager) {
 pub fn insert_compile_passes(pm: &mut PassManager) {
     pm.insert::<ScopeAnalyzer>();
     pm.insert::<TypePropagator>();
+    pm.insert::<TypeConcretisationPass>();
     pm.insert::<LValueReducer>();
     pm.insert::<StatTracker>();
     pm.insert::<GLSLCodeGenerator>();

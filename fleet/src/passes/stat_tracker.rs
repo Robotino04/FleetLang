@@ -24,11 +24,11 @@ use crate::{
     infra::{ErrorSeverity, FleetError},
     passes::{
         pass_manager::{
-            Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, StatData, TypeSets,
-            VariableData,
+            ConcreteFunctionData, ConcreteVariableData, Errors, GlobalState, Pass, PassFactory,
+            PassResult, StatData,
         },
-        runtime_type::RuntimeTypeKind,
-        scope_analysis::{Function, FunctionID, Variable},
+        runtime_type::ConcreteRuntimeType,
+        scope_analysis::{ConcreteFunction, ConcreteVariable, FunctionID},
     },
     tokenizer::{NamedSourceRange, SourceLocation},
 };
@@ -91,8 +91,8 @@ impl From<bool> for YesNoMaybe {
 
 #[derive(Clone, Debug, Default)]
 pub struct AccessRecord {
-    pub functions: Vec<Rc<RefCell<Function>>>,
-    pub used_variables: Vec<Rc<RefCell<Variable>>>,
+    pub functions: Vec<Rc<RefCell<ConcreteFunction>>>,
+    pub used_variables: Vec<Rc<RefCell<ConcreteVariable>>>,
 }
 
 impl PartialEq for AccessRecord {
@@ -193,14 +193,13 @@ pub struct StatTracker<'state> {
     errors: RefMut<'state, Errors>,
     program: Option<RefMut<'state, Program>>,
 
-    variable_data: Ref<'state, VariableData>,
-    type_sets: Ref<'state, TypeSets>,
-    function_data: Ref<'state, FunctionData>,
+    variable_data: Ref<'state, ConcreteVariableData>,
+    function_data: Ref<'state, ConcreteFunctionData>,
 
     stats: RefMut<'state, StatData>,
 
     function_stats: HashMap<FunctionID, NodeStats>,
-    current_function: Option<Rc<RefCell<Function>>>,
+    current_function: Option<Rc<RefCell<ConcreteFunction>>>,
     loop_count: usize,
 }
 
@@ -215,7 +214,6 @@ impl PassFactory for StatTracker<'_> {
         let errors = state.check_named()?;
         let program = state.check_named()?;
         let variable_data = state.check_named()?;
-        let type_sets = state.check_named()?;
         let function_data = state.check_named()?;
 
         let stats = state.insert_default::<StatData>();
@@ -225,7 +223,6 @@ impl PassFactory for StatTracker<'_> {
             program: Some(program.get_mut(state)),
 
             variable_data: variable_data.get(state),
-            type_sets: type_sets.get(state),
             function_data: function_data.get(state),
 
             stats: stats.get_mut(state),
@@ -405,12 +402,7 @@ impl AstVisitor for StatTracker<'_> {
                 .as_ref()
                 .expect("Function body analyzed for termination without a containing function");
 
-            if self
-                .type_sets
-                .get(current_function.borrow().return_type.unwrap())
-                .kind
-                != RuntimeTypeKind::Unit
-            {
+            if current_function.borrow().return_type != ConcreteRuntimeType::Unit {
                 self.errors.push({
                     FleetError::try_new(
                         stat.non_terminating_ranges

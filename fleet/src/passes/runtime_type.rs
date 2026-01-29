@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use itertools::{EitherOrBoth, Itertools};
 
 use crate::{
@@ -35,7 +37,7 @@ pub enum RuntimeTypeKind {
         size: Option<usize>,
     },
     Struct {
-        members: Vec<(String, UnionFindSetPtr<RuntimeType>)>,
+        members: Vec<(String, NamedSourceRange, UnionFindSetPtr<RuntimeType>)>,
         /// indicates which struct{} type definition this one originated from
         source_hash: Option<u64>,
     },
@@ -96,7 +98,7 @@ impl RuntimeTypeKind {
                     4,
                     members
                         .iter()
-                        .map(|(name, type_)| format!(
+                        .map(|(name, _range, type_)| format!(
                             "{name}: {},",
                             types.get(*type_).kind.stringify(types)
                         ))
@@ -574,8 +576,8 @@ impl RuntimeTypeKind {
                         for member_pair in members.iter().zip_longest(members_2) {
                             match member_pair {
                                 EitherOrBoth::Both(
-                                    (member1_name, member1_type),
-                                    (member2_name, member2_type),
+                                    (member1_name, _range1, member1_type),
+                                    (member2_name, _range2, member2_type),
                                 ) => {
                                     if !RuntimeTypeKind::merge_types(
                                         *member1_type,
@@ -623,5 +625,132 @@ impl RuntimeTypeKind {
                 }
             }
         })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConcreteRuntimeType {
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+    F32,
+    F64,
+    Boolean,
+    Unit,
+    ArrayOf {
+        subtype: Box<ConcreteRuntimeType>,
+        size: usize,
+    },
+    Struct {
+        members: Vec<(String, ConcreteRuntimeType)>,
+        /// indicates which struct{} type definition this one originated from
+        source_hash: u64,
+    },
+}
+
+impl Display for ConcreteRuntimeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConcreteRuntimeType::I8 => f.write_str("i8"),
+            ConcreteRuntimeType::I16 => f.write_str("i16"),
+            ConcreteRuntimeType::I32 => f.write_str("i32"),
+            ConcreteRuntimeType::I64 => f.write_str("i64"),
+            ConcreteRuntimeType::U8 => f.write_str("u8"),
+            ConcreteRuntimeType::U16 => f.write_str("u16"),
+            ConcreteRuntimeType::U32 => f.write_str("u32"),
+            ConcreteRuntimeType::U64 => f.write_str("u64"),
+            ConcreteRuntimeType::F32 => f.write_str("f32"),
+            ConcreteRuntimeType::F64 => f.write_str("f64"),
+            ConcreteRuntimeType::Unit => f.write_str("()"),
+            ConcreteRuntimeType::Boolean => f.write_str("bool"),
+            ConcreteRuntimeType::ArrayOf { subtype, size } => {
+                write!(f, "{subtype}[{size}]")
+            }
+            ConcreteRuntimeType::Struct {
+                members,
+                source_hash,
+            } => {
+                writeln!(f, "struct (hash: {source_hash:x?}) {{")?;
+                for (name, type_) in members {
+                    writeln!(f, "{name}: {type_},",)?;
+                }
+                write!(f, "}}")
+            }
+        }
+    }
+}
+
+impl ConcreteRuntimeType {
+    pub fn is_float(&self) -> bool {
+        use ConcreteRuntimeType::*;
+        match self {
+            F32 | F64 => true,
+            I8
+            | I16
+            | I32
+            | I64
+            | U8
+            | U16
+            | U32
+            | U64
+            | Unit
+            | Boolean
+            | ArrayOf { .. }
+            | Struct { .. } => false,
+        }
+    }
+    pub fn is_signed(&self) -> bool {
+        use ConcreteRuntimeType::*;
+        match self {
+            I8 | I16 | I32 | I64 | F32 | F64 => true,
+            U8 | U16 | U32 | U64 | Unit | Boolean | ArrayOf { .. } | Struct { .. } => false,
+        }
+    }
+    pub fn is_unsigned(&self) -> bool {
+        use ConcreteRuntimeType::*;
+        match self {
+            U8 | U16 | U32 | U64 => true,
+            I8 | I16 | I32 | I64 | F32 | F64 | Unit | Boolean | ArrayOf { .. } | Struct { .. } => {
+                false
+            }
+        }
+    }
+    pub fn is_integer(&self) -> bool {
+        use ConcreteRuntimeType::*;
+        match self {
+            I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 => true,
+            F32 | F64 | Unit | Boolean | ArrayOf { .. } | Struct { .. } => false,
+        }
+    }
+    pub fn is_numeric(&self) -> bool {
+        use ConcreteRuntimeType::*;
+        match self {
+            I8 | I16 | I32 | I64 | U8 | U16 | U32 | U64 | F32 | F64 => true,
+            Unit | Boolean | ArrayOf { .. } | Struct { .. } => false,
+        }
+    }
+    pub fn is_boolean(&self) -> bool {
+        use ConcreteRuntimeType::*;
+        match self {
+            Boolean => true,
+            I8
+            | I16
+            | I32
+            | I64
+            | U8
+            | U16
+            | U32
+            | U64
+            | F32
+            | F64
+            | Unit
+            | ArrayOf { .. }
+            | Struct { .. } => false,
+        }
     }
 }

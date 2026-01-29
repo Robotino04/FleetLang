@@ -18,8 +18,11 @@ use crate::{
     ast::PerNodeData,
     infra::FleetError,
     passes::{
-        runtime_type::RuntimeType,
-        scope_analysis::{Function, FunctionID, Variable, VariableScope},
+        runtime_type::{ConcreteRuntimeType, RuntimeType},
+        scope_analysis::{
+            ConcreteFunction, ConcreteVariable, ConcreteVariableScope, Function, FunctionID,
+            Variable, VariableScope,
+        },
         stat_tracker::NodeStats,
         union_find_set::{UnionFindSet, UnionFindSetPtr},
     },
@@ -86,6 +89,12 @@ NewtypeDeref!(pub FunctionData, PerNodeData<Rc<RefCell<Function>>>);
 NewtypeDeref!(pub TypeData, PerNodeData<UnionFindSetPtr<RuntimeType>>);
 NewtypeDeref!(pub TypeSets, UnionFindSet<RuntimeType>);
 NewtypeDeref!(pub ScopeData, PerNodeData<Rc<RefCell<VariableScope>>>);
+
+NewtypeDeref!(pub ConcreteVariableData, PerNodeData<Rc<RefCell<ConcreteVariable>>>);
+NewtypeDeref!(pub ConcreteFunctionData, PerNodeData<Rc<RefCell<ConcreteFunction>>>);
+NewtypeDeref!(pub ConcreteTypeData, PerNodeData<ConcreteRuntimeType>);
+NewtypeDeref!(pub ConcreteScopeData, PerNodeData<Rc<RefCell<ConcreteVariableScope>>>);
+
 NewtypeDeref!(pub StatData, PerNodeData<NodeStats>);
 NewtypeDeref!(pub StructAliasMap, HashMap<String, (usize, String)>, Clone);
 NewtypeDeref!(pub PrecompiledGlslFunctions, (HashMap<FunctionID, (String, String)>, StructAliasMap, u64), Clone);

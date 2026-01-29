@@ -31,7 +31,7 @@ use crate::{
             Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData,
             VariableData,
         },
-        runtime_type::RuntimeType,
+        runtime_type::{ConcreteRuntimeType, RuntimeType},
         union_find_set::UnionFindSetPtr,
     },
     tokenizer::NamedSourceRange,
@@ -42,6 +42,9 @@ pub struct VariableID(pub u64);
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct FunctionID(pub u64);
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct ScopeID(pub u64);
 
 #[derive(Clone, Debug)]
 pub struct Variable {
@@ -63,8 +66,9 @@ pub struct Function {
     pub definition_range: NamedSourceRange,
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug)]
 pub struct VariableScope {
+    pub id: ScopeID,
     pub variable_map: HashMap<String, Rc<RefCell<Variable>>>,
     pub parent_references: HashMap<String, Rc<RefCell<Variable>>>,
     pub copy_from_parent: bool,
@@ -73,7 +77,48 @@ pub struct VariableScope {
     pub parent: Option<Rc<RefCell<VariableScope>>>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ConcreteVariable {
+    pub name: String,
+    pub type_: ConcreteRuntimeType,
+    pub is_constant: bool,
+    pub id: VariableID,
+    pub definition_node_id: NodeID,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConcreteFunction {
+    pub name: String,
+    pub return_type: ConcreteRuntimeType,
+    pub parameter_types: Vec<Rc<RefCell<ConcreteVariable>>>,
+    pub id: FunctionID,
+    pub definition_node_id: NodeID,
+}
+
+#[derive(Clone, Debug)]
+pub struct ConcreteVariableScope {
+    pub id: ScopeID,
+    pub variable_map: HashMap<String, Rc<RefCell<ConcreteVariable>>>,
+    pub parent_references: HashMap<String, Rc<RefCell<ConcreteVariable>>>,
+    pub copy_from_parent: bool,
+    pub is_read_guard: bool,
+    pub is_write_guard: bool,
+    pub parent: Option<Rc<RefCell<ConcreteVariableScope>>>,
+}
+
 impl VariableScope {
+    fn new(id: ScopeID) -> Self {
+        Self {
+            id,
+            parent_references: Default::default(),
+            variable_map: Default::default(),
+            is_write_guard: Default::default(),
+            parent: Default::default(),
+            is_read_guard: Default::default(),
+            copy_from_parent: Default::default(),
+        }
+    }
+
     pub fn vars_and_refs(&self) -> HashMap<String, Rc<RefCell<Variable>>> {
         let mut map = self.variable_map.clone();
         map.extend(self.parent_references.clone().drain());
@@ -81,9 +126,19 @@ impl VariableScope {
     }
 }
 
-#[derive(Default)]
+impl ConcreteVariableScope {
+    pub fn vars_and_refs(&self) -> HashMap<String, Rc<RefCell<ConcreteVariable>>> {
+        let mut map = self.variable_map.clone();
+        map.extend(self.parent_references.clone().drain());
+        map
+    }
+}
+
 pub struct VariableScopeStack {
     pub current: Rc<RefCell<VariableScope>>,
+}
+pub struct ConcreteVariableScopeReader {
+    current: Rc<RefCell<ConcreteVariableScope>>,
 }
 
 #[derive(Debug, Error)]
@@ -94,7 +149,161 @@ pub struct ScopeInsertAlreadyPresentError {
     present_var: Rc<RefCell<Variable>>,
 }
 
+impl ConcreteVariableScopeReader {
+    pub fn from_scope(current: Rc<RefCell<ConcreteVariableScope>>) -> Self {
+        Self { current }
+    }
+
+    /// access a variable for reading without checking if a parent reference for it exists
+    pub fn get_read_noref(&self, name: &str) -> Option<Rc<RefCell<ConcreteVariable>>> {
+        let mut copy_from_parent_scopes = vec![];
+
+        let mut current = Some(self.current.clone());
+
+        let mut res = None;
+        while let Some(scope) = current {
+            if let Some(value) = scope.borrow().variable_map.get(name) {
+                res = Some(value.clone());
+                break;
+            }
+            if scope.borrow().copy_from_parent {
+                copy_from_parent_scopes.push(scope.clone());
+            }
+            if scope.borrow().is_read_guard {
+                break;
+            }
+
+            current = scope.borrow().parent.clone();
+        }
+
+        if let Some(res) = res.clone() {
+            for scope in copy_from_parent_scopes {
+                scope
+                    .borrow_mut()
+                    .parent_references
+                    .insert(name.to_string(), res.clone());
+            }
+        }
+
+        res
+    }
+    /// access a variable for writing without checking if a parent reference for it exists
+    pub fn get_write_noref(&self, name: &str) -> Option<Rc<RefCell<ConcreteVariable>>> {
+        let mut copy_from_parent_scopes = vec![];
+
+        let mut current = Some(self.current.clone());
+
+        let mut res = None;
+        while let Some(scope) = current {
+            if let Some(value) = scope.borrow().variable_map.get(name) {
+                res = Some(value.clone());
+                break;
+            }
+            if scope.borrow().copy_from_parent {
+                copy_from_parent_scopes.push(scope.clone());
+            }
+            if scope.borrow().is_write_guard {
+                break;
+            }
+
+            current = scope.borrow().parent.clone();
+        }
+
+        if let Some(res) = res.clone() {
+            for scope in copy_from_parent_scopes {
+                scope
+                    .borrow_mut()
+                    .parent_references
+                    .insert(name.to_string(), res.clone());
+            }
+        }
+
+        res
+    }
+
+    pub fn get_read(&self, name: &str) -> Option<Rc<RefCell<ConcreteVariable>>> {
+        let mut copy_from_parent_scopes = vec![];
+
+        let mut current = Some(self.current.clone());
+
+        let mut res = None;
+        while let Some(scope) = current {
+            if let Some(value) = scope.borrow().variable_map.get(name) {
+                res = Some(value.clone());
+                break;
+            }
+            if let Some(value) = scope.borrow().parent_references.get(name) {
+                res = Some(value.clone());
+                break;
+            }
+            if scope.borrow().copy_from_parent {
+                copy_from_parent_scopes.push(scope.clone());
+            }
+            if scope.borrow().is_read_guard {
+                break;
+            }
+
+            current = scope.borrow().parent.clone();
+        }
+
+        if let Some(res) = res.clone() {
+            for scope in copy_from_parent_scopes {
+                scope
+                    .borrow_mut()
+                    .parent_references
+                    .insert(name.to_string(), res.clone());
+            }
+        }
+
+        res
+    }
+    pub fn get_write(&self, name: &str) -> Option<Rc<RefCell<ConcreteVariable>>> {
+        let mut copy_from_parent_scopes = vec![];
+
+        let mut current = Some(self.current.clone());
+
+        let mut res = None;
+        while let Some(scope) = current {
+            if let Some(value) = scope.borrow().variable_map.get(name) {
+                res = Some(value.clone());
+                break;
+            }
+            if let Some(value) = scope.borrow().parent_references.get(name) {
+                res = Some(value.clone());
+                break;
+            }
+            if scope.borrow().copy_from_parent {
+                copy_from_parent_scopes.push(scope.clone());
+            }
+            if scope.borrow().is_write_guard {
+                break;
+            }
+
+            current = scope.borrow().parent.clone();
+        }
+
+        if let Some(res) = res.clone() {
+            for scope in copy_from_parent_scopes {
+                scope
+                    .borrow_mut()
+                    .parent_references
+                    .insert(name.to_string(), res.clone());
+            }
+        }
+
+        res
+    }
+}
+
 impl VariableScopeStack {
+    pub fn new(id_generator: &mut IdGenerator) -> Self {
+        Self {
+            current: Rc::new(RefCell::new(VariableScope::new(
+                id_generator.next_scope_id(),
+            ))),
+        }
+    }
+
     pub fn from_scope(current: Rc<RefCell<VariableScope>>) -> Self {
         Self { current }
     }
@@ -252,10 +461,10 @@ impl VariableScopeStack {
             Ok(())
         }
     }
-    pub fn push_child(&mut self) {
+    pub fn push_child(&mut self, id_generator: &mut IdGenerator) {
         self.current = Rc::new(RefCell::new(VariableScope {
             parent: Some(self.current.clone()),
-            ..Default::default()
+            ..VariableScope::new(id_generator.next_scope_id())
         }));
     }
     pub fn pop(&mut self) {
@@ -367,17 +576,20 @@ impl PassFactory for ScopeAnalyzer<'_> {
         let referenced_function = state.insert_default();
         let contained_scope = state.insert_default();
 
+        let mut id_generator = id_generator.get_mut(state);
+        let variable_scopes = VariableScopeStack::new(&mut id_generator);
+
         Ok(Self::Output {
             errors: errors.get_mut(state),
             program: Some(program.get_mut(state)),
-            id_generator: id_generator.get_mut(state),
+            id_generator,
 
             comptime_deps: comptime_deps.get_mut(state),
             referenced_variable: referenced_variable.get_mut(state),
             referenced_function: referenced_function.get_mut(state),
             contained_scope: contained_scope.get_mut(state),
 
-            variable_scopes: VariableScopeStack::default(),
+            variable_scopes,
             function_list: HashMap::new(),
             current_function: None,
         })
@@ -419,7 +631,7 @@ impl<'a> ScopeAnalyzer<'a> {
             id,
         } = function;
 
-        self.variable_scopes.push_child(); // temporary parameter scope
+        self.variable_scopes.push_child(&mut self.id_generator); // temporary parameter scope
 
         if self
             .function_list
@@ -497,7 +709,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
 
         self.current_function = Some(this_function.clone());
 
-        self.variable_scopes.push_child(); // the parameter scope
+        self.variable_scopes.push_child(&mut self.id_generator); // the parameter scope
         for (param, _comma) in parameters {
             self.visit_simple_binding(param);
         }
@@ -650,7 +862,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             id,
         } = stmt;
 
-        self.variable_scopes.push_child();
+        self.variable_scopes.push_child(&mut self.id_generator);
         self.variable_scopes.top_mut().copy_from_parent = true;
 
         self.visit_executor(executor);
@@ -703,7 +915,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             id,
         } = stmt;
 
-        self.variable_scopes.push_child();
+        self.variable_scopes.push_child(&mut self.id_generator);
 
         for stmt in body {
             let dep = self.visit_statement(stmt);
@@ -839,7 +1051,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             id,
         }: &mut ForLoopStatement,
     ) -> Self::StatementOutput {
-        self.variable_scopes.push_child();
+        self.variable_scopes.push_child(&mut self.id_generator);
         let init_dep = self.visit_statement(initializer);
 
         if let Some(con) = condition {
