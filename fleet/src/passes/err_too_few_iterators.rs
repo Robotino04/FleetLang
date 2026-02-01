@@ -2,7 +2,7 @@ use std::cell::RefMut;
 
 use crate::{
     ast::{AstVisitor, OnStatement, Program},
-    infra::{ErrorSeverity, FleetError},
+    infra::ErrorKind,
     passes::pass_manager::{Errors, GlobalState, Pass, PassFactory, PassResult},
 };
 
@@ -49,11 +49,9 @@ impl PartialAstVisitor for ErrTooFewIterators<'_> {
         } = stmt;
 
         if iterators.is_empty() {
-            self.errors.push(FleetError::from_node(
-                stmt,
-                "On-statements must have at least one iterator",
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::OnStatementMissingIterator {
+                on_range: stmt.on_token.range.clone(),
+            });
         }
     }
 }

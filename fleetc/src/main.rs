@@ -4,19 +4,19 @@ use std::{fs::read_to_string, process::exit};
 
 use clap::{Parser, ValueEnum};
 
-use fleet::passes::ast_json_dump::{AstJsonDumpPass, AstJsonOutput};
 use fleet::NewtypeDerefNoDefault;
 use fleet::ast::Program;
 use fleet::ast_to_dm::AstToDocumentModelConverter;
 use fleet::document_model::{DocumentElement, fully_flatten_document, stringify_document};
 use fleet::infra::{
-    ErrorSeverity, FleetError, insert_c_passes, insert_compile_passes, insert_fix_passes,
+    ErrorKind, ErrorSeverity, insert_c_passes, insert_compile_passes, insert_fix_passes,
     insert_minimal_pipeline,
 };
 use fleet::inkwell::module::Module;
 use fleet::inkwell::targets::{CodeModel, RelocMode, Target, TargetTriple};
 use fleet::inkwell::{self, OptimizationLevel};
 use fleet::ir_generator::{IrGenerator, LLVMOptimizerPass};
+use fleet::passes::ast_json_dump::{AstJsonDumpPass, AstJsonOutput};
 use fleet::passes::pass_manager::{Errors, InputSource, PassError, PassManager, StatData};
 use fleet::passes::save_artifact_pass::{ArtifactType, SaveArtifactPass};
 use fleet::passes::simple_function_pass::SingleFunctionPass;
@@ -121,12 +121,12 @@ fn main() {
         exit(1);
     });
 
-    let print_all_errors_and_message = |msg, mut errors: Vec<FleetError>| {
+    let print_all_errors_and_message = |msg, mut errors: Vec<ErrorKind>| {
         // error -> warning -> node, then sort by file location
         errors.sort_by_key(|err| err.highlight_groups().first().unwrap().0.range.start);
-        errors.sort_by_key(|err| err.main_severity);
+        errors.sort_by_key(|err| err.severity());
 
-        if let Some(worst_severity) = errors.iter().map(|err| err.main_severity).max() {
+        if let Some(worst_severity) = errors.iter().map(|err| err.severity()).max() {
             for error in &errors {
                 // double newline
                 eprintln!("{}\n", error.to_string_ansi(&src));
@@ -295,7 +295,7 @@ fn main() {
     let errors = errors.get(&pm.state).clone();
     if errors
         .iter()
-        .any(|err| err.main_severity == ErrorSeverity::Error)
+        .any(|err| err.severity() == ErrorSeverity::Error)
     {
         print_all_errors_and_message("Compilation has errors", errors.into());
         panic!("these errors should have resulted in a PassError::InvalidInput");

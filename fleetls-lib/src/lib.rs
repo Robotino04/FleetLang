@@ -933,7 +933,8 @@ impl Backend {
                     .as_ref()?
                     .get(id)?
                     .borrow()
-                    .definition_range
+                    .symbol
+                    .definition
                     .clone(),
             ),
             AstNode::VariableAccessExpression(VariableAccessExpression { id, .. })
@@ -947,11 +948,12 @@ impl Backend {
                     .as_ref()?
                     .get(id)?
                     .borrow()
-                    .definition_range
+                    .symbol
+                    .definition
                     .clone(),
             ),
-            //TODO: AstNode::StructAccessExpression(struct_access_expression) => todo!(),
-            //TODO: AstNode::StructAccessLValue(struct_access_lvalue) => todo!(),
+            // TODO: AstNode::StructAccessExpression(struct_access_expression) => todo!(),
+            // TODO: AstNode::StructAccessLValue(struct_access_lvalue) => todo!(),
             AstNode::AliasType(AliasType { id, .. }) => Some(
                 type_sets
                     .as_ref()?

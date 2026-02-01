@@ -20,7 +20,7 @@ use crate::{
         WhileLoopStatement,
     },
     generate_glsl::GLSLCodeGenerator,
-    infra::{ErrorSeverity, FleetError},
+    infra::{Backend, ErrorKind, ErrorSeverity, Intrinsic, UnresolvedSymbol},
     passes::{
         pass_manager::{
             CCodeOutput, ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData,
@@ -99,7 +99,7 @@ impl Pass for CCodeGenerator<'_> {
         if self
             .errors
             .iter()
-            .any(|err| err.main_severity == ErrorSeverity::Error)
+            .any(|err| err.severity() == ErrorSeverity::Error)
         {
             return Err(PassError::InvalidInput {
                 producing_pass: Self::name(),
@@ -205,9 +205,9 @@ impl CCodeGenerator<'_> {
             + &after_id
             + " "
             + if mangle {
-                self.mangle_function(&function.name)
+                self.mangle_function(&function.symbol.name)
             } else {
-                function.name.clone()
+                function.symbol.name.clone()
             }
             .as_str()
             + "("
@@ -220,7 +220,7 @@ impl CCodeGenerator<'_> {
     }
 
     fn mangle_variable(&self, var: &ConcreteVariable) -> String {
-        format!("fleet_{}_{}", var.name, var.id.0)
+        format!("fleet_{}_{}", var.symbol.name, var.id.0)
     }
     fn mangle_function(&self, name: &str) -> String {
         format!("fleet_{name}")
@@ -392,7 +392,7 @@ impl AstVisitor for CCodeGenerator<'_> {
     ) -> Self::FunctionBodyOutput {
         let parent_function = self.function_data.get(id).unwrap();
         let mut fake_extern_function = parent_function.borrow().clone();
-        fake_extern_function.name = symbol.clone();
+        fake_extern_function.symbol.name = symbol.clone();
 
         formatdoc!(
             "
@@ -659,12 +659,12 @@ impl AstVisitor for CCodeGenerator<'_> {
         };
         #[cfg(not(feature = "gpu_backend"))]
         let prepare_shader = || -> Option<(String, usize)> {
+            use crate::passes::find_node_bounds::find_node_bounds;
+
             drop(glsl_generator);
-            self.errors.push(FleetError::from_node(
-                &**executor,
-                "The GPU backend is disabled for this build of Fleet",
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::GpuBackendDisabled {
+                use_location: find_node_bounds(&**executor),
+            });
             Some(("/* GPU backend missing */".to_string(), 42))
         };
 
@@ -1094,11 +1094,10 @@ impl AstVisitor for CCodeGenerator<'_> {
         &mut self,
         expr: &mut CompilerExpression,
     ) -> Self::ExpressionOutput {
-        let expr_clone = expr.clone();
         let CompilerExpression {
             at_token: _,
             name,
-            name_token: _,
+            name_token,
             open_paren_token: _,
             arguments,
             close_paren_token: _,
@@ -1149,11 +1148,12 @@ impl AstVisitor for CCodeGenerator<'_> {
                         out_value: format!("({tmp})"),
                     }
                 } else {
-                    self.errors.push(FleetError::from_node(
-                        &expr_clone,
-                        format!("@zero isn't implemented for type {expected_type} in c backend"),
-                        ErrorSeverity::Error,
-                    ));
+                    self.errors.push(ErrorKind::InvalidIntrinsicType {
+                        backend: Backend::C,
+                        intrinsic: Intrinsic::Zero,
+                        intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                        type_: expected_type.clone(),
+                    });
                     PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: "\n#error unimplemented type for @zero\n".to_string(),
@@ -1176,13 +1176,12 @@ impl AstVisitor for CCodeGenerator<'_> {
                         out_value: format!("(sqrt({}))", args.first().unwrap()),
                     },
                     _ => {
-                        self.errors.push(FleetError::from_node(
-                            &expr_clone,
-                            format!(
-                                "@sqrt isn't implemented for type {expected_type} in c backend"
-                            ),
-                            ErrorSeverity::Error,
-                        ));
+                        self.errors.push(ErrorKind::InvalidIntrinsicType {
+                            backend: Backend::C,
+                            intrinsic: Intrinsic::Sqrt,
+                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                            type_: expected_type.clone(),
+                        });
                         PreStatementValue {
                             pre_statements: "".to_string(),
                             out_value: "\n#error unimplemented type for @sqrt\n".to_string(),
@@ -1206,11 +1205,12 @@ impl AstVisitor for CCodeGenerator<'_> {
                         out_value: format!("(sin({}))", args.first().unwrap()),
                     },
                     _ => {
-                        self.errors.push(FleetError::from_node(
-                            &expr_clone,
-                            format!("@sin isn't implemented for type {expected_type} in c backend"),
-                            ErrorSeverity::Error,
-                        ));
+                        self.errors.push(ErrorKind::InvalidIntrinsicType {
+                            backend: Backend::C,
+                            intrinsic: Intrinsic::Sin,
+                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                            type_: expected_type.clone(),
+                        });
                         PreStatementValue {
                             pre_statements: "".to_string(),
                             out_value: "\n#error unimplemented type for @sin\n".to_string(),
@@ -1234,13 +1234,12 @@ impl AstVisitor for CCodeGenerator<'_> {
                         out_value: format!("(cos({}))", args.first().unwrap()),
                     },
                     _ => {
-                        self.errors.push(FleetError::from_node(
-                            &expr_clone,
-                            format!(
-                                "@cos isn't implemented for type {expected_type} in c backend",
-                            ),
-                            ErrorSeverity::Error,
-                        ));
+                        self.errors.push(ErrorKind::InvalidIntrinsicType {
+                            backend: Backend::C,
+                            intrinsic: Intrinsic::Cos,
+                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                            type_: expected_type.clone(),
+                        });
                         PreStatementValue {
                             pre_statements: "".to_string(),
                             out_value: "\n#error unimplemented type for @cos\n".to_string(),
@@ -1259,19 +1258,10 @@ impl AstVisitor for CCodeGenerator<'_> {
                         pre_statements: "".to_string(),
                         out_value: format!("{size}"),
                     },
-                    _ => {
-                        self.errors.push(FleetError::from_node(
-                            &expr_clone,
-                            format!(
-                                "@length called with non-array typed value of type {array_type}",
-                            ),
-                            ErrorSeverity::Error,
-                        ));
-                        PreStatementValue {
-                            pre_statements: "".to_string(),
-                            out_value: "\n#error non-array type for @length\n".to_string(),
-                        }
-                    }
+                    _ => PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: "\n#error non-array type for @length\n".to_string(),
+                    },
                 }
             }
             "comptime" => PreStatementValue {
@@ -1279,11 +1269,10 @@ impl AstVisitor for CCodeGenerator<'_> {
                 out_value: args.first().unwrap().clone(),
             },
             _ => {
-                self.errors.push(FleetError::from_node(
-                    &expr_clone,
-                    format!("No compiler function named {name:?} is implemented for the C backend"),
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::IntrinsicNotImplemented {
+                    backend: Backend::C,
+                    intrinsic: UnresolvedSymbol::from_token(name.clone(), name_token),
+                });
 
                 PreStatementValue {
                     pre_statements: "".to_string(),

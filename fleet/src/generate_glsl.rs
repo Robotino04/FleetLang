@@ -27,8 +27,12 @@ use crate::{
         UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
-    infra::{ErrorSeverity, FleetError},
+    infra::{
+        Backend, ErrorKind, ErrorSeverity, GpuLimitation, InternalError, Intrinsic,
+        UnresolvedSymbol,
+    },
     passes::{
+        find_node_bounds::find_node_bounds,
         pass_manager::{
             ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData, ConcreteVariableData,
             Errors, GlobalState, Pass, PassError, PassFactory, PassResult,
@@ -101,7 +105,7 @@ impl Pass for GLSLCodeGenerator<'_> {
         if self
             .errors
             .iter()
-            .any(|err| err.main_severity == ErrorSeverity::Error)
+            .any(|err| err.severity() == ErrorSeverity::Error)
         {
             return Err(PassError::InvalidInput {
                 producing_pass: Self::name(),
@@ -294,10 +298,11 @@ impl<'state> GLSLCodeGenerator<'state> {
         let body_str = match self.visit_statement(main_body) {
             Ok(body_str) => body_str,
             Err(err) => {
-                self.errors.push(FleetError::from_node(
-                    main_body,
-                    format!("GLSL generation failed: {err}"),
-                    ErrorSeverity::Error,
+                self.errors.push(ErrorKind::InternalError(
+                    InternalError::GlslGenerationFailed {
+                        statement: find_node_bounds(&*main_body),
+                        error: err.to_string(),
+                    },
                 ));
                 return Err(err);
             }
@@ -385,7 +390,7 @@ impl<'state> GLSLCodeGenerator<'state> {
                 Ok(glsl_functions.get(&fid).cloned().ok_or_else(|| {
                     format!(
                         "Function {:?} is used but not available on the gpu",
-                        f.borrow().name
+                        f.borrow().symbol
                     )
                 })?)
             })
@@ -469,11 +474,12 @@ impl<'state> GLSLCodeGenerator<'state> {
                 Some(&options),
             )
             .inspect_err(|err| {
-                self.errors.push(FleetError::from_node(
-                    error_node,
-                    format!("{source}\n----------\nInternal shaderc error: {err}"),
-                    ErrorSeverity::Error,
-                ));
+                self.errors
+                    .push(ErrorKind::InternalError(InternalError::ShadercError {
+                        statement: find_node_bounds(error_node),
+                        glsl: source.to_string(),
+                        error: err.to_string(),
+                    }));
             })?)
     }
 
@@ -552,9 +558,9 @@ impl<'state> GLSLCodeGenerator<'state> {
             + &after_id
             + " "
             + if mangle {
-                self.mangle_function(&function.name)
+                self.mangle_function(&function.symbol.name)
             } else {
-                function.name.clone()
+                function.symbol.name.clone()
             }
             .as_str()
             + "("
@@ -567,7 +573,7 @@ impl<'state> GLSLCodeGenerator<'state> {
     }
 
     fn mangle_variable(&self, var: &ConcreteVariable) -> String {
-        format!("fleet_{}_{}", var.name, var.id.0)
+        format!("fleet_{}_{}", var.symbol.name, var.id.0)
     }
     fn mangle_function(&self, name: &str) -> String {
         format!("fleet_{name}")
@@ -576,11 +582,6 @@ impl<'state> GLSLCodeGenerator<'state> {
         let count = *self.temporary_counter.borrow();
         *self.temporary_counter.borrow_mut() += 1;
         format!("temporary_{name}_{count}")
-    }
-
-    fn report_error<T>(&mut self, error: FleetError) -> Result<T> {
-        self.errors.push(error.clone());
-        Err(error.message.into())
     }
 }
 
@@ -682,13 +683,21 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
     fn visit_extern_function_body(
         &mut self,
-        body: &mut ExternFunctionBody,
+        ExternFunctionBody {
+            at_token: _,
+            extern_token: _,
+            symbol: _,
+            symbol_token: _,
+            semicolon_token: _,
+            id,
+        }: &mut ExternFunctionBody,
     ) -> Self::FunctionBodyOutput {
-        self.report_error(FleetError::from_node(
-            body,
-            "external functions cannot be called from the GPU",
-            ErrorSeverity::Error,
-        ))
+        self.errors.push(ErrorKind::GpuLimitationUsed(
+            GpuLimitation::ExternalFunction {
+                function: self.function_data.get(id).unwrap().borrow().symbol.clone(),
+            },
+        ));
+        Err("Tried using external function from gpu".into())
     }
 
     fn visit_simple_binding(
@@ -733,11 +742,11 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
     }
 
     fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
-        self.report_error(FleetError::from_node(
-            on_stmt,
-            "Cannot use on-statements on the GPU",
-            ErrorSeverity::Error,
-        ))
+        self.errors
+            .push(ErrorKind::GpuLimitationUsed(GpuLimitation::OnStatement {
+                statement: find_node_bounds(&*on_stmt),
+            }));
+        Err("Tried using on-statement on GPU".into())
     }
 
     fn visit_block_statement(
@@ -1172,11 +1181,9 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         &mut self,
         expr: &mut FunctionCallExpression,
     ) -> Self::ExpressionOutput {
-        let expr_clone = expr.clone();
-
         let FunctionCallExpression {
             name,
-            name_token: _,
+            name_token,
             open_paren_token: _,
             arguments,
             close_paren_token: _,
@@ -1195,12 +1202,17 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             .unzip();
 
         if self.stats.get(id).unwrap().uses_gpu.at_least_maybe() {
-            self.errors.push(FleetError::from_node(
-                &expr_clone,
-                "This function (possibly indirectly) uses the gpu and \
-                can therefore not itself be called from the gpu",
-                ErrorSeverity::Error,
-            ));
+            self.errors
+                .push(ErrorKind::GpuLimitationUsed(GpuLimitation::GpuFunction {
+                    function: self
+                        .function_data
+                        .get(id)
+                        .unwrap()
+                        .borrow()
+                        .symbol
+                        .clone()
+                        .with_use(name_token.range.clone()),
+                }));
         }
 
         PreStatementValue {
@@ -1217,11 +1229,10 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         &mut self,
         expr: &mut CompilerExpression,
     ) -> Self::ExpressionOutput {
-        let expr_clone = expr.clone();
         let CompilerExpression {
             at_token: _,
             name,
-            name_token: _,
+            name_token,
             open_paren_token: _,
             arguments,
             close_paren_token: _,
@@ -1259,14 +1270,9 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                     }
                 } else if let ConcreteRuntimeType::ArrayOf { subtype, size } = expected_type {
                     if !subtype.is_numeric() {
-                        self.errors.push(FleetError::from_node(
-                            &expr_clone,
-                            format!(
-                                "@zero isn't implemented for array type {expected_type} in glsl backend \
-                                (only 1D arrays with numbers are supported currently)",
-                            ),
-                            ErrorSeverity::Error,
-                        ));
+                        self.errors.push(ErrorKind::ComplexZeroGlsl {
+                            zero: UnresolvedSymbol::from_token(name.clone(), name_token),
+                        });
                     }
 
                     let tmp = self.unique_temporary("zero");
@@ -1282,11 +1288,13 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                         out_value: format!("(&{tmp})"),
                     }
                 } else {
-                    self.errors.push(FleetError::from_node(
-                        &expr_clone,
-                        format!("@zero isn't implemented for type {expected_type} in glsl backend"),
-                        ErrorSeverity::Error,
-                    ));
+                    self.errors.push(ErrorKind::InvalidIntrinsicType {
+                        backend: Backend::Glsl,
+                        intrinsic: Intrinsic::Zero,
+                        intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                        type_: expected_type.clone(),
+                    });
+
                     PreStatementValue {
                         pre_statements: "".to_string(),
                         out_value: "\n#error unimplemented type for @zero\n".to_string(),
@@ -1305,13 +1313,13 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                         out_value: format!("(sqrt({}))", args.first().unwrap()),
                     },
                     _ => {
-                        self.errors.push(FleetError::from_node(
-                            &expr_clone,
-                            format!(
-                                "@sqrt isn't implemented for type {expected_type} in c backend"
-                            ),
-                            ErrorSeverity::Error,
-                        ));
+                        self.errors.push(ErrorKind::InvalidIntrinsicType {
+                            backend: Backend::Glsl,
+                            intrinsic: Intrinsic::Sqrt,
+                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                            type_: expected_type.clone(),
+                        });
+
                         PreStatementValue {
                             pre_statements: "".to_string(),
                             out_value: "\n#error unimplemented type for @sqrt\n".to_string(),
@@ -1331,11 +1339,12 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                         out_value: format!("(sin({}))", args.first().unwrap()),
                     },
                     _ => {
-                        self.errors.push(FleetError::from_node(
-                            &expr_clone,
-                            format!("@sin isn't implemented for type {expected_type} in c backend"),
-                            ErrorSeverity::Error,
-                        ));
+                        self.errors.push(ErrorKind::InvalidIntrinsicType {
+                            backend: Backend::Glsl,
+                            intrinsic: Intrinsic::Sin,
+                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                            type_: expected_type.clone(),
+                        });
                         PreStatementValue {
                             pre_statements: "".to_string(),
                             out_value: "\n#error unimplemented type for @sin\n".to_string(),
@@ -1355,11 +1364,12 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                         out_value: format!("(cos({}))", args.first().unwrap()),
                     },
                     _ => {
-                        self.errors.push(FleetError::from_node(
-                            &expr_clone,
-                            format!("@cos isn't implemented for type {expected_type} in c backend"),
-                            ErrorSeverity::Error,
-                        ));
+                        self.errors.push(ErrorKind::InvalidIntrinsicType {
+                            backend: Backend::Glsl,
+                            intrinsic: Intrinsic::Cos,
+                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                            type_: expected_type.clone(),
+                        });
                         PreStatementValue {
                             pre_statements: "".to_string(),
                             out_value: "\n#error unimplemented type for @cos\n".to_string(),
@@ -1378,29 +1388,17 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                         pre_statements: "".to_string(),
                         out_value: format!("{size}"),
                     },
-                    _ => {
-                        self.errors.push(FleetError::from_node(
-                            &expr_clone,
-                            format!(
-                                "@length called with non-array typed value of type {array_type}"
-                            ),
-                            ErrorSeverity::Error,
-                        ));
-                        PreStatementValue {
-                            pre_statements: "".to_string(),
-                            out_value: "\n#error non-array type for @length\n".to_string(),
-                        }
-                    }
+                    _ => PreStatementValue {
+                        pre_statements: "".to_string(),
+                        out_value: "\n#error non-array type for @length\n".to_string(),
+                    },
                 }
             }
             _ => {
-                self.errors.push(FleetError::from_node(
-                    &expr_clone,
-                    format!(
-                        "No compiler function named {name:?} is implemented for the GLSL backend"
-                    ),
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::IntrinsicNotImplemented {
+                    backend: Backend::Glsl,
+                    intrinsic: UnresolvedSymbol::from_token(name.clone(), name_token),
+                });
 
                 PreStatementValue {
                     pre_statements: "".to_string(),

@@ -3,7 +3,6 @@ use std::cell::{Ref, RefMut};
 use either::Either;
 use itertools::Itertools;
 use log::{error, warn};
-use thiserror::Error;
 
 use crate::{
     ast::{
@@ -20,41 +19,17 @@ use crate::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
-    infra::{ErrorSeverity, FleetError},
+    infra::ErrorKind,
     passes::{
-        pass_manager::{
-            Errors, GlobalState, InputSource, Pass, PassError, PassFactory, PassResult,
-        },
+        find_node_bounds::find_node_bounds,
+        pass_manager::{Errors, GlobalState, InputSource, Pass, PassFactory, PassResult},
         runtime_type::{RuntimeType, RuntimeTypeKind},
         scope_analysis::{FunctionID, ScopeID, VariableID},
     },
-    tokenizer::{Keyword, NamedSourceRange, Token, TokenType},
+    tokenizer::{Keyword, Token, TokenType},
 };
 
-#[derive(Error, Debug)]
-#[error(
-    "{file_name}:{start_line}:{start_column} - {end_line}:{end_column}: {msg}",
-    file_name = .range.name.0,
-    start_line = .range.start().line(),
-    start_column = .range.start().column(),
-    end_line = .range.end().line(),
-    end_column = .range.end().column()
-)]
-pub struct ParserError {
-    pub msg: String,
-    pub range: NamedSourceRange,
-}
-
-impl From<FleetError> for ParserError {
-    fn from(value: FleetError) -> Self {
-        Self {
-            range: value.start().until(value.end()),
-            msg: value.message,
-        }
-    }
-}
-
-type Result<T> = ::core::result::Result<T, ParserError>;
+type Result<T> = ::core::option::Option<T>;
 
 #[derive(Debug, Clone)]
 pub struct IdGenerator {
@@ -154,11 +129,7 @@ impl PassFactory for Parser<'_> {
 }
 impl Pass for Parser<'_> {
     fn run<'state>(self: Box<Self>) -> PassResult {
-        self.parse_program()
-            .map_err(|err| PassError::CompilerError {
-                source: err.into(),
-                producing_pass: Self::name(),
-            })?;
+        self.parse_program();
 
         Ok(())
     }
@@ -175,27 +146,25 @@ macro_rules! expect {
         {
             match $self.current_token_type() {
                 Some($main_type) $(if $guard)? => {
-                    let result: Result<_> = Ok($body);
+                    let result: Option<_> = Some($body);
                     $self.consume().unwrap();
                     result
                 },
                 _ => {
                     if let Some(token) = $self.current_token() {
-                        let err = FleetError::from_token(
-                            &token,
-                            format!("Expected {}, but found {:?}", stringify!($main_type), token.type_),
-                            ErrorSeverity::Error,
-                        );
+                        let err = ErrorKind::ParserExpectationFailed {
+                            expectation: stringify!($main_type).to_string(),
+                            found_token: token,
+                        };
                         $self.errors.push(err.clone());
-                        Err(err.into())
+                        None
                     } else {
-                        let err = FleetError::from_token(
-                            $self.tokens.last().unwrap(),
-                            format!("Expected {}, but found End of file", stringify!($main_type)),
-                            ErrorSeverity::Error,
-                        );
+                        let err = ErrorKind::ParserExpectationEOF {
+                            expectation: stringify!($main_type).to_string(),
+                            last_token: $self.tokens.last().unwrap().clone(),
+                        };
                         $self.errors.push(err.clone());
-                        Err(err.into())
+                        None
                     }
                 }
             }
@@ -222,17 +191,13 @@ macro_rules! recover_until {
             let recovery_end = $self.current_token();
             if $start_of_recovery != recovery_end {
                 if let (Some(start), Some(end)) = ($start_of_recovery, recovery_end) {
-                    $self.errors.push(
-                        FleetError::try_new(
-                            vec![(start.range.start().until(end.range.end()), ErrorSeverity::Warning)],
-                            format!(
-                                "Recovered by skipping until one of [{}]",
-                                stringify!($($recovery_stops), +)
-                            ),
-                            ErrorSeverity::Warning,
-                        )
-                        .unwrap(),
-                    )
+                    $self.errors.push(ErrorKind::ParserRecovery {
+                        range: start.range.start().until(end.range.end()),
+                        stop_conditions: vec![$(
+                            stringify!($recovery_stops).to_string()
+                        ),+],
+
+                    })
                 }
             }
         }
@@ -242,21 +207,19 @@ macro_rules! recover_until {
 macro_rules! unable_to_parse {
     ($self:ident, $fmt_string:expr $(, $($param:expr)+)?) => {
         if let Some(token) = $self.current_token() {
-            let err = FleetError::from_token(
-                &token,
-                format!("Unable to parse an expected {}", format!($fmt_string $(, $($param),+)?)),
-                ErrorSeverity::Error,
-            );
+            let err = ErrorKind::ParserFailure {
+                thing_to_parse: format!($fmt_string $(, $($param),+)?),
+                start_token: token,
+            };
             $self.errors.push(err.clone());
-            return Err(err.into());
+            return None;
         } else {
-            let err = FleetError::from_token(
-                $self.tokens.last().unwrap(),
-                format!("Hit EOF while parsing an expected {}", format!($fmt_string $(, $($param),+)?)),
-                ErrorSeverity::Error,
-            );
+            let err = ErrorKind::ParserFailureEOF {
+                thing_to_parse: format!($fmt_string $(, $($param),+)?),
+                start_token: $self.tokens.last().unwrap().clone(),
+            };
             $self.errors.push(err.clone());
-            return Err(err.into());
+            return None;
         }
     };
 }
@@ -284,10 +247,7 @@ impl<'state> Parser<'state> {
         t
     }
 
-    fn try_parse<F, T>(
-        &mut self,
-        callback: F,
-    ) -> ::core::result::Result<T, (ParserError, Vec<FleetError>)>
+    fn try_parse<F, T>(&mut self, callback: F) -> ::core::result::Result<T, Vec<ErrorKind>>
     where
         F: FnOnce(&mut Self) -> Result<T>,
     {
@@ -298,21 +258,21 @@ impl<'state> Parser<'state> {
         std::mem::swap(&mut tmp_errors, &mut self.errors);
 
         match result {
-            Ok(ok) => {
+            Some(ok) => {
                 // don't silently drop errors
                 self.errors.append(&mut tmp_errors);
 
                 Ok(ok)
             }
-            Err(err) => {
+            None => {
                 self.index = tmp_index;
 
-                Err((err, tmp_errors))
+                Err(tmp_errors)
             }
         }
     }
 
-    pub fn parse_program(mut self) -> Result<()> {
+    pub fn parse_program(mut self) {
         while !self.is_done() {
             let recovery_start = self.current_token();
 
@@ -320,7 +280,7 @@ impl<'state> Parser<'state> {
                 self.program
                     .top_level_statements
                     .push(TopLevelStatement::TypeAlias(type_alias));
-            } else if let Ok(function) = self.parse_function_definition() {
+            } else if let Some(function) = self.parse_function_definition() {
                 self.program
                     .top_level_statements
                     .push(TopLevelStatement::Function(function));
@@ -328,8 +288,6 @@ impl<'state> Parser<'state> {
                 recover_until!(self, recovery_start, TokenType::Keyword(Keyword::Let));
             }
         }
-
-        Ok(())
     }
 
     pub fn parse_function_definition(&mut self) -> Result<FunctionDefinition> {
@@ -360,7 +318,7 @@ impl<'state> Parser<'state> {
         let return_type = self.try_parse(|this| this.parse_type()).ok();
         let body = self.parse_function_body()?;
 
-        Ok(FunctionDefinition {
+        Some(FunctionDefinition {
             let_token,
             name,
             name_token,
@@ -383,7 +341,7 @@ impl<'state> Parser<'state> {
         let type_ = self.parse_type()?;
         let semicolon_token = expect!(self, TokenType::Semicolon)?;
 
-        Ok(TypeAlias {
+        Some(TypeAlias {
             let_token,
             name,
             name_token,
@@ -401,7 +359,7 @@ impl<'state> Parser<'state> {
                 let (symbol_token, symbol) = expect!(self, TokenType::StringLiteral(symbol) => (self.current_token().unwrap(), symbol))?;
                 let semicolon_token = expect!(self, TokenType::Semicolon)?;
 
-                Ok(FunctionBody::Extern(ExternFunctionBody {
+                Some(FunctionBody::Extern(ExternFunctionBody {
                     at_token,
                     extern_token,
                     symbol,
@@ -410,7 +368,7 @@ impl<'state> Parser<'state> {
                     id: self.id_generator.next_node_id(),
                 }))
             }
-            _ => Ok(FunctionBody::Statement(StatementFunctionBody {
+            _ => Some(FunctionBody::Statement(StatementFunctionBody {
                 statement: self.parse_statement()?,
                 id: self.id_generator.next_node_id(),
             })),
@@ -427,7 +385,7 @@ impl<'state> Parser<'state> {
             None
         };
 
-        Ok(SimpleBinding {
+        Some(SimpleBinding {
             name_token,
             name,
             type_,
@@ -472,7 +430,7 @@ impl<'state> Parser<'state> {
                 let close_paren_token = expect!(self, TokenType::CloseParen)?;
                 let body = self.parse_statement()?;
 
-                Ok(Statement::On(OnStatement {
+                Some(Statement::On(OnStatement {
                     on_token,
                     executor: Box::new(executor),
                     iterators,
@@ -491,7 +449,7 @@ impl<'state> Parser<'state> {
                     && self.current_token_type().is_some()
                 {
                     let recovery_start = self.current_token();
-                    if let Ok(stmt) = self.parse_statement() {
+                    if let Some(stmt) = self.parse_statement() {
                         body.push(stmt);
                     } else {
                         error!("failed to parse statement");
@@ -508,7 +466,7 @@ impl<'state> Parser<'state> {
                 }
                 let close_brace_token = expect!(self, TokenType::CloseBrace)?;
 
-                Ok(Statement::Block(BlockStatement {
+                Some(Statement::Block(BlockStatement {
                     open_brace_token,
                     body,
                     close_brace_token,
@@ -524,7 +482,7 @@ impl<'state> Parser<'state> {
                     Some(Box::new(self.parse_expression()?))
                 };
 
-                Ok(Statement::Return(ReturnStatement {
+                Some(Statement::Return(ReturnStatement {
                     return_token,
                     value,
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
@@ -534,7 +492,7 @@ impl<'state> Parser<'state> {
             Some(TokenType::Keyword(Keyword::Let)) => {
                 let let_token = expect!(self, TokenType::Keyword(Keyword::Let))?;
 
-                Ok(Statement::VariableDefinition(VariableDefinitionStatement {
+                Some(Statement::VariableDefinition(VariableDefinitionStatement {
                     let_token,
                     binding: Box::new(self.parse_simple_binding()?),
                     equals_token: expect!(self, TokenType::EqualSign)?,
@@ -565,7 +523,7 @@ impl<'state> Parser<'state> {
                     ));
                 }
 
-                Ok(Statement::If(IfStatement {
+                Some(Statement::If(IfStatement {
                     if_token,
                     condition: Box::new(condition),
                     if_body: Box::new(if_body),
@@ -578,7 +536,7 @@ impl<'state> Parser<'state> {
                 let while_token = expect!(self, TokenType::Keyword(Keyword::While))?;
                 let condition = self.parse_expression()?;
                 let body = self.parse_statement()?;
-                Ok(Statement::WhileLoop(WhileLoopStatement {
+                Some(Statement::WhileLoop(WhileLoopStatement {
                     while_token,
                     condition: Box::new(condition),
                     body: Box::new(body),
@@ -607,7 +565,7 @@ impl<'state> Parser<'state> {
                 let close_paren_token = expect!(self, TokenType::CloseParen)?;
 
                 let body = self.parse_statement()?;
-                Ok(Statement::ForLoop(ForLoopStatement {
+                Some(Statement::ForLoop(ForLoopStatement {
                     for_token,
                     open_paren_token,
                     initializer: Box::new(initializer),
@@ -619,17 +577,17 @@ impl<'state> Parser<'state> {
                     id: self.id_generator.next_node_id(),
                 }))
             }
-            Some(TokenType::Keyword(Keyword::Break)) => Ok(Statement::Break(BreakStatement {
+            Some(TokenType::Keyword(Keyword::Break)) => Some(Statement::Break(BreakStatement {
                 break_token: expect!(self, TokenType::Keyword(Keyword::Break))?,
                 semicolon_token: expect!(self, TokenType::Semicolon)?,
                 id: self.id_generator.next_node_id(),
             })),
-            Some(TokenType::Keyword(Keyword::Skip)) => Ok(Statement::Skip(SkipStatement {
+            Some(TokenType::Keyword(Keyword::Skip)) => Some(Statement::Skip(SkipStatement {
                 skip_token: expect!(self, TokenType::Keyword(Keyword::Skip))?,
                 semicolon_token: expect!(self, TokenType::Semicolon)?,
                 id: self.id_generator.next_node_id(),
             })),
-            _ => Ok(Statement::Expression(ExpressionStatement {
+            _ => Some(Statement::Expression(ExpressionStatement {
                 expression: Box::new(self.parse_expression()?),
                 semicolon_token: expect!(self, TokenType::Semicolon)?,
                 id: self.id_generator.next_node_id(),
@@ -642,28 +600,30 @@ impl<'state> Parser<'state> {
 
     fn parse_primary_expression(&mut self) -> Result<Expression> {
         match self.current_token_type() {
-            Some(TokenType::Integer(value, _)) => Ok(Expression::Literal(LiteralExpression {
+            Some(TokenType::Integer(value, _)) => Some(Expression::Literal(LiteralExpression {
                 value: LiteralKind::Number(value),
                 token: expect!(self, TokenType::Integer(_, _))?,
                 id: self.id_generator.next_node_id(),
             })),
-            Some(TokenType::CharLiteral(value)) => Ok(Expression::Literal(LiteralExpression {
+            Some(TokenType::CharLiteral(value)) => Some(Expression::Literal(LiteralExpression {
                 value: LiteralKind::Char(value.chars().next().unwrap_or('X')),
                 token: expect!(self, TokenType::CharLiteral(_))?,
                 id: self.id_generator.next_node_id(),
             })),
-            Some(TokenType::Float(value, _)) => Ok(Expression::Literal(LiteralExpression {
+            Some(TokenType::Float(value, _)) => Some(Expression::Literal(LiteralExpression {
                 value: LiteralKind::Float(value),
                 token: expect!(self, TokenType::Float(_, _))?,
                 id: self.id_generator.next_node_id(),
             })),
-            Some(TokenType::Keyword(Keyword::True)) => Ok(Expression::Literal(LiteralExpression {
-                value: LiteralKind::Bool(true),
-                token: expect!(self, TokenType::Keyword(Keyword::True))?,
-                id: self.id_generator.next_node_id(),
-            })),
+            Some(TokenType::Keyword(Keyword::True)) => {
+                Some(Expression::Literal(LiteralExpression {
+                    value: LiteralKind::Bool(true),
+                    token: expect!(self, TokenType::Keyword(Keyword::True))?,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
             Some(TokenType::Keyword(Keyword::False)) => {
-                Ok(Expression::Literal(LiteralExpression {
+                Some(Expression::Literal(LiteralExpression {
                     value: LiteralKind::Bool(false),
                     token: expect!(self, TokenType::Keyword(Keyword::False))?,
                     id: self.id_generator.next_node_id(),
@@ -686,7 +646,7 @@ impl<'state> Parser<'state> {
                     }
                 }
                 let close_bracket_token = expect!(self, TokenType::CloseBracket)?;
-                Ok(Expression::Array(ArrayExpression {
+                Some(Expression::Array(ArrayExpression {
                     open_bracket_token,
                     elements,
                     close_bracket_token,
@@ -714,7 +674,7 @@ impl<'state> Parser<'state> {
                     }
                 }
                 let close_paren_token = expect!(self, TokenType::CloseParen)?;
-                Ok(Expression::CompilerExpression(CompilerExpression {
+                Some(Expression::CompilerExpression(CompilerExpression {
                     at_token,
                     name,
                     name_token,
@@ -745,7 +705,7 @@ impl<'state> Parser<'state> {
                             }
                         }
                         let close_paren_token = expect!(self, TokenType::CloseParen)?;
-                        Ok(Expression::FunctionCall(FunctionCallExpression {
+                        Some(Expression::FunctionCall(FunctionCallExpression {
                             name,
                             name_token,
                             arguments,
@@ -754,14 +714,14 @@ impl<'state> Parser<'state> {
                             id: self.id_generator.next_node_id(),
                         }))
                     }
-                    _ => Ok(Expression::VariableAccess(VariableAccessExpression {
+                    _ => Some(Expression::VariableAccess(VariableAccessExpression {
                         name,
                         name_token,
                         id: self.id_generator.next_node_id(),
                     })),
                 }
             }
-            Some(TokenType::OpenParen) => Ok(Expression::Grouping(GroupingExpression {
+            Some(TokenType::OpenParen) => Some(Expression::Grouping(GroupingExpression {
                 open_paren_token: expect!(self, TokenType::OpenParen)?,
                 subexpression: Box::new(self.parse_expression()?),
                 close_paren_token: expect!(self, TokenType::CloseParen)?,
@@ -799,7 +759,7 @@ impl<'state> Parser<'state> {
             }
             let close_brace_token = expect!(this, TokenType::CloseBrace)?;
 
-            Ok(Expression::Struct(StructExpression {
+            Some(Expression::Struct(StructExpression {
                 type_,
                 open_brace_token,
                 members,
@@ -835,26 +795,26 @@ impl<'state> Parser<'state> {
                 });
                 true
             }
-            _ => return Ok(lhs),
+            _ => return Some(lhs),
         } {}
 
-        Ok(lhs)
+        Some(lhs)
     }
     fn parse_unary_expression(&mut self) -> Result<Expression> {
         match self.current_token_type() {
-            Some(TokenType::Tilde) => Ok(Expression::Unary(UnaryExpression {
+            Some(TokenType::Tilde) => Some(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::Tilde)?,
                 operation: UnaryOperation::BitwiseNot,
                 operand: Box::new(self.parse_unary_expression()?),
                 id: self.id_generator.next_node_id(),
             })),
-            Some(TokenType::Minus) => Ok(Expression::Unary(UnaryExpression {
+            Some(TokenType::Minus) => Some(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::Minus)?,
                 operation: UnaryOperation::Negate,
                 operand: Box::new(self.parse_unary_expression()?),
                 id: self.id_generator.next_node_id(),
             })),
-            Some(TokenType::ExclamationMark) => Ok(Expression::Unary(UnaryExpression {
+            Some(TokenType::ExclamationMark) => Some(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::ExclamationMark)?,
                 operation: UnaryOperation::LogicalNot,
                 operand: Box::new(self.parse_unary_expression()?),
@@ -883,7 +843,7 @@ impl<'state> Parser<'state> {
             _ => false,
         } {}
 
-        Ok(left)
+        Some(left)
     }
     fn parse_product_expression(&mut self) -> Result<Expression> {
         let mut left = self.parse_cast_expression()?;
@@ -928,7 +888,7 @@ impl<'state> Parser<'state> {
             _ => false,
         } {}
 
-        Ok(left)
+        Some(left)
     }
     fn parse_sum_expression(&mut self) -> Result<Expression> {
         let mut left = self.parse_product_expression()?;
@@ -961,7 +921,7 @@ impl<'state> Parser<'state> {
             _ => false,
         } {}
 
-        Ok(left)
+        Some(left)
     }
     fn parse_comparison_expression(&mut self) -> Result<Expression> {
         let mut left = self.parse_sum_expression()?;
@@ -1018,7 +978,7 @@ impl<'state> Parser<'state> {
             _ => false,
         } {}
 
-        Ok(left)
+        Some(left)
     }
     fn parse_equality_expression(&mut self) -> Result<Expression> {
         let mut left = self.parse_comparison_expression()?;
@@ -1051,7 +1011,7 @@ impl<'state> Parser<'state> {
             _ => false,
         } {}
 
-        Ok(left)
+        Some(left)
     }
     fn parse_logical_and_expression(&mut self) -> Result<Expression> {
         let mut left = self.parse_equality_expression()?;
@@ -1072,7 +1032,7 @@ impl<'state> Parser<'state> {
             _ => false,
         } {}
 
-        Ok(left)
+        Some(left)
     }
     fn parse_logical_or_expression(&mut self) -> Result<Expression> {
         let mut left = self.parse_logical_and_expression()?;
@@ -1093,7 +1053,7 @@ impl<'state> Parser<'state> {
             _ => false,
         } {}
 
-        Ok(left)
+        Some(left)
     }
 
     fn parse_lvalue_or_experssion(&mut self) -> Result<Either<(LValue, Expression), Expression>> {
@@ -1154,23 +1114,21 @@ impl<'state> Parser<'state> {
         }
 
         if let Some(lvalue) = expression_to_lvalue(&expr) {
-            Ok(Either::Left((lvalue, expr)))
+            Some(Either::Left((lvalue, expr)))
         } else {
-            Ok(Either::Right(expr))
+            Some(Either::Right(expr))
         }
     }
 
     fn parse_lvalue(&mut self) -> Result<LValue> {
         match self.parse_lvalue_or_experssion()? {
-            Either::Left((lvalue, _expr)) => Ok(lvalue),
+            Either::Left((lvalue, _expr)) => Some(lvalue),
             Either::Right(expr) => {
-                let err = FleetError::from_node(
-                    &expr,
-                    "This expression isn't a valid lvalue",
-                    ErrorSeverity::Error,
-                );
+                let err = ErrorKind::ExpressionNotLValue {
+                    expression: find_node_bounds(&expr),
+                };
                 self.errors.push(err.clone());
-                Err(err.into())
+                None
             }
         }
     }
@@ -1179,18 +1137,18 @@ impl<'state> Parser<'state> {
         let lv_or_expr = self.parse_lvalue_or_experssion()?;
 
         let (lvalue, left_expr) = match lv_or_expr {
-            Either::Right(expr) => return Ok(expr),
+            Either::Right(expr) => return Some(expr),
             Either::Left(x) => x,
         };
 
         if !matches!(self.current_token_type(), Some(TokenType::EqualSign)) {
-            return Ok(left_expr);
+            return Some(left_expr);
         }
 
         let equal_token = expect!(self, TokenType::EqualSign)?;
         let value = self.parse_assignment_expression()?;
 
-        Ok(Expression::VariableAssignment(
+        Some(Expression::VariableAssignment(
             VariableAssignmentExpression {
                 lvalue,
                 equal_token,
@@ -1210,7 +1168,7 @@ impl<'state> Parser<'state> {
 
         match self.current_token_type() {
             Some(TokenType::Identifier(name)) if name == "threads" => {
-                Ok(Executor::Thread(ThreadExecutor {
+                Some(Executor::Thread(ThreadExecutor {
                     host,
                     dot_token,
                     thread_token: expect!(self, = TokenType::Identifier("threads".to_string()))?,
@@ -1220,15 +1178,17 @@ impl<'state> Parser<'state> {
                     id: self.id_generator.next_node_id(),
                 }))
             }
-            Some(TokenType::Identifier(name)) if name == "gpus" => Ok(Executor::GPU(GPUExecutor {
-                host,
-                dot_token,
-                gpus_token: expect!(self, = TokenType::Identifier("gpus".to_string()))?,
-                open_bracket_token: expect!(self, TokenType::OpenBracket)?,
-                gpu_index: Box::new(self.parse_expression()?),
-                close_bracket_token: expect!(self, TokenType::CloseBracket)?,
-                id: self.id_generator.next_node_id(),
-            })),
+            Some(TokenType::Identifier(name)) if name == "gpus" => {
+                Some(Executor::GPU(GPUExecutor {
+                    host,
+                    dot_token,
+                    gpus_token: expect!(self, = TokenType::Identifier("gpus".to_string()))?,
+                    open_bracket_token: expect!(self, TokenType::OpenBracket)?,
+                    gpu_index: Box::new(self.parse_expression()?),
+                    close_bracket_token: expect!(self, TokenType::CloseBracket)?,
+                    id: self.id_generator.next_node_id(),
+                }))
+            }
             _ => unable_to_parse!(self, "executor"),
         }
     }
@@ -1256,14 +1216,14 @@ impl<'state> Parser<'state> {
             }
             _ => false,
         } {}
-        Ok(type_)
+        Some(type_)
     }
 
     pub fn parse_primary_type(&mut self) -> Result<Type> {
         match self.current_token_type() {
             Some(TokenType::Keyword(Keyword::I8)) => {
                 let token = expect!(self, TokenType::Keyword(Keyword::I8))?;
-                Ok(Type::Simple(SimpleType {
+                Some(Type::Simple(SimpleType {
                     type_: RuntimeType {
                         kind: RuntimeTypeKind::I8,
                         definition_range: Some(token.range.clone()),
@@ -1274,7 +1234,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::Keyword(Keyword::I16)) => {
                 let token = expect!(self, TokenType::Keyword(Keyword::I16))?;
-                Ok(Type::Simple(SimpleType {
+                Some(Type::Simple(SimpleType {
                     type_: RuntimeType {
                         kind: RuntimeTypeKind::I16,
                         definition_range: Some(token.range.clone()),
@@ -1285,7 +1245,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::Keyword(Keyword::I32)) => {
                 let token = expect!(self, TokenType::Keyword(Keyword::I32))?;
-                Ok(Type::Simple(SimpleType {
+                Some(Type::Simple(SimpleType {
                     type_: RuntimeType {
                         kind: RuntimeTypeKind::I32,
                         definition_range: Some(token.range.clone()),
@@ -1296,7 +1256,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::Keyword(Keyword::I64)) => {
                 let token = expect!(self, TokenType::Keyword(Keyword::I64))?;
-                Ok(Type::Simple(SimpleType {
+                Some(Type::Simple(SimpleType {
                     type_: RuntimeType {
                         kind: RuntimeTypeKind::I64,
                         definition_range: Some(token.range.clone()),
@@ -1307,7 +1267,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::Keyword(Keyword::U8)) => {
                 let token = expect!(self, TokenType::Keyword(Keyword::U8))?;
-                Ok(Type::Simple(SimpleType {
+                Some(Type::Simple(SimpleType {
                     type_: RuntimeType {
                         kind: RuntimeTypeKind::U8,
                         definition_range: Some(token.range.clone()),
@@ -1318,7 +1278,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::Keyword(Keyword::U16)) => {
                 let token = expect!(self, TokenType::Keyword(Keyword::U16))?;
-                Ok(Type::Simple(SimpleType {
+                Some(Type::Simple(SimpleType {
                     type_: RuntimeType {
                         kind: RuntimeTypeKind::U16,
                         definition_range: Some(token.range.clone()),
@@ -1329,7 +1289,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::Keyword(Keyword::U32)) => {
                 let token = expect!(self, TokenType::Keyword(Keyword::U32))?;
-                Ok(Type::Simple(SimpleType {
+                Some(Type::Simple(SimpleType {
                     type_: RuntimeType {
                         kind: RuntimeTypeKind::U32,
                         definition_range: Some(token.range.clone()),
@@ -1340,7 +1300,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::Keyword(Keyword::U64)) => {
                 let token = expect!(self, TokenType::Keyword(Keyword::U64))?;
-                Ok(Type::Simple(SimpleType {
+                Some(Type::Simple(SimpleType {
                     type_: RuntimeType {
                         kind: RuntimeTypeKind::U64,
                         definition_range: Some(token.range.clone()),
@@ -1351,7 +1311,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::Keyword(Keyword::F32)) => {
                 let token = expect!(self, TokenType::Keyword(Keyword::F32))?;
-                Ok(Type::Simple(SimpleType {
+                Some(Type::Simple(SimpleType {
                     type_: RuntimeType {
                         kind: RuntimeTypeKind::F32,
                         definition_range: Some(token.range.clone()),
@@ -1362,7 +1322,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::Keyword(Keyword::F64)) => {
                 let token = expect!(self, TokenType::Keyword(Keyword::F64))?;
-                Ok(Type::Simple(SimpleType {
+                Some(Type::Simple(SimpleType {
                     type_: RuntimeType {
                         kind: RuntimeTypeKind::F64,
                         definition_range: Some(token.range.clone()),
@@ -1373,7 +1333,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::Keyword(Keyword::Bool)) => {
                 let token = expect!(self, TokenType::Keyword(Keyword::Bool))?;
-                Ok(Type::Simple(SimpleType {
+                Some(Type::Simple(SimpleType {
                     type_: RuntimeType {
                         kind: RuntimeTypeKind::Boolean,
                         definition_range: Some(token.range.clone()),
@@ -1382,7 +1342,7 @@ impl<'state> Parser<'state> {
                     id: self.id_generator.next_node_id(),
                 }))
             }
-            Some(TokenType::Keyword(Keyword::Idk)) => Ok(Type::Idk(IdkType {
+            Some(TokenType::Keyword(Keyword::Idk)) => Some(Type::Idk(IdkType {
                 token: expect!(self, TokenType::Keyword(Keyword::Idk))?,
                 id: self.id_generator.next_node_id(),
             })),
@@ -1414,7 +1374,7 @@ impl<'state> Parser<'state> {
                     }
                 }
                 let close_brace_token = expect!(self, TokenType::CloseBrace)?;
-                Ok(Type::Struct(StructType {
+                Some(Type::Struct(StructType {
                     struct_token,
                     open_brace_token,
                     members,
@@ -1422,12 +1382,12 @@ impl<'state> Parser<'state> {
                     id: self.id_generator.next_node_id(),
                 }))
             }
-            Some(TokenType::Identifier(name)) => Ok(Type::Alias(AliasType {
+            Some(TokenType::Identifier(name)) => Some(Type::Alias(AliasType {
                 name,
                 name_token: expect!(self, TokenType::Identifier(_))?,
                 id: self.id_generator.next_node_id(),
             })),
-            Some(TokenType::OpenParen) => Ok(Type::Unit(UnitType {
+            Some(TokenType::OpenParen) => Some(Type::Unit(UnitType {
                 open_paren_token: expect!(self, TokenType::OpenParen)?,
                 close_paren_token: expect!(self, TokenType::CloseParen)?,
                 id: self.id_generator.next_node_id(),

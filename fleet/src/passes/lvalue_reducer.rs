@@ -11,8 +11,9 @@ use crate::{
         StructAccessExpression, StructAccessLValue, StructExpression, StructMemberValue, Type,
         UnaryExpression, VariableAccessExpression, VariableAssignmentExpression, VariableLValue,
     },
-    infra::{ErrorSeverity, FleetError},
+    infra::ErrorKind,
     passes::{
+        find_node_bounds::find_node_bounds,
         partial_visitor::PartialAstVisitor,
         pass_manager::{
             ConcreteScopeData, ConcreteTypeData, ConcreteVariableData, Errors, GlobalState, Pass,
@@ -321,11 +322,9 @@ impl PartialAstVisitor for LValueReducer<'_> {
             && !is_defined_here
         {
             if self.is_top_level_lvalue {
-                self.errors.push(FleetError::from_node(
-                    a,
-                    "This lvalue isn't available here",
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::LValueUnavailable {
+                    value_range: find_node_bounds(&*a),
+                });
             }
             self.previous_lvalue_valid = false
         } else {
@@ -359,11 +358,9 @@ impl PartialAstVisitor for LValueReducer<'_> {
         } else {
             // invalid because the child failed too
             if self.is_top_level_lvalue {
-                self.errors.push(FleetError::from_node(
-                    a,
-                    "This lvalue isn't available here",
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::LValueUnavailable {
+                    value_range: find_node_bounds(&*a),
+                });
             }
             self.previous_lvalue_valid = false;
         }

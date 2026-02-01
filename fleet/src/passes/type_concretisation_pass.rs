@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     ast::Program,
-    infra::{ErrorSeverity, FleetError},
+    infra::{ErrorKind, PrefetchedType},
     passes::{
         find_node_bounds::find_node_bounds,
         find_node_by_id::find_node_by_id,
@@ -94,25 +94,21 @@ impl TypeConcretisationPass<'_> {
         let func = func.borrow();
 
         let Some(return_type) = func.return_type else {
-            self.errors.push(FleetError::from_range(
-                func.definition_range.clone(),
-                format!("Function `{}` doesn't have a return type yet", func.name),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::FunctionMissingReturnType {
+                function: func.symbol.clone(),
+            });
             return None;
         };
         let Some(parameters) = &func.parameter_types else {
-            self.errors.push(FleetError::from_range(
-                func.definition_range.clone(),
-                format!("Function `{}` doesn't have parameter types yet", func.name),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::FunctionMissingParameterTypes {
+                function: func.symbol.clone(),
+            });
             return None;
         };
 
         Some(ConcreteFunction {
-            name: func.name.clone(),
-            return_type: self.concretisize_type(return_type, func.definition_range.clone())?,
+            symbol: func.symbol.clone(),
+            return_type: self.concretisize_type(return_type, func.symbol.definition.clone())?,
             parameter_types: parameters
                 .iter()
                 .map(|param| self.concretisize_variable(param))
@@ -132,17 +128,17 @@ impl TypeConcretisationPass<'_> {
         let var = var.borrow();
 
         let Some(type_) = var.type_ else {
-            self.errors.push(FleetError::from_range(
-                var.definition_range.clone(),
-                format!("Variable `{}` doesn't have a type yet", var.name),
-                ErrorSeverity::Error,
-            ));
+            self.errors
+                .push(ErrorKind::IncompleteTypeInferenceVariable {
+                    variable: var.symbol.clone(),
+                    best_guess: None,
+                });
             return None;
         };
 
         let var = Rc::new(RefCell::new(ConcreteVariable {
-            name: var.name.clone(),
-            type_: self.concretisize_type(type_, var.definition_range.clone())?,
+            symbol: var.symbol.clone(),
+            type_: self.concretisize_type(type_, var.symbol.definition.clone())?,
             is_constant: var.is_constant,
             id: var.id,
             definition_node_id: var.definition_node_id,
@@ -158,10 +154,10 @@ impl TypeConcretisationPass<'_> {
     }
     fn concretisize_type(
         &mut self,
-        type_: UnionFindSetPtr<RuntimeType>,
+        type_ptr: UnionFindSetPtr<RuntimeType>,
         parent_range: NamedSourceRange,
     ) -> Option<ConcreteRuntimeType> {
-        let type_ = self.type_sets.get(type_);
+        let type_ = self.type_sets.get(type_ptr);
         Some(match type_.kind.clone() {
             RuntimeTypeKind::Struct {
                 members: _,
@@ -174,14 +170,10 @@ impl TypeConcretisationPass<'_> {
             | RuntimeTypeKind::Unknown
             | RuntimeTypeKind::Error
             | RuntimeTypeKind::Number { .. } => {
-                self.errors.push(FleetError::from_range(
-                    type_.definition_range.clone().unwrap_or(parent_range),
-                    format!(
-                        "Cannot turn {} into a concrete type",
-                        type_.kind.stringify(&self.type_sets)
-                    ),
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::IncompleteTypeInference {
+                    range: type_.definition_range.clone().unwrap_or(parent_range),
+                    best_guess: Some(PrefetchedType::fetch(type_ptr, &self.type_sets)),
+                });
                 return None;
             }
             RuntimeTypeKind::I8 => ConcreteRuntimeType::I8,

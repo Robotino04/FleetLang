@@ -2,7 +2,7 @@ use std::cell::RefMut;
 
 use crate::{
     ast::{AstVisitor, FunctionDefinition, Program},
-    infra::{ErrorSeverity, FleetError},
+    infra::{ErrorKind, SymbolDefinition},
     passes::pass_manager::{Errors, Pass, PassFactory, PassResult},
 };
 
@@ -46,8 +46,8 @@ impl PartialAstVisitor for ErrMissingTypeInParam<'_> {
         &mut self,
         FunctionDefinition {
             let_token: _,
-            name: _,
-            name_token: _,
+            name,
+            name_token,
             equal_token: _,
             open_paren_token: _,
             parameters,
@@ -61,11 +61,10 @@ impl PartialAstVisitor for ErrMissingTypeInParam<'_> {
         for (param, _comma) in parameters {
             self.visit_simple_binding(param);
             if param.type_.is_none() {
-                self.errors.push(FleetError::from_node(
-                    param,
-                    "Function parameters must always have a type",
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::FunctionParameterUntyped {
+                    function: SymbolDefinition::from_token(name.clone(), name_token),
+                    parameter: SymbolDefinition::from_token(param.name.clone(), &param.name_token),
+                });
             }
         }
 

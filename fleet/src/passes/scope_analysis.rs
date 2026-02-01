@@ -1,6 +1,6 @@
 use std::{
     cell::{RefCell, RefMut},
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     hash::Hash,
     rc::Rc,
 };
@@ -23,7 +23,7 @@ use crate::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
-    infra::{ErrorSeverity, FleetError},
+    infra::{ErrorKind, SymbolDefinition, UniquelyNamed, UnresolvedSymbol},
     parser::IdGenerator,
     passes::{
         find_node_bounds::find_node_bounds,
@@ -34,7 +34,6 @@ use crate::{
         runtime_type::{ConcreteRuntimeType, RuntimeType},
         union_find_set::UnionFindSetPtr,
     },
-    tokenizer::NamedSourceRange,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -48,22 +47,20 @@ pub struct ScopeID(pub u64);
 
 #[derive(Clone, Debug)]
 pub struct Variable {
-    pub name: String,
+    pub symbol: SymbolDefinition,
     pub type_: Option<UnionFindSetPtr<RuntimeType>>,
     pub is_constant: bool,
     pub id: VariableID,
     pub definition_node_id: NodeID,
-    pub definition_range: NamedSourceRange,
 }
 
 #[derive(Clone, Debug)]
 pub struct Function {
-    pub name: String,
+    pub symbol: SymbolDefinition,
     pub return_type: Option<UnionFindSetPtr<RuntimeType>>,
     pub parameter_types: Option<Vec<Rc<RefCell<Variable>>>>,
     pub id: FunctionID,
     pub definition_node_id: NodeID,
-    pub definition_range: NamedSourceRange,
 }
 
 #[derive(Clone, Debug)]
@@ -79,7 +76,7 @@ pub struct VariableScope {
 
 #[derive(Clone, Debug)]
 pub struct ConcreteVariable {
-    pub name: String,
+    pub symbol: SymbolDefinition,
     pub type_: ConcreteRuntimeType,
     pub is_constant: bool,
     pub id: VariableID,
@@ -88,7 +85,7 @@ pub struct ConcreteVariable {
 
 #[derive(Clone, Debug)]
 pub struct ConcreteFunction {
-    pub name: String,
+    pub symbol: SymbolDefinition,
     pub return_type: ConcreteRuntimeType,
     pub parameter_types: Vec<Rc<RefCell<ConcreteVariable>>>,
     pub id: FunctionID,
@@ -143,7 +140,7 @@ pub struct ConcreteVariableScopeReader {
 
 #[derive(Debug, Error)]
 #[error(
-    "Variable named {:?} was already present.", present_var.borrow().name
+    "Variable named {:?} was already present.", present_var.borrow().symbol
 )]
 pub struct ScopeInsertAlreadyPresentError {
     present_var: Rc<RefCell<Variable>>,
@@ -449,7 +446,7 @@ impl VariableScopeStack {
     }
 
     pub fn try_insert(&mut self, var: Variable) -> Result<(), ScopeInsertAlreadyPresentError> {
-        if let Some(present_var) = self.current.borrow().variable_map.get(&var.name) {
+        if let Some(present_var) = self.current.borrow().variable_map.get(&var.symbol.name) {
             Err(ScopeInsertAlreadyPresentError {
                 present_var: present_var.clone(),
             })
@@ -457,7 +454,7 @@ impl VariableScopeStack {
             self.current
                 .borrow_mut()
                 .variable_map
-                .insert(var.name.clone(), Rc::new(RefCell::new(var)));
+                .insert(var.symbol.name.clone(), Rc::new(RefCell::new(var)));
             Ok(())
         }
     }
@@ -616,7 +613,6 @@ impl<'a> ScopeAnalyzer<'a> {
         }
     }
     fn register_function(&mut self, function: &mut FunctionDefinition) {
-        let function_clone = function.clone();
         let FunctionDefinition {
             let_token: _,
             name,
@@ -633,26 +629,21 @@ impl<'a> ScopeAnalyzer<'a> {
 
         self.variable_scopes.push_child(&mut self.id_generator); // temporary parameter scope
 
-        if self
-            .function_list
-            .insert(
-                name.clone(),
-                Rc::new(RefCell::new(Function {
-                    name: name.clone(),
-                    return_type: None,
-                    parameter_types: None,
-                    id: self.id_generator.next_function_id(),
-                    definition_node_id: *id,
-                    definition_range: name_token.range.clone(),
-                })),
-            )
-            .is_some()
-        {
-            self.errors.push(FleetError::from_node(
-                &function_clone,
-                format!("Multiple functions named {name:?} defined"),
-                ErrorSeverity::Error,
-            ));
+        if let Some(original) = self.function_list.insert(
+            name.clone(),
+            Rc::new(RefCell::new(Function {
+                symbol: SymbolDefinition::from_token(name.clone(), name_token),
+                return_type: None,
+                parameter_types: None,
+                id: self.id_generator.next_function_id(),
+                definition_node_id: *id,
+            })),
+        ) {
+            self.errors.push(ErrorKind::Duplicate {
+                kind: UniquelyNamed::Function,
+                original: original.borrow().symbol.clone(),
+                new_range: name_token.range.clone(),
+            });
         }
 
         // this is just the registration, so nothing has to be specialized
@@ -788,34 +779,18 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         }
         if let Err(ScopeInsertAlreadyPresentError { present_var }) =
             self.variable_scopes.try_insert(Variable {
-                name: name.clone(),
+                symbol: SymbolDefinition::from_token(name.clone(), name_token),
                 type_: None,
                 is_constant: false,
                 id: self.id_generator.next_variable_id(),
                 definition_node_id: *id,
-                definition_range: name_token.range.clone(),
             })
         {
-            self.errors.push(
-                FleetError::try_new(
-                    vec![
-                        (
-                            find_node_bounds(&simple_binding_clone),
-                            ErrorSeverity::Error,
-                        ),
-                        (
-                            present_var.borrow().definition_range.clone(),
-                            ErrorSeverity::Note,
-                        ),
-                    ],
-                    format!(
-                        "A variable named `{}` was already defined in this scope",
-                        name.clone()
-                    ),
-                    ErrorSeverity::Error,
-                )
-                .unwrap(),
-            );
+            self.errors.push(ErrorKind::Duplicate {
+                kind: UniquelyNamed::Variable,
+                original: present_var.borrow().symbol.clone(),
+                new_range: find_node_bounds(&simple_binding_clone),
+            });
         }
 
         self.referenced_variable.insert(
@@ -1232,7 +1207,6 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         &mut self,
         expression: &mut FunctionCallExpression,
     ) -> Self::ExpressionOutput {
-        let expression_clone = expression.clone();
         let FunctionCallExpression {
             name,
             name_token: _,
@@ -1242,11 +1216,10 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             id,
         } = expression;
         let Some(ref_function) = self.function_list.get(name).cloned() else {
-            self.errors.push(FleetError::from_node(
-                &expression_clone,
-                format!("No function named {name:?} is defined"),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::NotDefined {
+                kind: UniquelyNamed::Function,
+                item: UnresolvedSymbol::from_token(name.clone(), &expression.name_token),
+            });
 
             // still visit args, even though the function doesn't exist
             for (arg, _comma) in &mut expression.arguments {
@@ -1280,7 +1253,6 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         &mut self,
         expression: &mut CompilerExpression,
     ) -> Self::ExpressionOutput {
-        let expression_clone = expression.clone();
         let CompilerExpression {
             at_token: _,
             name,
@@ -1309,11 +1281,9 @@ impl AstVisitor for ScopeAnalyzer<'_> {
                 self.comptime_deps.mark_comptime_required(*id);
             }
             _ => {
-                self.errors.push(FleetError::from_node(
-                    &expression_clone,
-                    format!("No compiler function named {name:?} exists"),
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::IntrinsicUnknown {
+                    intrinsic: UnresolvedSymbol::from_token(name.clone(), &expression.name_token),
+                });
             }
         }
 
@@ -1388,18 +1358,16 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         &mut self,
         expression: &mut VariableAccessExpression,
     ) -> Self::ExpressionOutput {
-        let expression_clone = expression.clone();
         let VariableAccessExpression {
             name,
             name_token: _,
             id,
         } = expression;
         let Some(ref_variable) = self.variable_scopes.get_read(name) else {
-            self.errors.push(FleetError::from_node(
-                &expression_clone,
-                format!("No variable named {name:?} is defined"),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::NotDefined {
+                kind: UniquelyNamed::Variable,
+                item: UnresolvedSymbol::from_token(name.clone(), &expression.name_token),
+            });
             return *id;
         };
 
@@ -1518,26 +1486,26 @@ impl AstVisitor for ScopeAnalyzer<'_> {
     }
 
     fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
-        let lvalue_clone = lvalue.clone();
         let VariableLValue {
             name,
-            name_token: _,
+            name_token,
             id,
         } = lvalue;
         let Some(ref_variable) = self.variable_scopes.get_write(name) else {
-            self.errors.push(FleetError::from_node(
-                &lvalue_clone,
-                format!("No variable named {name:?} is defined"),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::NotDefined {
+                kind: UniquelyNamed::Variable,
+                item: UnresolvedSymbol::from_token(name.clone(), name_token),
+            });
             return *id;
         };
         if ref_variable.borrow().is_constant {
-            self.errors.push(FleetError::from_node(
-                &lvalue_clone,
-                format!("Variable {name:?} is constant and can't be used as an lvalue"),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::ConstantVariableAsLValue {
+                variable: ref_variable
+                    .borrow()
+                    .symbol
+                    .clone()
+                    .with_use(name_token.range.clone()),
+            });
         }
         self.referenced_variable.insert(*id, ref_variable.clone());
 
@@ -1684,7 +1652,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
 
-        let mut member_unique_set = HashSet::new();
+        let mut member_unique_set = HashMap::new();
 
         for (
             StructMemberDefinition {
@@ -1699,12 +1667,14 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             let member_dep = self.visit_type(type_);
             self.comptime_deps.add_dependency(*id, member_dep);
 
-            if !member_unique_set.insert(name.clone()) {
-                self.errors.push(FleetError::from_token(
-                    name_token,
-                    format!("This struct already has a member named {name:?}"),
-                    ErrorSeverity::Error,
-                ));
+            if let Some(other_range) =
+                member_unique_set.insert(name.clone(), name_token.range.clone())
+            {
+                self.errors.push(ErrorKind::Duplicate {
+                    kind: UniquelyNamed::StructMember,
+                    original: SymbolDefinition::new(name.clone(), other_range.clone()),
+                    new_range: name_token.range.clone(),
+                });
             }
         }
 

@@ -8,7 +8,7 @@ use crate::{
         ReturnStatement, ThreadExecutor, UnaryExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, WhileLoopStatement,
     },
-    infra::{ErrorSeverity, FleetError},
+    infra::{ErrorKind, Lint},
     passes::pass_manager::{Errors, GlobalState, Pass, PassFactory, PassResult},
 };
 
@@ -215,17 +215,11 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                     ]
                     .concat();
 
-                    self.errors.push({
-                        FleetError::try_new(
-                            vec![
-                                (open_paren_token.range.clone(), ErrorSeverity::Note),
-                                (close_paren_token.range.clone(), ErrorSeverity::Note),
-                            ],
-                            "Unnecessary parentheses".to_string(),
-                            ErrorSeverity::Note,
-                        )
-                        .unwrap()
-                    });
+                    self.errors
+                        .push(ErrorKind::Lint(Lint::UnnecessaryParentheses {
+                            opening: open_paren_token.range.clone(),
+                            closing: close_paren_token.range.clone(),
+                        }));
 
                     FirstTokenMapper::new(move |token| {
                         token.leading_trivia.append(&mut leading_trivia)
@@ -382,17 +376,11 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                     ]
                     .concat();
 
-                    self.errors.push({
-                        FleetError::try_new(
-                            vec![
-                                (open_paren_token.range.clone(), ErrorSeverity::Note),
-                                (close_paren_token.range.clone(), ErrorSeverity::Note),
-                            ],
-                            "Unnecessary parentheses".to_string(),
-                            ErrorSeverity::Note,
-                        )
-                        .unwrap()
-                    });
+                    self.errors
+                        .push(ErrorKind::Lint(Lint::UnnecessaryParentheses {
+                            opening: open_paren_token.range.clone(),
+                            closing: close_paren_token.range.clone(),
+                        }));
 
                     FirstTokenMapper::new(move |token| {
                         token.leading_trivia.append(&mut leading_trivia)

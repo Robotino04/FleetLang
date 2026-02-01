@@ -9,29 +9,35 @@ use itertools::{EitherOrBoth, Itertools};
 
 use crate::{
     ast::{
-        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
-        AstNodeRef, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
-        CastExpression, CompilerExpression, Expression, ExpressionStatement, ExternFunctionBody,
-        ForLoopStatement, FunctionCallExpression, FunctionDefinition, GPUExecutor,
-        GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression,
-        LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
-        SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression,
-        StructAccessLValue, StructExpression, StructMemberDefinition, StructMemberValue,
-        StructType, ThreadExecutor, TopLevelStatement, TypeAlias, UnaryExpression, UnaryOperation,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
+        CompilerExpression, Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+        GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
+        OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
+        SkipStatement, StatementFunctionBody, StructAccessExpression, StructAccessLValue,
+        StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
+        TopLevelStatement, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
-    infra::{ErrorSeverity, FleetError},
+    infra::{
+        CastDirection, ErrorKind, ExtraParameter, ImpossibleCastReason, InternalError, Lint,
+        MissingParameter, ParameterCountDifference, PrefetchedType, SymbolDefinition,
+        TypeMismatchKind, UniquelyNamed, UnresolvedSymbol,
+    },
     parser::IdGenerator,
     passes::{
+        find_node_bounds::find_node_bounds,
         pass_manager::{
             Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData, TypeData,
             TypeSets, VariableData,
         },
         runtime_type::{RuntimeType, RuntimeTypeKind},
         scope_analysis::Function,
-        union_find_set::{UnionFindSet, UnionFindSetPtr},
+        union_find_set::UnionFindSetPtr,
     },
+    tokenizer::NamedSourceRange,
 };
 
 pub struct TypePropagator<'state> {
@@ -45,7 +51,7 @@ pub struct TypePropagator<'state> {
     referenced_function: Ref<'state, FunctionData>,
     containing_scope: Ref<'state, ScopeData>,
 
-    type_aliases: HashMap<String, UnionFindSetPtr<RuntimeType>>,
+    type_aliases: HashMap<String, (NamedSourceRange, UnionFindSetPtr<RuntimeType>)>,
 
     current_function: Option<Rc<RefCell<Function>>>,
     require_constant: bool,
@@ -107,7 +113,6 @@ impl<'a> TypePropagator<'a> {
     }
 
     fn register_function(&mut self, function: &mut FunctionDefinition) {
-        let function_clone = function.clone();
         let FunctionDefinition {
             let_token: _,
             name,
@@ -140,24 +145,22 @@ impl<'a> TypePropagator<'a> {
             .collect();
 
         let Some(ref_func) = self.referenced_function.get(id) else {
-            self.errors.push(FleetError::from_node(
-                &function_clone,
-                format!("Function {name:?} wasn't processed by ScopeAnalysis"),
-                ErrorSeverity::Error,
+            self.errors.push(ErrorKind::InternalError(
+                InternalError::ScopeAnalysisMissedFunction {
+                    function: SymbolDefinition::from_token(name.clone(), name_token),
+                },
             ));
             return;
         };
         *ref_func.borrow_mut() = Function {
-            name: name.clone(),
+            symbol: SymbolDefinition::from_token(name.clone(), name_token),
             return_type: Some(return_type),
             parameter_types: Some(parameter_types),
             id: self.id_generator.next_function_id(),
             definition_node_id: *id,
-            definition_range: name_token.range.clone(),
         };
     }
     fn register_type_alias(&mut self, type_alias: &mut TypeAlias) {
-        let type_alias_clone = type_alias.clone();
         let TypeAlias {
             let_token: _,
             name,
@@ -173,58 +176,33 @@ impl<'a> TypePropagator<'a> {
             definition_range: Some(name_token.range.clone()),
         });
 
-        if self.type_aliases.insert(name.clone(), type_).is_some() {
-            self.errors.push(FleetError::from_node(
-                &type_alias_clone,
-                format!("A type alias named {name:?} already exists"),
-                ErrorSeverity::Error,
-            ));
+        if let Some((original_range, _original_type)) = self
+            .type_aliases
+            .insert(name.clone(), (name_token.range.clone(), type_))
+        {
+            self.errors.push(ErrorKind::Duplicate {
+                kind: UniquelyNamed::TypeAlias,
+                original: SymbolDefinition::new(name.clone(), original_range),
+                new_range: name_token.range.clone(),
+            });
         }
     }
 
-    fn generate_mismatched_type_error_if<'node, I: Into<AstNodeRef<'node>>>(
-        &mut self,
-        condition: bool,
-        node: I,
-        expression_type: impl AsRef<str>,
-        expected_name: impl AsRef<str>,
-        actual_type: RuntimeType,
-    ) {
-        if condition {
-            self.errors.push(FleetError::from_node(
-                node,
-                format!(
-                    "Expected {} to be {}. Got value of type {} instead",
-                    expression_type.as_ref(),
-                    expected_name.as_ref(),
-                    actual_type.kind.stringify(&self.type_sets)
-                ),
-                ErrorSeverity::Error,
-            ));
-        }
-    }
-
-    fn require_fully_specialized_scope<'node, I: Into<AstNodeRef<'node>>>(
-        &mut self,
-        error_node: I,
-        scope_node: &impl HasID,
-    ) {
+    fn require_fully_specialized_scope(&mut self, scope_node: &impl HasID) {
         let scope = self
             .containing_scope
             .get(&scope_node.get_id())
             .unwrap()
             .borrow();
 
-        let error_node = error_node.into();
-
-        for (name, variable) in &scope.variable_map {
-            let actual_type = self.type_sets.get_mut(variable.borrow().type_.unwrap());
+        for variable in scope.variable_map.values() {
+            let actual_type_ptr = variable.borrow().type_.unwrap();
+            let actual_type = self.type_sets.get_mut(actual_type_ptr);
             actual_type.kind.specialize_number_size();
 
             // release the borrow
             let actual_type = actual_type.clone();
 
-            // TODO: once we track variable definitions, use that here
             if let RuntimeTypeKind::Unknown
             | RuntimeTypeKind::Number { .. }
             | RuntimeTypeKind::ArrayOf {
@@ -232,20 +210,13 @@ impl<'a> TypePropagator<'a> {
                 size: None,
             } = actual_type.kind
             {
-                self.errors.push(FleetError::from_node(
-                    error_node,
-                    format!(
-                        "The type of {name:?} cannot be inferred completely. Best effort: {}",
-                        actual_type.kind.stringify(&self.type_sets)
-                    ),
-                    ErrorSeverity::Error,
-                ));
+                self.errors
+                    .push(ErrorKind::IncompleteTypeInferenceVariable {
+                        variable: variable.borrow().symbol.clone(),
+                        best_guess: Some(PrefetchedType::fetch(actual_type_ptr, &self.type_sets)),
+                    });
             }
         }
-    }
-
-    fn stringify_type_ptr(&self, ptr: UnionFindSetPtr<RuntimeType>) -> String {
-        self.type_sets.get(ptr).kind.stringify(&self.type_sets)
     }
 }
 
@@ -276,7 +247,6 @@ impl AstVisitor for TypePropagator<'_> {
     }
 
     fn visit_function_definition(&mut self, fdef: &mut FunctionDefinition) -> Self::TopLevelOutput {
-        let fdef_clone = fdef.clone();
         let FunctionDefinition {
             let_token: _,
             name: _,
@@ -309,7 +279,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.visit_function_body(body);
 
-        self.require_fully_specialized_scope(&fdef_clone, &**body);
+        self.require_fully_specialized_scope(&**body);
     }
 
     fn visit_type_alias(&mut self, type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
@@ -327,10 +297,10 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.type_sets.get_mut(type_).kind.specialize_number_size();
 
-        let aliased_type = *self.type_aliases.get(name).unwrap();
+        let (_range, aliased_type) = self.type_aliases.get(name).unwrap();
 
         // ignore failures because this should always succeed for valid programs
-        let _ = RuntimeTypeKind::merge_types(type_, aliased_type, &mut self.type_sets);
+        let _ = RuntimeTypeKind::merge_types(type_, *aliased_type, &mut self.type_sets);
     }
 
     fn visit_statement_function_body(
@@ -357,15 +327,14 @@ impl AstVisitor for TypePropagator<'_> {
         &mut self,
         simple_binding: &mut SimpleBinding,
     ) -> Self::SimpleBindingOutput {
-        let simple_binding_clone = simple_binding.clone();
         let SimpleBinding {
-            name_token: _,
-            name: _,
+            name_token,
+            name,
             type_,
             id,
         } = simple_binding;
 
-        let defined_type = if let Some((_colon, type_)) = type_ {
+        let defined_type_ptr = if let Some((_colon, type_)) = type_ {
             self.visit_type(type_)
         } else {
             self.type_sets.insert_set(RuntimeType {
@@ -373,22 +342,21 @@ impl AstVisitor for TypePropagator<'_> {
                 definition_range: None,
             })
         };
-        if self.type_sets.get(defined_type).kind == RuntimeTypeKind::Unit {
-            self.errors.push(FleetError::from_node(
-                &type_
+        if self.type_sets.get(defined_type_ptr).kind == RuntimeTypeKind::Unit {
+            self.errors.push(ErrorKind::UnitVariable {
+                variable: SymbolDefinition::from_token(name.clone(), name_token),
+                type_range: type_
                     .as_ref()
-                    .map(|(_colon, type_)| Into::<AstNode>::into(type_.clone()))
-                    .unwrap_or(simple_binding_clone.into()),
-                "Variables cannot have Unit type".to_string(),
-                ErrorSeverity::Error,
-            ));
+                    .map(|(_colon, type_)| find_node_bounds(type_)),
+                type_: PrefetchedType::fetch(defined_type_ptr, &self.type_sets),
+            });
         }
 
-        self.referenced_variable.get(id).unwrap().borrow_mut().type_ = Some(defined_type);
+        self.referenced_variable.get(id).unwrap().borrow_mut().type_ = Some(defined_type_ptr);
 
-        self.node_types.insert(*id, defined_type);
+        self.node_types.insert(*id, defined_type_ptr);
 
-        defined_type
+        defined_type_ptr
     }
 
     fn visit_expression_statement(
@@ -403,9 +371,8 @@ impl AstVisitor for TypePropagator<'_> {
     }
 
     fn visit_on_statement(&mut self, stmt: &mut OnStatement) -> Self::StatementOutput {
-        let stmt_clone = stmt.clone();
         let OnStatement {
-            on_token: _,
+            on_token,
             executor,
             iterators,
             open_paren_token: _,
@@ -436,17 +403,19 @@ impl AstVisitor for TypePropagator<'_> {
         {
             let iterator_type = self.visit_simple_binding(binding);
             if !RuntimeTypeKind::merge_types(iterator_type, max_value_type, &mut self.type_sets) {
-                let iterator_type_str = self.stringify_type_ptr(iterator_type);
-                let max_value_type_str = self.stringify_type_ptr(max_value_type);
-
-                self.errors.push(FleetError::from_node(
-                    &*binding,
-                    format!(
-                        "Iterator is defined as type {iterator_type_str}, \
-                        but has max value of type {max_value_type_str}",
+                self.errors.push(ErrorKind::IteratorValueMaxMismatch {
+                    on_range: on_token.range.clone(),
+                    iterator: SymbolDefinition::from_token(
+                        binding.name.clone(),
+                        &binding.name_token,
                     ),
-                    ErrorSeverity::Error,
-                ));
+                    type_range: binding
+                        .type_
+                        .as_ref()
+                        .map(|(_colon, type_)| find_node_bounds(type_)),
+                    iterator_type: PrefetchedType::fetch(iterator_type, &self.type_sets),
+                    max_type: PrefetchedType::fetch(max_value_type, &self.type_sets),
+                });
             }
 
             // TODO: HACK: remove when we have proper constness and mutability
@@ -462,12 +431,15 @@ impl AstVisitor for TypePropagator<'_> {
                 .expect("variable data should exist by now")
                 .borrow()
                 .is_constant;
+
             if !is_iterator_const {
-                self.errors.push(FleetError::from_node(
-                    &*binding,
-                    "The iterator of an on-statement cannot be mutable",
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::MutableIterator {
+                    on_range: on_token.range.clone(),
+                    iterator: SymbolDefinition::from_token(
+                        binding.name.clone(),
+                        &binding.name_token,
+                    ),
+                });
             }
             if !RuntimeTypeKind::merge_types(
                 self.type_sets.insert_set(RuntimeType {
@@ -480,11 +452,18 @@ impl AstVisitor for TypePropagator<'_> {
                 iterator_type,
                 &mut self.type_sets,
             ) {
-                self.errors.push(FleetError::from_node(
-                    &*binding,
-                    "Iterators can only be unsigned integers for now",
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::ImpossibleIteratorType {
+                    on_range: on_token.range.clone(),
+                    iterator: SymbolDefinition::from_token(
+                        binding.name.clone(),
+                        &binding.name_token,
+                    ),
+                    type_range: binding
+                        .type_
+                        .as_ref()
+                        .map(|(_colon, type_)| find_node_bounds(type_)),
+                    iterator_type: PrefetchedType::fetch(iterator_type, &self.type_sets),
+                });
             }
         }
 
@@ -496,11 +475,10 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.visit_statement(body);
 
-        self.require_fully_specialized_scope(&stmt_clone, &**body);
+        self.require_fully_specialized_scope(&**body);
     }
 
     fn visit_block_statement(&mut self, stmt: &mut BlockStatement) -> Self::StatementOutput {
-        let stmt_clone = stmt.clone();
         let BlockStatement {
             open_brace_token: _,
             body,
@@ -513,20 +491,19 @@ impl AstVisitor for TypePropagator<'_> {
         }
 
         if let Some(body_part) = body.first() {
-            self.require_fully_specialized_scope(&stmt_clone, body_part);
+            self.require_fully_specialized_scope(body_part);
         }
     }
 
     fn visit_return_statement(&mut self, stmt: &mut ReturnStatement) -> Self::StatementOutput {
-        let stmt_clone = stmt.clone();
         let ReturnStatement {
-            return_token: _,
+            return_token,
             value,
             semicolon_token: _,
             id,
         } = stmt;
 
-        let this_type = value
+        let this_type_ptr = value
             .as_mut()
             .map(|value| self.visit_expression(value))
             .unwrap_or_else(|| {
@@ -536,61 +513,60 @@ impl AstVisitor for TypePropagator<'_> {
                 })
             });
 
-        let expected_type = self
+        let current_function = self
             .current_function
             .as_ref()
             .expect("Return statements should only appear inside functions")
-            .borrow()
-            .return_type
-            .unwrap();
+            .borrow();
 
-        if !RuntimeTypeKind::merge_types(this_type, expected_type, &mut self.type_sets) {
-            let expected_type_str = self.stringify_type_ptr(expected_type);
-            let this_type_str = self.stringify_type_ptr(this_type);
+        let expected_type_ptr = current_function.return_type.unwrap();
 
-            self.errors.push(FleetError::from_node(
-                &stmt_clone,
-                format!(
-                    "Expected this functions to return {expected_type_str}. Got {this_type_str}",
-                ),
-                ErrorSeverity::Error,
-            ));
+        if !RuntimeTypeKind::merge_types(this_type_ptr, expected_type_ptr, &mut self.type_sets) {
+            self.errors.push(ErrorKind::TypeMismatch {
+                kind: TypeMismatchKind::FunctionReturn {
+                    function: current_function.symbol.clone(),
+                },
+                value_range: value
+                    .as_ref()
+                    .map(|value| find_node_bounds(&**value))
+                    .unwrap_or_else(|| return_token.range.clone()),
+                expected_types: vec![PrefetchedType::fetch(expected_type_ptr, &self.type_sets)],
+                actual_type: PrefetchedType::fetch(this_type_ptr, &self.type_sets),
+            });
         }
 
-        self.node_types.insert(*id, this_type);
+        self.node_types.insert(*id, this_type_ptr);
     }
 
     fn visit_variable_definition_statement(
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
     ) -> Self::StatementOutput {
-        let stmt_clone = vardef_stmt.clone();
         let VariableDefinitionStatement {
             let_token: _,
             binding,
             equals_token: _,
             value,
             semicolon_token: _,
-            id: _,
+            id,
         } = vardef_stmt;
 
         // evaluated before the binding so it can potentially access variables that get shadowed
         // by this binding
-        let value_type = self.visit_expression(value);
-        let defined_type = self.visit_simple_binding(binding);
+        let value_type_ptr = self.visit_expression(value);
+        let defined_type_ptr = self.visit_simple_binding(binding);
 
-        if !RuntimeTypeKind::merge_types(value_type, defined_type, &mut self.type_sets) {
-            let defined_type_str = self.stringify_type_ptr(defined_type);
-            let value_type_str = self.stringify_type_ptr(value_type);
+        let var = self.referenced_variable.get(id).unwrap();
 
-            self.errors.push(FleetError::from_node(
-                &stmt_clone,
-                format!(
-                    "Variable {:?} is defined as type {}, but the initializer value has type {}",
-                    binding.name, defined_type_str, value_type_str,
-                ),
-                ErrorSeverity::Error,
-            ));
+        if !RuntimeTypeKind::merge_types(value_type_ptr, defined_type_ptr, &mut self.type_sets) {
+            self.errors.push(ErrorKind::TypeMismatch {
+                kind: TypeMismatchKind::VariableInitializer {
+                    variable: var.borrow().symbol.clone(),
+                },
+                value_range: find_node_bounds(&**value),
+                expected_types: vec![PrefetchedType::fetch(defined_type_ptr, &self.type_sets)],
+                actual_type: PrefetchedType::fetch(value_type_ptr, &self.type_sets),
+            });
         }
     }
 
@@ -607,24 +583,31 @@ impl AstVisitor for TypePropagator<'_> {
     ) -> Self::StatementOutput {
         let cond_type = self.visit_expression(condition);
 
-        self.generate_mismatched_type_error_if(
-            !self.type_sets.get(cond_type).kind.is_boolean(),
-            &**condition,
-            "if condition",
-            "of type bool",
-            self.type_sets.get(cond_type).clone(),
-        );
+        let boolean = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::Boolean,
+            definition_range: None,
+        });
+
+        if !RuntimeTypeKind::merge_types(cond_type, boolean, &mut self.type_sets) {
+            self.errors.push(ErrorKind::TypeMismatch {
+                kind: TypeMismatchKind::IfCondition,
+                value_range: find_node_bounds(&**condition),
+                expected_types: vec![PrefetchedType::fetch(boolean, &self.type_sets)],
+                actual_type: PrefetchedType::fetch(cond_type, &self.type_sets),
+            });
+        }
 
         self.visit_statement(if_body);
         for (_elif_token, elif_condition, elif_body) in elifs {
             let elif_type = self.visit_expression(elif_condition);
-            self.generate_mismatched_type_error_if(
-                !self.type_sets.get(elif_type).kind.is_boolean(),
-                elif_condition,
-                "elif condition",
-                "of type bool",
-                self.type_sets.get(elif_type).clone(),
-            );
+            if !RuntimeTypeKind::merge_types(elif_type, boolean, &mut self.type_sets) {
+                self.errors.push(ErrorKind::TypeMismatch {
+                    kind: TypeMismatchKind::ElifCondition,
+                    value_range: find_node_bounds(&*elif_condition),
+                    expected_types: vec![PrefetchedType::fetch(boolean, &self.type_sets)],
+                    actual_type: PrefetchedType::fetch(elif_type, &self.type_sets),
+                });
+            }
 
             self.visit_statement(elif_body);
         }
@@ -644,13 +627,20 @@ impl AstVisitor for TypePropagator<'_> {
     ) -> Self::StatementOutput {
         let cond_type = self.visit_expression(condition);
 
-        self.generate_mismatched_type_error_if(
-            !self.type_sets.get(cond_type).kind.is_boolean(),
-            &**condition,
-            "while condition",
-            "of type bool",
-            self.type_sets.get(cond_type).clone(),
-        );
+        let boolean = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::Boolean,
+            definition_range: None,
+        });
+
+        if !RuntimeTypeKind::merge_types(cond_type, boolean, &mut self.type_sets) {
+            self.errors.push(ErrorKind::TypeMismatch {
+                kind: TypeMismatchKind::WhileCondition,
+                value_range: find_node_bounds(&**condition),
+                expected_types: vec![PrefetchedType::fetch(boolean, &self.type_sets)],
+                actual_type: PrefetchedType::fetch(cond_type, &self.type_sets),
+            });
+        }
+
         self.visit_statement(body);
     }
 
@@ -672,20 +662,27 @@ impl AstVisitor for TypePropagator<'_> {
 
         if let Some(con) = condition {
             let cond_type = self.visit_expression(con);
-            self.generate_mismatched_type_error_if(
-                !self.type_sets.get(cond_type).kind.is_boolean(),
-                &**con,
-                "for condition",
-                "of type bool",
-                self.type_sets.get(cond_type).clone(),
-            );
+
+            let boolean = self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Boolean,
+                definition_range: None,
+            });
+
+            if !RuntimeTypeKind::merge_types(cond_type, boolean, &mut self.type_sets) {
+                self.errors.push(ErrorKind::TypeMismatch {
+                    kind: TypeMismatchKind::ForCondition,
+                    value_range: find_node_bounds(&**con),
+                    expected_types: vec![PrefetchedType::fetch(boolean, &self.type_sets)],
+                    actual_type: PrefetchedType::fetch(cond_type, &self.type_sets),
+                });
+            }
         }
         if let Some(inc) = incrementer {
             self.visit_expression(inc);
         }
         self.visit_statement(body);
 
-        self.require_fully_specialized_scope(&**initializer, &**body);
+        self.require_fully_specialized_scope(&**body);
     }
 
     fn visit_break_statement(
@@ -719,7 +716,7 @@ impl AstVisitor for TypePropagator<'_> {
         ThreadExecutor {
             host,
             dot_token: _,
-            thread_token: _,
+            thread_token,
             open_bracket_token: _,
             index,
             close_bracket_token: _,
@@ -729,13 +726,24 @@ impl AstVisitor for TypePropagator<'_> {
         self.visit_executor_host(host);
         let index_type = self.visit_expression(index);
 
-        self.generate_mismatched_type_error_if(
-            !self.type_sets.get(index_type).kind.is_numeric(),
-            &**index,
-            "thread index",
-            "numeric",
-            self.type_sets.get(index_type).clone(),
-        );
+        let expected_type = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::Number {
+                signed: Some(false),
+                integer: Some(true),
+            },
+            definition_range: None,
+        });
+
+        if !RuntimeTypeKind::merge_types(index_type, expected_type, &mut self.type_sets) {
+            self.errors.push(ErrorKind::TypeMismatch {
+                kind: TypeMismatchKind::ThreadIndex {
+                    thread: thread_token.range.clone(),
+                },
+                value_range: find_node_bounds(&**index),
+                expected_types: vec![PrefetchedType::fetch(expected_type, &self.type_sets)],
+                actual_type: PrefetchedType::fetch(index_type, &self.type_sets),
+            });
+        };
     }
 
     fn visit_gpu_executor(
@@ -743,7 +751,7 @@ impl AstVisitor for TypePropagator<'_> {
         GPUExecutor {
             host,
             dot_token: _,
-            gpus_token: _,
+            gpus_token,
             open_bracket_token: _,
             gpu_index,
             close_bracket_token: _,
@@ -753,13 +761,24 @@ impl AstVisitor for TypePropagator<'_> {
         self.visit_executor_host(host);
         let index_type = self.visit_expression(gpu_index);
 
-        self.generate_mismatched_type_error_if(
-            !self.type_sets.get(index_type).kind.is_numeric(),
-            &**gpu_index,
-            "gpu index",
-            "numeric",
-            self.type_sets.get(index_type).clone(),
-        );
+        let expected_type = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::Number {
+                signed: Some(false),
+                integer: Some(true),
+            },
+            definition_range: None,
+        });
+
+        if !RuntimeTypeKind::merge_types(index_type, expected_type, &mut self.type_sets) {
+            self.errors.push(ErrorKind::TypeMismatch {
+                kind: TypeMismatchKind::GpuIndex {
+                    gpu: gpus_token.range.clone(),
+                },
+                value_range: find_node_bounds(&**gpu_index),
+                expected_types: vec![PrefetchedType::fetch(expected_type, &self.type_sets)],
+                actual_type: PrefetchedType::fetch(index_type, &self.type_sets),
+            });
+        };
     }
 
     fn visit_literal_expression(
@@ -802,31 +821,35 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         } = expression;
 
-        let element_type = self.type_sets.insert_set(RuntimeType {
+        let element_type_ptr = self.type_sets.insert_set(RuntimeType {
             kind: RuntimeTypeKind::Unknown,
             definition_range: None,
         });
+
+        let first_item_range = elements.first().map(|el| find_node_bounds(&el.0));
         for (item, _comma) in &mut *elements {
-            let this_item_type = self.visit_expression(item);
+            let this_item_type_ptr = self.visit_expression(item);
 
-            if !RuntimeTypeKind::merge_types(element_type, this_item_type, &mut self.type_sets) {
-                let this_item_type_str = self.stringify_type_ptr(this_item_type);
-                let element_type_str = self.stringify_type_ptr(element_type);
+            if !RuntimeTypeKind::merge_types(
+                element_type_ptr,
+                this_item_type_ptr,
+                &mut self.type_sets,
+            ) {
+                self.errors.push(ErrorKind::TypeMismatch {
+                    kind: TypeMismatchKind::ArrayElement {
+                        first_element_range: first_item_range.clone().unwrap(),
+                    },
+                    value_range: find_node_bounds(item),
 
-                self.errors.push(FleetError::from_node(
-                    item,
-                    format!(
-                        "This item has type {this_item_type_str}, but was expected \
-                        to have type {element_type_str} (inferred from the first element)",
-                    ),
-                    ErrorSeverity::Error,
-                ));
+                    expected_types: vec![PrefetchedType::fetch(element_type_ptr, &self.type_sets)],
+                    actual_type: PrefetchedType::fetch(this_item_type_ptr, &self.type_sets),
+                });
             }
         }
 
         let type_ = self.type_sets.insert_set(RuntimeType {
             kind: RuntimeTypeKind::ArrayOf {
-                subtype: element_type,
+                subtype: element_type_ptr,
                 size: Some(elements.len()),
             },
             definition_range: None,
@@ -839,33 +862,30 @@ impl AstVisitor for TypePropagator<'_> {
         &mut self,
         expression: &mut StructExpression,
     ) -> Self::ExpressionOutput {
-        let expression_clone = expression.clone();
+        let expression_range = find_node_bounds(&*expression);
         let StructExpression {
             type_,
-            open_brace_token: _,
+            open_brace_token,
             members,
-            close_brace_token: _,
+            close_brace_token,
             id,
         } = expression;
 
-        let defined_type = self.visit_type(type_);
+        let defined_type_ptr = self.visit_type(type_);
 
         let mut member_types = vec![];
 
-        let defined_members = match &self.type_sets.get(defined_type).kind {
+        let defined_members = match &self.type_sets.get(defined_type_ptr).kind {
             RuntimeTypeKind::Struct {
                 members,
                 source_hash: _,
             } => Some(members.clone()),
             RuntimeTypeKind::Unknown => None,
             _ => {
-                let defined_type_str = self.stringify_type_ptr(defined_type);
-
-                self.errors.push(FleetError::from_node(
-                    &expression_clone,
-                    format!("Cannot struct-initialize value of type {defined_type_str}",),
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::StructInitializeNonStruct {
+                    expression_range,
+                    wrong_type: PrefetchedType::fetch(defined_type_ptr, &self.type_sets),
+                });
 
                 None
             }
@@ -884,43 +904,50 @@ impl AstVisitor for TypePropagator<'_> {
             ),
         ) in members.iter_mut().enumerate()
         {
-            let this_type = self.visit_expression(value);
-            member_types.push((name.clone(), name_token.range.clone(), this_type));
+            let this_type_ptr = self.visit_expression(value);
+            member_types.push((name.clone(), name_token.range.clone(), this_type_ptr));
 
             // TODO: allow reordering
             if let Some(defined_members) = defined_members.as_ref()
-                && let Some((this_defined_name, _range, this_defined_type)) =
+                && let Some((this_defined_name, this_defined_range, this_defined_type_ptr)) =
                     defined_members.get(i).cloned()
             {
                 if *name != this_defined_name {
-                    self.errors.push(FleetError::from_node(
-                        &**value,
-                        format!(
-                            "Member {} has name {name:?}, but was expected \
-                            to have name {this_defined_type:?}.",
-                            i + 1
+                    self.errors.push(ErrorKind::StructMemberMismatch {
+                        member_index: i,
+                        expected: SymbolDefinition::new(
+                            this_defined_name.clone(),
+                            this_defined_range.clone(),
                         ),
-                        ErrorSeverity::Error,
-                    ));
+                        actual: UnresolvedSymbol::from_token(name.clone(), name_token),
+                    });
                 }
-                if !RuntimeTypeKind::merge_types(this_type, this_defined_type, &mut self.type_sets)
-                {
-                    let this_type_str = self.stringify_type_ptr(this_type);
-                    let this_defined_type_str = self.stringify_type_ptr(this_defined_type);
-
-                    self.errors.push(FleetError::from_node(
-                        &**value,
-                        format!(
-                            "Member {name:?} has type {this_type_str}, but was expected \
-                            to have type {this_defined_type_str}.",
-                        ),
-                        ErrorSeverity::Error,
-                    ));
+                if !RuntimeTypeKind::merge_types(
+                    this_type_ptr,
+                    this_defined_type_ptr,
+                    &mut self.type_sets,
+                ) {
+                    self.errors.push(ErrorKind::TypeMismatch {
+                        kind: TypeMismatchKind::StructMember {
+                            member_index: i,
+                            member: SymbolDefinition::new(
+                                this_defined_name.clone(),
+                                this_defined_range.clone(),
+                            )
+                            .with_use(name_token.range.clone()),
+                        },
+                        value_range: find_node_bounds(&**value),
+                        expected_types: vec![PrefetchedType::fetch(
+                            this_defined_type_ptr,
+                            &self.type_sets,
+                        )],
+                        actual_type: PrefetchedType::fetch(this_type_ptr, &self.type_sets),
+                    });
                 }
             }
         }
 
-        let constructed_type = self.type_sets.insert_set(RuntimeType {
+        let constructed_type_ptr = self.type_sets.insert_set(RuntimeType {
             kind: RuntimeTypeKind::Struct {
                 members: member_types,
                 source_hash: None,
@@ -928,43 +955,45 @@ impl AstVisitor for TypePropagator<'_> {
             definition_range: None,
         });
 
-        if !RuntimeTypeKind::merge_types(defined_type, constructed_type, &mut self.type_sets) {
-            let defined_type_str = self.stringify_type_ptr(defined_type);
-            let constructed_type = self.stringify_type_ptr(constructed_type);
-
-            self.errors.push(FleetError::from_node(
-                &expression_clone,
-                format!(
-                    "This struct initializer has type {defined_type_str}, but has fields \
-                        for type {constructed_type}.",
-                ),
-                ErrorSeverity::Error,
-            ));
+        if !RuntimeTypeKind::merge_types(
+            defined_type_ptr,
+            constructed_type_ptr,
+            &mut self.type_sets,
+        ) {
+            self.errors.push(ErrorKind::TypeMismatch {
+                kind: TypeMismatchKind::StructFields {
+                    type_expression: find_node_bounds(&*type_),
+                },
+                value_range: open_brace_token
+                    .range
+                    .clone()
+                    .extend_with(close_brace_token.range.clone()),
+                expected_types: vec![PrefetchedType::fetch(defined_type_ptr, &self.type_sets)],
+                actual_type: PrefetchedType::fetch(constructed_type_ptr, &self.type_sets),
+            });
         }
 
-        self.node_types.insert(*id, constructed_type);
-        constructed_type
+        self.node_types.insert(*id, constructed_type_ptr);
+        constructed_type_ptr
     }
 
     fn visit_function_call_expression(
         &mut self,
         expression: &mut FunctionCallExpression,
     ) -> Self::ExpressionOutput {
-        let expression_clone = expression.clone();
         let FunctionCallExpression {
             name,
-            name_token: _,
+            name_token,
             open_paren_token: _,
             arguments: _,
-            close_paren_token,
+            close_paren_token: _,
             id,
         } = expression;
         let Some(ref_function) = self.referenced_function.get(id).cloned() else {
-            self.errors.push(FleetError::from_node(
-                &expression_clone,
-                format!("No function named {name:?} is defined"),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::NotDefined {
+                kind: UniquelyNamed::Function,
+                item: UnresolvedSymbol::from_token(name.clone(), name_token),
+            });
 
             // still typecheck args, even though the function doesn't exist
             for (arg, _comma) in &mut expression.arguments {
@@ -977,12 +1006,8 @@ impl AstVisitor for TypePropagator<'_> {
             });
         };
 
-        let num_expected_arguments = ref_function
-            .borrow()
-            .parameter_types
-            .as_ref()
-            .unwrap()
-            .len();
+        let mut extra_parameters = Vec::new();
+        let mut missing_parameters = Vec::new();
 
         for (i, types) in expression
             .arguments
@@ -1001,60 +1026,96 @@ impl AstVisitor for TypePropagator<'_> {
             .enumerate()
         {
             match types {
-                EitherOrBoth::Both((arg_type, arg), param) => {
+                EitherOrBoth::Both((arg_type_ptr, arg), param) => {
                     // function arguments shouldn't get specialized by calling the function
-                    let param_type = param.borrow().type_.unwrap_or_else(|| {
+                    let param_type_ptr = param.borrow().type_.unwrap_or_else(|| {
                         self.type_sets.insert_set(RuntimeType {
                             kind: RuntimeTypeKind::Unknown,
                             definition_range: None,
                         })
                     });
-                    let param_type = self.type_sets.detach(param_type);
+                    let param_type_ptr = self.type_sets.detach(param_type_ptr);
 
-                    if !RuntimeTypeKind::merge_types(*arg_type, param_type, &mut self.type_sets) {
-                        let param_type_str = self.stringify_type_ptr(param_type);
-                        let arg_type_str = self.stringify_type_ptr(*arg_type);
-
-                        self.errors.push(FleetError::from_node(
-                            &**arg,
-                            format!(
-                                "{name:?} expects a value of type {} as argument {:?} (Nr. {}). Got {}",
-                                param_type_str,
-                                param.borrow().name,
-                                i + 1,
-                                arg_type_str,
-                            ),
-                            ErrorSeverity::Error,
-                        ));
+                    if !RuntimeTypeKind::merge_types(
+                        *arg_type_ptr,
+                        param_type_ptr,
+                        &mut self.type_sets,
+                    ) {
+                        self.errors.push(ErrorKind::TypeMismatch {
+                            kind: TypeMismatchKind::FunctionCallParameter {
+                                parameter_index: i,
+                                parameter: param.borrow().symbol.clone(),
+                            },
+                            value_range: find_node_bounds(&**arg),
+                            expected_types: vec![PrefetchedType::fetch(
+                                param_type_ptr,
+                                &self.type_sets,
+                            )],
+                            actual_type: PrefetchedType::fetch(*arg_type_ptr, &self.type_sets),
+                        });
                     }
                 }
-                EitherOrBoth::Left((_arg_type, arg)) => {
-                    self.errors.push(FleetError::from_node(
-                        &**arg,
-                        format!("{name:?} only has {num_expected_arguments} parameters"),
-                        ErrorSeverity::Error,
-                    ));
+                EitherOrBoth::Left((arg_type_ptr, arg)) => {
+                    extra_parameters.push(ExtraParameter {
+                        range: find_node_bounds(&**arg),
+                        type_: PrefetchedType::fetch(*arg_type_ptr, &self.type_sets),
+                    });
                 }
                 EitherOrBoth::Right(param) => {
-                    let param_type = param.borrow().type_.unwrap_or_else(|| {
+                    let param_type_ptr = param.borrow().type_.unwrap_or_else(|| {
                         self.type_sets.insert_set(RuntimeType {
                             kind: RuntimeTypeKind::Unknown,
                             definition_range: None,
                         })
                     });
-                    let param_type_str = self.stringify_type_ptr(param_type);
 
-                    self.errors.push(FleetError::from_token(
-                        close_paren_token,
-                        format!(
-                            "{name:?} is missing parameter {:?} (Nr. {}) of type {}",
-                            param.borrow().name,
-                            i + 1,
-                            param_type_str,
-                        ),
-                        ErrorSeverity::Error,
-                    ));
+                    missing_parameters.push(MissingParameter {
+                        name: param.borrow().symbol.name.clone(),
+                        name_range: Some(param.borrow().symbol.definition.clone()),
+                        type_: PrefetchedType::fetch(param_type_ptr, &self.type_sets),
+                    });
                 }
+            }
+        }
+
+        match (extra_parameters.is_empty(), missing_parameters.is_empty()) {
+            (true, true) => {}
+            (true, false) => {
+                let ref_function = ref_function.borrow();
+
+                self.errors
+                    .push(ErrorKind::FunctionCallWrongParameterCount {
+                        function: ref_function
+                            .symbol
+                            .clone()
+                            .with_use(name_token.range.clone()),
+                        difference: ParameterCountDifference::TooFewGiven(missing_parameters),
+                        defined_parameter_count: ref_function
+                            .parameter_types
+                            .as_ref()
+                            .unwrap()
+                            .len(),
+                    });
+            }
+            (false, true) => {
+                let ref_function = ref_function.borrow();
+
+                self.errors
+                    .push(ErrorKind::FunctionCallWrongParameterCount {
+                        function: ref_function
+                            .symbol
+                            .clone()
+                            .with_use(name_token.range.clone()),
+                        difference: ParameterCountDifference::TooManyGiven(extra_parameters),
+                        defined_parameter_count: ref_function
+                            .parameter_types
+                            .as_ref()
+                            .unwrap()
+                            .len(),
+                    });
+            }
+            (false, false) => {
+                unreachable!()
             }
         }
 
@@ -1071,14 +1132,13 @@ impl AstVisitor for TypePropagator<'_> {
         &mut self,
         expression: &mut CompilerExpression,
     ) -> Self::ExpressionOutput {
-        let expression_clone = expression.clone();
         let CompilerExpression {
             at_token: _,
             name,
-            name_token: _,
+            name_token,
             open_paren_token: _,
             arguments: _,
-            close_paren_token,
+            close_paren_token: _,
             id,
         } = expression;
         let (parameter_types, return_type): (
@@ -1151,11 +1211,9 @@ impl AstVisitor for TypePropagator<'_> {
                 (vec![(type_, "value".to_string())], type_)
             }
             _ => {
-                self.errors.push(FleetError::from_node(
-                    &expression_clone,
-                    format!("No compiler function named {name:?} exists"),
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::IntrinsicUnknown {
+                    intrinsic: UnresolvedSymbol::from_token(name.clone(), name_token),
+                });
 
                 // still typecheck args, even though the function doesn't exist
                 for (arg, _comma) in &mut expression.arguments {
@@ -1169,7 +1227,8 @@ impl AstVisitor for TypePropagator<'_> {
             }
         };
 
-        let num_expected_arguments = parameter_types.len();
+        let mut extra_parameters = Vec::new();
+        let mut missing_parameters = Vec::new();
 
         for (i, types) in expression
             .arguments
@@ -1181,43 +1240,62 @@ impl AstVisitor for TypePropagator<'_> {
             .enumerate()
         {
             match types {
-                EitherOrBoth::Both((arg_type, arg), (param_type, param_name)) => {
-                    if !RuntimeTypeKind::merge_types(arg_type, *param_type, &mut self.type_sets) {
-                        let param_type_str = self.stringify_type_ptr(*param_type);
-                        let arg_type_str = self.stringify_type_ptr(arg_type);
-
-                        self.errors.push(FleetError::from_node(
-                            arg,
-                            format!(
-                                "{name:?} expects a value of type {} as argument {param_name:?} (Nr. {}). Got {}",
-                                param_type_str,
-                                i + 1,
-                                arg_type_str,
-                            ),
-                            ErrorSeverity::Error,
-                        ));
+                EitherOrBoth::Both((arg_type_ptr, arg), (param_type_ptr, param_name)) => {
+                    if !RuntimeTypeKind::merge_types(
+                        arg_type_ptr,
+                        *param_type_ptr,
+                        &mut self.type_sets,
+                    ) {
+                        self.errors.push(ErrorKind::TypeMismatch {
+                            kind: TypeMismatchKind::IntrinsicCallParameter {
+                                parameter_index: i,
+                                parameter_name: param_name.clone(),
+                            },
+                            value_range: find_node_bounds(&*arg),
+                            expected_types: vec![PrefetchedType::fetch(
+                                *param_type_ptr,
+                                &self.type_sets,
+                            )],
+                            actual_type: PrefetchedType::fetch(arg_type_ptr, &self.type_sets),
+                        });
                     }
                 }
-                EitherOrBoth::Left((_arg_type, arg)) => {
-                    self.errors.push(FleetError::from_node(
-                        arg,
-                        format!("{name:?} only has {num_expected_arguments} parameters"),
-                        ErrorSeverity::Error,
-                    ));
+                EitherOrBoth::Left((arg_type_ptr, arg)) => {
+                    extra_parameters.push(ExtraParameter {
+                        range: find_node_bounds(&*arg),
+                        type_: PrefetchedType::fetch(arg_type_ptr, &self.type_sets),
+                    });
                 }
-                EitherOrBoth::Right((param_type, param_name)) => {
-                    let param_type_str = self.stringify_type_ptr(*param_type);
+                EitherOrBoth::Right((param_type_ptr, param_name)) => {
+                    missing_parameters.push(MissingParameter {
+                        name: param_name.clone(),
+                        name_range: None,
+                        type_: PrefetchedType::fetch(*param_type_ptr, &self.type_sets),
+                    });
+                }
+            }
+        }
 
-                    self.errors.push(FleetError::from_token(
-                        close_paren_token,
-                        format!(
-                            "{name:?} is missing parameter {param_name:?} (Nr. {}) of type {}",
-                            i + 1,
-                            param_type_str
-                        ),
-                        ErrorSeverity::Error,
-                    ));
-                }
+        match (extra_parameters.is_empty(), missing_parameters.is_empty()) {
+            (true, true) => {}
+            (true, false) => {
+                self.errors
+                    .push(ErrorKind::IntrinsicCallWrongParameterCount {
+                        intrinsic: UnresolvedSymbol::from_token(name.clone(), name_token),
+                        difference: ParameterCountDifference::TooFewGiven(missing_parameters),
+                        defined_parameter_count: parameter_types.len(),
+                    });
+            }
+            (false, true) => {
+                self.errors
+                    .push(ErrorKind::IntrinsicCallWrongParameterCount {
+                        intrinsic: UnresolvedSymbol::from_token(name.clone(), name_token),
+                        difference: ParameterCountDifference::TooManyGiven(extra_parameters),
+                        defined_parameter_count: parameter_types.len(),
+                    });
+            }
+            (false, false) => {
+                unreachable!()
             }
         }
 
@@ -1241,11 +1319,10 @@ impl AstVisitor for TypePropagator<'_> {
 
         let RuntimeTypeKind::ArrayOf { subtype, size: _ } = self.type_sets.get(array_type).kind
         else {
-            self.errors.push(FleetError::from_node(
-                &**array,
-                "Trying to index into non-array typed value",
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::ArrayIndexNonArray {
+                value: find_node_bounds(&**array),
+                wrong_type: PrefetchedType::fetch(array_type, &self.type_sets),
+            });
             let err_type = self.type_sets.insert_set(RuntimeType {
                 kind: RuntimeTypeKind::Error,
                 definition_range: None,
@@ -1254,24 +1331,23 @@ impl AstVisitor for TypePropagator<'_> {
             return err_type;
         };
 
-        if !RuntimeTypeKind::merge_types(
-            index_type,
-            self.type_sets.insert_set(RuntimeType {
-                kind: RuntimeTypeKind::Number {
-                    signed: Some(false),
-                    integer: Some(true),
-                },
-                definition_range: None,
-            }),
-            &mut self.type_sets,
-        ) {
-            let index_type_str = self.stringify_type_ptr(index_type);
+        let expected_index_type = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::Number {
+                signed: Some(false),
+                integer: Some(true),
+            },
+            definition_range: None,
+        });
 
-            self.errors.push(FleetError::from_node(
-                &**index,
-                format!("Cannot index into array using index of type {index_type_str}. Expected an unsigned integer"),
-                ErrorSeverity::Error,
-            ));
+        if !RuntimeTypeKind::merge_types(index_type, expected_index_type, &mut self.type_sets) {
+            self.errors.push(ErrorKind::TypeMismatch {
+                kind: TypeMismatchKind::ArrayIndex {
+                    array: find_node_bounds(&**array),
+                },
+                value_range: find_node_bounds(&**index),
+                expected_types: vec![PrefetchedType::fetch(expected_index_type, &self.type_sets)],
+                actual_type: PrefetchedType::fetch(index_type, &self.type_sets),
+            });
         }
 
         self.node_types.insert(*id, subtype);
@@ -1296,11 +1372,11 @@ impl AstVisitor for TypePropagator<'_> {
         } = &self.type_sets.get(value_type).kind
         else {
             if self.type_sets.get(value_type).kind != RuntimeTypeKind::Error {
-                self.errors.push(FleetError::from_node(
-                    &**value,
-                    "Trying to use struct access on non-struct typed value",
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::StructAccessNonStruct {
+                    value: find_node_bounds(&**value),
+                    wrong_type: PrefetchedType::fetch(value_type, &self.type_sets),
+                    member: UnresolvedSymbol::from_token(member_name.clone(), member_name_token),
+                });
             }
             let err_type = self.type_sets.insert_set(RuntimeType {
                 kind: RuntimeTypeKind::Error,
@@ -1315,11 +1391,11 @@ impl AstVisitor for TypePropagator<'_> {
         {
             *member_type
         } else {
-            self.errors.push(FleetError::from_token(
-                member_name_token,
-                format!("Struct doesn't have member named {member_name:?}"),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::NonexistentStructMember {
+                struct_type: PrefetchedType::fetch(value_type, &self.type_sets),
+                value: find_node_bounds(&**value),
+                member: UnresolvedSymbol::from_token(member_name.clone(), member_name_token),
+            });
 
             self.type_sets.insert_set(RuntimeType {
                 kind: RuntimeTypeKind::Error,
@@ -1349,10 +1425,9 @@ impl AstVisitor for TypePropagator<'_> {
         &mut self,
         expression: &mut VariableAccessExpression,
     ) -> Self::ExpressionOutput {
-        let expression_clone = expression.clone();
         let VariableAccessExpression {
             name: _,
-            name_token: _,
+            name_token,
             id,
         } = expression;
         let Some(ref_variable) = self.referenced_variable.get(id) else {
@@ -1362,11 +1437,13 @@ impl AstVisitor for TypePropagator<'_> {
             });
         };
         if self.require_constant && !ref_variable.borrow().is_constant {
-            self.errors.push(FleetError::from_node(
-                &expression_clone,
-                "Only constant variables can be used here. This one isn't.",
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::ConstantVariableRequired {
+                variable: ref_variable
+                    .borrow()
+                    .symbol
+                    .clone()
+                    .with_use(name_token.range.clone()),
+            });
         }
 
         let type_ = ref_variable.borrow().type_.unwrap();
@@ -1377,7 +1454,6 @@ impl AstVisitor for TypePropagator<'_> {
         &mut self,
         expression: &mut UnaryExpression,
     ) -> Self::ExpressionOutput {
-        let expression_clone = expression.clone();
         let UnaryExpression {
             operator_token: _,
             operation,
@@ -1387,63 +1463,50 @@ impl AstVisitor for TypePropagator<'_> {
 
         let type_ = self.visit_expression(operand);
 
-        let is_ok = match operation {
-            UnaryOperation::BitwiseNot => RuntimeTypeKind::merge_types(
-                type_,
+        let allowed_types = match operation {
+            UnaryOperation::BitwiseNot => vec![self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Number {
+                    signed: None,
+                    integer: Some(true),
+                },
+                definition_range: None,
+            })],
+            UnaryOperation::LogicalNot => vec![
                 self.type_sets.insert_set(RuntimeType {
                     kind: RuntimeTypeKind::Number {
                         signed: None,
-                        integer: Some(true),
-                    },
-                    definition_range: None,
-                }),
-                &mut self.type_sets,
-            ),
-            UnaryOperation::LogicalNot => {
-                RuntimeTypeKind::merge_types(
-                    type_,
-                    self.type_sets.insert_set(RuntimeType {
-                        kind: RuntimeTypeKind::Number {
-                            signed: None,
-                            integer: None,
-                        },
-                        definition_range: None,
-                    }),
-                    &mut self.type_sets,
-                ) || RuntimeTypeKind::merge_types(
-                    type_,
-                    self.type_sets.insert_set(RuntimeType {
-                        kind: RuntimeTypeKind::Boolean,
-                        definition_range: None,
-                    }),
-                    &mut self.type_sets,
-                )
-            }
-            UnaryOperation::Negate => RuntimeTypeKind::merge_types(
-                type_,
-                self.type_sets.insert_set(RuntimeType {
-                    kind: RuntimeTypeKind::Number {
-                        signed: Some(true),
                         integer: None,
                     },
                     definition_range: None,
                 }),
-                &mut self.type_sets,
-            ),
+                self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Boolean,
+                    definition_range: None,
+                }),
+            ],
+            UnaryOperation::Negate => vec![self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Number {
+                    signed: Some(true),
+                    integer: None,
+                },
+                definition_range: None,
+            })],
         };
 
+        let is_ok = allowed_types.iter().any(|expected_type| {
+            RuntimeTypeKind::merge_types(type_, *expected_type, &mut self.type_sets)
+        });
+
         if !is_ok {
-            let type_str = self.stringify_type_ptr(type_);
-            let (verb, expected) = match operation {
-                UnaryOperation::BitwiseNot => ("bitwise negate", "an integer"),
-                UnaryOperation::LogicalNot => ("logically negate", "a number or boolean"),
-                UnaryOperation::Negate => ("arithmetically negate", "a signed number"),
-            };
-            self.errors.push(FleetError::from_node(
-                &expression_clone,
-                format!("Cannot {verb} {type_str}. Expected {expected}."),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::TypeMismatch {
+                kind: TypeMismatchKind::UnaryOperation(*operation),
+                value_range: find_node_bounds(&**operand),
+                expected_types: allowed_types
+                    .iter()
+                    .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
+                    .collect(),
+                actual_type: PrefetchedType::fetch(type_, &self.type_sets),
+            });
         }
         let this_type = match operation {
             UnaryOperation::BitwiseNot => type_,
@@ -1480,8 +1543,8 @@ impl AstVisitor for TypePropagator<'_> {
             expression_clone: CastExpression,
             from_ptr: UnionFindSetPtr<RuntimeType>,
             to_ptr: UnionFindSetPtr<RuntimeType>,
-            self_errors: &mut Vec<FleetError>,
-            types: &mut UnionFindSet<RuntimeType>,
+            self_errors: &mut Vec<ErrorKind>,
+            types: &mut TypeSets,
         ) -> CastResult {
             let from_clone = types.get(from_ptr).kind.clone();
             let to_clone = types.get(to_ptr).kind.clone();
@@ -1500,14 +1563,10 @@ impl AstVisitor for TypePropagator<'_> {
                 | (T::F64, T::F64)
                 | (T::Boolean, T::Boolean)
                 | (T::Unit, T::Unit) => {
-                    self_errors.push(FleetError::from_node(
-                        &expression_clone,
-                        format!(
-                            "Casting {} to itself is redundant",
-                            from_clone.stringify(types)
-                        ),
-                        ErrorSeverity::Warning,
-                    ));
+                    self_errors.push(ErrorKind::Lint(Lint::SelfCast {
+                        expression: find_node_bounds(&expression_clone),
+                        type_: PrefetchedType::fetch(from_ptr, types),
+                    }));
                     CastResult::Redundant
                 }
                 (
@@ -1567,12 +1626,26 @@ impl AstVisitor for TypePropagator<'_> {
                     | T::F64,
                 ) => CastResult::Possible,
 
-                (_, T::Unit) | (T::Unit, _) => {
-                    self_errors.push(FleetError::from_node(
-                        &expression_clone,
-                        "Cannot cast to or from Unit".to_string(),
-                        ErrorSeverity::Error,
-                    ));
+                (_, T::Unit) => {
+                    self_errors.push(ErrorKind::ImpossibleCast {
+                        reason: ImpossibleCastReason::InvolvesUnit {
+                            direction: CastDirection::To,
+                        },
+                        expression: find_node_bounds(&expression_clone),
+                        from: PrefetchedType::fetch(from_ptr, types),
+                        to: PrefetchedType::fetch(to_ptr, types),
+                    });
+                    CastResult::Impossible
+                }
+                (T::Unit, _) => {
+                    self_errors.push(ErrorKind::ImpossibleCast {
+                        reason: ImpossibleCastReason::InvolvesUnit {
+                            direction: CastDirection::From,
+                        },
+                        expression: find_node_bounds(&expression_clone),
+                        from: PrefetchedType::fetch(from_ptr, types),
+                        to: PrefetchedType::fetch(to_ptr, types),
+                    });
                     CastResult::Impossible
                 }
                 (
@@ -1596,56 +1669,31 @@ impl AstVisitor for TypePropagator<'_> {
                     match res {
                         CastResult::Possible => CastResult::Possible,
                         CastResult::Redundant => {
-                            self_errors.push(FleetError::from_node(
-                                &expression_clone,
-                                format!(
-                                    "Casting array of type {} to array of type {} is \
-                                    redundant because the element types are equal",
-                                    from_clone.stringify(types),
-                                    to_clone.stringify(types)
-                                ),
-                                ErrorSeverity::Warning,
-                            ));
+                            self_errors.push(ErrorKind::Lint(Lint::SelfCast {
+                                expression: find_node_bounds(&expression_clone),
+                                type_: PrefetchedType::fetch(from_ptr, types),
+                            }));
                             CastResult::Redundant
                         }
                         CastResult::Impossible => {
-                            self_errors.push(FleetError::from_node(
-                                &expression_clone,
-                                format!(
-                                    "Casting array of type {} to array of type {} is \
-                                    impossible because the element types can't be cast",
-                                    from_clone.stringify(types),
-                                    to_clone.stringify(types)
-                                ),
-                                ErrorSeverity::Error,
-                            ));
+                            self_errors.push(ErrorKind::ImpossibleCast {
+                                reason: ImpossibleCastReason::ArrayElementsIncompatible,
+                                expression: find_node_bounds(&expression_clone),
+                                from: PrefetchedType::fetch(from_ptr, types),
+                                to: PrefetchedType::fetch(to_ptr, types),
+                            });
                             CastResult::Impossible
                         }
                     }
                 }
-                (
-                    T::ArrayOf {
-                        subtype: _,
-                        size: a_size,
-                    },
-                    T::ArrayOf {
-                        subtype: _,
-                        size: b_size,
-                    },
-                ) => {
-                    self_errors.push(FleetError::from_node(
-                        &expression_clone,
-                        format!(
-                            "Casting array with length {} to length {} is impossible",
-                            a_size
-                                .map(|x| x.to_string())
-                                .unwrap_or("{unknown}".to_string()),
-                            b_size
-                                .map(|x| x.to_string())
-                                .unwrap_or("{unknown}".to_string())
-                        ),
-                        ErrorSeverity::Error,
-                    ));
+                (T::ArrayOf { .. }, T::ArrayOf { .. }) => {
+                    // equal sizes are already handled above
+                    self_errors.push(ErrorKind::ImpossibleCast {
+                        reason: ImpossibleCastReason::ArrayLengthIncompatible,
+                        expression: find_node_bounds(&expression_clone),
+                        from: PrefetchedType::fetch(from_ptr, types),
+                        to: PrefetchedType::fetch(to_ptr, types),
+                    });
                     CastResult::Impossible
                 }
                 (
@@ -1655,15 +1703,14 @@ impl AstVisitor for TypePropagator<'_> {
                         size: _,
                     },
                 ) => {
-                    self_errors.push(FleetError::from_node(
-                        &expression_clone,
-                        format!(
-                            "Casting non-array of type {} to array of type {} is impossible",
-                            from_clone.stringify(types),
-                            to_clone.stringify(types)
-                        ),
-                        ErrorSeverity::Error,
-                    ));
+                    self_errors.push(ErrorKind::ImpossibleCast {
+                        reason: ImpossibleCastReason::ArrayAndNonArray {
+                            direction: CastDirection::To,
+                        },
+                        expression: find_node_bounds(&expression_clone),
+                        from: PrefetchedType::fetch(from_ptr, types),
+                        to: PrefetchedType::fetch(to_ptr, types),
+                    });
                     CastResult::Impossible
                 }
                 (
@@ -1673,15 +1720,14 @@ impl AstVisitor for TypePropagator<'_> {
                     },
                     _,
                 ) => {
-                    self_errors.push(FleetError::from_node(
-                        &expression_clone,
-                        format!(
-                            "Casting array of type {} to non-array of type {} is impossible",
-                            from_clone.stringify(types),
-                            to_clone.stringify(types)
-                        ),
-                        ErrorSeverity::Error,
-                    ));
+                    self_errors.push(ErrorKind::ImpossibleCast {
+                        reason: ImpossibleCastReason::ArrayAndNonArray {
+                            direction: CastDirection::From,
+                        },
+                        expression: find_node_bounds(&expression_clone),
+                        from: PrefetchedType::fetch(from_ptr, types),
+                        to: PrefetchedType::fetch(to_ptr, types),
+                    });
                     CastResult::Impossible
                 }
                 (
@@ -1699,14 +1745,10 @@ impl AstVisitor for TypePropagator<'_> {
 
                     match (hash_equal, members_equal) {
                         (true, true) => {
-                            self_errors.push(FleetError::from_node(
-                                &expression_clone,
-                                format!(
-                                    "Casting struct of type {} to itself is redundant",
-                                    from_clone.stringify(types),
-                                ),
-                                ErrorSeverity::Warning,
-                            ));
+                            self_errors.push(ErrorKind::Lint(Lint::SelfCast {
+                                expression: find_node_bounds(&expression_clone),
+                                type_: PrefetchedType::fetch(from_ptr, types),
+                            }));
                             CastResult::Redundant
                         }
                         (true, false) => {
@@ -1715,28 +1757,22 @@ impl AstVisitor for TypePropagator<'_> {
                             )
                         }
                         (false, true) => {
-                            self_errors.push(FleetError::from_node(
-                            &expression_clone,
-                            format!(
-                                "Casting between structs with equal members that stem from different places is forbidden.\n\
-                                From {} (source_hash: {a_hash:x?}) to {} (source_hash: {b_hash:x?})",
-                                from_clone.stringify(types),
-                                to_clone.stringify(types),
-                            ),
-                            ErrorSeverity::Error,
-                        ));
+                            self_errors.push(ErrorKind::ImpossibleCast {
+                                reason: ImpossibleCastReason::DifferentStructOrigin,
+                                expression: find_node_bounds(&expression_clone),
+                                from: PrefetchedType::fetch(from_ptr, types),
+                                to: PrefetchedType::fetch(to_ptr, types),
+                            });
+
                             CastResult::Impossible
                         }
                         (false, false) => {
-                            self_errors.push(FleetError::from_node(
-                                &expression_clone,
-                                format!(
-                                    "Cannot cast between unrelated structs {} and {}",
-                                    from_clone.stringify(types),
-                                    to_clone.stringify(types),
-                                ),
-                                ErrorSeverity::Error,
-                            ));
+                            self_errors.push(ErrorKind::ImpossibleCast {
+                                reason: ImpossibleCastReason::StructMembersDiffer,
+                                expression: find_node_bounds(&expression_clone),
+                                from: PrefetchedType::fetch(from_ptr, types),
+                                to: PrefetchedType::fetch(to_ptr, types),
+                            });
                             CastResult::Impossible
                         }
                     }
@@ -1747,61 +1783,46 @@ impl AstVisitor for TypePropagator<'_> {
                         source_hash: _,
                     },
                     _,
-                )
-                | (
+                ) => {
+                    self_errors.push(ErrorKind::ImpossibleCast {
+                        reason: ImpossibleCastReason::StructAndNonStruct {
+                            direction: CastDirection::From,
+                        },
+                        expression: find_node_bounds(&expression_clone),
+                        from: PrefetchedType::fetch(from_ptr, types),
+                        to: PrefetchedType::fetch(to_ptr, types),
+                    });
+
+                    CastResult::Impossible
+                }
+                (
                     _,
                     T::Struct {
                         members: _,
                         source_hash: _,
                     },
                 ) => {
-                    self_errors.push(FleetError::from_node(
-                        &expression_clone,
-                        format!(
-                            "Cannot cast from or to struct type: trying to cast from {} to {}",
-                            from_clone.stringify(types),
-                            to_clone.stringify(types),
-                        ),
-                        ErrorSeverity::Error,
-                    ));
+                    self_errors.push(ErrorKind::ImpossibleCast {
+                        reason: ImpossibleCastReason::StructAndNonStruct {
+                            direction: CastDirection::To,
+                        },
+                        expression: find_node_bounds(&expression_clone),
+                        from: PrefetchedType::fetch(from_ptr, types),
+                        to: PrefetchedType::fetch(to_ptr, types),
+                    });
+
                     CastResult::Impossible
                 }
                 (T::Unknown, T::Unknown) => {
-                    if !RuntimeTypeKind::merge_types(from_ptr, to_ptr, types) {
-                        self_errors.push(FleetError::from_node(
-                            &expression_clone,
-                            format!(
-                                "Casting value of type {} to value of type {} is impossible",
-                                from_clone.stringify(types),
-                                to_clone.stringify(types)
-                            ),
-                            ErrorSeverity::Error,
-                        ));
-                    }
-                    self_errors.push(FleetError::from_node(
-                        &expression_clone,
-                        format!(
-                            "Casting value of type {} to value of type {} is redundant",
-                            from_clone.stringify(types),
-                            to_clone.stringify(types)
-                        ),
-                        ErrorSeverity::Warning,
-                    ));
+                    assert!(RuntimeTypeKind::merge_types(from_ptr, to_ptr, types));
+                    self_errors.push(ErrorKind::Lint(Lint::SelfCast {
+                        expression: find_node_bounds(&expression_clone),
+                        type_: PrefetchedType::fetch(from_ptr, types),
+                    }));
                     CastResult::Possible
                 }
-                (_, T::Unknown) => CastResult::Possible,
-                (T::Unknown, _) => {
-                    if !RuntimeTypeKind::merge_types(from_ptr, to_ptr, types) {
-                        self_errors.push(FleetError::from_node(
-                            &expression_clone,
-                            format!(
-                                "Casting value of type {} to value of type {} is impossible",
-                                from_clone.stringify(types),
-                                to_clone.stringify(types)
-                            ),
-                            ErrorSeverity::Error,
-                        ));
-                    }
+                (_, T::Unknown) | (T::Unknown, _) => {
+                    assert!(RuntimeTypeKind::merge_types(from_ptr, to_ptr, types));
                     CastResult::Possible
                 }
             }
@@ -1833,7 +1854,7 @@ impl AstVisitor for TypePropagator<'_> {
         let left_type = self.visit_expression(left);
         let right_type = self.visit_expression(right);
 
-        let is_left_ok = match operation {
+        let allowed_types_left = match operation {
             BinaryOperation::Add
             | BinaryOperation::Subtract
             | BinaryOperation::Multiply
@@ -1842,20 +1863,15 @@ impl AstVisitor for TypePropagator<'_> {
             | BinaryOperation::GreaterThan
             | BinaryOperation::GreaterThanOrEqual
             | BinaryOperation::LessThan
-            | BinaryOperation::LessThanOrEqual => RuntimeTypeKind::merge_types(
-                left_type,
-                self.type_sets.insert_set(RuntimeType {
-                    kind: RuntimeTypeKind::Number {
-                        signed: None,
-                        integer: None,
-                    },
-                    definition_range: None,
-                }),
-                &mut self.type_sets,
-            ),
+            | BinaryOperation::LessThanOrEqual => vec![self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Number {
+                    signed: None,
+                    integer: None,
+                },
+                definition_range: None,
+            })],
             BinaryOperation::Equal | BinaryOperation::NotEqual => {
-                RuntimeTypeKind::merge_types(
-                    left_type,
+                vec![
                     self.type_sets.insert_set(RuntimeType {
                         kind: RuntimeTypeKind::Number {
                             signed: None,
@@ -1863,135 +1879,72 @@ impl AstVisitor for TypePropagator<'_> {
                         },
                         definition_range: None,
                     }),
-                    &mut self.type_sets,
-                ) || RuntimeTypeKind::merge_types(
-                    left_type,
                     self.type_sets.insert_set(RuntimeType {
                         kind: RuntimeTypeKind::Boolean,
                         definition_range: None,
                     }),
-                    &mut self.type_sets,
-                )
+                ]
             }
 
             BinaryOperation::LogicalAnd | BinaryOperation::LogicalOr => {
-                RuntimeTypeKind::merge_types(
-                    left_type,
-                    self.type_sets.insert_set(RuntimeType {
-                        kind: RuntimeTypeKind::Boolean,
-                        definition_range: None,
-                    }),
-                    &mut self.type_sets,
-                )
-            }
-        };
-
-        let is_right_ok = match operation {
-            BinaryOperation::Add
-            | BinaryOperation::Subtract
-            | BinaryOperation::Multiply
-            | BinaryOperation::Divide
-            | BinaryOperation::Modulo
-            | BinaryOperation::GreaterThan
-            | BinaryOperation::GreaterThanOrEqual
-            | BinaryOperation::LessThan
-            | BinaryOperation::LessThanOrEqual => RuntimeTypeKind::merge_types(
-                right_type,
-                self.type_sets.insert_set(RuntimeType {
-                    kind: RuntimeTypeKind::Number {
-                        signed: None,
-                        integer: None,
-                    },
+                vec![self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Boolean,
                     definition_range: None,
-                }),
-                &mut self.type_sets,
-            ),
-            BinaryOperation::Equal | BinaryOperation::NotEqual => {
-                RuntimeTypeKind::merge_types(
-                    right_type,
-                    self.type_sets.insert_set(RuntimeType {
-                        kind: RuntimeTypeKind::Number {
-                            signed: None,
-                            integer: None,
-                        },
-                        definition_range: None,
-                    }),
-                    &mut self.type_sets,
-                ) || RuntimeTypeKind::merge_types(
-                    right_type,
-                    self.type_sets.insert_set(RuntimeType {
-                        kind: RuntimeTypeKind::Boolean,
-                        definition_range: None,
-                    }),
-                    &mut self.type_sets,
-                )
-            }
-
-            BinaryOperation::LogicalAnd | BinaryOperation::LogicalOr => {
-                RuntimeTypeKind::merge_types(
-                    right_type,
-                    self.type_sets.insert_set(RuntimeType {
-                        kind: RuntimeTypeKind::Boolean,
-                        definition_range: None,
-                    }),
-                    &mut self.type_sets,
-                )
+                })]
             }
         };
+        let allowed_types_right = allowed_types_left.clone();
+
+        let is_left_ok = allowed_types_left.iter().any(|expected_type| {
+            RuntimeTypeKind::merge_types(left_type, *expected_type, &mut self.type_sets)
+        });
+        let is_right_ok = allowed_types_right.iter().any(|expected_type| {
+            RuntimeTypeKind::merge_types(right_type, *expected_type, &mut self.type_sets)
+        });
 
         if !RuntimeTypeKind::merge_types(left_type, right_type, &mut self.type_sets)
             || !is_left_ok
             || !is_right_ok
         {
-            let (verb, l_expected, preposition, r_expected) = match operation {
-                BinaryOperation::Add => ("add", "number", "to", "number"),
-                BinaryOperation::Subtract => ("subtract", "number", "from", "number"),
-                BinaryOperation::Multiply => ("multiply", "number", "by", "number"),
-                BinaryOperation::Divide => ("divide", "number", "by", "number"),
-                BinaryOperation::Modulo => ("modulo", "number", "by", "number"),
-                BinaryOperation::GreaterThan => ("compare", "number", ">", "number"),
-                BinaryOperation::GreaterThanOrEqual => ("compare", "number", ">=", "number"),
-                BinaryOperation::LessThan => ("compare", "number", "<", "number"),
-                BinaryOperation::LessThanOrEqual => ("compare", "number", "<=", "number"),
-                BinaryOperation::Equal => {
-                    ("compare", "number or boolean", "==", "number or boolean")
-                }
-                BinaryOperation::NotEqual => {
-                    ("compare", "number or boolean", "!=", "number or boolean")
-                }
-                BinaryOperation::LogicalAnd => ("logically AND", "boolean", "with", "boolean"),
-                BinaryOperation::LogicalOr => ("logically OR", "boolean", "with", "boolean"),
-            };
             if !is_left_ok {
-                let left_type_str = self.stringify_type_ptr(left_type);
-
-                self.errors.push(FleetError::from_node(
-                    &**left,
-                    format!("Cannot {verb} {left_type_str}. Expected {l_expected}."),
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::TypeMismatch {
+                    kind: TypeMismatchKind::BinaryOperationLeft(*operation),
+                    value_range: find_node_bounds(&**left),
+                    expected_types: allowed_types_left
+                        .iter()
+                        .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
+                        .collect(),
+                    actual_type: PrefetchedType::fetch(left_type, &self.type_sets),
+                });
             }
             if !is_right_ok {
-                let right_type_str = self.stringify_type_ptr(right_type);
-
-                self.errors.push(FleetError::from_node(
-                    &**right,
-                    format!("Cannot {verb} {preposition} {right_type_str}. Expected {r_expected}."),
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::TypeMismatch {
+                    kind: TypeMismatchKind::BinaryOperationRight(*operation),
+                    value_range: find_node_bounds(&**right),
+                    expected_types: allowed_types_right
+                        .iter()
+                        .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
+                        .collect(),
+                    actual_type: PrefetchedType::fetch(right_type, &self.type_sets),
+                });
             }
             if is_left_ok && is_right_ok && left_type != right_type {
-                let left_type_str = self.stringify_type_ptr(left_type);
-                let right_type_str = self.stringify_type_ptr(right_type);
-
-                self.errors.push(FleetError::from_node(
-                    &expression_clone,
-                    format!(
-                        "Cannot {verb} {left_type_str} {preposition} {right_type_str}. \
-                        Expected {l_expected} and {r_expected}."
-                    ),
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::TypeMismatch {
+                    kind: TypeMismatchKind::BinaryOperation {
+                        operation: *operation,
+                        right_expected_types: allowed_types_right
+                            .iter()
+                            .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
+                            .collect(),
+                        right_actual_type: PrefetchedType::fetch(right_type, &self.type_sets),
+                    },
+                    value_range: find_node_bounds(&expression_clone),
+                    expected_types: allowed_types_left
+                        .iter()
+                        .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
+                        .collect(),
+                    actual_type: PrefetchedType::fetch(left_type, &self.type_sets),
+                });
             }
 
             let this_type = self.type_sets.insert_set(RuntimeType {
@@ -2028,7 +1981,6 @@ impl AstVisitor for TypePropagator<'_> {
         &mut self,
         expression: &mut VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
-        let expression_clone = expression.clone();
         let VariableAssignmentExpression {
             lvalue,
             equal_token: _,
@@ -2039,16 +1991,14 @@ impl AstVisitor for TypePropagator<'_> {
         let right_type = self.visit_expression(right);
 
         if !RuntimeTypeKind::merge_types(left_type, right_type, &mut self.type_sets) {
-            let right_type_str = self.stringify_type_ptr(right_type);
-            let left_type_str = self.stringify_type_ptr(left_type);
-
-            self.errors.push(FleetError::from_node(
-                &expression_clone,
-                format!(
-                    "Cannot assign value of type {right_type_str} to lvalue of type {left_type_str}",
-                ),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::TypeMismatch {
+                kind: TypeMismatchKind::LValueAssignment {
+                    lvalue: find_node_bounds(&*lvalue),
+                },
+                value_range: find_node_bounds(&**right),
+                expected_types: vec![PrefetchedType::fetch(left_type, &self.type_sets)],
+                actual_type: PrefetchedType::fetch(right_type, &self.type_sets),
+            });
         }
 
         self.node_types.insert(*id, left_type);
@@ -2056,10 +2006,9 @@ impl AstVisitor for TypePropagator<'_> {
     }
 
     fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
-        let lvalue_clone = lvalue.clone();
         let VariableLValue {
-            name,
-            name_token: _,
+            name: _,
+            name_token,
             id,
         } = lvalue;
         let Some(ref_variable) = self.referenced_variable.get(id) else {
@@ -2069,11 +2018,13 @@ impl AstVisitor for TypePropagator<'_> {
             });
         };
         if ref_variable.borrow().is_constant {
-            self.errors.push(FleetError::from_node(
-                &lvalue_clone,
-                format!("Variable {name:?} is constant and can't be used as an lvalue"),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::ConstantVariableAsLValue {
+                variable: ref_variable
+                    .borrow()
+                    .symbol
+                    .clone()
+                    .with_use(name_token.range.clone()),
+            });
         }
 
         let type_ = ref_variable.borrow().type_.unwrap();
@@ -2082,7 +2033,6 @@ impl AstVisitor for TypePropagator<'_> {
     }
 
     fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
-        let _lvalue_clone = lvalue.clone();
         let ArrayIndexLValue {
             array,
             open_bracket_token: _,
@@ -2096,11 +2046,10 @@ impl AstVisitor for TypePropagator<'_> {
 
         let RuntimeTypeKind::ArrayOf { subtype, size: _ } = self.type_sets.get(array_type).kind
         else {
-            self.errors.push(FleetError::from_node(
-                &**array,
-                "Trying to index into non-array typed value",
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::ArrayIndexNonArray {
+                value: find_node_bounds(&**array),
+                wrong_type: PrefetchedType::fetch(array_type, &self.type_sets),
+            });
             let err_type = self.type_sets.insert_set(RuntimeType {
                 kind: RuntimeTypeKind::Error,
                 definition_range: None,
@@ -2109,24 +2058,23 @@ impl AstVisitor for TypePropagator<'_> {
             return err_type;
         };
 
-        if !RuntimeTypeKind::merge_types(
-            index_type,
-            self.type_sets.insert_set(RuntimeType {
-                kind: RuntimeTypeKind::Number {
-                    signed: Some(false),
-                    integer: Some(true),
-                },
-                definition_range: None,
-            }),
-            &mut self.type_sets,
-        ) {
-            let index_type_str = self.stringify_type_ptr(index_type);
+        let expected_type = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::Number {
+                signed: Some(false),
+                integer: Some(true),
+            },
+            definition_range: None,
+        });
 
-            self.errors.push(FleetError::from_node(
-                &**index,
-                format!("Cannot index into array using index of type {index_type_str}. Expected an unsigned integer"),
-                ErrorSeverity::Error,
-            ));
+        if !RuntimeTypeKind::merge_types(index_type, expected_type, &mut self.type_sets) {
+            self.errors.push(ErrorKind::TypeMismatch {
+                kind: TypeMismatchKind::ArrayIndex {
+                    array: find_node_bounds(&**array),
+                },
+                value_range: find_node_bounds(&**index),
+                expected_types: vec![PrefetchedType::fetch(expected_type, &self.type_sets)],
+                actual_type: PrefetchedType::fetch(index_type, &self.type_sets),
+            });
         }
 
         self.node_types.insert(*id, subtype);
@@ -2151,11 +2099,11 @@ impl AstVisitor for TypePropagator<'_> {
         } = &self.type_sets.get(value_type).kind
         else {
             if self.type_sets.get(value_type).kind != RuntimeTypeKind::Error {
-                self.errors.push(FleetError::from_node(
-                    &**value,
-                    "Trying to use struct access on non-struct typed value",
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::StructAccessNonStruct {
+                    value: find_node_bounds(&**value),
+                    wrong_type: PrefetchedType::fetch(value_type, &self.type_sets),
+                    member: UnresolvedSymbol::from_token(member_name.clone(), member_name_token),
+                });
             }
             let err_type = self.type_sets.insert_set(RuntimeType {
                 kind: RuntimeTypeKind::Error,
@@ -2170,11 +2118,11 @@ impl AstVisitor for TypePropagator<'_> {
         {
             *member_type
         } else {
-            self.errors.push(FleetError::from_token(
-                member_name_token,
-                format!("Struct doesn't have member named {member_name:?}"),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::NonexistentStructMember {
+                struct_type: PrefetchedType::fetch(value_type, &self.type_sets),
+                value: find_node_bounds(&**value),
+                member: UnresolvedSymbol::from_token(member_name.clone(), member_name_token),
+            });
 
             self.type_sets.insert_set(RuntimeType {
                 kind: RuntimeTypeKind::Error,
@@ -2255,41 +2203,40 @@ impl AstVisitor for TypePropagator<'_> {
         t
     }
 
-    fn visit_array_type(
-        &mut self,
-        ArrayType {
+    fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
+        let array_type_range = find_node_bounds(&*array_type);
+        let ArrayType {
             subtype,
             open_bracket_token,
             size,
             close_bracket_token,
             id,
-        }: &mut ArrayType,
-    ) -> Self::TypeOutput {
+        } = array_type;
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
         }
         let subtype_t = self.visit_type(subtype);
 
         if matches!(self.type_sets.get(subtype_t).kind, RuntimeTypeKind::Unit) {
-            self.errors.push(FleetError::from_node(
-                &**subtype,
-                "Cannot have array of Unit".to_string(),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::ArrayOfUnit {
+                local_expr: array_type_range.clone(),
+                element_type: PrefetchedType::fetch(subtype_t, &self.type_sets),
+            });
         }
+
         let size = match size.as_ref().map(|boxed_x| &**boxed_x) {
             Some(Expression::Literal(LiteralExpression {
                 value: LiteralKind::Number(value),
                 token: _,
                 id: _,
             })) => Some(*value as usize),
-            Some(_) => {
+            Some(expr) => {
                 // TODO: once we have consteval, relax this restriction
-                self.errors.push(FleetError::from_node(
-                    &**subtype,
-                    "Arrays can only have integer literals as a size for now".to_string(),
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::NonLiteralArrayLength {
+                    local_expr: array_type_range.clone(),
+                    element_type: PrefetchedType::fetch(subtype_t, &self.type_sets),
+                    length_range: find_node_bounds(expr),
+                });
                 None
             }
             None => None,
@@ -2337,12 +2284,12 @@ impl AstVisitor for TypePropagator<'_> {
         {
             let subtype = self.visit_type(type_);
 
-            if matches!(self.type_sets.get(subtype).kind, RuntimeTypeKind::Unit) {
-                self.errors.push(FleetError::from_node(
-                    type_,
-                    "Structs cannot contain Unit".to_string(),
-                    ErrorSeverity::Error,
-                ));
+            if self.type_sets.get(subtype).kind == RuntimeTypeKind::Unit {
+                self.errors.push(ErrorKind::StructOfUnit {
+                    member: SymbolDefinition::from_token(name.clone(), name_token),
+                    type_: PrefetchedType::fetch(subtype, &self.type_sets),
+                    type_range: find_node_bounds(&*type_),
+                });
             }
 
             rt_members.push((name.clone(), name_token.range.clone(), subtype));
@@ -2368,19 +2315,17 @@ impl AstVisitor for TypePropagator<'_> {
     }
 
     fn visit_alias_type(&mut self, alias_type: &mut AliasType) -> Self::TypeOutput {
-        let alias_type_clone = alias_type.clone();
         let AliasType {
             name,
             name_token,
             id,
         } = alias_type;
 
-        let Some(aliased_type) = self.type_aliases.get(name) else {
-            self.errors.push(FleetError::from_node(
-                &alias_type_clone,
-                format!("No type alias {name:?} defined"),
-                ErrorSeverity::Error,
-            ));
+        let Some((_definition_range, aliased_type)) = self.type_aliases.get(name) else {
+            self.errors.push(ErrorKind::NotDefined {
+                kind: UniquelyNamed::TypeAlias,
+                item: UnresolvedSymbol::from_token(name.clone(), name_token),
+            });
 
             let type_ = self.type_sets.insert_set(RuntimeType {
                 kind: RuntimeTypeKind::Error,

@@ -6,7 +6,7 @@ use log::{error, info};
 use crate::{
     NewtypeDeref,
     escape::{QuoteType, unescape},
-    infra::{ErrorSeverity, FleetError},
+    infra::ErrorKind,
     passes::pass_manager::{Errors, GlobalState, InputSource, Pass, PassFactory, PassResult},
 };
 
@@ -650,8 +650,9 @@ impl<'errors> Tokenizer<'errors> {
                         }
                         Some('*') => {
                             let start_location = self.current_location;
-                            self.advance();
-                            self.advance();
+                            self.advance(); // /
+                            let start_marker_range = start_location.until(self.current_location);
+                            self.advance(); // *
                             let content_start_location = self.current_location;
 
                             while self.current_location.index + 1 < self.chars.len()
@@ -664,13 +665,9 @@ impl<'errors> Tokenizer<'errors> {
                             let content_end_location = self.current_location;
 
                             if self.current_location.index + 1 >= self.chars.len() {
-                                self.errors.push(FleetError::from_range(
-                                    start_location
-                                        .until(content_end_location)
-                                        .named(self.file_name.clone()),
-                                    "Unclosed block comment".to_string(),
-                                    ErrorSeverity::Error,
-                                ));
+                                self.errors.push(ErrorKind::UnclosedBlockComment {
+                                    start_token: start_marker_range.named(self.file_name.clone()),
+                                });
                             } else {
                                 self.advance(); // *
                                 self.advance(); // /
@@ -798,13 +795,12 @@ impl<'errors> Tokenizer<'errors> {
                         type_: if is_float {
                             TokenType::Float(
                                 lexeme.parse().unwrap_or_else(|_| {
-                                    self.errors.push(FleetError::from_range(
-                                        start_location
+                                    self.errors.push(ErrorKind::InvalidFloatLexeme {
+                                        range: start_location
                                             .until(self.current_location)
                                             .named(self.file_name.clone()),
-                                        format!("Unable to parse {lexeme:?} as a float"),
-                                        ErrorSeverity::Error,
-                                    ));
+                                        lexeme: lexeme.to_string(),
+                                    });
 
                                     0.0
                                 }),
@@ -813,13 +809,12 @@ impl<'errors> Tokenizer<'errors> {
                         } else {
                             TokenType::Integer(
                                 lexeme.parse().unwrap_or_else(|_| {
-                                    self.errors.push(FleetError::from_range(
-                                        start_location
+                                    self.errors.push(ErrorKind::InvalidIntLexeme {
+                                        range: start_location
                                             .until(self.current_location)
                                             .named(self.file_name.clone()),
-                                        format!("Unable to parse {lexeme:?} as a float"),
-                                        ErrorSeverity::Error,
-                                    ));
+                                        lexeme: lexeme.to_string(),
+                                    });
                                     0
                                 }),
                                 lexeme.clone(),
@@ -849,6 +844,8 @@ impl<'errors> Tokenizer<'errors> {
                     }
                     self.advance(); // "
 
+                    let string_range = start_location.until(self.current_location);
+
                     let raw_lexeme = self.chars
                         [start_location.index + 1..self.current_location.index - 1]
                         .iter()
@@ -864,12 +861,15 @@ impl<'errors> Tokenizer<'errors> {
                     for esc_error_offset in unknown_escape_sequences {
                         let start = range.start.offset(esc_error_offset + 1, &self.chars);
                         let end = start.offset(2, &self.chars);
-                        self.errors.push(FleetError::from_range(
-                            start.until(end).named(self.file_name.clone()),
-                            "Unknown escape sequence ".to_string()
-                                + &raw_lexeme.chars().skip(esc_error_offset).take(2).join(""),
-                            ErrorSeverity::Error,
-                        ));
+                        self.errors.push(ErrorKind::InvalidEscapeSequence {
+                            string_range: string_range.named(self.file_name.clone()),
+                            escape_range: start.until(end).named(self.file_name.clone()),
+                            escape_sequence: raw_lexeme
+                                .chars()
+                                .skip(esc_error_offset)
+                                .take(2)
+                                .join(""),
+                        });
                     }
 
                     self.tokens.push(Token {
@@ -899,6 +899,8 @@ impl<'errors> Tokenizer<'errors> {
                     }
                     self.advance(); // '
 
+                    let string_range = start_location.until(self.current_location);
+
                     let raw_lexeme = self.chars
                         [start_location.index + 1..self.current_location.index - 1]
                         .iter()
@@ -914,20 +916,22 @@ impl<'errors> Tokenizer<'errors> {
                     for esc_error_offset in unknown_escape_sequences {
                         let start = range.start.offset(esc_error_offset + 1, &self.chars);
                         let end = start.offset(2, &self.chars);
-                        self.errors.push(FleetError::from_range(
-                            start.until(end).named(self.file_name.clone()),
-                            "Unknown escape sequence ".to_string()
-                                + &raw_lexeme.chars().skip(esc_error_offset).take(2).join(""),
-                            ErrorSeverity::Error,
-                        ));
+                        self.errors.push(ErrorKind::InvalidEscapeSequence {
+                            string_range: string_range.named(self.file_name.clone()),
+                            escape_range: start.until(end).named(self.file_name.clone()),
+                            escape_sequence: raw_lexeme
+                                .chars()
+                                .skip(esc_error_offset)
+                                .take(2)
+                                .join(""),
+                        });
                     }
 
                     if lexeme.len() != 1 {
-                        self.errors.push(FleetError::from_range(
-                            range.named(self.file_name.clone()),
-                            "Character literals may only contain a single character",
-                            ErrorSeverity::Error,
-                        ));
+                        self.errors.push(ErrorKind::CharacterLiteralTooBig {
+                            range: range.named(self.file_name.clone()),
+                            actual_length: lexeme.len(),
+                        });
                     }
 
                     self.tokens.push(Token {
@@ -979,15 +983,15 @@ impl<'errors> Tokenizer<'errors> {
 
         for token in self.tokens.iter() {
             if let Token {
-                type_: TokenType::UnknownCharacters(_),
+                type_: TokenType::UnknownCharacters(chars),
+                range,
                 ..
             } = token
             {
-                self.errors.push(FleetError::from_token(
-                    token,
-                    "Unrecognized characters",
-                    ErrorSeverity::Error,
-                ));
+                self.errors.push(ErrorKind::InvalidCharacters {
+                    range: range.clone(),
+                    characters: chars.to_string(),
+                });
             }
         }
     }

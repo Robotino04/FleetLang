@@ -11,7 +11,6 @@ use inkwell::{
     basic_block::BasicBlock,
     builder::Builder,
     context::Context,
-    intrinsics::Intrinsic,
     memory_buffer::MemoryBuffer,
     module::{Linkage, Module},
     passes::PassBuilderOptions,
@@ -44,7 +43,7 @@ use crate::{
     },
     escape::{QuoteType, unescape},
     generate_glsl::GLSLCodeGenerator,
-    infra::{ErrorSeverity, FleetError},
+    infra::{Backend, ErrorKind, ErrorSeverity, InternalError, Intrinsic, UnresolvedSymbol},
     passes::{
         find_node_bounds::find_node_bounds,
         pass_manager::{
@@ -57,8 +56,16 @@ use crate::{
         stat_tracker::YesNoMaybe,
         top_level_binding_finder::TopLevelBindingFinder,
     },
-    tokenizer::SourceLocation,
 };
+
+macro_rules! pass_precondition {
+    () => {
+        unreachable!("Pass precondition violated")
+    };
+    ($($arg:tt)*) => {
+        unreachable!("Pass precondition violated:\n{}", format!($($arg)*))
+    };
+}
 
 type Result<T> = ::core::result::Result<T, Box<dyn Error>>;
 
@@ -299,7 +306,7 @@ impl Pass for IrGenerator<'_> {
         if self
             .errors
             .iter()
-            .any(|err| err.main_severity == ErrorSeverity::Error)
+            .any(|err| err.severity() == ErrorSeverity::Error)
         {
             return Err(PassError::InvalidInput {
                 producing_pass: Self::name(),
@@ -319,11 +326,6 @@ impl Pass for IrGenerator<'_> {
 }
 
 impl<'a> IrGenerator<'_> {
-    fn report_error<T>(&mut self, error: FleetError) -> Result<T> {
-        self.errors.push(error.clone());
-        Err(error.message.into())
-    }
-
     fn make_into_function_type<'c>(
         &self,
         type_: AnyTypeEnum<'c>,
@@ -332,7 +334,7 @@ impl<'a> IrGenerator<'_> {
     ) -> Result<FunctionType<'c>> {
         match type_.into_basic_type() {
             Ok(type_) => Ok(type_.fn_type(param_types, is_var_args)),
-            Err(Either::Left(_func)) => Err("Tried to make a function returning function".into()),
+            Err(Either::Left(_func)) => panic!("Tried to make a function returning function"),
             Err(Either::Right(void)) => Ok(void.fn_type(param_types, is_var_args)),
         }
     }
@@ -373,41 +375,27 @@ impl<'a> IrGenerator<'_> {
         })
     }
 
-    fn runtime_type_to_llvm<'node, I: Into<AstNodeRef<'node>>>(
-        &mut self,
-        type_ptr: &ConcreteRuntimeType,
-        error_node: I,
-    ) -> Result<AnyTypeEnum<'a>> {
-        match self.runtime_type_to_llvm_impl(type_ptr, error_node) {
-            Ok(ok) => Ok(ok),
-            Err(err) => self.report_error(err),
-        }
-    }
     fn llvm_type_of_node<'node, 'b, I: Into<AstNodeRef<'node>>>(
         &'b mut self,
         node: I,
-    ) -> Result<AnyTypeEnum<'a>> {
+    ) -> AnyTypeEnum<'a> {
         let node = node.into();
 
-        let infered_type = self
-            .type_data
-            .get(&node.get_id())
-            .expect("type data should exist before calling ir_generator");
+        let infered_type = self.type_data.get(&node.get_id()).unwrap_or_else(|| {
+            pass_precondition!("type data should exist before calling ir_generator")
+        });
 
-        match self.runtime_type_to_llvm_impl(infered_type, node) {
-            Ok(ok) => Ok(ok),
-            Err(err) => self.report_error(err),
-        }
+        self.runtime_type_to_llvm(infered_type, node)
     }
 
-    fn runtime_type_to_llvm_impl<'node, I: Into<AstNodeRef<'node>>>(
+    fn runtime_type_to_llvm<'node, I: Into<AstNodeRef<'node>>>(
         &self,
         type_ptr: &ConcreteRuntimeType,
         error_node: I,
-    ) -> ::core::result::Result<AnyTypeEnum<'a>, FleetError> {
+    ) -> AnyTypeEnum<'a> {
         let error_node = error_node.into();
 
-        Ok(match type_ptr {
+        match type_ptr {
             ConcreteRuntimeType::I8 | ConcreteRuntimeType::U8 => self.context.i8_type().into(),
             ConcreteRuntimeType::I16 | ConcreteRuntimeType::U16 => self.context.i16_type().into(),
             ConcreteRuntimeType::I32 | ConcreteRuntimeType::U32 => self.context.i32_type().into(),
@@ -420,23 +408,15 @@ impl<'a> IrGenerator<'_> {
                 subtype: inner_type,
                 size,
             } => {
-                let inner_type_ir = self.runtime_type_to_llvm_impl(inner_type, error_node);
+                let inner_type_ir = self.runtime_type_to_llvm(inner_type, error_node);
 
-                match inner_type_ir?.into_basic_type() {
+                match inner_type_ir.into_basic_type() {
                     Ok(type_) => type_.array_type(*size as u32).as_any_type_enum(),
                     Err(Either::Left(_func)) => {
-                        return Err(FleetError::from_node(
-                            error_node,
-                            "Cannot have array of functions",
-                            ErrorSeverity::Error,
-                        ));
+                        panic!("Cannot have array of functions")
                     }
                     Err(Either::Right(_void)) => {
-                        return Err(FleetError::from_node(
-                            error_node,
-                            "Cannot have array of Unit",
-                            ErrorSeverity::Error,
-                        ));
+                        pass_precondition!("Cannot have array of Unit")
                     }
                 }
             }
@@ -450,33 +430,22 @@ impl<'a> IrGenerator<'_> {
                         .clone()
                         .into_iter()
                         .map(|(_name, type_)| {
-                            Ok(
-                                match (self.runtime_type_to_llvm_impl(&type_, error_node)?)
-                                    .into_basic_type()
-                                {
-                                    Ok(type_) => type_.as_basic_type_enum(),
-                                    Err(Either::Left(_)) => {
-                                        return Err(FleetError::from_node(
-                                            error_node,
-                                            "Cannot have struct containing function",
-                                            ErrorSeverity::Error,
-                                        ));
-                                    }
-                                    Err(Either::Right(_)) => {
-                                        return Err(FleetError::from_node(
-                                            error_node,
-                                            "Cannot have struct containing Unit",
-                                            ErrorSeverity::Error,
-                                        ));
-                                    }
-                                },
-                            )
+                            match (self.runtime_type_to_llvm(&type_, error_node)).into_basic_type()
+                            {
+                                Ok(type_) => type_.as_basic_type_enum(),
+                                Err(Either::Left(_)) => {
+                                    panic!("Cannot have struct containing function")
+                                }
+                                Err(Either::Right(_)) => {
+                                    pass_precondition!("Cannot have struct containing Unit")
+                                }
+                            }
                         })
-                        .collect::<::core::result::Result<Vec<_>, _>>()?,
+                        .collect_vec(),
                     false,
                 )
                 .into(),
-        })
+        }
     }
 
     fn mangle_function(&self, name: &str) -> String {
@@ -508,7 +477,7 @@ impl<'a> IrGenerator<'_> {
                     .return_type
                     .clone())
             })?;
-        let return_type_ir = self.runtime_type_to_llvm(&return_type, &*function)?;
+        let return_type_ir = self.runtime_type_to_llvm(&return_type, &*function);
 
         let name = match &*function.body {
             FunctionBody::Extern(ExternFunctionBody {
@@ -538,22 +507,16 @@ impl<'a> IrGenerator<'_> {
             .iter()
             .flat_map(|(param, var)| -> Result<_> {
                 Ok(
-                    match (self.runtime_type_to_llvm(&var.borrow().type_, param)?).into_basic_type()
+                    match self
+                        .runtime_type_to_llvm(&var.borrow().type_, param)
+                        .into_basic_type()
                     {
                         Ok(type_) => type_.into(),
                         Err(Either::Left(_)) => {
-                            return self.report_error(FleetError::from_node(
-                                param,
-                                "cannot have function types as parameter",
-                                ErrorSeverity::Error,
-                            ));
+                            panic!("cannot have function types as parameter")
                         }
                         Err(Either::Right(_)) => {
-                            return self.report_error(FleetError::from_node(
-                                param,
-                                "cannot have unit type as parameter",
-                                ErrorSeverity::Error,
-                            ));
+                            pass_precondition!("cannot have unit type as parameter");
                         }
                     },
                 )
@@ -608,24 +571,12 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     ))?;
 
             if let Err(err) = self.module.link_in_module(runtime_module_declarations) {
-                self.errors.push(FleetError::from_range(
-                    SourceLocation::start()
-                        .named(program.file_name.clone())
-                        .until(
-                            program
-                                .top_level_statements
-                                .first()
-                                .map_or(SourceLocation::start(), |tls| {
-                                    find_node_bounds(tls).range.end
-                                }),
-                        ),
-                    format!(
-                        "Linking with runtime library declarations failed: {}\nModule dump:\n{}",
-                        unescape(err.to_str().unwrap(), QuoteType::Double)
+                self.errors.push(ErrorKind::InternalError(
+                    InternalError::LlvmRuntimeLinkFailure {
+                        error: unescape(err.to_str().unwrap(), QuoteType::Double)
                             .unwrap_or_else(|_| err.to_str().unwrap().to_string()),
-                        self.module.print_to_string().to_str().unwrap()
-                    ),
-                    ErrorSeverity::Error,
+                        module_dump: self.module.print_to_string().to_string(),
+                    },
                 ));
             }
         }
@@ -639,10 +590,16 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         }
 
         {
-            let fleet_main_fn = self
+            let fleet_main_fn_ir = self
                 .module
                 .get_function(&self.mangle_function("main"))
                 .expect("Program must have a main function");
+            let fleet_main_fn = self
+                .function_data
+                .iter()
+                .find(|(_id, func)| func.borrow().symbol.name == "main")
+                .unwrap()
+                .1;
 
             let initialize_fleet_fn = self.module.add_function(
                 "initialize_fleet",
@@ -697,9 +654,11 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             self.builder
                 .build_call(initialize_fleet_fn, &[], "initialize_fleet")?;
 
-            let retvalue = self.builder.build_call(fleet_main_fn, &[], "main call")?;
+            let retvalue = self
+                .builder
+                .build_call(fleet_main_fn_ir, &[], "main call")?;
 
-            let cast_retvalue = match fleet_main_fn.get_type().get_return_type() {
+            let cast_retvalue = match fleet_main_fn_ir.get_type().get_return_type() {
                 None => actual_main_return_type.const_zero(),
                 Some(BasicTypeEnum::IntType(int_type)) if int_type.get_bit_width() == 1 => {
                     self.builder.build_int_z_extend_or_bit_cast(
@@ -737,22 +696,15 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     )?
                 }
 
-                Some(other_type) => self.report_error(FleetError::from_node(
-                    program
-                        .top_level_statements
-                        .iter()
-                        .find_map(|tls| match tls {
-                            TopLevelStatement::Function(function_definition)
-                                if function_definition.name == "main" =>
-                            {
-                                Some(function_definition)
-                            }
-                            _ => None,
-                        })
-                        .expect("Main function must exist"),
-                    format!("Main function returns unsupported type {other_type}"),
-                    ErrorSeverity::Error,
-                ))?,
+                Some(_other_type) => {
+                    self.errors.push(ErrorKind::InternalError(
+                        InternalError::LlvmUnsupportedMainReturnType {
+                            type_: fleet_main_fn.borrow().return_type.clone(),
+                            main_function: fleet_main_fn.borrow().symbol.clone(),
+                        },
+                    ));
+                    return Err("Unsupported main function type".into());
+                }
             };
 
             self.builder
@@ -761,27 +713,14 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             self.builder.build_return(Some(&cast_retvalue))?;
         }
 
-        if let Err(err) = self.module.verify() {
-            self.errors.push(FleetError::from_range(
-                SourceLocation::start()
-                    .named(program.file_name.clone())
-                    .until(
-                        program
-                            .top_level_statements
-                            .first()
-                            .map_or(SourceLocation::start(), |tls| {
-                                find_node_bounds(tls).range.end
-                            }),
-                    ),
-                format!(
-                    "LLVM module is invalid: {}\nModule dump:\n{}",
-                    unescape(err.to_str().unwrap(), QuoteType::Double)
+        self.module.verify().inspect_err(|err| {
+            self.errors
+                .push(ErrorKind::InternalError(InternalError::LlvmModuleInvalid {
+                    error: unescape(err.to_str().unwrap(), QuoteType::Double)
                         .unwrap_or_else(|_| err.to_str().unwrap().to_string()),
-                    self.module.print_to_string().to_str().unwrap()
-                ),
-                ErrorSeverity::Error,
-            ));
-        }
+                    module_dump: self.module.print_to_string().to_string(),
+                }));
+        })?;
 
         Ok(())
     }
@@ -790,31 +729,22 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         &mut self,
         function: &mut FunctionDefinition,
     ) -> Self::TopLevelOutput {
+        let function_ref = self
+            .function_data
+            .get(&function.get_id())
+            .expect("Function data should exist before calling ir_generator")
+            .clone();
+
         let return_type = function
             .return_type
             .as_mut()
             .map(|type_| self.visit_type(type_))
-            .unwrap_or_else(|| {
-                Ok(self
-                    .function_data
-                    .get(&function.get_id())
-                    .expect("Function data should exist before calling ir_generator")
-                    .borrow()
-                    .return_type
-                    .clone())
-            })?;
+            .unwrap_or_else(|| Ok(function_ref.borrow().return_type.clone()))?;
 
-        let return_type_ir = self.runtime_type_to_llvm(&return_type, &*function)?;
+        let return_type_ir = self.runtime_type_to_llvm(&return_type, &*function);
         let ir_function = self
             .function_locations
-            .get(
-                &self
-                    .function_data
-                    .get(&function.id)
-                    .expect("Function data should exist before calling ir_generator")
-                    .borrow()
-                    .id,
-            )
+            .get(&function_ref.borrow().id)
             .expect("Functions should be registered before traversing the tree")
             .clone()
             .0;
@@ -879,7 +809,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             match *function.body {
                 FunctionBody::Extern(_) => {}
                 FunctionBody::Statement(_) => {
-                    unreachable!("non-terminating functions should have caused errors earlier")
+                    pass_precondition!(
+                        "non-terminating functions should have caused errors earlier"
+                    )
                 }
             }
         }
@@ -894,11 +826,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         };
 
         if !ir_function.verify(false) {
-            self.errors.push(FleetError::from_node(
-                function,
-                "The IR generated for this function is invalid. See the ".to_string()
-                    + "global error at the start of the file for more info",
-                ErrorSeverity::Error,
+            self.errors.push(ErrorKind::InternalError(
+                InternalError::LlvmFunctionInvalid {
+                    function: function_ref.borrow().symbol.clone(),
+                },
             ));
         }
 
@@ -950,23 +881,15 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .clone())
             })?;
 
-        let type_ = self.runtime_type_to_llvm(&type_, &*simple_binding)?;
+        let type_ = self.runtime_type_to_llvm(&type_, &*simple_binding);
 
         let ptr = match type_.into_basic_type() {
             Ok(type_) => self.builder.build_alloca(type_, &simple_binding.name)?,
             Err(Either::Left(_)) => {
-                return self.report_error(FleetError::from_node(
-                    simple_binding,
-                    "Somehow tried to bind a function type",
-                    ErrorSeverity::Error,
-                ));
+                panic!("Tried to bind a function type")
             }
             Err(Either::Right(_)) => {
-                return self.report_error(FleetError::from_node(
-                    simple_binding,
-                    "Somehow tried to bind a void type",
-                    ErrorSeverity::Error,
-                ));
+                pass_precondition!("Tried to bind a unit type")
             }
         };
 
@@ -974,7 +897,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .variable_data
             .get(&simple_binding.id)
             .unwrap_or_else(|| {
-                panic!(
+                pass_precondition!(
                     "Variable data for {:?} should exist before calling ir_generator",
                     simple_binding.name
                 )
@@ -1111,7 +1034,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             self.builder.position_at_end(bindings_block);
             let binding_ir = self.visit_variable_lvalue(top_level_binding)?;
             let size = self
-                .runtime_type_to_llvm(type_, top_level_binding)?
+                .runtime_type_to_llvm(type_, top_level_binding)
                 .size_of()
                 .expect("data passed to GPU must be sized");
 
@@ -1154,7 +1077,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .0;
 
                 let size = self
-                    .runtime_type_to_llvm(type_, &**body)?
+                    .runtime_type_to_llvm(type_, &**body)
                     .size_of()
                     .expect("data passed to GPU must be sized");
                 Ok((size, binding_ir))
@@ -1225,11 +1148,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         }
 
         if cfg!(not(feature = "gpu_backend")) {
-            self.errors.push(FleetError::from_node(
-                &**executor,
-                "The GPU backend is disabled for this build of Fleet",
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::GpuBackendDisabled {
+                use_location: find_node_bounds(&**executor),
+            });
         }
 
         let glsl_errors = RefCell::new(Errors::default());
@@ -1380,7 +1301,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         if let Some(retvalue) = &mut return_stmt.value {
             let ir_value = self.visit_expression(retvalue)?;
             let value_type = self
-                .llvm_type_of_node(&**retvalue)?
+                .llvm_type_of_node(&**retvalue)
                 .into_basic_type()
                 .unwrap();
 
@@ -1416,7 +1337,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         if let RuntimeValueIR::Array(right_value) | RuntimeValueIR::Struct(right_value) = eval_value
         {
             let size = self
-                .llvm_type_of_node(&*vardef_stmt.value)?
+                .llvm_type_of_node(&*vardef_stmt.value)
                 .size_of()
                 .unwrap();
             self.builder.build_memcpy(
@@ -1461,7 +1382,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         if self
             .node_stats
             .get(&if_stmt.if_body.get_id())
-            .unwrap_or_else(|| panic!("{:?} doesn't have stats", if_stmt.if_body))
+            .unwrap_or_else(|| pass_precondition!("{:?} doesn't have stats", if_stmt.if_body))
             .terminates_function
             != YesNoMaybe::Yes
         {
@@ -1493,7 +1414,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             if self
                 .node_stats
                 .get(&body.get_id())
-                .unwrap_or_else(|| panic!("{body:?} doesn't have stats"))
+                .unwrap_or_else(|| pass_precondition!("{body:?} doesn't have stats"))
                 .terminates_function
                 != YesNoMaybe::Yes
             {
@@ -1509,7 +1430,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             if self
                 .node_stats
                 .get(&else_body.get_id())
-                .unwrap_or_else(|| panic!("{else_body:?} doesn't have stats"))
+                .unwrap_or_else(|| pass_precondition!("{else_body:?} doesn't have stats"))
                 .terminates_function
                 != YesNoMaybe::Yes
             {
@@ -1652,43 +1573,34 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(())
     }
 
-    fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
-        if let Some(break_block) = self.break_block {
-            self.builder.build_unconditional_branch(break_block)?;
-            let next_block = self.context.insert_basic_block_after(
-                self.builder
-                    .get_insert_block()
-                    .expect("Builder should always be in a block"),
-                "after_break",
-            );
-            self.builder.position_at_end(next_block);
-        } else {
-            self.errors.push(FleetError::from_node(
-                break_stmt,
-                "Break statements can only appear inside of loops",
-                ErrorSeverity::Error,
-            ));
-        }
+    fn visit_break_statement(&mut self, _break_stmt: &mut BreakStatement) -> Self::StatementOutput {
+        let break_block = self
+            .break_block
+            .expect("Break statements can only appear inside of loops");
+        self.builder.build_unconditional_branch(break_block)?;
+        let next_block = self.context.insert_basic_block_after(
+            self.builder
+                .get_insert_block()
+                .expect("Builder should always be in a block"),
+            "after_break",
+        );
+        self.builder.position_at_end(next_block);
         Ok(())
     }
 
-    fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
-        if let Some(skip_block) = self.skip_block {
-            self.builder.build_unconditional_branch(skip_block)?;
-            let next_block = self.context.insert_basic_block_after(
-                self.builder
-                    .get_insert_block()
-                    .expect("Builder should always be in a block"),
-                "after_skip",
-            );
-            self.builder.position_at_end(next_block);
-        } else {
-            self.errors.push(FleetError::from_node(
-                skip_stmt,
-                "Skip statements can only appear inside of loops",
-                ErrorSeverity::Error,
-            ));
-        }
+    fn visit_skip_statement(&mut self, _skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
+        let skip_block = self
+            .skip_block
+            .expect("Skip statements can only appear inside of loops");
+        self.builder.build_unconditional_branch(skip_block)?;
+        let next_block = self.context.insert_basic_block_after(
+            self.builder
+                .get_insert_block()
+                .expect("Builder should always be in a block"),
+            "after_skip",
+        );
+        self.builder.position_at_end(next_block);
+
         Ok(())
     }
 
@@ -1724,7 +1636,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .clone();
 
         Ok(match value {
-            LiteralKind::Number(value) => match self.llvm_type_of_node(&literal_clone)? {
+            LiteralKind::Number(value) => match self.llvm_type_of_node(&literal_clone) {
                 AnyTypeEnum::FloatType(type_) => {
                     RuntimeValueIR::Float(type_.const_float(*value as f64))
                 }
@@ -1739,19 +1651,25 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     unreachable!("all ints should either be signed or unsigned")
                 }
 
-                _ => self.report_error(FleetError::from_node(
-                    literal,
-                    "This was neither a float nor int in the llvm backend",
-                    ErrorSeverity::Error,
-                ))?,
+                _ => {
+                    self.errors.push(ErrorKind::InternalError(
+                        InternalError::LlvmNumberLiteralMistyped {
+                            literal: find_node_bounds(&*literal),
+                        },
+                    ));
+
+                    return Err(
+                        "Number literal was neither a float nor int in the llvm backend".into(),
+                    );
+                }
             },
             LiteralKind::Char(value) => RuntimeValueIR::UnsignedInt(
-                self.llvm_type_of_node(&literal_clone)?
+                self.llvm_type_of_node(&literal_clone)
                     .into_int_type()
                     .const_int(*value as u64, false),
             ),
             LiteralKind::Float(value) => RuntimeValueIR::Float(
-                self.llvm_type_of_node(&literal_clone)?
+                self.llvm_type_of_node(&literal_clone)
                     .into_float_type()
                     .const_float(*value),
             ),
@@ -1775,7 +1693,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             id: _,
         } = expression;
 
-        let array_type = self.llvm_type_of_node(&expression_clone)?.into_array_type();
+        let array_type = self.llvm_type_of_node(&expression_clone).into_array_type();
         let item_type = array_type.get_element_type();
 
         let mut array_ir = array_type.get_undef();
@@ -1826,16 +1744,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         let type_ = self.visit_type(type_)?;
         let ConcreteRuntimeType::Struct { .. } = type_ else {
-            return self.report_error(FleetError::from_node(
-                &expression_clone,
-                "This struct doesn't have a Struct(_) type",
-                ErrorSeverity::Error,
-            ));
+            pass_precondition!("Struct doesn't have a Struct(_) type")
         };
 
-        let struct_type = self
-            .llvm_type_of_node(&expression_clone)?
-            .into_struct_type();
+        let struct_type = self.llvm_type_of_node(&expression_clone).into_struct_type();
 
         let mut struct_ir = struct_type.get_undef();
 
@@ -1853,21 +1765,13 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         ) in members.iter_mut().enumerate()
         {
             let item_ir = self.visit_expression(value)?;
-            let item_type = match self.llvm_type_of_node(&**value)?.into_basic_type() {
+            let item_type = match self.llvm_type_of_node(&**value).into_basic_type() {
                 Ok(ok) => ok,
                 Err(Either::Left(_fn_type)) => {
-                    return self.report_error(FleetError::from_node(
-                        &**value,
-                        "Struct cannot contain functions",
-                        ErrorSeverity::Error,
-                    ));
+                    panic!("Struct cannot contain functions")
                 }
                 Err(Either::Right(_void_type)) => {
-                    return self.report_error(FleetError::from_node(
-                        &**value,
-                        "Struct cannot contain unti values",
-                        ErrorSeverity::Error,
-                    ));
+                    pass_precondition!("Struct cannot contain unit values")
                 }
             };
             if let RuntimeValueIR::Array(item_ir) | RuntimeValueIR::Struct(item_ir) = item_ir {
@@ -1915,7 +1819,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let mut args: Vec<BasicMetadataValueEnum> = vec![];
         for (arg, _comma) in arguments {
             let ir_value = self.visit_expression(arg)?;
-            let value_type = self.llvm_type_of_node(arg)?.into_basic_type().unwrap();
+            let value_type = self.llvm_type_of_node(arg).into_basic_type().unwrap();
 
             if let RuntimeValueIR::Array(ir_ptr) | RuntimeValueIR::Struct(ir_ptr) = ir_value {
                 let value = self
@@ -1972,7 +1876,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let CompilerExpression {
             at_token: _,
             name,
-            name_token: _,
+            name_token,
             open_paren_token: _,
             arguments,
             close_paren_token: _,
@@ -1992,7 +1896,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .get(id)
                     .expect("type data must exist before calling ir_generator")
                     .clone();
-                let expected_type_ir = self.runtime_type_to_llvm(&expected_type, &expr_clone)?;
+                let expected_type_ir = self.runtime_type_to_llvm(&expected_type, &expr_clone);
 
                 Ok(match expected_type {
                     ConcreteRuntimeType::I8
@@ -2013,12 +1917,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     ConcreteRuntimeType::Boolean => {
                         RuntimeValueIR::Bool(expected_type_ir.into_int_type().const_zero())
                     }
-                    ConcreteRuntimeType::Unit => self.report_error(FleetError::from_node(
-                        &expr_clone,
-                        "@zero cannot have Unit type",
-                        ErrorSeverity::Error,
-                    ))?,
-
+                    ConcreteRuntimeType::Unit => pass_precondition!("@zero cannot have Unit type"),
                     ConcreteRuntimeType::ArrayOf { .. } => {
                         let ptr = self
                             .builder
@@ -2055,11 +1954,11 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .get(id)
                     .expect("type data must exist before calling ir_generator")
                     .clone();
-                let expected_type_ir = self.runtime_type_to_llvm(&expected_type, &expr_clone)?;
+                let expected_type_ir = self.runtime_type_to_llvm(&expected_type, &expr_clone);
 
                 Ok(match args.first().unwrap().1 {
                     RuntimeValueIR::Float(value) => {
-                        let intrinsic = Intrinsic::find("llvm.sqrt").unwrap();
+                        let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.sqrt").unwrap();
                         let intrinsic = intrinsic
                             .get_declaration(
                                 &self.module,
@@ -2074,13 +1973,19 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                                 .into_float_value(),
                         )
                     }
-                    _ => self.report_error(FleetError::from_node(
-                        &expr_clone,
-                        format!(
+                    _ => {
+                        self.errors.push(ErrorKind::InvalidIntrinsicType {
+                            backend: Backend::Llvm,
+                            intrinsic: Intrinsic::Sqrt,
+                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                            type_: expected_type.clone(),
+                        });
+
+                        return Err(format!(
                             "@sqrt compiler function has unknown or error type: {expected_type}"
-                        ),
-                        ErrorSeverity::Error,
-                    ))?,
+                        )
+                        .into());
+                    }
                 })
             }
             "sin" => {
@@ -2089,11 +1994,11 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .get(id)
                     .expect("type data must exist before calling ir_generator")
                     .clone();
-                let expected_type_ir = self.runtime_type_to_llvm(&expected_type, &expr_clone)?;
+                let expected_type_ir = self.runtime_type_to_llvm(&expected_type, &expr_clone);
 
                 Ok(match args.first().unwrap().1 {
                     RuntimeValueIR::Float(value) => {
-                        let intrinsic = Intrinsic::find("llvm.sin").unwrap();
+                        let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.sin").unwrap();
                         let intrinsic = intrinsic
                             .get_declaration(
                                 &self.module,
@@ -2108,13 +2013,19 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                                 .into_float_value(),
                         )
                     }
-                    _ => self.report_error(FleetError::from_node(
-                        &expr_clone,
-                        format!(
+                    _ => {
+                        self.errors.push(ErrorKind::InvalidIntrinsicType {
+                            backend: Backend::Llvm,
+                            intrinsic: Intrinsic::Sin,
+                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                            type_: expected_type.clone(),
+                        });
+
+                        return Err(format!(
                             "@sin compiler function has unknown or error type: {expected_type}"
-                        ),
-                        ErrorSeverity::Error,
-                    ))?,
+                        )
+                        .into());
+                    }
                 })
             }
             "cos" => {
@@ -2123,11 +2034,11 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .get(id)
                     .expect("type data must exist before calling ir_generator")
                     .clone();
-                let expected_type_ir = self.runtime_type_to_llvm(&expected_type, &expr_clone)?;
+                let expected_type_ir = self.runtime_type_to_llvm(&expected_type, &expr_clone);
 
                 Ok(match args.first().unwrap().1 {
                     RuntimeValueIR::Float(value) => {
-                        let intrinsic = Intrinsic::find("llvm.cos").unwrap();
+                        let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.cos").unwrap();
                         let intrinsic = intrinsic
                             .get_declaration(
                                 &self.module,
@@ -2142,13 +2053,19 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                                 .into_float_value(),
                         )
                     }
-                    _ => self.report_error(FleetError::from_node(
-                        &expr_clone,
-                        format!(
+                    _ => {
+                        self.errors.push(ErrorKind::InvalidIntrinsicType {
+                            backend: Backend::Llvm,
+                            intrinsic: Intrinsic::Cos,
+                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                            type_: expected_type.clone(),
+                        });
+
+                        return Err(format!(
                             "@cos compiler function has unknown or error type: {expected_type}"
-                        ),
-                        ErrorSeverity::Error,
-                    ))?,
+                        )
+                        .into());
+                    }
                 })
             }
             "length" => {
@@ -2165,14 +2082,12 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
                 let length = match array_type {
                     ConcreteRuntimeType::ArrayOf { subtype: _, size } => size,
-                    _ => self.report_error(FleetError::from_node(
-                        &expr_clone,
-                        format!("@length called with non-array typed value of type {array_type}"),
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => pass_precondition!(
+                        "@length called with non-array typed value of type {array_type}"
+                    ),
                 };
 
-                let ir_type = self.runtime_type_to_llvm(&expected_type, &expr_clone)?;
+                let ir_type = self.runtime_type_to_llvm(&expected_type, &expr_clone);
 
                 Ok(match args.first().unwrap().1 {
                     RuntimeValueIR::Array(_value) => match ir_type {
@@ -2186,25 +2101,24 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                             unreachable!("all ints should either be signed or unsigned")
                         }
 
-                        _ => self.report_error(FleetError::from_node(
-                            &expr_clone,
-                            "This was not an int in the llvm backend",
-                            ErrorSeverity::Error,
-                        ))?,
+                        _ => pass_precondition!("result of @length() isn't an integer"),
                     },
-                    _ => self.report_error(FleetError::from_node(
-                        &expr_clone,
-                        format!("@length called with non-array typed value of type {array_type}"),
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => pass_precondition!(
+                        "@length called with non-array typed value of type {array_type}"
+                    ),
                 })
             }
             "comptime" => Ok(args.first().unwrap().1),
-            _ => self.report_error(FleetError::from_node(
-                &expr_clone,
-                format!("No compiler function named {name:?} is implemented for the LLVM backend"),
-                ErrorSeverity::Error,
-            )),
+            _ => {
+                self.errors.push(ErrorKind::IntrinsicNotImplemented {
+                    backend: Backend::Glsl,
+                    intrinsic: UnresolvedSymbol::from_token(name.clone(), name_token),
+                });
+                Err(format!(
+                    "No compiler function named {name:?} is implemented for the LLVM backend"
+                )
+                .into())
+            }
         }
     }
 
@@ -2223,7 +2137,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let array_type = self.type_data.get(&array.get_id()).unwrap().clone();
         let index_ir = self.visit_expression(index)?.unwrap_unsigned_int();
 
-        let array_type_ir = self.runtime_type_to_llvm(&array_type, &**array)?;
+        let array_type_ir = self.runtime_type_to_llvm(&array_type, &**array);
 
         let index_ptr = unsafe {
             self.builder.build_gep(
@@ -2239,7 +2153,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             size: _,
         } = array_type
         else {
-            unreachable!()
+            pass_precondition!("indexed array has non-array type")
         };
 
         let result = if let ConcreteRuntimeType::ArrayOf { .. }
@@ -2261,7 +2175,6 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         &mut self,
         expr: &mut StructAccessExpression,
     ) -> Self::ExpressionOutput {
-        let expr_clone = expr.clone();
         let StructAccessExpression {
             value,
             dot_token: _,
@@ -2272,29 +2185,22 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let value_ptr = self.visit_expression(value)?.unwrap_struct();
         let value_type = self.type_data.get(&value.get_id()).unwrap().clone();
 
-        let value_type_ir = self.runtime_type_to_llvm(&value_type, &**value)?;
+        let value_type_ir = self.runtime_type_to_llvm(&value_type, &**value);
 
         let ConcreteRuntimeType::Struct {
             members,
             source_hash: _,
         } = value_type
         else {
-            return self.report_error(FleetError::from_node(
-                expr,
-                "Struct access used on non-struct",
-                ErrorSeverity::Error,
-            ));
+            pass_precondition!("Struct access used on non-struct")
         };
 
-        let Some((member_index, (_, member_type))) =
-            members.iter().find_position(|m| m.0 == *member_name)
-        else {
-            return self.report_error(FleetError::from_node(
-                &expr_clone,
-                format!("Struct doesn't have member named {member_name:?}"),
-                ErrorSeverity::Error,
-            ));
-        };
+        let (member_index, (_, member_type)) = members
+            .iter()
+            .find_position(|m| m.0 == *member_name)
+            .unwrap_or_else(|| {
+                pass_precondition!("Struct doesn't have member named {member_name:?}")
+            });
 
         let index_ptr = self.builder.build_struct_gep(
             value_type_ir.into_struct_type(),
@@ -2348,24 +2254,22 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .variable_data
             .get(id)
             .unwrap_or_else(|| {
-                panic!("Variable data for {name:?} should exist before running ir_generator")
+                pass_precondition!(
+                    "Variable data for {name:?} should exist before running ir_generator"
+                )
             })
             .clone();
 
-        let Some(storage) = self.variable_storage.get(&var.borrow().id) else {
-            return self.report_error(FleetError::from_node(
-                &expr_clone,
-                format!(
-                    "Variables should have storage before being accessed.\nVarData: {:#?}\nVarStorage: {:#?}\nThis ID: {id:?}",
-                    self.variable_data, self.variable_storage
-                ),
-                ErrorSeverity::Error,
-            ));
-        };
+        let storage = self.variable_storage.get(&var.borrow().id).unwrap_or_else(||
+            panic!(
+                "Variables should have storage before being accessed.\nVarData: {:#?}\nVarStorage: {:#?}\nThis ID: {id:?}",
+                self.variable_data, self.variable_storage
+            )
+        );
         let storage = storage.clone();
 
         let result_type = var.borrow().type_.clone();
-        let result_type_ir = self.runtime_type_to_llvm(&result_type, &expr_clone)?;
+        let result_type_ir = self.runtime_type_to_llvm(&result_type, &expr_clone);
 
         let result = if let ConcreteRuntimeType::ArrayOf { .. }
         | ConcreteRuntimeType::Struct { .. } = result_type
@@ -2400,11 +2304,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 RuntimeValueIR::UnsignedInt(value) => {
                     RuntimeValueIR::UnsignedInt(self.builder.build_not(value, "bitwise_not")?)
                 }
-                _ => self.report_error(FleetError::from_node(
-                    expr,
-                    "This was not an int in llvm backend",
-                    ErrorSeverity::Error,
-                ))?,
+                _ => pass_precondition!("Bitwise not operand was not an int in llvm backend"),
             },
 
             UnaryOperation::LogicalNot => RuntimeValueIR::Bool(match value {
@@ -2422,11 +2322,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     value.get_type().const_zero(),
                     "logical_not",
                 )?,
-                _ => self.report_error(FleetError::from_node(
-                    expr,
-                    "This was neither a float or int in llvm backend",
-                    ErrorSeverity::Error,
-                ))?,
+                _ => pass_precondition!("LogicalNot operand wasn't a number in llvm backend"),
             }),
             UnaryOperation::Negate => match value {
                 RuntimeValueIR::SignedInt(value) => {
@@ -2436,11 +2332,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     RuntimeValueIR::Float(self.builder.build_float_neg(value, "negate")?)
                 }
 
-                _ => self.report_error(FleetError::from_node(
-                    expr,
-                    "This was neither a float nor signed int in llvm backend",
-                    ErrorSeverity::Error,
-                ))?,
+                _ => pass_precondition!(
+                    "Negate operand wasn't a signed integer or float in llvm backend"
+                ),
             },
         };
 
@@ -2491,7 +2385,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             ) => {
                 let expected_type = self.visit_type(type_)?;
                 let expected_type_ir = self
-                    .runtime_type_to_llvm(&expected_type, &expr_clone)?
+                    .runtime_type_to_llvm(&expected_type, &expr_clone)
                     .into_int_type();
 
                 let ir_value = match value {
@@ -2512,11 +2406,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         expected_type_ir,
                         &format!("as_{value_type}"),
                     )?,
-                    _ => self.report_error(FleetError::from_node(
-                        &**operand,
-                        "Expected this to be an integer or bool",
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => {
+                        pass_precondition!("Value cast to an integer should be an integer or bool")
+                    }
                 };
 
                 if expected_type.is_signed() {
@@ -2541,7 +2433,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             ) => {
                 let expected_type = self.visit_type(type_)?;
                 let expected_type = self
-                    .runtime_type_to_llvm(&expected_type, &expr_clone)?
+                    .runtime_type_to_llvm(&expected_type, &expr_clone)
                     .into_float_type();
 
                 Ok(RuntimeValueIR::Float(match value {
@@ -2557,11 +2449,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         expected_type,
                         &format!("as_{value_type}"),
                     )?,
-                    _ => self.report_error(FleetError::from_node(
-                        &**operand,
-                        "Expected this to be an integer or bool",
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => pass_precondition!("Value cast to a float should be an integer or bool"),
                 }))
             }
             (
@@ -2573,7 +2461,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             ) => {
                 let expected_type = self.visit_type(type_)?;
                 let expected_type = self
-                    .runtime_type_to_llvm(&expected_type, expr)?
+                    .runtime_type_to_llvm(&expected_type, expr)
                     .into_int_type();
 
                 Ok(RuntimeValueIR::SignedInt(
@@ -2593,7 +2481,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             ) => {
                 let expected_type = self.visit_type(type_)?;
                 let expected_type = self
-                    .runtime_type_to_llvm(&expected_type, expr)?
+                    .runtime_type_to_llvm(&expected_type, expr)
                     .into_int_type();
 
                 Ok(RuntimeValueIR::UnsignedInt(
@@ -2607,7 +2495,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             (ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64, ConcreteRuntimeType::F64) => {
                 let expected_type = self.visit_type(type_)?;
                 let expected_type = self
-                    .runtime_type_to_llvm(&expected_type, expr)?
+                    .runtime_type_to_llvm(&expected_type, expr)
                     .into_float_type();
 
                 Ok(RuntimeValueIR::Float(self.builder.build_float_ext(
@@ -2619,7 +2507,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             (ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64, ConcreteRuntimeType::F32) => {
                 let expected_type = self.visit_type(type_)?;
                 let expected_type = self
-                    .runtime_type_to_llvm(&expected_type, expr)?
+                    .runtime_type_to_llvm(&expected_type, expr)
                     .into_float_type();
 
                 Ok(RuntimeValueIR::Float(self.builder.build_float_trunc(
@@ -2641,11 +2529,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     size: _,
                 },
                 _,
-            ) => self.report_error(FleetError::from_node(
-                type_,
-                "cannot cast to or from array currently",
-                ErrorSeverity::Error,
-            )),
+            ) => pass_precondition!("cannot cast to or from array currently"),
             (
                 _,
                 ConcreteRuntimeType::Struct {
@@ -2659,11 +2543,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     source_hash: _,
                 },
                 _,
-            ) => self.report_error(FleetError::from_node(
-                type_,
-                "cannot cast to or from struct currently",
-                ErrorSeverity::Error,
-            )),
+            ) => pass_precondition!("cannot cast to or from struct currently"),
             (
                 ConcreteRuntimeType::I8
                 | ConcreteRuntimeType::I16
@@ -2687,11 +2567,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         "as_bool",
                     )?))
                 } else {
-                    self.report_error(FleetError::from_node(
-                        type_,
-                        format!("trying to cast {value:?} to boolean"),
-                        ErrorSeverity::Error,
-                    ))
+                    pass_precondition!("trying to cast {value:?} to boolean")
                 }
             }
             (ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64, ConcreteRuntimeType::Boolean) => {
@@ -2704,12 +2580,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     "as_bool",
                 )?))
             }
-            (_, ConcreteRuntimeType::Unit) => Ok(RuntimeValueIR::Unit),
-            (ConcreteRuntimeType::Unit, _) => self.report_error(FleetError::from_node(
-                type_,
-                "cannot cast from Unit to anything",
-                ErrorSeverity::Error,
-            )),
+            (_, ConcreteRuntimeType::Unit) | (ConcreteRuntimeType::Unit, _) => {
+                pass_precondition!("cannot cast from or to Unit")
+            }
         }
     }
 
@@ -2753,11 +2626,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         )?)
                     }
 
-                    _ => self.report_error(FleetError::from_node(
-                        &**right,
-                        "This was neither a float or int in llvm backend",
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => pass_precondition!("Add RHS should be float or int in llvm backend"),
                 })
             }
             BinaryOperation::Subtract => {
@@ -2785,11 +2654,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         )?)
                     }
 
-                    _ => self.report_error(FleetError::from_node(
-                        &**right,
-                        "This was neither a float or int in llvm backend",
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => pass_precondition!("Subtract RHS should be float or int in llvm backend"),
                 })
             }
 
@@ -2818,11 +2683,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         )?)
                     }
 
-                    _ => self.report_error(FleetError::from_node(
-                        &**right,
-                        "This was neither a float or int in llvm backend",
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => pass_precondition!("Multiply RHS should be float or int in llvm backend"),
                 })
             }
             BinaryOperation::Divide => {
@@ -2850,11 +2711,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         )?)
                     }
 
-                    _ => self.report_error(FleetError::from_node(
-                        &**right,
-                        "This was neither a float or int in llvm backend",
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => pass_precondition!("Divide RHS should be float or int in llvm backend"),
                 })
             }
             BinaryOperation::Modulo => {
@@ -2882,11 +2739,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         )?)
                     }
 
-                    _ => self.report_error(FleetError::from_node(
-                        &**right,
-                        "This was neither a float or int in llvm backend",
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => pass_precondition!("Modulo RHS should be float or int in llvm backend"),
                 })
             }
 
@@ -2918,11 +2771,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         )?)
                     }
 
-                    _ => self.report_error(FleetError::from_node(
-                        &**right,
-                        "This was neither a float or int in llvm backend",
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => pass_precondition!("LessThan RHS should be float or int in llvm backend"),
                 })
             }
             BinaryOperation::LessThanOrEqual => {
@@ -2953,11 +2802,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         )?)
                     }
 
-                    _ => self.report_error(FleetError::from_node(
-                        &**right,
-                        "This was neither a float or int in llvm backen",
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => pass_precondition!(
+                        "LessThanOrEqual RHS should be float or int in llvm backend"
+                    ),
                 })
             }
             BinaryOperation::GreaterThan => {
@@ -2988,11 +2835,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         )?)
                     }
 
-                    _ => self.report_error(FleetError::from_node(
-                        &**right,
-                        "This was neither a float or int in llvm backend",
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => {
+                        pass_precondition!("GreaterThan RHS should be float or int in llvm backend")
+                    }
                 })
             }
             BinaryOperation::GreaterThanOrEqual => {
@@ -3023,11 +2868,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         )?)
                     }
 
-                    _ => self.report_error(FleetError::from_node(
-                        &**right,
-                        "This was neither a float or int in llvm backend",
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => pass_precondition!(
+                        "GreaterThanOrEqual RHS should be float or int in llvm backend"
+                    ),
                 })
             }
             BinaryOperation::Equal => {
@@ -3052,11 +2895,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         )?)
                     }
 
-                    _ => self.report_error(FleetError::from_node(
-                        &**right,
-                        "This was neither a float or int in llvm backend",
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => {
+                        pass_precondition!("Equal RHS should be float, int or bool in llvm backend")
+                    }
                 })
             }
             BinaryOperation::NotEqual => {
@@ -3081,11 +2922,11 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                         )?)
                     }
 
-                    _ => self.report_error(FleetError::from_node(
-                        &**right,
-                        "This was neither a float or int in llvm backend",
-                        ErrorSeverity::Error,
-                    ))?,
+                    _ => {
+                        pass_precondition!(
+                            "NotEqual RHS should be float, int or bool in llvm backend"
+                        )
+                    }
                 })
             }
 
@@ -3197,7 +3038,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         if let RuntimeValueIR::Array(right_value) | RuntimeValueIR::Struct(right_value) =
             right_value
         {
-            let size = self.llvm_type_of_node(&**right)?.size_of().unwrap();
+            let size = self.llvm_type_of_node(&**right).size_of().unwrap();
             self.builder.build_memcpy(
                 storage,
                 1, // alignment gets read from the pointer itself in LLVM 7 and above
@@ -3222,19 +3063,20 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         } = lvalue;
 
         let var = self.variable_data.get(id).unwrap_or_else(|| {
-            panic!("Variable data for {name:?} should exist before calling ir_generator")
+            pass_precondition!(
+                "Variable data for {name:?} should exist before calling ir_generator"
+            )
         });
-        let Some(storage) = self.variable_storage.get(&var.borrow().id) else {
-            return self.report_error(FleetError::from_node(
-                &lvalue_clone,
-                format!(
+        let storage = self
+            .variable_storage
+            .get(&var.borrow().id)
+            .unwrap_or_else(|| {
+                panic!(
                     "Variables should have storage before being accessed.\
                         \nVarData: {:#?}\nVarStorage: {:#?}\nThis ID: {:?}",
                     self.variable_data, self.variable_storage, lvalue_clone.id
-                ),
-                ErrorSeverity::Error,
-            ));
-        };
+                )
+            });
 
         Ok(storage.0)
     }
@@ -3252,7 +3094,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let array_ptr = self.visit_lvalue(array)?;
         let index_ir = self.visit_expression(index)?.unwrap_unsigned_int();
 
-        let array_type_ir = self.llvm_type_of_node(&**array)?;
+        let array_type_ir = self.llvm_type_of_node(&**array);
 
         let index_ptr = unsafe {
             self.builder.build_gep(
@@ -3281,29 +3123,22 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let value_ptr = self.visit_lvalue(value)?;
         let value_type = self.type_data.get(&value.get_id()).unwrap().clone();
 
-        let value_type_ir = self.runtime_type_to_llvm(&value_type, &lvalue_clone)?;
+        let value_type_ir = self.runtime_type_to_llvm(&value_type, &lvalue_clone);
 
         let ConcreteRuntimeType::Struct {
             members,
             source_hash: _,
         } = value_type
         else {
-            return self.report_error(FleetError::from_node(
-                lvalue,
-                "Struct access used on non-struct",
-                ErrorSeverity::Error,
-            ));
+            pass_precondition!("Struct access used on non-struct")
         };
 
-        let Some((member_index, (_, _member_type))) =
-            members.iter().find_position(|m| m.0 == *member_name)
-        else {
-            return self.report_error(FleetError::from_node(
-                &lvalue_clone,
-                format!("Struct doesn't have member named {member_name:?}"),
-                ErrorSeverity::Error,
-            ));
-        };
+        let (member_index, (_, _member_type)) = members
+            .iter()
+            .find_position(|m| m.0 == *member_name)
+            .unwrap_or_else(|| {
+                pass_precondition!("Struct doesn't have member named {member_name:?}")
+            });
 
         let index_ptr = self.builder.build_struct_gep(
             value_type_ir.into_struct_type(),

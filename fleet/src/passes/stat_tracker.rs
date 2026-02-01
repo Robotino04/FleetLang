@@ -5,7 +5,6 @@ use std::{
     vec::Vec,
 };
 
-use itertools::Itertools;
 use log::info;
 
 use crate::{
@@ -21,7 +20,7 @@ use crate::{
         UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
-    infra::{ErrorSeverity, FleetError},
+    infra::{ErrorKind, Lint, LoopControl},
     passes::{
         pass_manager::{
             ConcreteFunctionData, ConcreteVariableData, Errors, GlobalState, Pass, PassFactory,
@@ -30,7 +29,7 @@ use crate::{
         runtime_type::ConcreteRuntimeType,
         scope_analysis::{ConcreteFunction, ConcreteVariable, FunctionID},
     },
-    tokenizer::{NamedSourceRange, SourceLocation},
+    tokenizer::NamedSourceRange,
 };
 
 use super::find_node_bounds::find_node_bounds;
@@ -310,19 +309,7 @@ impl AstVisitor for StatTracker<'_> {
                 .clone();
             self.stats.insert(program.id, main_stat);
         } else {
-            self.errors.push(FleetError::from_range(
-                SourceLocation::start()
-                    .named(program.file_name.clone())
-                    .until(
-                        program
-                            .top_level_statements
-                            .first()
-                            .map(|tls| find_node_bounds(tls).range.start)
-                            .unwrap_or(SourceLocation::start()),
-                    ),
-                "No main function was found.".to_string(),
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::NoMainFunction);
         }
     }
 
@@ -403,18 +390,14 @@ impl AstVisitor for StatTracker<'_> {
                 .expect("Function body analyzed for termination without a containing function");
 
             if current_function.borrow().return_type != ConcreteRuntimeType::Unit {
-                self.errors.push({
-                    FleetError::try_new(
-                        stat.non_terminating_ranges
-                            .iter()
-                            .cloned()
-                            .map(|r| (r, ErrorSeverity::Error))
-                            .collect_vec(),
-                        "All code paths must return.",
-                        ErrorSeverity::Error,
-                    )
-                    .unwrap()
-                });
+                for range in &stat.non_terminating_ranges {
+                    self.errors.push({
+                        ErrorKind::PathDoesntReturn {
+                            function: current_function.borrow().symbol.clone(),
+                            source_range: range.clone(),
+                        }
+                    });
+                }
             }
         }
 
@@ -527,11 +510,9 @@ impl AstVisitor for StatTracker<'_> {
         if exec_stats.terminates_function == YesNoMaybe::Yes
             || binding_stats.terminates_function == YesNoMaybe::Yes
         {
-            self.errors.push(FleetError::from_node(
-                &**body,
-                "This code is unreachable",
-                ErrorSeverity::Warning,
-            ));
+            self.errors.push(ErrorKind::Lint(Lint::CodeUnreachable {
+                range: find_node_bounds(&**body),
+            }));
         }
         let body_stats = self.visit_statement(body);
 
@@ -573,11 +554,8 @@ impl AstVisitor for StatTracker<'_> {
             ]));
         }
         if let Some(range) = unreachable_range {
-            self.errors.push(FleetError::from_range(
-                range,
-                "This code is unreachable".to_string(),
-                ErrorSeverity::Warning,
-            ));
+            self.errors
+                .push(ErrorKind::Lint(Lint::CodeUnreachable { range }));
         }
         self.stats.insert(*id, body_stat.clone());
         body_stat
@@ -727,11 +705,10 @@ impl AstVisitor for StatTracker<'_> {
         let stat = NodeStats::default_with_range(vec![find_node_bounds(&*break_stmt)]);
         self.stats.insert(break_stmt.id, stat.clone());
         if self.loop_count == 0 {
-            self.errors.push(FleetError::from_node(
-                break_stmt,
-                "Break statements cannot appear outside loops",
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::LoopControlOutsideLoop {
+                kind: LoopControl::Break,
+                range: break_stmt.break_token.range.clone(),
+            });
         }
 
         stat
@@ -741,11 +718,10 @@ impl AstVisitor for StatTracker<'_> {
         let stat = NodeStats::default_with_range(vec![find_node_bounds(&*skip_stmt)]);
         self.stats.insert(skip_stmt.id, stat.clone());
         if self.loop_count == 0 {
-            self.errors.push(FleetError::from_node(
-                skip_stmt,
-                "Skip statements cannot appear outside loops",
-                ErrorSeverity::Error,
-            ));
+            self.errors.push(ErrorKind::LoopControlOutsideLoop {
+                kind: LoopControl::Skip,
+                range: skip_stmt.skip_token.range.clone(),
+            });
         }
 
         stat

@@ -5,7 +5,7 @@ use crate::{
         AstVisitor, BlockStatement, ForLoopStatement, FunctionBody, FunctionDefinition,
         IfStatement, Program, Statement, WhileLoopStatement,
     },
-    infra::{ErrorSeverity, FleetError},
+    infra::{BlockRequiredKind, ErrorKind},
     parser::IdGenerator,
     passes::pass_manager::{Errors, GlobalState, Pass, PassFactory, PassResult},
     tokenizer::{Token, TokenType},
@@ -91,20 +91,13 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
             self.visit_type(return_type);
         }
 
-        let body_clone = body.clone();
         if let FunctionBody::Statement(stmt_body) = &mut **body
             && !matches!(stmt_body.statement, Statement::Block { .. })
         {
-            self.errors.push(FleetError::from_node(
-                &*body_clone,
-                "Functions must have a block as the body",
-                ErrorSeverity::Error,
-            ));
-            self.errors.push(FleetError::from_node(
-                &*body_clone,
-                "Formatting will fix this",
-                ErrorSeverity::Note,
-            ));
+            self.errors.push(ErrorKind::BlockRequired {
+                kind: BlockRequiredKind::Function,
+                stmt_range: find_node_bounds(&stmt_body.statement),
+            });
 
             stmt_body.statement = self.create_fake_block_arround(&mut stmt_body.statement);
         }
@@ -124,16 +117,10 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
         }: &mut IfStatement,
     ) {
         if !matches!(**if_body, Statement::Block { .. }) {
-            self.errors.push(FleetError::from_node(
-                &**if_body,
-                "If statements must always have a block as the body.",
-                ErrorSeverity::Error,
-            ));
-            self.errors.push(FleetError::from_node(
-                &**if_body,
-                "Formatting will fix this",
-                ErrorSeverity::Note,
-            ));
+            self.errors.push(ErrorKind::BlockRequired {
+                kind: BlockRequiredKind::If,
+                stmt_range: find_node_bounds(&**if_body),
+            });
 
             **if_body = self.create_fake_block_arround(&mut *if_body);
         }
@@ -143,16 +130,10 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
 
         for (_token, elif_condition, elif_body) in elifs {
             if !matches!(elif_body, Statement::Block { .. }) {
-                self.errors.push(FleetError::from_node(
-                    &*elif_body,
-                    "Elif statements must always have a block as the body.",
-                    ErrorSeverity::Error,
-                ));
-                self.errors.push(FleetError::from_node(
-                    &*elif_body,
-                    "Formatting will fix this",
-                    ErrorSeverity::Note,
-                ));
+                self.errors.push(ErrorKind::BlockRequired {
+                    kind: BlockRequiredKind::Elif,
+                    stmt_range: find_node_bounds(&*elif_body),
+                });
 
                 *elif_body = self.create_fake_block_arround(elif_body);
             }
@@ -162,16 +143,10 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
 
         if let Some((_token, else_body)) = else_ {
             if !matches!(**else_body, Statement::Block { .. }) {
-                self.errors.push(FleetError::from_node(
-                    &**else_body,
-                    "Else statements must always have a block as the body.",
-                    ErrorSeverity::Error,
-                ));
-                self.errors.push(FleetError::from_node(
-                    &**else_body,
-                    "Formatting will fix this",
-                    ErrorSeverity::Note,
-                ));
+                self.errors.push(ErrorKind::BlockRequired {
+                    kind: BlockRequiredKind::Else,
+                    stmt_range: find_node_bounds(&**else_body),
+                });
 
                 **else_body = self.create_fake_block_arround(&mut *else_body);
             }
@@ -190,16 +165,10 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
         }: &mut WhileLoopStatement,
     ) {
         if !matches!(**body, Statement::Block { .. }) {
-            self.errors.push(FleetError::from_node(
-                &**body,
-                "While loops must always have a block as the body.",
-                ErrorSeverity::Error,
-            ));
-            self.errors.push(FleetError::from_node(
-                &**body,
-                "Formatting will fix this",
-                ErrorSeverity::Note,
-            ));
+            self.errors.push(ErrorKind::BlockRequired {
+                kind: BlockRequiredKind::While,
+                stmt_range: find_node_bounds(&**body),
+            });
 
             **body = self.create_fake_block_arround(&mut *body);
         }
@@ -223,16 +192,10 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
         }: &mut ForLoopStatement,
     ) {
         if !matches!(**body, Statement::Block { .. }) {
-            self.errors.push(FleetError::from_node(
-                &**body,
-                "For loops must always have a block as the body.",
-                ErrorSeverity::Error,
-            ));
-            self.errors.push(FleetError::from_node(
-                &**body,
-                "Formatting will fix this",
-                ErrorSeverity::Note,
-            ));
+            self.errors.push(ErrorKind::BlockRequired {
+                kind: BlockRequiredKind::For,
+                stmt_range: find_node_bounds(&**body),
+            });
 
             **body = self.create_fake_block_arround(&mut *body);
         }
