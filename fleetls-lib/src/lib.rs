@@ -13,8 +13,8 @@ use fleet::{
     },
     escape::{QuoteType, escape},
     infra::{
-        self, ErrorSeverity, insert_c_passes, insert_compile_passes, insert_fix_passes,
-        insert_minimal_pipeline,
+        self, ErrorSeverity, HighlightTag, insert_c_passes, insert_compile_passes,
+        insert_fix_passes, insert_minimal_pipeline,
     },
     passes::{
         find_containing_node::FindContainingNodePass,
@@ -1079,10 +1079,12 @@ impl LanguageServer for Backend {
             //pm.insert::<LLVMOptimizerPass>();
         };
 
+        let file_name: FileName = params.text_document.uri.path().to_string().into();
+
         let errors = pm.state.insert_default::<Errors>();
         pm.state.insert(InputSource {
             source: src.to_string(),
-            file_name: params.text_document.uri.path().to_string().into(),
+            file_name: file_name.clone(),
         });
 
         if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
@@ -1103,12 +1105,58 @@ impl LanguageServer for Backend {
                     items: errors
                         .iter()
                         .flat_map(|error| {
-                            error
-                                .highlight_groups()
+                            let rendered = error.render();
+
+                            let first = rendered.highlight_groups.first();
+
+                            let first_range =
+                                first.map(|hl| hl.range.clone()).unwrap_or_else(|| {
+                                    SourceRange::empty_start().named(file_name.clone())
+                                });
+
+                            let mut diagnostics = rendered
+                                .highlight_groups
                                 .iter()
-                                .map(|(range, severity)| Diagnostic {
-                                    range: source_range_to_lsp_range(range.clone()),
-                                    severity: Some(match severity {
+                                .skip(1) // The main message takes over this diagnostic
+                                .filter_map(|hl| {
+                                    if hl.range.name != file_name {
+                                        return None;
+                                    }
+
+                                    Some(Diagnostic {
+                                        range: source_range_to_lsp_range(hl.range.range),
+                                        severity: Some(match hl.severity {
+                                            ErrorSeverity::Error => DiagnosticSeverity::ERROR,
+                                            ErrorSeverity::Warning => DiagnosticSeverity::WARNING,
+                                            ErrorSeverity::Note => DiagnosticSeverity::HINT,
+                                        }),
+                                        code: None,
+                                        code_description: None,
+                                        source: Some("FleetLS".to_string()),
+                                        message: hl.message.clone(),
+                                        related_information: None,
+                                        tags: Some(
+                                            hl.tags
+                                                .iter()
+                                                .map(|tag| match tag {
+                                                    HighlightTag::Unnecessary => {
+                                                        DiagnosticTag::UNNECESSARY
+                                                    }
+                                                    HighlightTag::Deprecated => {
+                                                        DiagnosticTag::DEPRECATED
+                                                    }
+                                                })
+                                                .collect_vec(),
+                                        ),
+                                        data: None,
+                                    })
+                                })
+                                .collect_vec();
+
+                            if first_range.name == file_name {
+                                diagnostics.push(Diagnostic {
+                                    range: source_range_to_lsp_range(first_range.range),
+                                    severity: Some(match rendered.severity {
                                         ErrorSeverity::Error => DiagnosticSeverity::ERROR,
                                         ErrorSeverity::Warning => DiagnosticSeverity::WARNING,
                                         ErrorSeverity::Note => DiagnosticSeverity::HINT,
@@ -1116,11 +1164,27 @@ impl LanguageServer for Backend {
                                     code: None,
                                     code_description: None,
                                     source: Some("FleetLS".to_string()),
-                                    message: error.message.clone(),
+                                    message: rendered.main_message,
                                     related_information: None,
-                                    tags: None,
+                                    tags: Some(
+                                        first
+                                            .iter()
+                                            .flat_map(|hl| &hl.tags)
+                                            .map(|tag| match tag {
+                                                HighlightTag::Unnecessary => {
+                                                    DiagnosticTag::UNNECESSARY
+                                                }
+                                                HighlightTag::Deprecated => {
+                                                    DiagnosticTag::DEPRECATED
+                                                }
+                                            })
+                                            .collect_vec(),
+                                    ),
                                     data: None,
-                                })
+                                });
+                            }
+
+                            diagnostics
                         })
                         .collect(),
                 },

@@ -22,9 +22,9 @@ use crate::{
         VariableLValue, WhileLoopStatement,
     },
     infra::{
-        CastDirection, ErrorKind, ExtraParameter, ImpossibleCastReason, InternalError, Lint,
-        MissingParameter, ParameterCountDifference, PrefetchedType, SymbolDefinition,
-        TypeMismatchKind, UniquelyNamed, UnresolvedSymbol,
+        CastDirection, DuplicateKind, ErrorKind, ExtraParameter, ImpossibleCastReason,
+        InternalError, Lint, MissingParameter, NotDefinedKind, ParameterCountDifference,
+        PrefetchedType, SymbolDefinition, TypeMismatchKind, UnresolvedSymbol,
     },
     parser::IdGenerator,
     passes::{
@@ -181,7 +181,7 @@ impl<'a> TypePropagator<'a> {
             .insert(name.clone(), (name_token.range.clone(), type_))
         {
             self.errors.push(ErrorKind::Duplicate {
-                kind: UniquelyNamed::TypeAlias,
+                kind: DuplicateKind::TypeAlias,
                 original: SymbolDefinition::new(name.clone(), original_range),
                 new_range: name_token.range.clone(),
             });
@@ -395,7 +395,7 @@ impl AstVisitor for TypePropagator<'_> {
                 open_bracket_token: _,
                 binding,
                 equal_token: _,
-                max_value: _,
+                max_value,
                 close_bracket_token: _,
             },
             max_value_type,
@@ -409,6 +409,7 @@ impl AstVisitor for TypePropagator<'_> {
                         binding.name.clone(),
                         &binding.name_token,
                     ),
+                    max_value_range: find_node_bounds(&**max_value),
                     type_range: binding
                         .type_
                         .as_ref()
@@ -441,14 +442,15 @@ impl AstVisitor for TypePropagator<'_> {
                     ),
                 });
             }
+            let possible_iterator_type = self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Number {
+                    signed: Some(false),
+                    integer: Some(true),
+                },
+                definition_range: None,
+            });
             if !RuntimeTypeKind::merge_types(
-                self.type_sets.insert_set(RuntimeType {
-                    kind: RuntimeTypeKind::Number {
-                        signed: Some(false),
-                        integer: Some(true),
-                    },
-                    definition_range: None,
-                }),
+                possible_iterator_type,
                 iterator_type,
                 &mut self.type_sets,
             ) {
@@ -463,6 +465,10 @@ impl AstVisitor for TypePropagator<'_> {
                         .as_ref()
                         .map(|(_colon, type_)| find_node_bounds(type_)),
                     iterator_type: PrefetchedType::fetch(iterator_type, &self.type_sets),
+                    possible_iterator_type: PrefetchedType::fetch(
+                        possible_iterator_type,
+                        &self.type_sets,
+                    ),
                 });
             }
         }
@@ -884,6 +890,7 @@ impl AstVisitor for TypePropagator<'_> {
             _ => {
                 self.errors.push(ErrorKind::StructInitializeNonStruct {
                     expression_range,
+                    type_range: find_node_bounds(&*type_),
                     wrong_type: PrefetchedType::fetch(defined_type_ptr, &self.type_sets),
                 });
 
@@ -915,6 +922,7 @@ impl AstVisitor for TypePropagator<'_> {
                 if *name != this_defined_name {
                     self.errors.push(ErrorKind::StructMemberMismatch {
                         member_index: i,
+                        struct_type: PrefetchedType::fetch(defined_type_ptr, &self.type_sets),
                         expected: SymbolDefinition::new(
                             this_defined_name.clone(),
                             this_defined_range.clone(),
@@ -991,7 +999,7 @@ impl AstVisitor for TypePropagator<'_> {
         } = expression;
         let Some(ref_function) = self.referenced_function.get(id).cloned() else {
             self.errors.push(ErrorKind::NotDefined {
-                kind: UniquelyNamed::Function,
+                kind: NotDefinedKind::Function,
                 item: UnresolvedSymbol::from_token(name.clone(), name_token),
             });
 
@@ -1045,6 +1053,11 @@ impl AstVisitor for TypePropagator<'_> {
                             kind: TypeMismatchKind::FunctionCallParameter {
                                 parameter_index: i,
                                 parameter: param.borrow().symbol.clone(),
+                                function: ref_function
+                                    .borrow()
+                                    .symbol
+                                    .clone()
+                                    .with_use(name_token.range.clone()),
                             },
                             value_range: find_node_bounds(&**arg),
                             expected_types: vec![PrefetchedType::fetch(
@@ -1250,6 +1263,7 @@ impl AstVisitor for TypePropagator<'_> {
                             kind: TypeMismatchKind::IntrinsicCallParameter {
                                 parameter_index: i,
                                 parameter_name: param_name.clone(),
+                                intrinsic: UnresolvedSymbol::from_token(name.clone(), name_token),
                             },
                             value_range: find_node_bounds(&*arg),
                             expected_types: vec![PrefetchedType::fetch(
@@ -1686,10 +1700,22 @@ impl AstVisitor for TypePropagator<'_> {
                         }
                     }
                 }
-                (T::ArrayOf { .. }, T::ArrayOf { .. }) => {
+                (
+                    T::ArrayOf {
+                        size: Some(from_size),
+                        ..
+                    },
+                    T::ArrayOf {
+                        size: Some(to_size),
+                        ..
+                    },
+                ) => {
                     // equal sizes are already handled above
                     self_errors.push(ErrorKind::ImpossibleCast {
-                        reason: ImpossibleCastReason::ArrayLengthIncompatible,
+                        reason: ImpossibleCastReason::ArrayLengthIncompatible {
+                            from_size: *from_size,
+                            to_size: *to_size,
+                        },
                         expression: find_node_bounds(&expression_clone),
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
@@ -1854,7 +1880,8 @@ impl AstVisitor for TypePropagator<'_> {
         let left_type = self.visit_expression(left);
         let right_type = self.visit_expression(right);
 
-        let allowed_types_left = match operation {
+        // only works as long as this is symmetric
+        let mut allowed_gen = || match operation {
             BinaryOperation::Add
             | BinaryOperation::Subtract
             | BinaryOperation::Multiply
@@ -1893,7 +1920,9 @@ impl AstVisitor for TypePropagator<'_> {
                 })]
             }
         };
-        let allowed_types_right = allowed_types_left.clone();
+
+        let allowed_types_left = allowed_gen();
+        let allowed_types_right = allowed_gen();
 
         let is_left_ok = allowed_types_left.iter().any(|expected_type| {
             RuntimeTypeKind::merge_types(left_type, *expected_type, &mut self.type_sets)
@@ -2219,7 +2248,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         if matches!(self.type_sets.get(subtype_t).kind, RuntimeTypeKind::Unit) {
             self.errors.push(ErrorKind::ArrayOfUnit {
-                local_expr: array_type_range.clone(),
+                type_range: array_type_range.clone(),
                 element_type: PrefetchedType::fetch(subtype_t, &self.type_sets),
             });
         }
@@ -2233,7 +2262,7 @@ impl AstVisitor for TypePropagator<'_> {
             Some(expr) => {
                 // TODO: once we have consteval, relax this restriction
                 self.errors.push(ErrorKind::NonLiteralArrayLength {
-                    local_expr: array_type_range.clone(),
+                    type_range: array_type_range.clone(),
                     element_type: PrefetchedType::fetch(subtype_t, &self.type_sets),
                     length_range: find_node_bounds(expr),
                 });
@@ -2323,7 +2352,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         let Some((_definition_range, aliased_type)) = self.type_aliases.get(name) else {
             self.errors.push(ErrorKind::NotDefined {
-                kind: UniquelyNamed::TypeAlias,
+                kind: NotDefinedKind::TypeAlias,
                 item: UnresolvedSymbol::from_token(name.clone(), name_token),
             });
 

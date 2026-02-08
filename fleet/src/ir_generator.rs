@@ -56,6 +56,7 @@ use crate::{
         stat_tracker::YesNoMaybe,
         top_level_binding_finder::TopLevelBindingFinder,
     },
+    tokenizer::SourceRange,
 };
 
 macro_rules! pass_precondition {
@@ -573,6 +574,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             if let Err(err) = self.module.link_in_module(runtime_module_declarations) {
                 self.errors.push(ErrorKind::InternalError(
                     InternalError::LlvmRuntimeLinkFailure {
+                        file_start: SourceRange::empty_start().named(program.file_name.clone()),
                         error: unescape(err.to_str().unwrap(), QuoteType::Double)
                             .unwrap_or_else(|_| err.to_str().unwrap().to_string()),
                         module_dump: self.module.print_to_string().to_string(),
@@ -716,6 +718,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         self.module.verify().inspect_err(|err| {
             self.errors
                 .push(ErrorKind::InternalError(InternalError::LlvmModuleInvalid {
+                    file_start: SourceRange::empty_start().named(program.file_name.clone()),
                     error: unescape(err.to_str().unwrap(), QuoteType::Double)
                         .unwrap_or_else(|_| err.to_str().unwrap().to_string()),
                     module_dump: self.module.print_to_string().to_string(),

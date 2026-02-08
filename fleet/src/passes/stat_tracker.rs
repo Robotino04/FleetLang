@@ -29,7 +29,7 @@ use crate::{
         runtime_type::ConcreteRuntimeType,
         scope_analysis::{ConcreteFunction, ConcreteVariable, FunctionID},
     },
-    tokenizer::NamedSourceRange,
+    tokenizer::{NamedSourceRange, SourceRange},
 };
 
 use super::find_node_bounds::find_node_bounds;
@@ -309,7 +309,9 @@ impl AstVisitor for StatTracker<'_> {
                 .clone();
             self.stats.insert(program.id, main_stat);
         } else {
-            self.errors.push(ErrorKind::NoMainFunction);
+            self.errors.push(ErrorKind::NoMainFunction {
+                file_start: SourceRange::empty_start().named(program.file_name.clone()),
+            });
         }
     }
 

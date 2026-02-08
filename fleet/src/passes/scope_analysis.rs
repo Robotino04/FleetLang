@@ -23,7 +23,7 @@ use crate::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
-    infra::{ErrorKind, SymbolDefinition, UniquelyNamed, UnresolvedSymbol},
+    infra::{DuplicateKind, ErrorKind, NotDefinedKind, SymbolDefinition, UnresolvedSymbol},
     parser::IdGenerator,
     passes::{
         find_node_bounds::find_node_bounds,
@@ -640,7 +640,7 @@ impl<'a> ScopeAnalyzer<'a> {
             })),
         ) {
             self.errors.push(ErrorKind::Duplicate {
-                kind: UniquelyNamed::Function,
+                kind: DuplicateKind::Function,
                 original: original.borrow().symbol.clone(),
                 new_range: name_token.range.clone(),
             });
@@ -787,7 +787,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             })
         {
             self.errors.push(ErrorKind::Duplicate {
-                kind: UniquelyNamed::Variable,
+                kind: DuplicateKind::Variable,
                 original: present_var.borrow().symbol.clone(),
                 new_range: find_node_bounds(&simple_binding_clone),
             });
@@ -950,6 +950,9 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             .add_dependencies(*id, [value_dep, binding_dep]);
         self.comptime_deps.add_dependency(binding_dep, value_dep);
         self.comptime_deps.add_dependency(binding_dep, *id);
+
+        let binding_ref_var = self.referenced_variable.get(&binding.id).unwrap().clone();
+        self.referenced_variable.insert(*id, binding_ref_var);
 
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
@@ -1217,7 +1220,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         } = expression;
         let Some(ref_function) = self.function_list.get(name).cloned() else {
             self.errors.push(ErrorKind::NotDefined {
-                kind: UniquelyNamed::Function,
+                kind: NotDefinedKind::Function,
                 item: UnresolvedSymbol::from_token(name.clone(), &expression.name_token),
             });
 
@@ -1365,7 +1368,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         } = expression;
         let Some(ref_variable) = self.variable_scopes.get_read(name) else {
             self.errors.push(ErrorKind::NotDefined {
-                kind: UniquelyNamed::Variable,
+                kind: NotDefinedKind::Variable,
                 item: UnresolvedSymbol::from_token(name.clone(), &expression.name_token),
             });
             return *id;
@@ -1493,7 +1496,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         } = lvalue;
         let Some(ref_variable) = self.variable_scopes.get_write(name) else {
             self.errors.push(ErrorKind::NotDefined {
-                kind: UniquelyNamed::Variable,
+                kind: NotDefinedKind::Variable,
                 item: UnresolvedSymbol::from_token(name.clone(), name_token),
             });
             return *id;
@@ -1671,7 +1674,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
                 member_unique_set.insert(name.clone(), name_token.range.clone())
             {
                 self.errors.push(ErrorKind::Duplicate {
-                    kind: UniquelyNamed::StructMember,
+                    kind: DuplicateKind::StructMember,
                     original: SymbolDefinition::new(name.clone(), other_range.clone()),
                     new_range: name_token.range.clone(),
                 });

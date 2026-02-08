@@ -21,7 +21,6 @@ Features:
 - signature help
 - hover information
 - lots of crashes
-
 There is a [Web-Demo](https://robotino04.github.io/FleetLang/) available which runs a VSCode-style editor in your browser, giving you access to all the features of FleetLS. You can also observe how the generated C-Code corresponds to the Fleet one and even take a look at the generated AST. Unfortunately, you can't execute the programs yet.
 
 
@@ -149,6 +148,12 @@ If something doesn't make sense or isn't accurate anymore, feel free to reach ou
   }
   ```
 - lint against `as idk`
+- Allow inference here:
+  ```rust
+  idk {
+      b: 2,
+  };
+  ```
 
 #### Medium
 - real mutability/constant system

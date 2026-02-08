@@ -1272,6 +1272,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                     if !subtype.is_numeric() {
                         self.errors.push(ErrorKind::ComplexZeroGlsl {
                             zero: UnresolvedSymbol::from_token(name.clone(), name_token),
+                            type_: expected_type.clone(),
                         });
                     }
 
