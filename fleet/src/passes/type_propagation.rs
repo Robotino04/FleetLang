@@ -256,7 +256,7 @@ impl AstVisitor for TypePropagator<'_> {
             parameters,
             close_paren_token: _,
             right_arrow_token: _,
-            return_type,
+            return_type: _,
             body,
             id,
         } = fdef;
@@ -267,9 +267,7 @@ impl AstVisitor for TypePropagator<'_> {
             .expect("All functions should have been registered before traversing the tree")
             .clone();
 
-        if let Some(return_type) = return_type {
-            self.visit_type(return_type);
-        }
+        // return type was already handled when registering
 
         self.current_function = Some(this_function.clone());
 
@@ -1923,6 +1921,8 @@ impl AstVisitor for TypePropagator<'_> {
 
         let allowed_types_left = allowed_gen();
         let allowed_types_right = allowed_gen();
+        let allowed_types_preserved_left = allowed_gen();
+        let allowed_types_preserved_right = allowed_gen();
 
         let is_left_ok = allowed_types_left.iter().any(|expected_type| {
             RuntimeTypeKind::merge_types(left_type, *expected_type, &mut self.type_sets)
@@ -1939,7 +1939,7 @@ impl AstVisitor for TypePropagator<'_> {
                 self.errors.push(ErrorKind::TypeMismatch {
                     kind: TypeMismatchKind::BinaryOperationLeft(*operation),
                     value_range: find_node_bounds(&**left),
-                    expected_types: allowed_types_left
+                    expected_types: allowed_types_preserved_left
                         .iter()
                         .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
                         .collect(),
@@ -1950,7 +1950,7 @@ impl AstVisitor for TypePropagator<'_> {
                 self.errors.push(ErrorKind::TypeMismatch {
                     kind: TypeMismatchKind::BinaryOperationRight(*operation),
                     value_range: find_node_bounds(&**right),
-                    expected_types: allowed_types_right
+                    expected_types: allowed_types_preserved_right
                         .iter()
                         .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
                         .collect(),
@@ -1961,14 +1961,14 @@ impl AstVisitor for TypePropagator<'_> {
                 self.errors.push(ErrorKind::TypeMismatch {
                     kind: TypeMismatchKind::BinaryOperation {
                         operation: *operation,
-                        right_expected_types: allowed_types_right
+                        right_expected_types: allowed_types_preserved_right
                             .iter()
                             .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
                             .collect(),
                         right_actual_type: PrefetchedType::fetch(right_type, &self.type_sets),
                     },
                     value_range: find_node_bounds(&expression_clone),
-                    expected_types: allowed_types_left
+                    expected_types: allowed_types_preserved_left
                         .iter()
                         .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
                         .collect(),

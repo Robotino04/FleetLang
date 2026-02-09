@@ -168,7 +168,6 @@ impl TypeConcretisationPass<'_> {
                 size: None,
             }
             | RuntimeTypeKind::Unknown
-            | RuntimeTypeKind::Error
             | RuntimeTypeKind::Number { .. } => {
                 self.errors.push(ErrorKind::IncompleteTypeInference {
                     range: type_.definition_range.clone().unwrap_or(parent_range),
@@ -176,6 +175,12 @@ impl TypeConcretisationPass<'_> {
                 });
                 return None;
             }
+            RuntimeTypeKind::Error => {
+                // these are always the result of an already reported error, so let's not
+                // overreport subsequent ones.
+                return None;
+            }
+
             RuntimeTypeKind::I8 => ConcreteRuntimeType::I8,
             RuntimeTypeKind::I16 => ConcreteRuntimeType::I16,
             RuntimeTypeKind::I32 => ConcreteRuntimeType::I32,

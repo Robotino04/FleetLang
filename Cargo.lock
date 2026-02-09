@@ -333,6 +333,7 @@ dependencies = [
  "clap-verbosity-flag",
  "env_logger",
  "fleet",
+ "itertools",
 ]
 
 [[package]]

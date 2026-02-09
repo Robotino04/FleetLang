@@ -93,17 +93,14 @@ impl RuntimeTypeKind {
                 members,
                 source_hash,
             } => format!(
-                "struct (hash: {source_hash:x?}) {{\n{}\n}}",
-                indent::indent_all_by(
-                    4,
-                    members
-                        .iter()
-                        .map(|(name, _range, type_)| format!(
-                            "{name}: {},",
-                            types.get(*type_).kind.stringify(types)
-                        ))
-                        .join("\n")
-                )
+                "struct (hash: {source_hash:x?}) {{ {} }}",
+                members
+                    .iter()
+                    .map(|(name, _range, type_)| format!(
+                        "{name}: {},",
+                        types.get(*type_).kind.stringify(types)
+                    ))
+                    .join("\n")
             ),
         }
     }
@@ -375,12 +372,6 @@ impl RuntimeTypeKind {
         b: UnionFindSetPtr<RuntimeType>,
         types: &mut UnionFindSet<RuntimeType>,
     ) -> bool {
-        if types.get(a).kind == RuntimeTypeKind::Error
-            || types.get(b).kind == RuntimeTypeKind::Error
-        {
-            return false;
-        }
-
         types.try_merge(a, b, |mut a_full, b_full, types| {
             use UnionFindSetMergeResult as R;
             let a = &mut a_full.kind;
@@ -389,9 +380,14 @@ impl RuntimeTypeKind {
             if *b == RuntimeTypeKind::Unknown {
                 return R::Merged(a_full);
             }
-            if *b == RuntimeTypeKind::Error {
-                unreachable!("Should have been checked above")
+
+            if *a == RuntimeTypeKind::Error {
+                return R::Merged(a_full);
             }
+            if *b == RuntimeTypeKind::Error {
+                return R::Merged(b_full);
+            }
+
             match a {
                 _ if a == b => R::Merged(a_full),
 
@@ -675,11 +671,11 @@ impl Display for ConcreteRuntimeType {
                 members,
                 source_hash,
             } => {
-                writeln!(f, "struct (hash: {source_hash:x?}) {{")?;
+                write!(f, "struct (hash: {source_hash:x?}) {{ ")?;
                 for (name, type_) in members {
-                    writeln!(f, "{name}: {type_},",)?;
+                    write!(f, "{name}: {type_},",)?;
                 }
-                write!(f, "}}")
+                write!(f, " }}")
             }
         }
     }

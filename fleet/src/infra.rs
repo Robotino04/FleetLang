@@ -453,6 +453,7 @@ pub enum HighlightTag {
     Deprecated,
 }
 
+#[derive(Clone, Debug)]
 pub struct HighlightGroup {
     pub severity: ErrorSeverity,
     pub range: NamedSourceRange,
@@ -460,6 +461,7 @@ pub struct HighlightGroup {
     pub tags: Vec<HighlightTag>,
 }
 
+#[derive(Clone, Debug)]
 pub struct RenderedError {
     pub highlight_groups: Vec<HighlightGroup>,
     pub main_message: String,
@@ -727,7 +729,7 @@ impl ErrorKind {
                 actual,
             } => RenderedError {
                 highlight_groups: vec![
-                    error(&actual.use_range, "not a struct type"),
+                    error(&actual.use_range, "wrong name used here"),
                     note(&expected.definition, "member defined here"),
                 ],
                 main_message: format!(
