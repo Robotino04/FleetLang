@@ -8,7 +8,7 @@ import { ComChannelEndpoint, type ComRouter, RawPayload, WorkerMessage } from 'w
 
 class FileHandlerWorker implements ComRouter {
 
-    private portClandFsEndpoint: ComChannelEndpoint;
+    private portClandFsEndpoint!: ComChannelEndpoint;
 
     setComChannelEndpoint(comChannelEndpoint: ComChannelEndpoint): void {
         this.portClandFsEndpoint = comChannelEndpoint;
@@ -110,7 +110,18 @@ export class WorkerRemoteMessageChannelFs implements FileSystemEndpoint {
 
     stat(_params: StatsRequest): Promise<StatsRequestResult> {
         return Promise.resolve({
-            type: 'unknown'
+            type: 'unknown',
+            size: 0,
+            name: '',
+            mtime: 0
         });
+    }
+
+    getFileStats(): Promise<any> {
+        return Promise.resolve({});
+    }
+
+    listFiles(): Promise<any> {
+        return Promise.resolve([]);
     }
 }

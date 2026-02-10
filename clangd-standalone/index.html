@@ -17,6 +17,22 @@
         <br>
         <p>The clangd language server worker has been derived from: <a href="https://github.com/guyutongxue/clangd-in-browser">clangd-in-browser</a></p>
     </div>
+    <div id="workbench-container">
+        <div id="titleBar"></div>
+        <div id="banner"></div>
+        <div id="workbench-top">
+            <div id="sidebarDiv">
+                <div id="sidebar"></div>
+            </div>
+            <div id="editorsDiv">
+                <div id="editors"></div>
+            </div>
+            <div id="sidebarRightDiv">
+                <div id="sidebar-right"></div>
+            </div>
+        </div>
+        <div id="panel"></div>
+    </div>
     <script type="module">
         import { runClangdWrapper } from "./src/clangd/client/main.ts";
         runClangdWrapper();

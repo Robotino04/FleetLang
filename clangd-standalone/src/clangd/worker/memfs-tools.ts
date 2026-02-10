@@ -3,7 +3,7 @@
  * Licensed under the MIT License. See LICENSE in the package root for license information.
  * ------------------------------------------------------------------------------------------ */
 
-export const fsReadAllFiles = (emscriptenFs: typeof FS, baseFolder: string) => {
+export const fsReadAllFiles = (emscriptenFs: any, baseFolder: string) => {
     const files: string[] = [];
     const directories: string[] = [];
 
@@ -15,7 +15,7 @@ export const fsReadAllFiles = (emscriptenFs: typeof FS, baseFolder: string) => {
                 continue;
             }
 
-            const path = `${folder}/${name}`.replaceAll('//', '/');
+            const path = `${folder}/${name}`.replace(/\/\//g, '/');
             try {
                 const { mode } = emscriptenFs.lookupPath(path, { parent: false }).node;
                 if (emscriptenFs.isFile(mode)) {

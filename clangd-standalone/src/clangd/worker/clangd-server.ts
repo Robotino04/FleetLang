@@ -32,18 +32,18 @@ export class ClangdInteractionWorker implements ComRouter {
     private lsMessagePort?: MessagePort;
     private fsMessagePort?: MessagePort;
 
-    private emscriptenFS?: typeof FS;
+    private emscriptenFS?: any;
     private remoteFs?: WorkerRemoteMessageChannelFs;
 
-    private clearIndexedDb: boolean;
-    private useCompressedWorkspace: boolean;
+    private clearIndexedDb!: boolean;
+    private useCompressedWorkspace!: boolean;
     private compressedWorkspaceUrl?: string;
 
     private startingAwait?: Promise<void>;
-    private startingResolve: (value: void | PromiseLike<void>) => void;
+    private startingResolve!: (value: void | PromiseLike<void>) => void;
 
     private synchingFSAwait?: Promise<void>;
-    private synchingFSResolve: (value: void | PromiseLike<void>) => void;
+    private synchingFSResolve!: (value: void | PromiseLike<void>) => void;
 
     setComChannelEndpoint(comChannelEndpoint: ComChannelEndpoint): void {
         this.endpointWorker = comChannelEndpoint;
@@ -81,7 +81,7 @@ export class ClangdInteractionWorker implements ComRouter {
         const clangd = await this.runClangdLanguageServer(requiredResurces);
 
         // perform all file system updates
-        this.emscriptenFS = clangd.FS as typeof FS;
+        this.emscriptenFS = clangd.FS as any;
         await this.updateWorkerFilesystem(requiredResurces);
         await this.updateRemoteFilesystem();
 
@@ -278,7 +278,7 @@ export class ClangdInteractionWorker implements ComRouter {
     private async syncFS(readOrWrite: boolean) {
         if (!this.emscriptenFS) throw new Error('Emscripten FS is not available! Aborting ...');
 
-        this.emscriptenFS.syncfs(readOrWrite, (err) => {
+        this.emscriptenFS.syncfs(readOrWrite, (err: any) => {
             if (err !== null) {
                 console.error(`Error syncing filesystem: ${err}`);
             }

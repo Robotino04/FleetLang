@@ -1,16 +1,105 @@
+:root {
+    font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 24px;
+    font-weight: 400;
+
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-text-size-adjust: 100%;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+}
+
 body {
-    font-family: Helvetica, Arial, Sans-Serif;
     background-color: #1f1f1f;
     color: #cccccc;
 }
 
 .exampleHeadelineDiv {
-    padding: 5px 0px 5px 0px;
+    padding: 10px 15px;
+    background-color: #2d2d30;
+    border-bottom: 1px solid #3e3e42;
+    flex: none;
 }
 
 .exampleHeadeline {
     font-weight: bold;
-    font-size: 20px;
+    font-size: 14px;
+    color: #cccccc;
+}
+
+#sidebarDiv,
+#sidebarRightDiv {
+    display: flex;
+    flex: none;
+    border: 1px solid var(--vscode-editorWidget-border);
+}
+
+#sidebar {
+    width: 300px;
+}
+
+#editorsDiv {
+    flex: 1;
+    min-width: 0;
+}
+
+#editors {
+    position: relative;
+    min-width: 0;
+    height: 100%;
+    border: 1px solid var(--vscode-editorWidget-border);
+}
+
+#sidebar-right {
+    max-width: 500px;
+}
+
+#auxiliaryBar-left,
+#auxiliaryBar {
+    max-width: 300px;
+}
+
+#panel {
+    display: none;
+    flex: 1;
+    border: 1px solid var(--vscode-editorWidget-border);
+    min-height: 0;
+}
+
+#titleBar {
+    position: relative;
+    flex: none;
+}
+
+#banner {
+    flex: none;
+}
+
+#workbench-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+#workbench-top {
+    display: flex;
+    gap: 0;
+    flex: 1;
+    min-height: 0;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
 }
 
 a:link {
