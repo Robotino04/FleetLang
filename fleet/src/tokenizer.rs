@@ -5,9 +5,9 @@ use log::{error, info};
 
 use crate::{
     NewtypeDeref,
-    error_reporting::ErrorKind,
+    error_reporting::{ErrorKind, Errors},
     escape::{QuoteType, unescape},
-    passes::pass_manager::{Errors, GlobalState, InputSource, Pass, PassFactory, PassResult},
+    passes::pass_manager::{GlobalState, InputSource, Pass, PassFactory, PassResult},
 };
 
 #[derive(Clone, PartialEq, Debug)]

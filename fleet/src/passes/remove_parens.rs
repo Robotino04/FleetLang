@@ -8,8 +8,8 @@ use crate::{
         ReturnStatement, ThreadExecutor, UnaryExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, WhileLoopStatement,
     },
-    error_reporting::{ErrorKind, Lint},
-    passes::pass_manager::{Errors, GlobalState, Pass, PassFactory, PassResult},
+    error_reporting::{ErrorKind, Errors, Lint},
+    passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
 };
 
 use super::{

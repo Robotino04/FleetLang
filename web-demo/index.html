@@ -25,6 +25,7 @@
 
         #editor,
         #output-editor,
+        #error-terminal,
         #right-panel {
             width: 50vw;
             height: 100%;
@@ -73,6 +74,7 @@
             <select id="output-selector">
                 <option value="c">C Code</option>
                 <option value="ast">AST</option>
+                <option value="terminal">Errors/Warnings</option>
             </select>
         </div>
     </div>
@@ -81,6 +83,7 @@
         <div id="right-panel">
             <svg id="ast-view"></svg>
             <div id="output-editor"></div>
+            <div id="error-terminal"></div>
         </div>
     </div>
     <script type="module" src="/src/monaco-setup.ts"></script>

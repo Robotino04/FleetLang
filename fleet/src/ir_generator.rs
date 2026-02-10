@@ -42,7 +42,7 @@ use crate::{
         VariableLValue, WhileLoopStatement,
     },
     error_reporting::{
-        Backend, ErrorKind, ErrorSeverity, InternalError, Intrinsic, UnresolvedSymbol,
+        Backend, ErrorKind, ErrorSeverity, Errors, InternalError, Intrinsic, UnresolvedSymbol,
     },
     escape::{QuoteType, unescape},
     generate_glsl::GLSLCodeGenerator,
@@ -50,8 +50,8 @@ use crate::{
         find_node_bounds::find_node_bounds,
         pass_manager::{
             ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData, ConcreteVariableData,
-            Errors, GlobalState, Pass, PassError, PassFactory, PassResult,
-            PrecompiledGlslFunctions, StatData,
+            GlobalState, Pass, PassError, PassFactory, PassResult, PrecompiledGlslFunctions,
+            StatData,
         },
         runtime_type::ConcreteRuntimeType,
         scope_analysis::{FunctionID, VariableID},

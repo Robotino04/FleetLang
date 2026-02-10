@@ -24,14 +24,13 @@ use crate::{
         WhileLoopStatement,
     },
     error_reporting::{
-        DuplicateKind, ErrorKind, NotDefinedKind, SymbolDefinition, UnresolvedSymbol,
+        DuplicateKind, ErrorKind, Errors, NotDefinedKind, SymbolDefinition, UnresolvedSymbol,
     },
     parser::IdGenerator,
     passes::{
         find_node_bounds::find_node_bounds,
         pass_manager::{
-            Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData,
-            VariableData,
+            FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData, VariableData,
         },
         runtime_type::{ConcreteRuntimeType, RuntimeType},
         union_find_set::UnionFindSetPtr,

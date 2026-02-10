@@ -20,11 +20,11 @@ use crate::{
         UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
-    error_reporting::{ErrorKind, Lint, LoopControl},
+    error_reporting::{ErrorKind, Errors, Lint, LoopControl},
     passes::{
         pass_manager::{
-            ConcreteFunctionData, ConcreteVariableData, Errors, GlobalState, Pass, PassFactory,
-            PassResult, StatData,
+            ConcreteFunctionData, ConcreteVariableData, GlobalState, Pass, PassFactory, PassResult,
+            StatData,
         },
         runtime_type::ConcreteRuntimeType,
         scope_analysis::{ConcreteFunction, ConcreteVariable, FunctionID},

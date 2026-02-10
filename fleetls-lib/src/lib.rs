@@ -11,7 +11,7 @@ use fleet::{
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
         VariableLValue, WhileLoopStatement,
     },
-    error_reporting::{ErrorSeverity, HighlightTag},
+    error_reporting::{ErrorSeverity, Errors, HighlightTag},
     escape::{QuoteType, escape},
     infra::{
         self, insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
@@ -19,8 +19,8 @@ use fleet::{
     passes::{
         find_containing_node::FindContainingNodePass,
         pass_manager::{
-            Errors, FunctionData, InputSource, PassError, PassManager, ScopeData, StatData,
-            TypeData, TypeSets, VariableData,
+            FunctionData, InputSource, PassError, PassManager, ScopeData, StatData, TypeData,
+            TypeSets, VariableData,
         },
         scope_analysis::ComptimeDeps,
     },

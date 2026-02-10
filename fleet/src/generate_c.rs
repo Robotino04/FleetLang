@@ -19,12 +19,12 @@ use crate::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
-    error_reporting::{Backend, ErrorKind, ErrorSeverity, Intrinsic, UnresolvedSymbol},
+    error_reporting::{Backend, ErrorKind, ErrorSeverity, Errors, Intrinsic, UnresolvedSymbol},
     generate_glsl::GLSLCodeGenerator,
     passes::{
         pass_manager::{
             CCodeOutput, ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData,
-            ConcreteVariableData, Errors, GlobalState, Pass, PassError, PassFactory, PassResult,
+            ConcreteVariableData, GlobalState, Pass, PassError, PassFactory, PassResult,
             PrecompiledGlslFunctions, StatData, StructAliasMap,
         },
         runtime_type::ConcreteRuntimeType,

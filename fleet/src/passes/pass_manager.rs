@@ -83,7 +83,6 @@ macro_rules! NewtypeDeref {
     };
 }
 
-NewtypeDeref!(pub Errors, Vec<ErrorKind>, Clone);
 NewtypeDeref!(pub VariableData, PerNodeData<Rc<RefCell<Variable>>>);
 NewtypeDeref!(pub FunctionData, PerNodeData<Rc<RefCell<Function>>>);
 NewtypeDeref!(pub TypeData, PerNodeData<UnionFindSetPtr<RuntimeType>>);

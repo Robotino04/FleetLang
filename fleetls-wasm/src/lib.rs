@@ -7,12 +7,13 @@ use std::{
 use fleetls_lib::{
     Backend, BackgroundThreadState,
     fleet::{
+        error_reporting::{ErrorSeverity, Errors},
         infra::{
             insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
         },
         passes::{
             ast_json_dump::{AstJsonDumpPass, AstJsonOutput},
-            pass_manager::{CCodeOutput, Errors, InputSource, PassManager},
+            pass_manager::{CCodeOutput, InputSource, PassError, PassManager},
         },
         tokenizer::FileName,
     },
@@ -64,24 +65,70 @@ pub fn extract_ast(src: String) -> Option<String> {
     }
 }
 
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Clone, Debug)]
+pub struct CompileOutput {
+    pub ccode: String,
+    pub warnings: String,
+}
+
 #[wasm_bindgen]
-pub fn compile_to_c(src: String) -> Option<String> {
+pub fn compile_to_c(source: String) -> Result<CompileOutput, String> {
     let mut pm = PassManager::default();
     insert_minimal_pipeline(&mut pm);
     insert_fix_passes(&mut pm);
     insert_compile_passes(&mut pm);
     insert_c_passes(&mut pm);
 
-    pm.state.insert(InputSource {
-        source: src,
-        file_name: FileName(Rc::new("web-ui.fl".to_string())),
-    });
-    pm.state.insert(Errors::default());
+    let file_name = FileName(Rc::new("web-ui.fl".to_string()));
 
-    match pm.run() {
-        Ok(()) => Some(pm.state.get::<CCodeOutput>()?.0.clone()),
-        Err(_) => None,
+    let documents = vec![(file_name.clone(), source.clone())]
+        .into_iter()
+        .collect();
+
+    pm.state.insert(InputSource { source, file_name });
+    let errors = pm.state.insert(Errors::default());
+
+    let run_result = pm.run();
+    let mut errors = errors.get(&pm.state).clone();
+
+    let ccode = match run_result {
+        Err(err @ (PassError::CompilerError { .. } | PassError::PassManagerStall { .. })) => Err(
+            errors.format_all_errors_and_message("Compilation failed internally", &documents, true)
+                + "\n"
+                + &err.to_string(),
+        ),
+        Err(PassError::InvalidInput { .. }) => {
+            Err(errors.format_all_errors_and_message("Program has errors", &documents, true))
+        }
+        Ok(()) => Ok(pm
+            .state
+            .get::<CCodeOutput>()
+            .ok_or("Failed to generate C Code")?
+            .0
+            .clone()),
+    }?;
+
+    if errors
+        .iter()
+        .any(|err| err.severity() == ErrorSeverity::Error)
+    {
+        eprintln!("these errors should have resulted in a PassError::InvalidInput");
+        return Err(errors.format_all_errors_and_message(
+            "Compilation has errors",
+            &documents,
+            true,
+        ));
     }
+
+    Ok(CompileOutput {
+        ccode,
+        warnings: if !(errors.is_empty()) {
+            errors.format_all_errors_and_message("There are warnings", &documents, true)
+        } else {
+            String::new()
+        },
+    })
 }
 
 // NOTE: we don't use web_sys::ReadableStream for input here because on the

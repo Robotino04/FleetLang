@@ -17,13 +17,13 @@ use inkwell::{
 
 use fleet::{
     ast::Program,
-    error_reporting::{ErrorKind, ErrorSeverity},
+    error_reporting::{ErrorKind, ErrorSeverity, Errors},
     infra::{
         format, insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
     },
     ir_generator::{IrGenerator, LLVMOptimizerPass},
     passes::{
-        pass_manager::{Errors, InputSource, PassError, PassManager, StatData},
+        pass_manager::{InputSource, PassError, PassManager, StatData},
         save_artifact_pass::{ArtifactType, SaveArtifactPass},
     },
     tokenizer::SourceLocation,

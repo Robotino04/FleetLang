@@ -5,9 +5,9 @@ use crate::{
         AstVisitor, BlockStatement, ForLoopStatement, FunctionBody, FunctionDefinition,
         IfStatement, Program, Statement, WhileLoopStatement,
     },
-    error_reporting::{BlockRequiredKind, ErrorKind},
+    error_reporting::{BlockRequiredKind, ErrorKind, Errors},
     parser::IdGenerator,
-    passes::pass_manager::{Errors, GlobalState, Pass, PassFactory, PassResult},
+    passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
     tokenizer::{Token, TokenType},
 };
 

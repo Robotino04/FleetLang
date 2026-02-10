@@ -6,19 +6,24 @@ import Server from "./server";
 import { IntoServer, FromServer } from "./codec";
 import { MonacoLspTransport } from "./monaco-lsp-transport";
 import "./monaco-fleet-lang";
-import initWasm, {
-  compile_to_c,
-  extract_ast,
-} from "@assets/wasm/fleetls_wasm.js";
+import { compile_to_c, extract_ast } from "@assets/wasm/fleetls_wasm.js";
 import latteTheme from "@assets/themes/latte.json";
 import mochaTheme from "@assets/themes/mocha.json";
 import { convertVsCodeThemeToStandalone } from "./theming";
 import examplePrograms from "@assets/examples.json";
+import { ITheme, Terminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
+import { FitAddon } from "@xterm/addon-fit";
 
 monaco.editor.defineTheme("latte", convertVsCodeThemeToStandalone(latteTheme));
 monaco.editor.defineTheme("mocha", convertVsCodeThemeToStandalone(mochaTheme));
 
-function setThemeCssVars(themeName: string) {
+const allThemes = {
+  latte: latteTheme,
+  mocha: mochaTheme,
+};
+
+function setThemeCssVars(themeName: keyof typeof allThemes) {
   let colors;
   if (themeName === "latte") {
     colors = latteTheme.colors;
@@ -48,9 +53,45 @@ function setThemeCssVars(themeName: string) {
       (themeName === "latte" ? "#8839ef" : "#cba6f7"),
   );
 }
+function setTerminalTheme(themeName: keyof typeof allThemes) {
+  let colors = allThemes[themeName].colors;
+  let terminal_theme: ITheme = {
+    foreground: colors["terminal.foreground"],
+    background: colors["editor.background"],
+    cursor: colors["terminalCursor.foreground"],
+    cursorAccent: colors["terminalCursor.background"],
+    selectionBackground: colors["terminal.selectionBackground"],
+    selectionForeground: undefined,
+    selectionInactiveBackground: colors["terminal.inactiveSelectionBackground"],
+    scrollbarSliderBackground: colors["scrollbarSlider.background"],
+    scrollbarSliderHoverBackground: colors["scrollbarSlider.hoverBackground"],
+    scrollbarSliderActiveBackground: colors["scrollbarSlider.activeBackground"],
+    overviewRulerBorder: colors["editorOverviewRuler.border"],
+    black: colors["terminal.ansiBlack"],
+    red: colors["terminal.ansiRed"],
+    green: colors["terminal.ansiGreen"],
+    yellow: colors["terminal.ansiYellow"],
+    blue: colors["terminal.ansiBlue"],
+    magenta: colors["terminal.ansiMagenta"],
+    cyan: colors["terminal.ansiCyan"],
+    white: colors["terminal.ansiWhite"],
+    brightBlack: colors["terminal.ansiBrightBlack"],
+    brightRed: colors["terminal.ansiBrightRed"],
+    brightGreen: colors["terminal.ansiBrightGreen"],
+    brightYellow: colors["terminal.ansiBrightYellow"],
+    brightBlue: colors["terminal.ansiBrightBlue"],
+    brightMagenta: colors["terminal.ansiBrightMagenta"],
+    brightCyan: colors["terminal.ansiBrightCyan"],
+    brightWhite: colors["terminal.ansiBrightWhite"],
+  };
+
+  errorTerminal.options.theme = { ...terminal_theme };
+}
+
+const defaultThemeName: keyof typeof allThemes = "mocha";
 
 const defaultProperties: monaco.editor.IStandaloneEditorConstructionOptions = {
-  theme: "mocha",
+  theme: defaultThemeName,
   automaticLayout: true,
   "semanticHighlighting.enabled": false, // too lazy to figure out the correct scopes and theming stuff
   tabSize: 4,
@@ -69,8 +110,6 @@ const defaultProperties: monaco.editor.IStandaloneEditorConstructionOptions = {
   },
 };
 
-setThemeCssVars(defaultProperties.theme || "mocha");
-
 // Create Monaco Editor instances
 const editorContainer = document.getElementById("editor");
 const editor = monaco.editor.create(editorContainer!, {
@@ -78,6 +117,30 @@ const editor = monaco.editor.create(editorContainer!, {
   language: "fleet",
   ...defaultProperties,
 });
+
+const errorTerminalContainer = document.getElementById("error-terminal")!;
+const errorTerminal = new Terminal({
+  fontFamily: defaultProperties.fontFamily,
+  fontSize: defaultProperties.fontSize,
+});
+const errorTerminalFit = new FitAddon();
+
+errorTerminal.loadAddon(errorTerminalFit);
+errorTerminal.open(errorTerminalContainer);
+
+window.addEventListener("resize", () => {
+  errorTerminalFit.fit();
+});
+
+// Listen for theme changes (if you add a theme switcher in future)
+// For now, update CSS vars if theme changes programmatically
+const originalSetTheme = monaco.editor.setTheme;
+monaco.editor.setTheme = function (themeName: string) {
+  setThemeCssVars(themeName as any);
+  setTerminalTheme(themeName as any);
+  originalSetTheme.call(monaco.editor, themeName);
+};
+monaco.editor.setTheme(defaultThemeName);
 
 function setupExampleSelector() {
   const exampleSelector = document.getElementById(
@@ -90,14 +153,6 @@ function setupExampleSelector() {
     exampleSelector.add(option);
   }
 
-  // Listen for theme changes (if you add a theme switcher in future)
-  // For now, update CSS vars if theme changes programmatically
-  const originalSetTheme = monaco.editor.setTheme;
-  monaco.editor.setTheme = function (themeName: string) {
-    setThemeCssVars(themeName);
-    originalSetTheme.call(monaco.editor, themeName);
-  };
-
   // Load selected example into editor
   if (exampleSelector) {
     exampleSelector.addEventListener("change", (e) => {
@@ -106,13 +161,42 @@ function setupExampleSelector() {
     });
   }
 }
-function setupOutputSelector() {
-  const outputSelector = document.getElementById(
-    "output-selector",
-  ) as HTMLSelectElement;
+const outputSelector = document.getElementById(
+  "output-selector",
+) as HTMLSelectElement;
+
+function selectOutputPanel(panel: "c" | "ast" | "terminal") {
+  outputSelector.value = panel;
 
   const ast_view = document.getElementById("ast-view")!!;
   const c_view = document.getElementById("output-editor")!!;
+  const error_view = document.getElementById("error-terminal")!!;
+
+  switch (panel) {
+    case "c":
+      ast_view.style.display = "none";
+      c_view.style.display = "block";
+      error_view.style.display = "none";
+      break;
+    case "ast":
+      c_view.style.display = "none";
+      ast_view.style.display = "block";
+      error_view.style.display = "none";
+      break;
+    case "terminal":
+      c_view.style.display = "none";
+      ast_view.style.display = "none";
+      error_view.style.display = "block";
+
+      errorTerminalFit.fit();
+      break;
+  }
+}
+
+function setupOutputSelector() {
+  outputSelector.value = "c";
+
+  const ast_view = document.getElementById("ast-view")!!;
 
   ast_view.setAttribute("width", "100%");
   ast_view.setAttribute("height", "100%");
@@ -122,16 +206,7 @@ function setupOutputSelector() {
 
   if (outputSelector) {
     outputSelector.addEventListener("change", (e) => {
-      switch (outputSelector.value) {
-        case "c":
-          ast_view.style.display = "none";
-          c_view.style.display = "block";
-          break;
-        case "ast":
-          c_view.style.display = "none";
-          ast_view.style.display = "block";
-          break;
-      }
+      selectOutputPanel(outputSelector.value as any);
     });
   }
 }
@@ -183,15 +258,40 @@ async function setupLanguageServer() {
 
 // WASM and compile-to-c integration
 async function setupCompileToC() {
+  let previous_state: "c" | "ast" | "terminal" | undefined = undefined;
+
   const updateOutput = () => {
     const src = editor.getValue();
-    let c = outputEditor.getValue();
+    let ccode: string;
+    let terminal_out: string;
+    let has_error = false;
+
     try {
-      c = compile_to_c(src) || c;
+      const out = compile_to_c(src);
+      ccode = out.ccode;
+      terminal_out = out.warnings;
     } catch (e) {
-      c = `// Compile error: ${e}`;
+      terminal_out = e as string;
+      ccode = "// Compile error";
+      has_error = true;
     }
-    outputEditor.setValue(c);
+    outputEditor.setValue(ccode);
+
+    if (has_error) {
+      if (outputSelector.value != "errors") {
+        previous_state = outputSelector.value as any;
+        selectOutputPanel("terminal");
+      }
+    } else {
+      if (previous_state !== undefined) {
+        selectOutputPanel(previous_state);
+        previous_state = undefined;
+      }
+    }
+    errorTerminal.clear();
+    for (let line of terminal_out.split("\n")) {
+      errorTerminal.writeln(line);
+    }
   };
   editor.onDidChangeModelContent(updateOutput);
   updateOutput();

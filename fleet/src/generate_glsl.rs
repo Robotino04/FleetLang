@@ -28,15 +28,15 @@ use crate::{
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     error_reporting::{
-        Backend, ErrorKind, ErrorSeverity, GpuLimitation, InternalError, Intrinsic,
+        Backend, ErrorKind, ErrorSeverity, Errors, GpuLimitation, InternalError, Intrinsic,
         UnresolvedSymbol,
     },
     passes::{
         find_node_bounds::find_node_bounds,
         pass_manager::{
             ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData, ConcreteVariableData,
-            Errors, GlobalState, Pass, PassError, PassFactory, PassResult,
-            PrecompiledGlslFunctions, StatData, StructAliasMap,
+            GlobalState, Pass, PassError, PassFactory, PassResult, PrecompiledGlslFunctions,
+            StatData, StructAliasMap,
         },
         runtime_type::ConcreteRuntimeType,
         scope_analysis::{ConcreteFunction, ConcreteVariable},

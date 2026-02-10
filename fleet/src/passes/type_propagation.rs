@@ -22,7 +22,7 @@ use crate::{
         VariableLValue, WhileLoopStatement,
     },
     error_reporting::{
-        CastDirection, DuplicateKind, ErrorKind, ExtraParameter, ImpossibleCastReason,
+        CastDirection, DuplicateKind, ErrorKind, Errors, ExtraParameter, ImpossibleCastReason,
         InternalError, Lint, MissingParameter, NotDefinedKind, ParameterCountDifference,
         PrefetchedType, SymbolDefinition, TypeMismatchKind, UnresolvedSymbol,
     },
@@ -30,7 +30,7 @@ use crate::{
     passes::{
         find_node_bounds::find_node_bounds,
         pass_manager::{
-            Errors, FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData, TypeData,
+            FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData, TypeData,
             TypeSets, VariableData,
         },
         runtime_type::{RuntimeType, RuntimeTypeKind},

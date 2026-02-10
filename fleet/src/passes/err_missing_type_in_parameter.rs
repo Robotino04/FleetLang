@@ -2,8 +2,8 @@ use std::cell::RefMut;
 
 use crate::{
     ast::{AstVisitor, FunctionDefinition, Program},
-    error_reporting::{ErrorKind, SymbolDefinition},
-    passes::pass_manager::{Errors, Pass, PassFactory, PassResult},
+    error_reporting::{ErrorKind, Errors, SymbolDefinition},
+    passes::pass_manager::{Pass, PassFactory, PassResult},
 };
 
 use super::{partial_visitor::PartialAstVisitor, pass_manager::GlobalState};

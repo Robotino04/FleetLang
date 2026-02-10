@@ -6,13 +6,13 @@ use std::{
 
 use crate::{
     ast::Program,
-    error_reporting::{ErrorKind, PrefetchedType},
+    error_reporting::{ErrorKind, Errors, PrefetchedType},
     passes::{
         find_node_bounds::find_node_bounds,
         find_node_by_id::find_node_by_id,
         pass_manager::{
             ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData, ConcreteVariableData,
-            Errors, FunctionData, GlobalState, Pass, PassError, PassFactory, PassResult, ScopeData,
+            FunctionData, GlobalState, Pass, PassError, PassFactory, PassResult, ScopeData,
             TypeData, TypeSets, VariableData,
         },
         runtime_type::{ConcreteRuntimeType, RuntimeType, RuntimeTypeKind},

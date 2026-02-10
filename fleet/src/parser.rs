@@ -19,10 +19,10 @@ use crate::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
-    error_reporting::ErrorKind,
+    error_reporting::{ErrorKind, Errors},
     passes::{
         find_node_bounds::find_node_bounds,
-        pass_manager::{Errors, GlobalState, InputSource, Pass, PassFactory, PassResult},
+        pass_manager::{GlobalState, InputSource, Pass, PassFactory, PassResult},
         runtime_type::{RuntimeType, RuntimeTypeKind},
         scope_analysis::{FunctionID, ScopeID, VariableID},
     },

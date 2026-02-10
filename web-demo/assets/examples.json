@@ -12,7 +12,7 @@
   {
     "title": "Arithmetic Simplification",
     "description": "Example of a program with binary arithmetic operators. The unnecessary brackets are automatically removed.",
-    "code": "// fleetc --format\nlet main = () -> i32 {\n    return (( 2 * 3 ) + ((3))) / 2 - 1;\n}"
+    "code": "// Try pressing Ctrl+Shift+I or Right-Click > Format Document\n\nlet main = () -> i32 {\n    return (( 2 * 3 ) + ((3))) / 2 - 1;\n}"
   },
   {
     "title": "Short-Circuit OR",
@@ -87,6 +87,6 @@
   {
     "title": "AST Demo Function",
     "description": "A simple, pointless Fleet program to demonstrate a real AST.",
-    "code": "// fleetc -o ./generated/ast_test_output.json -d ast-json\nlet square_if_positive = (x: i32) -> i32 {\n    if x > 0 {\n        return x * x;\n    }\n    else {\n        return x;\n    }\n}\n\nlet main = () -> i32 {\n    let number1 = 4;\n    let number2 = -8;\n    number1 = number1 * number2 + 5;\n    return square_if_positive(number1 - 7);\n}"
+    "code": "let square_if_positive = (x: i32) -> i32 {\n    if x > 0 {\n        return x * x;\n    }\n    else {\n        return x;\n    }\n}\n\nlet main = () -> i32 {\n    let number1 = 4;\n    let number2 = -8;\n    number1 = number1 * number2 + 5;\n    return square_if_positive(number1 - 7);\n}"
   }
 ]

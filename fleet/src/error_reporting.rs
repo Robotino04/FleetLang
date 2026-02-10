@@ -1,9 +1,9 @@
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
 use itertools::Itertools;
 
 use crate::{
-    NewtypeDerefNoDefault,
+    NewtypeDeref, NewtypeDerefNoDefault,
     ast::{BinaryOperation, UnaryOperation},
     natural_language::{JoinAnd, JoinOr, an, nth, plural},
     passes::{
@@ -11,14 +11,72 @@ use crate::{
         runtime_type::{ConcreteRuntimeType, RuntimeType, RuntimeTypeKind},
         union_find_set::UnionFindSetPtr,
     },
-    tokenizer::{NamedSourceRange, Token},
+    tokenizer::{FileName, NamedSourceRange, SourceLocation, Token},
 };
+
+NewtypeDeref!(pub Errors, Vec<ErrorKind>, Clone);
+
+const UNCONDITIONAL_ANSI_RESET: &str = "\x1B[0m";
+
+impl Errors {
+    pub fn format_all_errors_and_message(
+        &mut self,
+        msg: &str,
+        documents: &HashMap<FileName, String>,
+        ansi: bool,
+    ) -> String {
+        let mut out = String::new();
+
+        let ansi_reset = if ansi { UNCONDITIONAL_ANSI_RESET } else { "" };
+
+        // error -> warning -> node, then sort by file location
+        self.sort_by_key(|err| {
+            err.render()
+                .highlight_groups
+                .first()
+                .unwrap()
+                .range
+                .range
+                .start
+        });
+        self.sort_by_key(|err| err.severity());
+
+        if let Some(worst_severity) = self.iter().map(|err| err.severity()).max() {
+            for error in &self.0 {
+                // double newline
+                out += &error.render().to_string(ansi, documents);
+                out += "\n\n";
+            }
+            let ansi_color = if ansi {
+                worst_severity.ansi_color()
+            } else {
+                String::new()
+            };
+            out += &format!("\n{ansi_color}{msg}{ansi_reset}");
+        }
+
+        out
+    }
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum ErrorSeverity {
     Note,
     Warning,
     Error,
+}
+
+impl ErrorSeverity {
+    fn ansi_color(self) -> String {
+        format!(
+            "\x1B[{}m",
+            match self {
+                ErrorSeverity::Error => "31",
+                ErrorSeverity::Warning => "33",
+                ErrorSeverity::Note => "34",
+            }
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -414,6 +472,179 @@ pub struct RenderedError {
     pub severity: ErrorSeverity,
 }
 
+impl RenderedError {
+    fn to_string(&self, ansi: bool, documents: &HashMap<FileName, String>) -> String {
+        let RenderedError {
+            highlight_groups,
+            main_message,
+            severity: main_severity,
+        } = self;
+
+        let ansi_reset = if ansi { UNCONDITIONAL_ANSI_RESET } else { "" };
+
+        let mut highlighted_sources = Vec::new();
+        for HighlightGroup {
+            severity,
+            range,
+            message,
+            tags: _,
+        } in highlight_groups
+        {
+            let color = if ansi {
+                severity.ansi_color()
+            } else {
+                String::new()
+            };
+
+            let Some(source) = documents.get(&range.name) else {
+                let red = if ansi {
+                    ErrorSeverity::Error.ansi_color()
+                } else {
+                    String::new()
+                };
+
+                let filename = &range.name.0;
+                let SourceLocation {
+                    index: _,
+                    line,
+                    column,
+                } = range.range.start;
+
+                highlighted_sources.push(format!(
+                "{filename}:{line}:{column}: {color}{message}{ansi_reset}\n\
+                {red}[INTERNAL ERROR]{ansi_reset}: Ha, no fancy error for you! (I couldn't find the source code, sorry)"
+            ));
+
+                continue;
+            };
+
+            let prefix_lines = 2;
+            let postfix_lines = 2;
+
+            let start_line = range.start().line().saturating_sub(prefix_lines);
+            let end_line = range.end().line() + postfix_lines;
+
+            let filename = &range.name.0;
+            let SourceLocation {
+                index: _,
+                line,
+                column,
+            } = range.range.start;
+
+            let mut min_column = range
+                .start()
+                .column()
+                .min(range.end().column().saturating_sub(1));
+            let mut max_column = (range.start().column() + 1).max(range.end().column());
+
+            let structure_color = if ansi {
+                ErrorSeverity::Note.ansi_color()
+            } else {
+                String::new()
+            };
+
+            let displayed_lines = source
+                .lines()
+                .enumerate()
+                .map(|(nr, line)| (nr + 1, line))
+                .skip(start_line.saturating_sub(1))
+                .take(end_line - start_line)
+                .filter(|(nr, line)| {
+                    if *nr >= range.start().line() && *nr <= range.end().line() {
+                        true
+                    } else {
+                        !line.trim().is_empty()
+                    }
+                });
+
+            let max_line_number_length =
+                displayed_lines.clone().last().unwrap().0.to_string().len() + 1;
+
+            let snippet = displayed_lines
+                .map(|(nr, line)| {
+                    if nr > range.start().line() && nr < range.end().line() {
+                        if let Some((local_min_column, _)) =
+                            line.chars().find_position(|c| !c.is_whitespace())
+                        {
+                            min_column = min_column.min(local_min_column);
+                        }
+                        if let Some((local_max_column, _)) = line
+                            .chars()
+                            .enumerate()
+                            .collect_vec()
+                            .into_iter()
+                            .rev()
+                            .find(|(_, c)| !c.is_whitespace())
+                        {
+                            max_column = max_column.max(local_max_column + 1);
+                        }
+                    }
+
+                    let line_colored = {
+                        let mut out = String::new();
+                        if nr > range.start().line() && nr <= range.end().line() {
+                            out += &severity.ansi_color();
+                        }
+                        for (col, c) in line.chars().enumerate() {
+                            if col == range.start().column() && nr == range.start().line() {
+                                out += &severity.ansi_color();
+                            }
+                            if col == range.end().column() && nr == range.end().line() {
+                                out += ansi_reset;
+                            }
+                            out.push(c);
+                        }
+                        if nr >= range.start().line() && nr < range.end().line() {
+                            out += ansi_reset;
+                        }
+                        out
+                    };
+
+                    let mut out = format!(
+                        "{structure_color}{nr:<max_line_number_length$}│{ansi_reset} {line_colored}"
+                    );
+                    if nr == range.end().line() {
+                        let length = max_column - min_column;
+                        out += &format!(
+                            "\n{structure_color}{empty:<max_line_number_length$}│{ansi_reset} \
+                        {empty:<min_column$}{color}{empty:^<length$} {message}{ansi_reset}",
+                            empty = "",
+                        );
+                    }
+
+                    out
+                })
+                .join("\n");
+
+            highlighted_sources.push(format!(
+            "{structure_color}{empty:─<max_line_number_length$}╭─ {filename}:{line}:{column}{ansi_reset}\n\
+            {snippet}\n\
+            {structure_color}{empty:─<max_line_number_length$}╯{ansi_reset}",
+            empty = "",
+        ));
+        }
+
+        let color = if ansi {
+            main_severity.ansi_color()
+        } else {
+            String::new()
+        };
+
+        let severity = match *main_severity {
+            ErrorSeverity::Note => "note",
+            ErrorSeverity::Warning => "warning",
+            ErrorSeverity::Error => "error",
+        };
+
+        let highlighted_sources = highlighted_sources.join("\n");
+
+        format!(
+            "{color}{severity}:{ansi_reset} {main_message}\n\n\
+        {highlighted_sources}",
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum ImpossibleCastReason {
     InvolvesUnit { direction: CastDirection },
@@ -785,7 +1016,7 @@ impl ErrorKind {
                     if let Some(best_guess) = best_guess {
                         format!(" The best guess is {best_guess}.")
                     } else {
-                        "".to_string()
+                        String::new()
                     }
                 ),
                 severity: ErrorSeverity::Error,
@@ -1169,7 +1400,7 @@ impl ErrorKind {
                     if let Some(best_guess) = best_guess {
                         format!(" The best guess is {best_guess}.")
                     } else {
-                        "".to_string()
+                        String::new()
                     }
                 ),
                 severity: ErrorSeverity::Error,

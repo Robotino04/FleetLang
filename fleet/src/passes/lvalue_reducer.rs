@@ -11,12 +11,12 @@ use crate::{
         StructAccessExpression, StructAccessLValue, StructExpression, StructMemberValue, Type,
         UnaryExpression, VariableAccessExpression, VariableAssignmentExpression, VariableLValue,
     },
-    error_reporting::ErrorKind,
+    error_reporting::{ErrorKind, Errors},
     passes::{
         find_node_bounds::find_node_bounds,
         partial_visitor::PartialAstVisitor,
         pass_manager::{
-            ConcreteScopeData, ConcreteTypeData, ConcreteVariableData, Errors, GlobalState, Pass,
+            ConcreteScopeData, ConcreteTypeData, ConcreteVariableData, GlobalState, Pass,
             PassFactory, PassResult,
         },
         scope_analysis::ConcreteVariableScopeReader,
