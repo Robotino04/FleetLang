@@ -17,9 +17,9 @@ use inkwell::{
 
 use fleet::{
     ast::Program,
+    error_reporting::{ErrorKind, ErrorSeverity},
     infra::{
-        ErrorKind, ErrorSeverity, format, insert_c_passes, insert_compile_passes,
-        insert_fix_passes, insert_minimal_pipeline,
+        format, insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
     },
     ir_generator::{IrGenerator, LLVMOptimizerPass},
     passes::{

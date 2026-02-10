@@ -5,8 +5,8 @@ use log::{error, info};
 
 use crate::{
     NewtypeDeref,
+    error_reporting::ErrorKind,
     escape::{QuoteType, unescape},
-    infra::ErrorKind,
     passes::pass_manager::{Errors, GlobalState, InputSource, Pass, PassFactory, PassResult},
 };
 

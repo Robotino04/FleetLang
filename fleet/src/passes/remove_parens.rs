@@ -8,7 +8,7 @@ use crate::{
         ReturnStatement, ThreadExecutor, UnaryExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, WhileLoopStatement,
     },
-    infra::{ErrorKind, Lint},
+    error_reporting::{ErrorKind, Lint},
     passes::pass_manager::{Errors, GlobalState, Pass, PassFactory, PassResult},
 };
 

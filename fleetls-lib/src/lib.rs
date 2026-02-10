@@ -11,10 +11,10 @@ use fleet::{
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
         VariableLValue, WhileLoopStatement,
     },
+    error_reporting::{ErrorSeverity, HighlightTag},
     escape::{QuoteType, escape},
     infra::{
-        self, ErrorSeverity, HighlightTag, insert_c_passes, insert_compile_passes,
-        insert_fix_passes, insert_minimal_pipeline,
+        self, insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
     },
     passes::{
         find_containing_node::FindContainingNodePass,

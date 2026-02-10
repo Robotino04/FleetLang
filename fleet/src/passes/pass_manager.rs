@@ -16,7 +16,7 @@ use thiserror::Error;
 
 use crate::{
     ast::PerNodeData,
-    infra::ErrorKind,
+    error_reporting::ErrorKind,
     passes::{
         runtime_type::{ConcreteRuntimeType, RuntimeType},
         scope_analysis::{

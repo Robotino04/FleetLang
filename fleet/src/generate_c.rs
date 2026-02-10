@@ -19,8 +19,8 @@ use crate::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
+    error_reporting::{Backend, ErrorKind, ErrorSeverity, Intrinsic, UnresolvedSymbol},
     generate_glsl::GLSLCodeGenerator,
-    infra::{Backend, ErrorKind, ErrorSeverity, Intrinsic, UnresolvedSymbol},
     passes::{
         pass_manager::{
             CCodeOutput, ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData,
@@ -1152,7 +1152,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                         backend: Backend::C,
                         intrinsic: Intrinsic::Zero,
                         intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                        type_: expected_type.clone(),
+                        type_: expected_type.clone().into(),
                     });
                     PreStatementValue {
                         pre_statements: "".to_string(),
@@ -1180,7 +1180,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                             backend: Backend::C,
                             intrinsic: Intrinsic::Sqrt,
                             intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone(),
+                            type_: expected_type.clone().into(),
                         });
                         PreStatementValue {
                             pre_statements: "".to_string(),
@@ -1209,7 +1209,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                             backend: Backend::C,
                             intrinsic: Intrinsic::Sin,
                             intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone(),
+                            type_: expected_type.clone().into(),
                         });
                         PreStatementValue {
                             pre_statements: "".to_string(),
@@ -1238,7 +1238,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                             backend: Backend::C,
                             intrinsic: Intrinsic::Cos,
                             intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone(),
+                            type_: expected_type.clone().into(),
                         });
                         PreStatementValue {
                             pre_statements: "".to_string(),

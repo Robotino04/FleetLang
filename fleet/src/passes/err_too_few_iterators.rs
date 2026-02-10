@@ -2,7 +2,7 @@ use std::cell::RefMut;
 
 use crate::{
     ast::{AstVisitor, OnStatement, Program},
-    infra::ErrorKind,
+    error_reporting::ErrorKind,
     passes::pass_manager::{Errors, GlobalState, Pass, PassFactory, PassResult},
 };
 

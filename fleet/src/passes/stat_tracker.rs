@@ -20,7 +20,7 @@ use crate::{
         UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
-    infra::{ErrorKind, Lint, LoopControl},
+    error_reporting::{ErrorKind, Lint, LoopControl},
     passes::{
         pass_manager::{
             ConcreteFunctionData, ConcreteVariableData, Errors, GlobalState, Pass, PassFactory,

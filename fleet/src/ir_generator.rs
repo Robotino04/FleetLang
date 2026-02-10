@@ -41,9 +41,11 @@ use crate::{
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
         VariableLValue, WhileLoopStatement,
     },
+    error_reporting::{
+        Backend, ErrorKind, ErrorSeverity, InternalError, Intrinsic, UnresolvedSymbol,
+    },
     escape::{QuoteType, unescape},
     generate_glsl::GLSLCodeGenerator,
-    infra::{Backend, ErrorKind, ErrorSeverity, InternalError, Intrinsic, UnresolvedSymbol},
     passes::{
         find_node_bounds::find_node_bounds,
         pass_manager::{
@@ -701,7 +703,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 Some(_other_type) => {
                     self.errors.push(ErrorKind::InternalError(
                         InternalError::LlvmUnsupportedMainReturnType {
-                            type_: fleet_main_fn.borrow().return_type.clone(),
+                            type_: fleet_main_fn.borrow().return_type.clone().into(),
                             main_function: fleet_main_fn.borrow().symbol.clone(),
                         },
                     ));
@@ -1981,7 +1983,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                             backend: Backend::Llvm,
                             intrinsic: Intrinsic::Sqrt,
                             intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone(),
+                            type_: expected_type.clone().into(),
                         });
 
                         return Err(format!(
@@ -2021,7 +2023,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                             backend: Backend::Llvm,
                             intrinsic: Intrinsic::Sin,
                             intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone(),
+                            type_: expected_type.clone().into(),
                         });
 
                         return Err(format!(
@@ -2061,7 +2063,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                             backend: Backend::Llvm,
                             intrinsic: Intrinsic::Cos,
                             intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone(),
+                            type_: expected_type.clone().into(),
                         });
 
                         return Err(format!(

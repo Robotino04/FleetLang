@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     ast::Program,
-    infra::{ErrorKind, PrefetchedType},
+    error_reporting::{ErrorKind, PrefetchedType},
     passes::{
         find_node_bounds::find_node_bounds,
         find_node_by_id::find_node_by_id,

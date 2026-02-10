@@ -19,7 +19,7 @@ use crate::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
-    infra::ErrorKind,
+    error_reporting::ErrorKind,
     passes::{
         find_node_bounds::find_node_bounds,
         pass_manager::{Errors, GlobalState, InputSource, Pass, PassFactory, PassResult},

@@ -21,7 +21,7 @@ use crate::{
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
         VariableLValue, WhileLoopStatement,
     },
-    infra::{
+    error_reporting::{
         CastDirection, DuplicateKind, ErrorKind, ExtraParameter, ImpossibleCastReason,
         InternalError, Lint, MissingParameter, NotDefinedKind, ParameterCountDifference,
         PrefetchedType, SymbolDefinition, TypeMismatchKind, UnresolvedSymbol,

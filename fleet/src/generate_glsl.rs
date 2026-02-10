@@ -27,7 +27,7 @@ use crate::{
         UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
-    infra::{
+    error_reporting::{
         Backend, ErrorKind, ErrorSeverity, GpuLimitation, InternalError, Intrinsic,
         UnresolvedSymbol,
     },
@@ -1272,7 +1272,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                     if !subtype.is_numeric() {
                         self.errors.push(ErrorKind::ComplexZeroGlsl {
                             zero: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone(),
+                            type_: expected_type.clone().into(),
                         });
                     }
 
@@ -1293,7 +1293,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                         backend: Backend::Glsl,
                         intrinsic: Intrinsic::Zero,
                         intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                        type_: expected_type.clone(),
+                        type_: expected_type.clone().into(),
                     });
 
                     PreStatementValue {
@@ -1318,7 +1318,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                             backend: Backend::Glsl,
                             intrinsic: Intrinsic::Sqrt,
                             intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone(),
+                            type_: expected_type.clone().into(),
                         });
 
                         PreStatementValue {
@@ -1344,7 +1344,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                             backend: Backend::Glsl,
                             intrinsic: Intrinsic::Sin,
                             intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone(),
+                            type_: expected_type.clone().into(),
                         });
                         PreStatementValue {
                             pre_statements: "".to_string(),
@@ -1369,7 +1369,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                             backend: Backend::Glsl,
                             intrinsic: Intrinsic::Cos,
                             intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone(),
+                            type_: expected_type.clone().into(),
                         });
                         PreStatementValue {
                             pre_statements: "".to_string(),

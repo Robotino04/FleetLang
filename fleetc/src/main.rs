@@ -9,9 +9,9 @@ use fleet::NewtypeDerefNoDefault;
 use fleet::ast::Program;
 use fleet::ast_to_dm::AstToDocumentModelConverter;
 use fleet::document_model::{DocumentElement, fully_flatten_document, stringify_document};
+use fleet::error_reporting::{ErrorKind, ErrorSeverity, HighlightGroup, RenderedError};
 use fleet::infra::{
-    ErrorKind, ErrorSeverity, HighlightGroup, RenderedError, insert_c_passes,
-    insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
+    insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
 };
 use fleet::inkwell::module::Module;
 use fleet::inkwell::targets::{CodeModel, RelocMode, Target, TargetTriple};

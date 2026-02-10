@@ -23,7 +23,9 @@ use crate::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
-    infra::{DuplicateKind, ErrorKind, NotDefinedKind, SymbolDefinition, UnresolvedSymbol},
+    error_reporting::{
+        DuplicateKind, ErrorKind, NotDefinedKind, SymbolDefinition, UnresolvedSymbol,
+    },
     parser::IdGenerator,
     passes::{
         find_node_bounds::find_node_bounds,

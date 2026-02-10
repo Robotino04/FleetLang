@@ -11,7 +11,7 @@ use crate::{
         StructAccessExpression, StructAccessLValue, StructExpression, StructMemberValue, Type,
         UnaryExpression, VariableAccessExpression, VariableAssignmentExpression, VariableLValue,
     },
-    infra::ErrorKind,
+    error_reporting::ErrorKind,
     passes::{
         find_node_bounds::find_node_bounds,
         partial_visitor::PartialAstVisitor,
