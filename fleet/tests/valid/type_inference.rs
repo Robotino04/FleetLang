@@ -78,11 +78,11 @@ fn chained_untyped_assignment() {
 }
 
 #[test]
-fn chained_as_idk_casts() {
+fn as_idk_casts() {
     assert_compile_and_warning(
         indoc! {r##"
             let main = () -> i32 {
-                return 2 as idk as idk as idk;
+                return 2 as idk;
             }
         "##},
         SourceLocation {

@@ -12,9 +12,9 @@ fn bitwise_not_on_float() {
             }
         "##},
         SourceLocation {
-            index: 34,
+            index: 35,
             line: 2,
-            column: 11,
+            column: 12,
         },
     );
 }

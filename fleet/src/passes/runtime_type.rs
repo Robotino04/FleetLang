@@ -372,12 +372,13 @@ impl RuntimeTypeKind {
         b: UnionFindSetPtr<RuntimeType>,
         types: &mut UnionFindSet<RuntimeType>,
     ) -> bool {
-        types.try_merge(a, b, |mut a_full, b_full, types| {
+        types.try_merge(a, b, |mut a_full, mut b_full, types| {
             use UnionFindSetMergeResult as R;
             let a = &mut a_full.kind;
-            let b = &b_full.kind;
+            let b = &mut b_full.kind;
 
             if *b == RuntimeTypeKind::Unknown {
+                a_full.definition_range = a_full.definition_range.or(b_full.definition_range);
                 return R::Merged(a_full);
             }
 
@@ -516,7 +517,10 @@ impl RuntimeTypeKind {
                         }
                     }
                 }
-                RuntimeTypeKind::Unknown => R::Merged(b_full),
+                RuntimeTypeKind::Unknown => {
+                    b_full.definition_range = a_full.definition_range.or(b_full.definition_range);
+                    R::Merged(b_full)
+                }
                 RuntimeTypeKind::Error => R::Merged(a_full),
                 RuntimeTypeKind::ArrayOf {
                     subtype: a_subtype,
@@ -527,29 +531,32 @@ impl RuntimeTypeKind {
                         size: b_size,
                     } = b
                     {
+                        let mut do_merge = true;
                         if !RuntimeTypeKind::merge_types(*a_subtype, *b_subtype, types) {
-                            return R::NotMerged {
-                                a: a_full,
-                                b: b_full,
-                            };
+                            do_merge = false;
                         }
                         match (*a_size, *b_size) {
                             (None, None) => {}
                             (None, Some(_)) => {
                                 *a_size = *b_size;
                             }
-                            (Some(_), None) => {}
+                            (Some(_), None) => {
+                                *b_size = *a_size;
+                            }
                             (Some(a_size), Some(b_size)) => {
                                 if a_size != b_size {
-                                    return R::NotMerged {
-                                        a: a_full,
-                                        b: b_full,
-                                    };
+                                    do_merge = false;
                                 }
                             }
                         }
-
-                        R::Merged(a_full)
+                        if do_merge {
+                            R::Merged(a_full)
+                        } else {
+                            R::NotMerged {
+                                a: a_full,
+                                b: b_full,
+                            }
+                        }
                     } else {
                         R::NotMerged {
                             a: a_full,

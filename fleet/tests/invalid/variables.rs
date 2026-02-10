@@ -191,9 +191,9 @@ fn unit_variable() {
             }
         "##},
         SourceLocation {
-            index: 76,
+            index: 73,
             line: 5,
-            column: 11,
+            column: 8,
         },
     );
 }
@@ -208,9 +208,9 @@ fn i32_assigned_to_bool() {
             }
         "##},
         SourceLocation {
-            index: 28,
+            index: 42,
             line: 2,
-            column: 4,
+            column: 18,
         },
     );
 }
@@ -225,9 +225,9 @@ fn bool_assigned_to_i32() {
             }
         "##},
         SourceLocation {
-            index: 27,
+            index: 40,
             line: 2,
-            column: 4,
+            column: 17,
         },
     );
 }

@@ -53,6 +53,11 @@ pub enum Lint {
         expression: NamedSourceRange,
         type_: PrefetchedType,
     },
+    ToIdkCast {
+        expression: NamedSourceRange,
+        from_type: PrefetchedType,
+        to_type: PrefetchedType,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -553,6 +558,12 @@ impl ErrorKind {
                 n => format!("{n}th"),
             }
         }
+        fn plural<T>(singular: T, plural: T, count: usize) -> T {
+            match count {
+                1 => singular,
+                _ => plural,
+            }
+        }
 
         match self {
             ErrorKind::UnclosedBlockComment { start_token } => RenderedError {
@@ -747,15 +758,20 @@ impl ErrorKind {
                     error(&function.use_range, "too few parameters"),
                     note(&function.definition, "function defined here"),
                 ],
-                main_message: format!(
-                    "The function `{function}` expects {defined_parameter_count} parameters, but only {given_parameters} are given. \
-                    Consider adding {missing_params_pretty}.",
-                    given_parameters = defined_parameter_count - missing_params.len(),
-                    missing_params_pretty = missing_params
-                        .iter()
-                        .map(|param| format!("`{}`", param.name))
-                        .join_and()
-                ),
+                main_message: {
+                    let given_parameters = defined_parameter_count - missing_params.len();
+
+                    format!(
+                        "The function `{function}` expects {defined_parameter_count} {parameters}, but only {given_parameters} {are} given. \
+                        Consider adding {missing_params_pretty}.",
+                        parameters = plural("parameter", "parameters", *defined_parameter_count),
+                        are = plural("is", "are", given_parameters),
+                        missing_params_pretty = missing_params
+                            .iter()
+                            .map(|param| format!("`{}`", param.name))
+                            .join_and()
+                    )
+                },
                 severity: ErrorSeverity::Error,
             },
             ErrorKind::FunctionCallWrongParameterCount {
@@ -772,12 +788,14 @@ impl ErrorKind {
                         .iter()
                         .map(|param| error(&param.range, "extra parameter")),
                 );
+                let given_parameters = defined_parameter_count + extra_params.len();
                 RenderedError {
                     highlight_groups,
                     main_message: format!(
-                        "The function `{function}` expects only {defined_parameter_count} parameters, but {given_parameters} are given. \
+                        "The function `{function}` expects only {defined_parameter_count} {parameters}, but {given_parameters} {are} given. \
                         Consider removing the last {extras}.",
-                        given_parameters = defined_parameter_count + extra_params.len(),
+                        parameters = plural("parameter", "parameters", *defined_parameter_count),
+                        are = plural("is", "are", given_parameters),
                         extras = extra_params.len()
                     ),
                     severity: ErrorSeverity::Error,
@@ -1182,7 +1200,15 @@ impl ErrorKind {
 
                 let (mut highlight_groups, primary_hl_message, main_message) = match kind {
                     TypeMismatchKind::FunctionReturn { function } => (
-                        vec![note(&function.definition, "return type defined here")],
+                        expected_types
+                            .iter()
+                            .flat_map(|type_| {
+                                Some(note(
+                                    type_.definition_range.as_ref()?,
+                                    "return type defined here",
+                                ))
+                            })
+                            .collect_vec(),
                         "different return type used".to_string(),
                         format!(
                             "Function `{function}` is defined to return {expected_types_str}, but it returns `{actual_type}` here."
@@ -1227,7 +1253,7 @@ impl ErrorKind {
                         parameter,
                         function,
                     } => {
-                        let index_nth = nth(*parameter_index);
+                        let index_nth = nth(*parameter_index + 1);
                         (
                             vec![note(&parameter.definition, "parameter defined here")],
                             "type mismatch".to_string(),
@@ -1242,7 +1268,7 @@ impl ErrorKind {
                         parameter_name,
                         intrinsic,
                     } => {
-                        let index_nth = nth(*parameter_index);
+                        let index_nth = nth(*parameter_index + 1);
                         (
                             vec![],
                             "type mismatch".to_string(),
@@ -1275,7 +1301,7 @@ impl ErrorKind {
                         vec![],
                         "type mismatch".to_string(),
                         format!(
-                            "Cannot {op}. Expected {expected_types_str}.",
+                            "Cannot {op}. Expected `{expected_types_str}`.",
                             op = format_binary_op(
                                 *binary_operation,
                                 "anything",
@@ -1308,14 +1334,14 @@ impl ErrorKind {
                         "type mismatch".to_string(),
                         format!(
                             "Cannot {op}. Expected {expected_types_str}.",
-                            op = format_unary_op(*unary_operation, actual_type),
+                            op = format_unary_op(*unary_operation, format!("`{actual_type}`")),
                         ),
                     ),
                     TypeMismatchKind::LValueAssignment { lvalue: _ } => (
                         vec![],
                         "type mismatch".to_string(),
                         format!(
-                            "Cannot assign value of type {expected_types_str} to lvalue of type {actual_type}."
+                            "Cannot assign value of type {expected_types_str} to lvalue of type `{actual_type}`."
                         ),
                     ),
                     TypeMismatchKind::GpuIndex { gpu: _ } => (
@@ -1503,6 +1529,17 @@ impl ErrorKind {
             ErrorKind::Lint(Lint::SelfCast { expression, type_ }) => RenderedError {
                 highlight_groups: vec![warning(expression, "unnecessary cast")],
                 main_message: format!("Casting from type `{type_}` to itself is redundant."),
+                severity: ErrorSeverity::Warning,
+            },
+            ErrorKind::Lint(Lint::ToIdkCast {
+                expression,
+                from_type,
+                to_type,
+            }) => RenderedError {
+                highlight_groups: vec![warning(expression, "unnecessary cast")],
+                main_message: format!(
+                    "Casting from any type (including `{from_type}`) to `{to_type}` is redundant."
+                ),
                 severity: ErrorSeverity::Warning,
             },
             ErrorKind::Lint(Lint::CodeUnreachable { range }) => RenderedError {

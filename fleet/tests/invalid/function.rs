@@ -235,9 +235,9 @@ fn too_few_arguments() {
             }
         "##},
         SourceLocation {
-            index: 86,
+            index: 82,
             line: 5,
-            column: 15,
+            column: 11,
         },
     );
 }
@@ -278,9 +278,9 @@ fn redefine_function() {
             }
         "##},
         SourceLocation {
-            index: 81,
+            index: 85,
             line: 7,
-            column: 0,
+            column: 4,
         },
     );
 }
@@ -297,9 +297,9 @@ fn too_many_arguments() {
             }
         "##},
         SourceLocation {
-            index: 89,
+            index: 82,
             line: 5,
-            column: 18,
+            column: 11,
         },
     );
 }
@@ -332,9 +332,9 @@ fn return_bool_instead_of_i32() {
             }
         "##},
         SourceLocation {
-            index: 27,
+            index: 34,
             line: 2,
-            column: 4,
+            column: 11,
         },
     );
 }
@@ -348,9 +348,9 @@ fn return_i32_instead_of_bool() {
             }
         "##},
         SourceLocation {
-            index: 28,
+            index: 35,
             line: 2,
-            column: 4,
+            column: 11,
         },
     );
 }

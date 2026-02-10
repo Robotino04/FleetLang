@@ -23,9 +23,9 @@ fn redefine_type_alias() {
             }
         "##},
         SourceLocation {
-            index: 59,
+            index: 63,
             line: 6,
-            column: 0,
+            column: 4,
         },
     );
 }

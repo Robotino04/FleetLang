@@ -17,9 +17,9 @@ fn mixed_missing_return_type() {
             }
         "##},
         SourceLocation {
-            index: 83,
+            index: 90,
             line: 6,
-            column: 8,
+            column: 15,
         },
     );
 }

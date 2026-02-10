@@ -64,9 +64,9 @@ fn wrong_type_assigned() {
             }
         "##},
         SourceLocation {
-            index: 27,
+            index: 42,
             line: 2,
-            column: 4,
+            column: 19,
         },
     );
 }
@@ -81,9 +81,9 @@ fn wrong_size_assigned() {
             }
         "##},
         SourceLocation {
-            index: 27,
+            index: 43,
             line: 2,
-            column: 4,
+            column: 20,
         },
     );
 }

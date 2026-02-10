@@ -35,6 +35,8 @@ pub struct TypeConcretisationPass<'state> {
     type_sets: Ref<'state, TypeSets>,
     type_data: Ref<'state, TypeData>,
 
+    visited_types: HashMap<UnionFindSetPtr<RuntimeType>, Option<ConcreteRuntimeType>>,
+
     concrete_referenced_variable: RefMut<'state, ConcreteVariableData>,
     concrete_referenced_function: RefMut<'state, ConcreteFunctionData>,
     concrete_contained_scope: RefMut<'state, ConcreteScopeData>,
@@ -77,6 +79,8 @@ impl PassFactory for TypeConcretisationPass<'_> {
             contained_scope: contained_scope.get(state),
             type_sets: type_sets.get(state),
             type_data: type_data.get(state),
+
+            visited_types: Default::default(),
 
             concrete_referenced_variable: concrete_referenced_variable.get_mut(state),
             concrete_referenced_function: concrete_referenced_function.get_mut(state),
@@ -157,66 +161,76 @@ impl TypeConcretisationPass<'_> {
         type_ptr: UnionFindSetPtr<RuntimeType>,
         parent_range: NamedSourceRange,
     ) -> Option<ConcreteRuntimeType> {
-        let type_ = self.type_sets.get(type_ptr);
-        Some(match type_.kind.clone() {
-            RuntimeTypeKind::Struct {
-                members: _,
-                source_hash: None,
-            }
-            | RuntimeTypeKind::ArrayOf {
-                subtype: _,
-                size: None,
-            }
-            | RuntimeTypeKind::Unknown
-            | RuntimeTypeKind::Number { .. } => {
-                self.errors.push(ErrorKind::IncompleteTypeInference {
-                    range: type_.definition_range.clone().unwrap_or(parent_range),
-                    best_guess: Some(PrefetchedType::fetch(type_ptr, &self.type_sets)),
-                });
-                return None;
-            }
-            RuntimeTypeKind::Error => {
-                // these are always the result of an already reported error, so let's not
-                // overreport subsequent ones.
-                return None;
-            }
+        if let Some(res) = self.visited_types.get(&type_ptr) {
+            return res.clone();
+        }
 
-            RuntimeTypeKind::I8 => ConcreteRuntimeType::I8,
-            RuntimeTypeKind::I16 => ConcreteRuntimeType::I16,
-            RuntimeTypeKind::I32 => ConcreteRuntimeType::I32,
-            RuntimeTypeKind::I64 => ConcreteRuntimeType::I64,
-            RuntimeTypeKind::U8 => ConcreteRuntimeType::U8,
-            RuntimeTypeKind::U16 => ConcreteRuntimeType::U16,
-            RuntimeTypeKind::U32 => ConcreteRuntimeType::U32,
-            RuntimeTypeKind::U64 => ConcreteRuntimeType::U64,
-            RuntimeTypeKind::F32 => ConcreteRuntimeType::F32,
-            RuntimeTypeKind::F64 => ConcreteRuntimeType::F64,
-            RuntimeTypeKind::Boolean => ConcreteRuntimeType::Boolean,
-            RuntimeTypeKind::Unit => ConcreteRuntimeType::Unit,
-            RuntimeTypeKind::ArrayOf {
-                subtype,
-                size: Some(size),
-            } => ConcreteRuntimeType::ArrayOf {
-                size,
-                subtype: Box::new(self.concretisize_type(
+        let out = || {
+            let type_ = self.type_sets.get(type_ptr);
+            Some(match type_.kind.clone() {
+                RuntimeTypeKind::Struct {
+                    members: _,
+                    source_hash: None,
+                }
+                | RuntimeTypeKind::ArrayOf {
+                    subtype: _,
+                    size: None,
+                }
+                | RuntimeTypeKind::Unknown
+                | RuntimeTypeKind::Number { .. } => {
+                    self.errors.push(ErrorKind::IncompleteTypeInference {
+                        range: type_.definition_range.clone().unwrap_or(parent_range),
+                        best_guess: Some(PrefetchedType::fetch(type_ptr, &self.type_sets)),
+                    });
+                    return None;
+                }
+                RuntimeTypeKind::Error => {
+                    // these are always the result of an already reported error, so let's not
+                    // overreport subsequent ones.
+                    return None;
+                }
+
+                RuntimeTypeKind::I8 => ConcreteRuntimeType::I8,
+                RuntimeTypeKind::I16 => ConcreteRuntimeType::I16,
+                RuntimeTypeKind::I32 => ConcreteRuntimeType::I32,
+                RuntimeTypeKind::I64 => ConcreteRuntimeType::I64,
+                RuntimeTypeKind::U8 => ConcreteRuntimeType::U8,
+                RuntimeTypeKind::U16 => ConcreteRuntimeType::U16,
+                RuntimeTypeKind::U32 => ConcreteRuntimeType::U32,
+                RuntimeTypeKind::U64 => ConcreteRuntimeType::U64,
+                RuntimeTypeKind::F32 => ConcreteRuntimeType::F32,
+                RuntimeTypeKind::F64 => ConcreteRuntimeType::F64,
+                RuntimeTypeKind::Boolean => ConcreteRuntimeType::Boolean,
+                RuntimeTypeKind::Unit => ConcreteRuntimeType::Unit,
+                RuntimeTypeKind::ArrayOf {
                     subtype,
-                    type_.definition_range.clone().unwrap_or(parent_range),
-                )?),
-            },
-            RuntimeTypeKind::Struct {
-                members,
-                source_hash: Some(source_hash),
-            } => ConcreteRuntimeType::Struct {
-                source_hash,
-                members: members
-                    .clone()
-                    .into_iter()
-                    .map(|(name, range, type_)| {
-                        Some((name.clone(), self.concretisize_type(type_, range)?))
-                    })
-                    .collect::<Option<_>>()?,
-            },
-        })
+                    size: Some(size),
+                } => ConcreteRuntimeType::ArrayOf {
+                    size,
+                    subtype: Box::new(self.concretisize_type(
+                        subtype,
+                        type_.definition_range.clone().unwrap_or(parent_range),
+                    )?),
+                },
+                RuntimeTypeKind::Struct {
+                    members,
+                    source_hash: Some(source_hash),
+                } => ConcreteRuntimeType::Struct {
+                    source_hash,
+                    members: members
+                        .clone()
+                        .into_iter()
+                        .map(|(name, range, type_)| {
+                            Some((name.clone(), self.concretisize_type(type_, range)?))
+                        })
+                        .collect::<Option<_>>()?,
+                },
+            })
+        };
+
+        let out = out();
+        self.visited_types.insert(type_ptr, out.clone());
+        out
     }
     fn concretisize_scope(
         &mut self,

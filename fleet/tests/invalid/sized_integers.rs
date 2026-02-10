@@ -13,9 +13,9 @@ fn return_wrong_size() {
             }
         "##},
         SourceLocation {
-            index: 47,
+            index: 54,
             line: 3,
-            column: 4,
+            column: 11,
         },
     );
 }
@@ -31,9 +31,9 @@ fn initialize_wrong_size() {
             }
         "##},
         SourceLocation {
-            index: 46,
+            index: 59,
             line: 3,
-            column: 4,
+            column: 17,
         },
     );
 }
@@ -44,15 +44,15 @@ fn assign_wrong_size() {
         indoc! {r##"
             let main = () -> i16 {
                 let a: i64 = 2;
-                let b: i16 = a;
+                let b: i16 = 6;
                 b = a;
                 return b;
             }
         "##},
         SourceLocation {
-            index: 67,
+            index: 71,
             line: 4,
-            column: 4,
+            column: 8,
         },
     );
 }
@@ -89,9 +89,9 @@ fn call_wrong_size() {
             }
         "##},
         SourceLocation {
-            index: 88,
+            index: 95,
             line: 6,
-            column: 4,
+            column: 11,
         },
     );
 }

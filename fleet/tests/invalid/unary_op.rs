@@ -74,9 +74,9 @@ fn binary_not_bool() {
             }
         "##},
         SourceLocation {
-            index: 35,
+            index: 36,
             line: 2,
-            column: 11,
+            column: 12,
         },
     );
 }
@@ -90,9 +90,9 @@ fn minus_bool() {
             }
         "##},
         SourceLocation {
-            index: 35,
+            index: 36,
             line: 2,
-            column: 11,
+            column: 12,
         },
     );
 }

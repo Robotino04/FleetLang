@@ -136,6 +136,7 @@ impl<'a> TypePropagator<'a> {
                     definition_range: None,
                 })
             });
+
         let parameter_types = parameters
             .iter_mut()
             .map(|(param, _comma)| {
@@ -298,7 +299,8 @@ impl AstVisitor for TypePropagator<'_> {
         let (_range, aliased_type) = self.type_aliases.get(name).unwrap();
 
         // ignore failures because this should always succeed for valid programs
-        let _ = RuntimeTypeKind::merge_types(type_, *aliased_type, &mut self.type_sets);
+        // make sure to pass aliased_type first so the definition range gets preserved
+        let _ = RuntimeTypeKind::merge_types(*aliased_type, type_, &mut self.type_sets);
     }
 
     fn visit_statement_function_body(
@@ -1574,6 +1576,7 @@ impl AstVisitor for TypePropagator<'_> {
                 | (T::F32, T::F32)
                 | (T::F64, T::F64)
                 | (T::Boolean, T::Boolean)
+                | (T::Unknown, T::Unknown)
                 | (T::Unit, T::Unit) => {
                     self_errors.push(ErrorKind::Lint(Lint::SelfCast {
                         expression: find_node_bounds(&expression_clone),
@@ -1837,15 +1840,16 @@ impl AstVisitor for TypePropagator<'_> {
 
                     CastResult::Impossible
                 }
-                (T::Unknown, T::Unknown) => {
-                    assert!(RuntimeTypeKind::merge_types(from_ptr, to_ptr, types));
-                    self_errors.push(ErrorKind::Lint(Lint::SelfCast {
+                (_, T::Unknown) => {
+                    self_errors.push(ErrorKind::Lint(Lint::ToIdkCast {
                         expression: find_node_bounds(&expression_clone),
-                        type_: PrefetchedType::fetch(from_ptr, types),
+                        from_type: PrefetchedType::fetch(from_ptr, types),
+                        to_type: PrefetchedType::fetch(to_ptr, types),
                     }));
-                    CastResult::Possible
+                    assert!(RuntimeTypeKind::merge_types(from_ptr, to_ptr, types));
+                    CastResult::Redundant
                 }
-                (_, T::Unknown) | (T::Unknown, _) => {
+                (T::Unknown, _) => {
                     assert!(RuntimeTypeKind::merge_types(from_ptr, to_ptr, types));
                     CastResult::Possible
                 }
@@ -2363,8 +2367,15 @@ impl AstVisitor for TypePropagator<'_> {
             self.node_types.insert(*id, type_);
             return type_;
         };
+        let properly_ranged_type = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::Unknown,
+            definition_range: Some(name_token.range.clone()),
+        });
 
-        self.node_types.insert(*id, *aliased_type);
+        let _ =
+            RuntimeTypeKind::merge_types(properly_ranged_type, *aliased_type, &mut self.type_sets);
+
+        self.node_types.insert(*id, properly_ranged_type);
         *aliased_type
     }
 }

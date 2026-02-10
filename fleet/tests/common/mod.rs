@@ -18,7 +18,7 @@ use inkwell::{
 use fleet::{
     ast::Program,
     infra::{
-        ErrorSeverity, FleetError, format, insert_c_passes, insert_compile_passes,
+        ErrorKind, ErrorSeverity, format, insert_c_passes, insert_compile_passes,
         insert_fix_passes, insert_minimal_pipeline,
     },
     ir_generator::{IrGenerator, LLVMOptimizerPass},
@@ -110,39 +110,39 @@ pub fn assert_parser_or_tokenizer_error(src: &str, error_start: SourceLocation) 
     assert_error_at_position(&errors.0, error_start);
 }
 
-fn assert_error_at_position(errors: &Vec<FleetError>, error_start: SourceLocation) {
+fn assert_error_at_position(errors: &Vec<ErrorKind>, error_start: SourceLocation) {
     assert!(
-        errors
-            .iter()
-            .flat_map(|err| err
-                .highlight_groups()
-                .iter()
-                .map(|range| (range, err.main_severity)))
-            .any(|(range, severity)| range.0.range.start == error_start
-                && severity == ErrorSeverity::Error),
+        errors.iter().any(|err| {
+            let rendered = err.render();
+            rendered
+                .highlight_groups
+                .first()
+                .is_some_and(|hl| hl.range.range.start == error_start)
+                && rendered.severity == ErrorSeverity::Error
+        }),
         "Expected an error at {error_start:?}. Got {errors:#?}"
     );
 }
 
-fn assert_warning_at_position(errors: &Vec<FleetError>, warning_start: SourceLocation) {
+fn assert_warning_at_position(errors: &Vec<ErrorKind>, warning_start: SourceLocation) {
     assert!(
-        errors
-            .iter()
-            .flat_map(|warn| warn
-                .highlight_groups()
-                .iter()
-                .map(|range| (range, warn.main_severity)))
-            .any(|(range, severity)| range.0.range.start == warning_start
-                && severity == ErrorSeverity::Warning),
+        errors.iter().any(|err| {
+            let rendered = err.render();
+            rendered
+                .highlight_groups
+                .first()
+                .is_some_and(|hl| hl.range.range.start == warning_start)
+                && rendered.severity == ErrorSeverity::Warning
+        }),
         "Expected a warning at {warning_start:?}. Got {errors:#?}"
     );
 }
 
-pub fn assert_no_fatal_errors(errors: &Vec<FleetError>) {
+pub fn assert_no_fatal_errors(errors: &Vec<ErrorKind>) {
     assert!(
         !errors
             .iter()
-            .any(|err| err.main_severity == ErrorSeverity::Error),
+            .any(|err| err.render().severity == ErrorSeverity::Error),
         "There are fatal errors: {errors:#?}"
     );
 }
