@@ -1,0 +1,45 @@
+{
+  "name": "clangd-standalone-example",
+  "version": "1.0.0",
+  "description": "Standalone example of monaco-languageclient with clangd language server",
+  "type": "module",
+  "main": "index.html",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@codingame/monaco-vscode-configuration-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-cpp-default-extension": "^25.1.2",
+    "@codingame/monaco-vscode-debug-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-editor-api": "^25.1.2",
+    "@codingame/monaco-vscode-environment-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-explorer-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-files-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-keybindings-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-lifecycle-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-localization-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-remote-agent-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-secret-storage-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-view-banner-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-view-status-bar-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-view-title-bar-service-override": "^25.1.2",
+    "jszip": "~3.10.1",
+    "monaco-languageclient": "~10.7.0",
+    "monaco-editor": "~0.52.0",
+    "vscode": "npm:@codingame/monaco-vscode-extension-api@^25.1.2",
+    "vscode-languageclient": "~9.0.1",
+    "vscode-languageserver": "~9.0.1",
+    "vscode-uri": "~3.1.0",
+    "vscode-ws-jsonrpc": "~3.5.0",
+    "wtd-core": "~4.0.1"
+  },
+  "devDependencies": {
+    "@codingame/monaco-vscode-rollup-vsix-plugin": "^25.1.2",
+    "@types/node": "^24.10.10",
+    "typescript": "^5.9.3",
+    "vite": "~8.0.0-beta.13",
+    "vscode-languageserver-types": "~3.17.5"
+  }
+}
