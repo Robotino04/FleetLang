@@ -52,7 +52,7 @@ impl RuntimeTypeKind {
         }
     }
 
-    pub fn stringify(&self, types: &UnionFindSet<RuntimeType>) -> String {
+    pub fn stringify_one_level(&self) -> String {
         match self {
             RuntimeTypeKind::Number { signed, integer } => format!(
                 "{{{}{}}}",
@@ -81,6 +81,50 @@ impl RuntimeTypeKind {
             RuntimeTypeKind::Boolean => "bool".to_string(),
             RuntimeTypeKind::Unknown => "{unknown}".to_string(),
             RuntimeTypeKind::Error => "{error}".to_string(),
+            RuntimeTypeKind::ArrayOf {
+                subtype: _,
+                size: None,
+            } => format!("{}[]", RuntimeTypeKind::Unknown.stringify_one_level()),
+            RuntimeTypeKind::ArrayOf {
+                subtype: _,
+                size: Some(size),
+            } => format!(
+                "{}[{}]",
+                RuntimeTypeKind::Unknown.stringify_one_level(),
+                size
+            ),
+            RuntimeTypeKind::Struct {
+                members,
+                source_hash,
+            } => format!(
+                "struct (hash: {source_hash:x?}) {{ {} }}",
+                members
+                    .iter()
+                    .map(|(name, _range, _type)| format!(
+                        "{name}: {},",
+                        RuntimeTypeKind::Unknown.stringify_one_level()
+                    ))
+                    .join("\n")
+            ),
+        }
+    }
+    pub fn stringify(&self, types: &UnionFindSet<RuntimeType>) -> String {
+        match self {
+            RuntimeTypeKind::Number { .. }
+            | RuntimeTypeKind::I8
+            | RuntimeTypeKind::I16
+            | RuntimeTypeKind::I32
+            | RuntimeTypeKind::I64
+            | RuntimeTypeKind::U8
+            | RuntimeTypeKind::U16
+            | RuntimeTypeKind::U32
+            | RuntimeTypeKind::U64
+            | RuntimeTypeKind::F32
+            | RuntimeTypeKind::F64
+            | RuntimeTypeKind::Unit
+            | RuntimeTypeKind::Boolean
+            | RuntimeTypeKind::Unknown
+            | RuntimeTypeKind::Error => self.stringify_one_level(),
             RuntimeTypeKind::ArrayOf {
                 subtype,
                 size: None,

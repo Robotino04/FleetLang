@@ -711,7 +711,7 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             id: _,
         }: &mut SimpleType,
     ) -> Self::TypeOutput {
-        format!("\"Type `{:?}`\"", type_)
+        format!("\"Type `{}`\"", type_.kind.stringify_one_level())
     }
 
     fn visit_unit_type(
