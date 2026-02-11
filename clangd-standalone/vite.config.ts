@@ -3,59 +3,67 @@
  * Licensed under the MIT License. See LICENSE in the package root for license information.
  * ------------------------------------------------------------------------------------------ */
 
-import { defineConfig } from 'vite';
-import fs from 'node:fs';
-import * as path from 'node:path';
-import vsixPlugin from '@codingame/monaco-vscode-rollup-vsix-plugin';
-
-const clangdWasmLocation = 'resources/clangd/wasm/clangd.wasm';
+import { defineConfig } from "vite";
+import fs from "node:fs";
+import * as path from "node:path";
+import vsixPlugin from "@codingame/monaco-vscode-rollup-vsix-plugin";
 
 export default defineConfig({
-    build: {
-        rolldownOptions: {
-            input: path.resolve(__dirname, 'index.html')
-        }
+  build: {
+    rolldownOptions: {
+      input: path.resolve(__dirname, "index.html"),
     },
-    server: {
-        port: 3000,
-        cors: {
-            origin: '*'
-        },
-        headers: {
-            'Cross-Origin-Opener-Policy': 'same-origin',
-            'Cross-Origin-Embedder-Policy': 'require-corp',
-        }
+  },
+  server: {
+    port: 3000,
+    cors: {
+      origin: "*",
     },
-    optimizeDeps: {
-        include: [
-            'vscode/localExtensionHost',
-            'vscode-jsonrpc',
-            'vscode-languageclient',
-            'vscode-languageserver',
-            'vscode-languageserver/browser.js'
-        ]
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "require-corp",
     },
-    plugins: [
-        {
-            // For the *-language-features extensions which use SharedArrayBuffer
-            name: 'configure-response-headers',
-            apply: 'serve',
-            configureServer: (server) => {
-                server.middlewares.use((_req, res, next) => {
-                    res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless')
-                    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
-                    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin')
-                    next()
-                })
-            }
-        },
-        vsixPlugin()
+  },
+  optimizeDeps: {
+    include: [
+      "vscode/localExtensionHost",
+      "vscode-jsonrpc",
+      "vscode-languageclient",
+      "vscode-languageserver",
+      "vscode-languageserver/browser.js",
+      'vscode-languageserver-protocol',
+
+      '@codingame/monaco-vscode-standalone-languages',
     ],
-    define: {
-        rootDirectory: JSON.stringify(__dirname),
-        __WASM_SIZE__: fs.existsSync(clangdWasmLocation) ? fs.statSync(clangdWasmLocation).size : 0
+  },
+  plugins: [
+    {
+      // For the *-language-features extensions which use SharedArrayBuffer
+      name: "configure-response-headers",
+      apply: "serve",
+      configureServer: (server) => {
+        server.middlewares.use((_req, res, next) => {
+          res.setHeader("Cross-Origin-Embedder-Policy", "credentialless");
+          res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+          res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+                    
+          // Fix MIME type for JS worker files
+          if (_req.url?.endsWith('.js')) {
+            res.setHeader("Content-Type", "application/javascript");
+          }
+
+          next();
+        });
+      },
     },
-    worker: {
-        format: 'es'
-    }
+    vsixPlugin(),
+  ],
+  resolve: {
+    alias: {
+      "@assets": "/assets",
+    },
+  },
+  worker: {
+    format: "es",
+  },
 });

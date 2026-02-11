@@ -16,23 +16,33 @@ import getTitleBarServiceOverride from '@codingame/monaco-vscode-view-title-bar-
 import type { EditorAppConfig } from 'monaco-languageclient/editorApp';
 import type { LanguageClientConfig } from 'monaco-languageclient/lcwrapper';
 import { defaultHtmlAugmentationInstructions, defaultViewsInit, type MonacoVscodeApiConfig } from 'monaco-languageclient/vscodeApiWrapper';
-import { configureDefaultWorkerFactory } from 'monaco-languageclient/workerFactory';
+import { useWorkerFactory, Worker, WorkerLoader } from 'monaco-languageclient/workerFactory';
 import { Uri } from 'vscode';
-import { ClangdWorkerHandler } from './workerHandler.js';
+import { FleetWorkerHandler } from './workerHandler.js';
+import statemachineLanguageConfig from "./language-configuration.json?raw"
 
-export type ClangdAppConfig = {
+import EditorWorkerUrl from '@codingame/monaco-vscode-editor-api/esm/vs/editor/editor.worker?worker&url';
+import ExtensionHostWorkerUrl from '@codingame/monaco-vscode-api/workers/extensionHost.worker?worker&url';
+import TextMateWorkerUrl from '@codingame/monaco-vscode-textmate-service-override/worker?worker&url';
+
+
+export type FleetAppConfig = {
     languageClientConfig: LanguageClientConfig;
     vscodeApiConfig: MonacoVscodeApiConfig;
     editorAppConfig: EditorAppConfig;
 }
 
-export const createClangdAppConfig = async (config: {
+export const createFleetAppConfig = async (config: {
     htmlContainer: HTMLElement,
     workspaceUri: Uri,
     workspaceFileUri: Uri,
-    clangdWorkerHandler: ClangdWorkerHandler,
+    fleetWorkerHandler: FleetWorkerHandler,
     lsMessageLocalPort: MessagePort
-}): Promise<ClangdAppConfig> => {
+}): Promise<FleetAppConfig> => {
+    const extensionFilesOrContents = new Map<string, string | URL>();
+    extensionFilesOrContents.set(`/language-statemachine-configuration.json`, statemachineLanguageConfig);
+    //extensionFilesOrContents.set(`/language-statemachine-grammar.json`, responseStatemachineTm);
+
     const vscodeApiConfig: MonacoVscodeApiConfig = {
         $type: 'extended',
         logLevel: LogLevel.Debug,
@@ -56,7 +66,7 @@ export const createClangdAppConfig = async (config: {
         workspaceConfig: {
             enableWorkspaceTrust: true,
             windowIndicator: {
-                label: 'mlc-clangd-example',
+                label: 'mlc-fleet-example',
                 tooltip: '',
                 command: ''
             },
@@ -71,11 +81,11 @@ export const createClangdAppConfig = async (config: {
                 },
             },
             configurationDefaults: {
-                'window.title': 'mlc-clangd-exampled${separator}${dirty}${activeEditorShort}'
+                'window.title': 'mlc-fleet-example${separator}${dirty}${activeEditorShort}'
             },
             productConfiguration: {
-                nameShort: 'mlc-clangd-example',
-                nameLong: 'mlc-clangd-example'
+                nameShort: 'mlc-fleet-example',
+                nameLong: 'mlc-fleet-example'
             }
         },
         userConfiguration: {
@@ -90,23 +100,47 @@ export const createClangdAppConfig = async (config: {
         },
         extensions: [{
             config: {
-                name: 'mlc-clangd-example',
+                name: 'mlc-fleet-example',
                 publisher: 'TypeFox',
                 version: '1.0.0',
-                engines: {
-                    vscode: '*'
-                }
-            }
+                engines: { vscode: '*' },
+                contributes: {
+                    languages: [{
+                        id: 'fleet',
+                        extensions: ['.fl', ".fleet"],
+                        aliases: ['Fleet'],
+                        configuration: `./language-statemachine-configuration.json`
+                    }],
+                    /*
+                    grammars: [{
+                        language: 'fleet',
+                        scopeName: 'source.statemachine',
+                        path: `./language-statemachine-grammar.json`
+                    }]
+                    */
+                },
+            },
+            filesOrContents: extensionFilesOrContents
         }],
-        monacoWorkerFactory: configureDefaultWorkerFactory
+        monacoWorkerFactory: () => useWorkerFactory({
+            workerLoaders: {
+                editorWorkerService: () => new Worker(EditorWorkerUrl, { type: 'module' }),
+                extensionHostWorkerMain: () => new Worker(ExtensionHostWorkerUrl, { type: 'module' }),
+                TextMateWorker: () => new Worker(TextMateWorkerUrl, { type: 'module' }),
+                OutputLinkDetectionWorker: undefined,
+                LanguageDetectionWorker: undefined,
+                NotebookEditorWorker: undefined,
+                LocalFileSearchWorker: undefined
+            }
+        })
     };
 
     const languageClientConfig: LanguageClientConfig = {
-        languageId: 'cpp',
+        languageId: 'fleet',
         connection: {
             options: {
                 $type: 'WorkerDirect',
-                worker: await config.clangdWorkerHandler.createWorker(),
+                worker: await config.fleetWorkerHandler.createWorker(),
                 messagePort: config.lsMessageLocalPort
             }
         },
@@ -116,7 +150,9 @@ export const createClangdAppConfig = async (config: {
             keepWorker: true
         },
         clientOptions: {
-            documentSelector: ['cpp'],
+            documentSelector: [{
+                language: "fleet",
+            }],
             workspaceFolder: {
                 index: 0,
                 name: 'workspace',

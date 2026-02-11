@@ -5,71 +5,68 @@
 
 import { RegisteredFileSystemProvider, RegisteredMemoryFile, registerFileSystemOverlay } from '@codingame/monaco-vscode-files-service-override';
 import * as vscode from 'vscode';
-// this is required syntax highlighting
-import '@codingame/monaco-vscode-cpp-default-extension';
+import '@codingame/monaco-vscode-cpp-default-extension'; // syntax highlighting
 import { LanguageClientWrapper } from 'monaco-languageclient/lcwrapper';
 import { MonacoVscodeApiWrapper } from 'monaco-languageclient/vscodeApiWrapper';
 import { createDefaultWorkspaceContent, disableElement } from '../../common/client/utils.js';
 import { HOME_DIR, WORKSPACE_PATH } from '../definitions.js';
-import { createClangdAppConfig } from './config.js';
-import { MainRemoteMessageChannelFs } from './mainRemoteMessageChannelFs.js';
-import { ClangdWorkerHandler } from './workerHandler.js';
+import { createFleetAppConfig } from './config.js';
+import { FleetWorkerHandler } from './workerHandler.js';
 
-export const runClangdWrapper = async () => {
+export const runFleetWrapper = async () => {
+    // 1. Create the LSP message channel
     const channelLs = new MessageChannel();
-    const channelFs = new MessageChannel();
 
+    // 2. Register a minimal in-memory Monaco workspace
     const fileSystemProvider = new RegisteredFileSystemProvider(false);
     const workspaceFileUri = vscode.Uri.file(`${HOME_DIR}/workspace.code-workspace`);
-    fileSystemProvider.registerFile(new RegisteredMemoryFile(workspaceFileUri, createDefaultWorkspaceContent(WORKSPACE_PATH)));
+    const defaultContent = createDefaultWorkspaceContent(WORKSPACE_PATH);
+    fileSystemProvider.registerFile(new RegisteredMemoryFile(workspaceFileUri, defaultContent));
+
+    
+    fileSystemProvider.registerFile(
+        new RegisteredMemoryFile(vscode.Uri.file(`${WORKSPACE_PATH}/main.fl`),
+        "let main = () -> i32 {\n    return 0;\n}\n")
+    );
+
     registerFileSystemOverlay(1, fileSystemProvider);
 
-    const readiness = async () => {
-        const resourceUri = vscode.Uri.file(`${WORKSPACE_PATH}/main.cpp`);
-        await vscode.window.showTextDocument(resourceUri);
-    };
-    new MainRemoteMessageChannelFs(fileSystemProvider, channelFs.port1, readiness);
+    // 3. Prepare Fleet worker
+    const fleetWorkerHandler = new FleetWorkerHandler();
 
-    const clangdWorkerHandler = new ClangdWorkerHandler();
-    const appConfig = await createClangdAppConfig({
-        htmlContainer: document.body,
+    // 4. Create Fleet app config
+    const appConfig = await createFleetAppConfig({
+        htmlContainer: document.getElementById("monaco-container")!,
         workspaceUri: vscode.Uri.file(WORKSPACE_PATH),
         workspaceFileUri,
-        clangdWorkerHandler,
+        fleetWorkerHandler,
         lsMessageLocalPort: channelLs.port1
     });
 
-    // perform global init
+    // 5. Initialize Monaco / VSC API wrapper
     const apiWrapper = new MonacoVscodeApiWrapper(appConfig.vscodeApiConfig);
     await apiWrapper.start();
 
+    // 6. Initialize the language client wrapper
     const lcWrapper = new LanguageClientWrapper(appConfig.languageClientConfig);
 
-    /* @vite-ignore */
-    const compressedWorkspaceUrl = new URL('../../../resources/clangd/workspace.zip', import.meta.url).href;
-    const initConfig = {
-        lsMessagePort: channelLs.port2,
-        fsMessagePort: channelFs.port2,
-        clearIndexedDb: false,
-        // set to true to use the compressed workspace at the specified URL
-        useCompressedWorkspace: false,
-        compressedWorkspaceUrl
-    };
-
+    // 7. Define the Fleet worker init + launch
     const startWrapper = async () => {
-        await clangdWorkerHandler.init(initConfig);
-        await clangdWorkerHandler.launch();
+        // Only pass the LSP port; Fleet ignores FS channels
+        await fleetWorkerHandler.init({ lsMessagePort: channelLs.port2 });
+        await fleetWorkerHandler.launch();
         await lcWrapper.start();
     };
 
+    // 8. Attach UI buttons
     try {
         document.querySelector('#button-start')?.addEventListener('click', async () => {
             disableElement('button-start', true);
             disableElement('button-start-fresh', true);
             await startWrapper();
         });
+
         document.querySelector('#button-start-fresh')?.addEventListener('click', async () => {
-            initConfig.clearIndexedDb = true;
             disableElement('button-start', true);
             disableElement('button-start-fresh', true);
             await startWrapper();
