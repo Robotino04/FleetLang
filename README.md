@@ -124,7 +124,7 @@ These are some things that need doing or fixing.
 If something doesn't make sense or isn't accurate anymore, feel free to reach out or create an issue.
 
 #### Priority
-- track definitions and references of variables
+- track references of variables
 - tied to ^this^: warnings for unused functions/variables
 - use byval attributes for arrays and structs
 - import of some sort
@@ -137,7 +137,6 @@ If something doesn't make sense or isn't accurate anymore, feel free to reach ou
 - add different errors for missing Pass dependencies and for failed check_empty calls
 - move runtime_type_to_byte_size somewhere common
 - allow on-statements without iterators again
-- add lint to make variables and functions snake_case and types CamelCase
 - allow struct initializers to have any order
 - Invalid IR:
   ```rust
