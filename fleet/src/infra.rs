@@ -11,6 +11,7 @@ use crate::{
         err_too_few_iterators::ErrTooFewIterators,
         fix_non_block_statements::FixNonBlockStatements,
         fix_trailing_comma::FixTrailingComma,
+        lint_variable_names::LintVariableNaming,
         lvalue_reducer::LValueReducer,
         pass_manager::{InputSource, PassError, PassManager},
         remove_parens::RemoveParensPass,
@@ -29,6 +30,7 @@ pub fn insert_fix_passes(pm: &mut PassManager) {
     pm.insert::<FixTrailingComma>();
     pm.insert::<ErrMissingTypeInParam>();
     pm.insert::<ErrTooFewIterators>();
+    pm.insert::<LintVariableNaming>();
 }
 
 pub fn insert_minimal_pipeline(pm: &mut PassManager) {

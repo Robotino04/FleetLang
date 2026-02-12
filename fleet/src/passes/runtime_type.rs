@@ -104,7 +104,7 @@ impl RuntimeTypeKind {
                         "{name}: {},",
                         RuntimeTypeKind::Unknown.stringify_one_level()
                     ))
-                    .join("\n")
+                    .join("")
             ),
         }
     }
@@ -144,7 +144,7 @@ impl RuntimeTypeKind {
                         "{name}: {},",
                         types.get(*type_).kind.stringify(types)
                     ))
-                    .join("\n")
+                    .join("")
             ),
         }
     }

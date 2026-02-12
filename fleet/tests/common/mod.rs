@@ -724,6 +724,15 @@ pub fn assert_compile_and_output_subprocess(
     println!("Source is formatted");
 
     {
+        let pm = compile_or_panic(src);
+        let errors = pm.state.get::<Errors>().unwrap();
+        assert!(
+            errors.is_empty(),
+            "Expected no errors, but still got some: {errors:#?}"
+        );
+    }
+
+    {
         let llvm_tmpdir = tempdir().unwrap();
         let llvm_bin = compile_to_binary_llvm(src, &llvm_tmpdir);
         run_and_check_output(

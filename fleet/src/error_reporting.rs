@@ -97,6 +97,22 @@ pub enum Lint {
         from_type: PrefetchedType,
         to_type: PrefetchedType,
     },
+    FunctionNameNotSnakeCase {
+        function: SymbolDefinition,
+        suggestion: String,
+    },
+    VariableNameNotSnakeCase {
+        variable: SymbolDefinition,
+        suggestion: String,
+    },
+    StructMemberNotSnakeCase {
+        member: SymbolDefinition,
+        suggestion: String,
+    },
+    TypeNameNotCamelCase {
+        type_: SymbolDefinition,
+        suggestion: String,
+    },
 }
 
 NewtypeDerefNoDefault!(pub ConcreteRuntimeTypeMarkdown, ConcreteRuntimeType, Clone);
@@ -1882,6 +1898,42 @@ impl ErrorKind {
                 main_message: "These parentheses are redundant and can be removed.".to_string(),
                 severity: ErrorSeverity::Note,
             },
+            ErrorKind::Lint(Lint::FunctionNameNotSnakeCase {
+                function,
+                suggestion,
+            }) => RenderedError {
+                highlight_groups: vec![warning(&function.definition, "name not snake_case")],
+                main_message: format!(
+                    "Functions have snake_case names by convention. Consider renaming `{function}` to `{suggestion}`."
+                ),
+                severity: ErrorSeverity::Warning,
+            },
+            ErrorKind::Lint(Lint::VariableNameNotSnakeCase {
+                variable,
+                suggestion,
+            }) => RenderedError {
+                highlight_groups: vec![warning(&variable.definition, "name not snake_case")],
+                main_message: format!(
+                    "Variables have snake_case names by convention. Consider renaming `{variable}` to `{suggestion}`."
+                ),
+                severity: ErrorSeverity::Warning,
+            },
+            ErrorKind::Lint(Lint::TypeNameNotCamelCase { type_, suggestion }) => RenderedError {
+                highlight_groups: vec![warning(&type_.definition, "name not CamelCase")],
+                main_message: format!(
+                    "Type aliases have CamelCase names by convention. Consider renaming `{type_}` to `{suggestion}`."
+                ),
+                severity: ErrorSeverity::Warning,
+            },
+            ErrorKind::Lint(Lint::StructMemberNotSnakeCase { member, suggestion }) => {
+                RenderedError {
+                    highlight_groups: vec![warning(&member.definition, "name not snake_case")],
+                    main_message: format!(
+                        "Struct members have snake_case names by convention. Consider renaming `{member}` to `{suggestion}`."
+                    ),
+                    severity: ErrorSeverity::Warning,
+                }
+            }
         }
     }
 }

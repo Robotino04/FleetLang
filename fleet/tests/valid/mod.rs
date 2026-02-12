@@ -8,6 +8,7 @@ mod conditional_statements;
 mod floats;
 mod function;
 mod loops;
+mod naming;
 mod on_gpu;
 mod sized_integers;
 mod structs;

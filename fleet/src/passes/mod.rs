@@ -8,6 +8,7 @@ pub mod first_token_mapper;
 pub mod fix_non_block_statements;
 pub mod fix_trailing_comma;
 pub mod last_token_mapper;
+pub mod lint_variable_names;
 pub mod lvalue_reducer;
 pub mod partial_visitor;
 pub mod pass_manager;
