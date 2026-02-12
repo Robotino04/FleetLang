@@ -1,11 +1,9 @@
 #[cfg(test)]
 use std::fmt::Debug;
 use std::{
-    ffi::{CStr, CString, c_char, c_void},
+    ffi::CString,
     fs::File,
     io::Read,
-    mem::MaybeUninit,
-    path::PathBuf,
     process::{Command, Stdio},
 };
 
@@ -29,7 +27,7 @@ use fleet::{
     tokenizer::SourceLocation,
 };
 use itertools::Itertools;
-use libc::{RTLD_DI_LINKMAP, RTLD_LAZY, dlclose, dlinfo, dlopen, mkfifo};
+use libc::{RTLD_GLOBAL, RTLD_NOW, dlopen, mkfifo};
 use tempfile::{TempDir, tempdir};
 
 pub trait SubprocessTestableReturnType {
@@ -347,39 +345,11 @@ fn execute_function<ReturnType>(
     Target::initialize_native(&InitializationConfig::default())
         .expect("Failed to initialize native LLVM target");
 
-    fn find_library(name: &str) -> PathBuf {
-        #[repr(C)]
-        struct LinkMap {
-            l_addr: usize,
-            l_name: *const c_char,
-            l_ld: *mut c_void,
-            l_next: *mut LinkMap,
-            l_prev: *mut LinkMap,
-        }
-
-        unsafe {
-            let library = dlopen(CString::new(name).unwrap().as_c_str().as_ptr(), RTLD_LAZY);
-            if library.is_null() {
-                panic!("Failed to open library");
-            }
-            let mut link_map: MaybeUninit<*mut LinkMap> = MaybeUninit::uninit();
-            let result = dlinfo(
-                library,
-                RTLD_DI_LINKMAP,
-                link_map.as_mut_ptr() as *mut c_void,
-            );
-            if result != 0 {
-                dlclose(library);
-                panic!("Failed to get link map");
-            }
-            let lib_path = CStr::from_ptr((*link_map.assume_init()).l_name)
-                .to_str()
-                .unwrap()
-                .to_string();
-            if dlclose(library) != 0 {
-                panic!("Failed to close library");
-            }
-            lib_path.parse::<PathBuf>().unwrap()
+    fn load_library(name: &str) {
+        let cname = CString::new(name).unwrap();
+        let handle = unsafe { dlopen(cname.as_ptr(), RTLD_NOW | RTLD_GLOBAL) };
+        if handle.is_null() {
+            panic!("Failed to dlopen {:?}", name);
         }
     }
 
@@ -394,9 +364,9 @@ fn execute_function<ReturnType>(
         )
         .unwrap();
 
-        inkwell::support::load_library_permanently(&find_library("libvulkan.so")).unwrap();
-        inkwell::support::load_library_permanently(fl_runtime_so.as_path()).unwrap();
-        inkwell::support::load_library_permanently(&find_library("libstdc++.so")).unwrap();
+        load_library("libvulkan.so");
+        load_library("libstdc++.so");
+        load_library(fl_runtime_so.to_str().unwrap());
     }
 
     let execution_engine = module

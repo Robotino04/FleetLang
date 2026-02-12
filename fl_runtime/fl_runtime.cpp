@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
@@ -552,18 +553,27 @@ static void runShader(PerShaderData const& sd, uint computeSize) {
 static thread_local std::unordered_map<void*, CommonBuffer> backing_registry;
 static thread_local std::vector<void*> bound_buffers;
 
-extern "C" {
-void fl_runtime_init(void) {
-    if (!checkValidationLayerSupport()) {
-        std::cerr << "validation layers requested, but not available!\n";
-        exit(-1);
-    }
-    if (!checkInstanceExtensionSupport()) {
-        std::cerr << "extensions requested, but not available!\n";
-        exit(-1);
-    }
+static std::mutex vulkan_loader_mutex{};
 
-    VkInstance instance = createInstance();
+extern "C" {
+
+void fl_runtime_init(void) {
+    VkInstance instance;
+    {
+        // no clue why we need this, but without it, the tests segfault in the vulkan loader
+        auto _guard = std::unique_lock(vulkan_loader_mutex);
+
+        if (!checkValidationLayerSupport()) {
+            std::cerr << "validation layers requested, but not available!\n";
+            exit(-1);
+        }
+        if (!checkInstanceExtensionSupport()) {
+            std::cerr << "extensions requested, but not available!\n";
+            exit(-1);
+        }
+
+        instance = createInstance();
+    }
 
     VkDebugUtilsMessengerEXT debugMessenger = createDebugMessenger(instance);
 
@@ -610,7 +620,12 @@ void fl_runtime_deinit(void) {
     );
 
     LOG(std::cerr << "destroying instance" << "\n");
-    vkDestroyInstance(global_s.instance, nullptr);
+
+    {
+        // same note as in fl_runtime_init
+        auto _guard = std::unique_lock(vulkan_loader_mutex);
+        vkDestroyInstance(global_s.instance, nullptr);
+    }
 }
 
 void fl_runtime_allocate_gpu_backing(void* buffer, uint64_t size) {
