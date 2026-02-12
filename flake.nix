@@ -151,7 +151,7 @@
             name = "fleetls-web-demo";
 
             src = ./web-demo;
-            npmDepsHash = "sha256-uLCapz8R3S26r9grOxdhuEqjSODHC55z9cNU05nbRhM=";
+            npmDepsHash = "sha256-immgbSCcA1FUZ/+yx+De2mnYH4wLLtagdaMgXH2tFjw=";
 
             npmBuildScript = "build";
 
