@@ -1,7 +1,6 @@
 {
-  "name": "clangd-standalone-example",
+  "name": "web-demo",
   "version": "1.0.0",
-  "description": "Standalone example of monaco-languageclient with clangd language server",
   "type": "module",
   "main": "index.html",
   "scripts": {

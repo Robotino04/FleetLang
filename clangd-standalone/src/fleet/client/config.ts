@@ -17,7 +17,7 @@ import getViewsServiceOverride from "@codingame/monaco-vscode-views-service-over
 import type { EditorAppConfig } from 'monaco-languageclient/editorApp';
 import type { LanguageClientConfig } from 'monaco-languageclient/lcwrapper';
 import { defaultHtmlAugmentationInstructions, defaultViewsInit, type MonacoVscodeApiConfig } from 'monaco-languageclient/vscodeApiWrapper';
-import { useWorkerFactory, Worker, WorkerLoader } from 'monaco-languageclient/workerFactory';
+import { useWorkerFactory, Worker } from 'monaco-languageclient/workerFactory';
 import { Uri } from 'vscode';
 import { FleetWorkerHandler } from './workerHandler.js';
 import statemachineLanguageConfig from "./language-configuration.json?raw"
@@ -25,7 +25,6 @@ import statemachineLanguageConfig from "./language-configuration.json?raw"
 import EditorWorkerUrl from '@codingame/monaco-vscode-editor-api/esm/vs/editor/editor.worker?worker&url';
 import ExtensionHostWorkerUrl from '@codingame/monaco-vscode-api/workers/extensionHost.worker?worker&url';
 import TextMateWorkerUrl from '@codingame/monaco-vscode-textmate-service-override/worker?worker&url';
-import { HoverMiddleware } from 'vscode-languageclient';
 
 
 export type FleetAppConfig = {
@@ -69,7 +68,7 @@ export const createFleetAppConfig = async (config: {
         workspaceConfig: {
             enableWorkspaceTrust: true,
             windowIndicator: {
-                label: 'mlc-fleet-example',
+                label: 'FleetLS Demo',
                 tooltip: '',
                 command: ''
             },

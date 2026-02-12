@@ -4,7 +4,7 @@
  * ------------------------------------------------------------------------------------------ */
 
 import { ComChannelEndpoint, type ComRouter, RawPayload, WorkerMessage } from 'wtd-core';
-import fleetWorkerUrl from '../worker/clangd-server?worker&url';
+import fleetWorkerUrl from '../worker/fleet-server?worker&url';
 
 /**
  * Minimal interaction main thread, just forwards LSP messages.
@@ -15,13 +15,10 @@ class FleetInteractionMain implements ComRouter {
     }
 
     // Optional hooks for progress / errors
-    clangd_progress(_message: WorkerMessage) {}
-    clangd_error(_message: WorkerMessage) {}
+    fleetls_progress(_message: WorkerMessage) {}
+    fleetls_error(_message: WorkerMessage) {}
 }
 
-/**
- * Fleet worker handler (drop-in replacement for ClangdWorkerHandler)
- */
 export class FleetWorkerHandler {
     private interactionMain: FleetInteractionMain = new FleetInteractionMain();
     private endpointMain?: ComChannelEndpoint;
@@ -64,11 +61,11 @@ export class FleetWorkerHandler {
                 new RawPayload({
                     lsMessagePort: config.lsMessagePort
                 }),
-                'clangd_init' // keep old command name for drop-in compatibility
+                'fleetls_init' // keep old command name for drop-in compatibility
             ),
             transferables: [config.lsMessagePort],
             awaitAnswer: true,
-            expectedAnswer: 'clangd_init_complete'
+            expectedAnswer: 'fleetls_init_complete'
         });
     }
 
@@ -81,10 +78,10 @@ export class FleetWorkerHandler {
         await this.endpointMain.sentMessage({
             message: WorkerMessage.fromPayload(
                 new RawPayload({}),
-                'clangd_launch' // still matches the old contract
+                'fleetls_launch' // still matches the old contract
             ),
             awaitAnswer: true,
-            expectedAnswer: 'clangd_launch_complete'
+            expectedAnswer: 'fleetls_launch_complete'
         });
     }
 }

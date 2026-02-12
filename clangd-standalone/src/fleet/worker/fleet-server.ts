@@ -16,8 +16,8 @@ import {
   WorkerMessage,
 } from "wtd-core";
 
-import initFleet, { serve, ServerConfig, InitOutput } from "../../../resources/fleet/fleetls_wasm";
-import wasmUrl from "../../../resources/fleet/fleetls_wasm_bg.wasm?url";
+import initFleet, { serve, ServerConfig, InitOutput } from "../../../assets/wasm/fleetls_wasm";
+import wasmUrl from "../../../assets/wasm/fleetls_wasm_bg.wasm?url";
 import { JsonStream } from "./json_stream";
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -86,7 +86,7 @@ export class FleetInteractionWorker implements ComRouter {
   // -------------------------
   // INIT
   // -------------------------
-  async clangd_init(message: WorkerMessage) {
+  async fleetls_init(message: WorkerMessage) {
     const rawPayload = (message.payloads![0] as RawPayload).message.raw;
     this.lsMessagePort = rawPayload.lsMessagePort as MessagePort;
 
@@ -95,7 +95,7 @@ export class FleetInteractionWorker implements ComRouter {
 
     this.endpointWorker?.sentAnswer({
       message: WorkerMessage.createFromExisting(message, {
-        overrideCmd: "clangd_init_complete",
+        overrideCmd: "fleetls_init_complete",
       }),
     });
   }
@@ -103,12 +103,12 @@ export class FleetInteractionWorker implements ComRouter {
   // -------------------------
   // LAUNCH
   // -------------------------
-  async clangd_launch(message: WorkerMessage) {
+  async fleetls_launch(message: WorkerMessage) {
     await this.startFleet();
 
     this.endpointWorker?.sentAnswer({
       message: WorkerMessage.createFromExisting(message, {
-        overrideCmd: "clangd_launch_complete",
+        overrideCmd: "fleetls_launch_complete",
       }),
     });
   }

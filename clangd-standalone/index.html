@@ -2,7 +2,7 @@
 <html>
 
 <head>
-    <title>Cpp Language Client & Clangd Language Server (Worker/Wasm)</title>
+    <title>FleetLS Language Server (Worker/Wasm)</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="style.css">
@@ -11,15 +11,13 @@
 
 <body>
     <div class="exampleHeadelineDiv">
-        <b class="exampleHeadeline">Cpp Language Client & Clangd Language Server (Worker/Wasm)</b>
+        <b class="exampleHeadeline">FleetLS Language Server (Worker/Wasm)</b>
         <br>
         <button type="button" id="button-start">Start</button>
-        <br>
-        <p>The clangd language server worker has been derived from: <a href="https://github.com/guyutongxue/clangd-in-browser">clangd-in-browser</a></p>
     </div>
     <div id="monaco-container"></div>
     <script type="module">
-        import { runFleetWrapper } from "./src/clangd/client/main.ts";
+        import { runFleetWrapper } from "./src/fleet/client/main.ts";
         runFleetWrapper();
     </script>
 </body>
