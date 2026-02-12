@@ -5,7 +5,8 @@
 
 import { RegisteredFileSystemProvider, RegisteredMemoryFile, registerFileSystemOverlay } from '@codingame/monaco-vscode-files-service-override';
 import * as vscode from 'vscode';
-import '@codingame/monaco-vscode-cpp-default-extension'; // syntax highlighting
+import '@codingame/monaco-vscode-rust-default-extension'; // syntax highlighting
+import "@codingame/monaco-vscode-markdown-basics-default-extension";
 import { LanguageClientWrapper } from 'monaco-languageclient/lcwrapper';
 import { MonacoVscodeApiWrapper } from 'monaco-languageclient/vscodeApiWrapper';
 import { createDefaultWorkspaceContent, disableElement } from '../../common/client/utils.js';
@@ -62,13 +63,6 @@ export const runFleetWrapper = async () => {
     try {
         document.querySelector('#button-start')?.addEventListener('click', async () => {
             disableElement('button-start', true);
-            disableElement('button-start-fresh', true);
-            await startWrapper();
-        });
-
-        document.querySelector('#button-start-fresh')?.addEventListener('click', async () => {
-            disableElement('button-start', true);
-            disableElement('button-start-fresh', true);
             await startWrapper();
         });
     } catch (e) {

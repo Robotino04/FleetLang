@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@codingame/monaco-vscode-api": "^25.1.2",
     "@codingame/monaco-vscode-configuration-service-override": "^25.1.2",
     "@codingame/monaco-vscode-cpp-default-extension": "^25.1.2",
     "@codingame/monaco-vscode-debug-service-override": "^25.1.2",
@@ -20,14 +21,19 @@
     "@codingame/monaco-vscode-keybindings-service-override": "^25.1.2",
     "@codingame/monaco-vscode-lifecycle-service-override": "^25.1.2",
     "@codingame/monaco-vscode-localization-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-markdown-basics-default-extension": "^25.1.2",
     "@codingame/monaco-vscode-remote-agent-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-rust-default-extension": "^25.1.2",
     "@codingame/monaco-vscode-secret-storage-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-standalone-languages": "^25.1.2",
+    "@codingame/monaco-vscode-textmate-service-override": "^25.1.2",
     "@codingame/monaco-vscode-view-banner-service-override": "^25.1.2",
     "@codingame/monaco-vscode-view-status-bar-service-override": "^25.1.2",
     "@codingame/monaco-vscode-view-title-bar-service-override": "^25.1.2",
+    "@codingame/monaco-vscode-views-service-override": "^25.1.2",
     "jszip": "~3.10.1",
+    "monaco-editor": "~0.55.1",
     "monaco-languageclient": "~10.7.0",
-    "monaco-editor": "~0.52.0",
     "vscode": "npm:@codingame/monaco-vscode-extension-api@^25.1.2",
     "vscode-languageclient": "~9.0.1",
     "vscode-languageserver": "~9.0.1",
@@ -36,6 +42,7 @@
     "wtd-core": "~4.0.1"
   },
   "devDependencies": {
+    "@codingame/esbuild-import-meta-url-plugin": "^1.0.3",
     "@codingame/monaco-vscode-rollup-vsix-plugin": "^25.1.2",
     "@types/node": "^24.10.10",
     "typescript": "^5.9.3",

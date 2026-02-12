@@ -13,6 +13,7 @@ import getSecretStorageServiceOverride from '@codingame/monaco-vscode-secret-sto
 import getBannerServiceOverride from '@codingame/monaco-vscode-view-banner-service-override';
 import getStatusBarServiceOverride from '@codingame/monaco-vscode-view-status-bar-service-override';
 import getTitleBarServiceOverride from '@codingame/monaco-vscode-view-title-bar-service-override';
+import getViewsServiceOverride from "@codingame/monaco-vscode-views-service-override";
 import type { EditorAppConfig } from 'monaco-languageclient/editorApp';
 import type { LanguageClientConfig } from 'monaco-languageclient/lcwrapper';
 import { defaultHtmlAugmentationInstructions, defaultViewsInit, type MonacoVscodeApiConfig } from 'monaco-languageclient/vscodeApiWrapper';
@@ -24,6 +25,7 @@ import statemachineLanguageConfig from "./language-configuration.json?raw"
 import EditorWorkerUrl from '@codingame/monaco-vscode-editor-api/esm/vs/editor/editor.worker?worker&url';
 import ExtensionHostWorkerUrl from '@codingame/monaco-vscode-api/workers/extensionHost.worker?worker&url';
 import TextMateWorkerUrl from '@codingame/monaco-vscode-textmate-service-override/worker?worker&url';
+import { HoverMiddleware } from 'vscode-languageclient';
 
 
 export type FleetAppConfig = {
@@ -55,7 +57,8 @@ export const createFleetAppConfig = async (config: {
             ...getExplorerServiceOverride(),
             ...getRemoteAgentServiceOverride(),
             ...getEnvironmentServiceOverride(),
-            ...getSecretStorageServiceOverride()
+            ...getSecretStorageServiceOverride(),
+            ...getViewsServiceOverride(),
         },
         viewsConfig: {
             $type: 'ViewsService',
@@ -153,6 +156,10 @@ export const createFleetAppConfig = async (config: {
             documentSelector: [{
                 language: "fleet",
             }],
+            markdown: {
+                isTrusted: true,
+                supportHtml: true,
+            },
             workspaceFolder: {
                 index: 0,
                 name: 'workspace',

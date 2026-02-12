@@ -7,6 +7,7 @@ import { defineConfig } from "vite";
 import fs from "node:fs";
 import * as path from "node:path";
 import vsixPlugin from "@codingame/monaco-vscode-rollup-vsix-plugin";
+import importMetaUrlPlugin from "@codingame/esbuild-import-meta-url-plugin";
 
 export default defineConfig({
   build: {
@@ -31,10 +32,11 @@ export default defineConfig({
       "vscode-languageclient",
       "vscode-languageserver",
       "vscode-languageserver/browser.js",
-      'vscode-languageserver-protocol',
-
-      '@codingame/monaco-vscode-standalone-languages',
+      "vscode-languageserver-protocol",
     ],
+    rolldownOptions: {
+      plugins: [importMetaUrlPlugin],
+    }
   },
   plugins: [
     {
@@ -46,9 +48,9 @@ export default defineConfig({
           res.setHeader("Cross-Origin-Embedder-Policy", "credentialless");
           res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
           res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-                    
+
           // Fix MIME type for JS worker files
-          if (_req.url?.endsWith('.js')) {
+          if (_req.url?.endsWith(".js")) {
             res.setHeader("Content-Type", "application/javascript");
           }
 
