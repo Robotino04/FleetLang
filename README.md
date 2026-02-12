@@ -132,10 +132,8 @@ If something doesn't make sense or isn't accurate anymore, feel free to reach ou
 
 #### Easy
 - if expressions
-- consistent error language style
 - test array-to-array assignments in GLSL (maybe C as well)
 - test bigger-than-float float literals with C and GLSL backend
-- disallow returning arrays
 - add different errors for missing Pass dependencies and for failed check_empty calls
 - move runtime_type_to_byte_size somewhere common
 - allow on-statements without iterators again
@@ -147,7 +145,6 @@ If something doesn't make sense or isn't accurate anymore, feel free to reach ou
       return x as i32;
   }
   ```
-- lint against `as idk`
 - Allow inference here:
   ```rust
   idk {

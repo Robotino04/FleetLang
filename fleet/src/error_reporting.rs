@@ -932,9 +932,16 @@ impl ErrorKind {
                 range,
                 actual_length,
             } => RenderedError {
-                highlight_groups: vec![error(range, "character literal too big")],
+                highlight_groups: vec![error(
+                    range,
+                    if *actual_length > 1 {
+                        "character literal too big"
+                    } else {
+                        "character literal empty"
+                    },
+                )],
                 main_message: format!(
-                    "A character literal may only contain a single character. This one contains {actual_length}."
+                    "A character literal may only contain exactly one character. This one contains {actual_length}."
                 ),
                 severity: ErrorSeverity::Error,
             },
