@@ -135,7 +135,6 @@ If something doesn't make sense or isn't accurate anymore, feel free to reach ou
 - test array-to-array assignments in GLSL (maybe C as well)
 - test bigger-than-float float literals with C and GLSL backend
 - add different errors for missing Pass dependencies and for failed check_empty calls
-- move runtime_type_to_byte_size somewhere common
 - allow on-statements without iterators again
 - allow struct initializers to have any order
 - Invalid IR:

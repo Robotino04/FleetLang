@@ -166,29 +166,6 @@ impl CCodeGenerator<'_> {
             ),
         }
     }
-    fn runtime_type_to_byte_size(type_: &ConcreteRuntimeType) -> usize {
-        match type_ {
-            ConcreteRuntimeType::I8 | ConcreteRuntimeType::U8 => 1,
-            ConcreteRuntimeType::I16 | ConcreteRuntimeType::U16 => 2,
-            ConcreteRuntimeType::I32 | ConcreteRuntimeType::U32 => 4,
-            ConcreteRuntimeType::I64 | ConcreteRuntimeType::U64 => 8,
-            ConcreteRuntimeType::F32 => 4,
-            ConcreteRuntimeType::F64 => 8,
-            ConcreteRuntimeType::Boolean => 1,
-            ConcreteRuntimeType::Unit => 0,
-            ConcreteRuntimeType::ArrayOf { subtype, size } => {
-                let subtype_size = Self::runtime_type_to_byte_size(subtype);
-                size * subtype_size
-            }
-            ConcreteRuntimeType::Struct {
-                members,
-                source_hash: _,
-            } => members
-                .iter()
-                .map(|(_member, type_)| Self::runtime_type_to_byte_size(type_))
-                .sum(),
-        }
-    }
 
     fn generate_function_declaration(&self, function: &ConcreteFunction, mangle: bool) -> String {
         let params = function
@@ -520,7 +497,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                     pre_statements,
                     out_value,
                 } = self.visit_variable_lvalue(top_level_binding);
-                let size = Self::runtime_type_to_byte_size(type_);
+                let size = type_.sizeof();
 
                 let temporary = self.unique_temporary("lvalue_binding");
 
@@ -560,16 +537,10 @@ impl AstVisitor for CCodeGenerator<'_> {
         let (ro_allocations, ro_deallocations): (Vec<_>, Vec<_>) = bindings
             .ro
             .iter_mut()
-            .map(|(type_, variable)| {
-                (
-                    self.mangle_variable(&variable.borrow()),
-                    Self::runtime_type_to_byte_size(type_),
-                )
-            })
+            .map(|(type_, variable)| (self.mangle_variable(&variable.borrow()), type_.sizeof()))
             .chain(Some((
                 iterator_size_buffer,
-                iterator_end_values.len()
-                    * Self::runtime_type_to_byte_size(&ConcreteRuntimeType::I32),
+                iterator_end_values.len() * ConcreteRuntimeType::I32.sizeof(),
             )))
             .collect_vec()
             .into_iter()
@@ -1137,7 +1108,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                 | ConcreteRuntimeType::Struct { .. } = expected_type
                 {
                     let tmp = self.unique_temporary("zero");
-                    let size = Self::runtime_type_to_byte_size(expected_type);
+                    let size = expected_type.sizeof();
                     PreStatementValue {
                         pre_statements: formatdoc!(
                             "

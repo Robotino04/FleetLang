@@ -823,4 +823,22 @@ impl ConcreteRuntimeType {
             | T::Struct { .. } => false,
         }
     }
+
+    pub fn sizeof(&self) -> usize {
+        match self {
+            ConcreteRuntimeType::I8 | ConcreteRuntimeType::U8 => 1,
+            ConcreteRuntimeType::I16 | ConcreteRuntimeType::U16 => 2,
+            ConcreteRuntimeType::I32 | ConcreteRuntimeType::U32 => 4,
+            ConcreteRuntimeType::I64 | ConcreteRuntimeType::U64 => 8,
+            ConcreteRuntimeType::F32 => 4,
+            ConcreteRuntimeType::F64 => 8,
+            ConcreteRuntimeType::Boolean => 1,
+            ConcreteRuntimeType::Unit => 0,
+            ConcreteRuntimeType::ArrayOf { subtype, size } => size * subtype.sizeof(),
+            ConcreteRuntimeType::Struct {
+                members,
+                source_hash: _,
+            } => members.iter().map(|(_member, type_)| type_.sizeof()).sum(),
+        }
+    }
 }

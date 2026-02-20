@@ -518,30 +518,6 @@ impl<'state> GLSLCodeGenerator<'state> {
             ),
         }
     }
-    #[allow(unused)]
-    fn runtime_type_to_byte_size(type_: &ConcreteRuntimeType) -> usize {
-        match type_ {
-            ConcreteRuntimeType::I8 | ConcreteRuntimeType::U8 => 1,
-            ConcreteRuntimeType::I16 | ConcreteRuntimeType::U16 => 2,
-            ConcreteRuntimeType::I32 | ConcreteRuntimeType::U32 => 4,
-            ConcreteRuntimeType::I64 | ConcreteRuntimeType::U64 => 8,
-            ConcreteRuntimeType::F32 => 4,
-            ConcreteRuntimeType::F64 => 8,
-            ConcreteRuntimeType::Boolean => 1,
-            ConcreteRuntimeType::Unit => 0,
-            ConcreteRuntimeType::ArrayOf { subtype, size } => {
-                let subtype_size = Self::runtime_type_to_byte_size(subtype);
-                size * subtype_size
-            }
-            ConcreteRuntimeType::Struct {
-                members,
-                source_hash: _,
-            } => members
-                .iter()
-                .map(|(_member, type_)| Self::runtime_type_to_byte_size(type_))
-                .sum(),
-        }
-    }
 
     fn generate_function_declaration(&self, function: &ConcreteFunction, mangle: bool) -> String {
         let params = function
