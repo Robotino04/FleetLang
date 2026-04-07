@@ -574,7 +574,7 @@ impl RenderedError {
 
             let snippet = displayed_lines
                 .map(|(nr, line)| {
-                    if nr > range.start().line() && nr < range.end().line() {
+                    if nr >= range.start().line() && nr < range.end().line() {
                         if let Some((local_min_column, _)) =
                             line.chars().find_position(|c| !c.is_whitespace())
                         {
