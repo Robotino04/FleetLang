@@ -17,6 +17,22 @@ fn missing_return_type() {
 }
 
 #[test]
+fn missing_return_type_unit() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let nothing = () -> {}
+
+            let main = () -> i32 {
+                nothing();
+                return 2;
+            }
+        "##},
+        "main",
+        2i32,
+    );
+}
+
+#[test]
 fn missing_return_type_chained() {
     assert_compile_and_return_value(
         indoc! {r##"

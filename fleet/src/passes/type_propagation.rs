@@ -279,6 +279,19 @@ impl AstVisitor for TypePropagator<'_> {
         self.visit_function_body(body);
 
         self.require_fully_specialized_scope(&**body);
+
+        if let Some(return_type_ptr) = this_function.borrow().return_type
+            && let RuntimeTypeKind::Unknown = self.type_sets.get(return_type_ptr).kind
+        {
+            assert!(RuntimeTypeKind::merge_types(
+                return_type_ptr,
+                self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Unit,
+                    definition_range: None
+                }),
+                &mut self.type_sets
+            ));
+        }
     }
 
     fn visit_type_alias(&mut self, type_alias: &mut TypeAlias) -> Self::TopLevelOutput {

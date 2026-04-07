@@ -149,11 +149,6 @@ If something doesn't make sense or isn't accurate anymore, feel free to reach ou
       b: 2,
   };
   ```
-- Allow inference here:
-  ```rust
-  let main = () -> {
-  }
-  ```
 
 #### Medium
 - real mutability/constant system
@@ -168,6 +163,12 @@ If something doesn't make sense or isn't accurate anymore, feel free to reach ou
 - Unstable formatting:
   ```rust
   if (@sqrt(seed) < 1){
+
+  }
+  ```
+- two-stage formatting:
+  ```rust
+  let main = () -> {
 
   }
   ```
