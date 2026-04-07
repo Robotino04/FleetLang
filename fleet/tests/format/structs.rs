@@ -107,3 +107,73 @@ fn expand_struct() {
         "main",
     );
 }
+
+#[test]
+fn keep_parentheses_around_if_condition() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let A = struct {
+                a: bool,
+            };
+
+            let main = () -> i32 {
+                if (A{a: true}.a) {
+                    return 2;
+                }
+
+                return 9123;
+            }"##
+        },
+        indoc! {r##"
+            let A = struct {
+                a: bool,
+            };
+
+            let main = () -> i32 {
+                if (A {
+                    a: true,
+                }.a) {
+                    return 2;
+                }
+
+                return 9123;
+            }"##
+        },
+        "main",
+    );
+}
+
+#[test]
+fn keep_parentheses_around_if_condition_cast() {
+    assert_formatting_and_same_behaviour::<i32>(
+        indoc! {r##"
+            let main = () -> i32 {
+                let x = idk {
+                    a: true,
+                };
+
+                if (x as struct {a: bool}).a {
+                    return 2;
+                }
+
+                return 9123;
+            }"##
+        },
+        indoc! {r##"
+            let main = () -> i32 {
+                let x = idk {
+                    a: true,
+                };
+
+                if (x as struct {
+                    a: bool,
+                }).a {
+                    return 2;
+                }
+
+                return 9123;
+            }"##
+        },
+        "main",
+    );
+}

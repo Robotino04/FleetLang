@@ -409,6 +409,15 @@ impl RuntimeTypeKind {
         }
     }
 
+    #[must_use = "Failed merges usually indicate a compile error"]
+    pub fn can_merge_types(
+        a: UnionFindSetPtr<RuntimeType>,
+        b: UnionFindSetPtr<RuntimeType>,
+        types: &mut UnionFindSet<RuntimeType>,
+    ) -> bool {
+        Self::merge_types(types.detach(a), types.detach(b), types)
+    }
+
     /// Returns true on successful merge
     #[must_use = "Failed merges usually indicate a compile error"]
     pub fn merge_types(

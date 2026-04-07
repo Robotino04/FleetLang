@@ -2369,6 +2369,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .clone();
 
         match (&value_type, &target_type) {
+            (a, b) if a == b => Ok(value),
             (
                 ConcreteRuntimeType::I8
                 | ConcreteRuntimeType::I16

@@ -2,11 +2,12 @@ use std::cell::RefMut;
 
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, Associativity, AstVisitor,
-        BinaryExpression, CastExpression, Expression, ExpressionStatement, ForLoopStatement,
-        FunctionCallExpression, GroupingExpression, GroupingLValue, IfStatement, LValue, Program,
-        ReturnStatement, ThreadExecutor, UnaryExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, WhileLoopStatement,
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, Associativity,
+        AstVisitor, BinaryExpression, CastExpression, Expression, ExpressionStatement,
+        ForLoopStatement, FunctionCallExpression, GroupingExpression, GroupingLValue, IfStatement,
+        LValue, Program, ReturnStatement, StructAccessExpression, ThreadExecutor, Type,
+        UnaryExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        WhileLoopStatement,
     },
     error_reporting::{ErrorKind, Errors, Lint},
     passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
@@ -30,6 +31,9 @@ pub struct RemoveParensPass<'state> {
     parent_precedence: usize,
     parent_associativity: Associativity,
     current_side: OperandSide,
+
+    /// used to keep parenthesized struct literals in if-conditions and thelike
+    allow_bare_struct_literals: bool,
 }
 
 impl PassFactory for RemoveParensPass<'_> {
@@ -46,6 +50,7 @@ impl PassFactory for RemoveParensPass<'_> {
             parent_precedence: Expression::TOP_PRECEDENCE,
             parent_associativity: Associativity::Both,
             current_side: OperandSide::Left,
+            allow_bare_struct_literals: true,
         })
     }
 }
@@ -88,6 +93,76 @@ impl RemoveParensPass<'_> {
 
         parent_precedence_stronger || same_precedence_and_safe
     }
+
+    fn type_has_bare_struct_literal(type_: &Type) -> bool {
+        match type_ {
+            Type::Simple(_) => false,
+            Type::Unit(_) => false,
+            Type::Idk(_) => false,
+            Type::Array(ArrayType {
+                subtype,
+                open_bracket_token: _,
+                size: _,
+                close_bracket_token: _,
+                id: _,
+            }) => Self::type_has_bare_struct_literal(subtype),
+            Type::Struct(_) => true,
+            Type::Alias(_) => false,
+        }
+    }
+
+    fn has_bare_struct_literal(expr: &Expression) -> bool {
+        match expr {
+            Expression::Literal(_) => false,
+            Expression::Array(_) => false,
+            Expression::Struct(_) => true,
+            Expression::FunctionCall(_) => false,
+            Expression::CompilerExpression(_) => false,
+            Expression::ArrayIndex(ArrayIndexExpression {
+                array,
+                open_bracket_token: _,
+                index: _,
+                close_bracket_token: _,
+                id: _,
+            }) => Self::has_bare_struct_literal(array),
+            Expression::StructAccess(StructAccessExpression {
+                value,
+                dot_token: _,
+                member_name: _,
+                member_name_token: _,
+                id: _,
+            }) => Self::has_bare_struct_literal(value),
+            Expression::Grouping(_) => false,
+            Expression::VariableAccess(_) => false,
+            Expression::Unary(UnaryExpression {
+                operator_token: _,
+                operation: _,
+                operand,
+                id: _,
+            }) => Self::has_bare_struct_literal(operand),
+            Expression::Cast(CastExpression {
+                operand,
+                as_token: _,
+                type_,
+                id: _,
+            }) => {
+                Self::has_bare_struct_literal(operand) || Self::type_has_bare_struct_literal(type_)
+            }
+            Expression::Binary(BinaryExpression {
+                left,
+                operator_token: _,
+                operation: _,
+                right,
+                id: _,
+            }) => Self::has_bare_struct_literal(left) || Self::has_bare_struct_literal(right),
+            Expression::VariableAssignment(VariableAssignmentExpression {
+                lvalue: _,
+                equal_token: _,
+                right,
+                id: _,
+            }) => Self::has_bare_struct_literal(right),
+        }
+    }
 }
 
 impl PartialAstVisitor for RemoveParensPass<'_> {
@@ -117,13 +192,17 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
     fn partial_visit_if_statement(&mut self, if_stmt: &mut IfStatement) {
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
+        self.allow_bare_struct_literals = false;
         self.visit_expression(&mut if_stmt.condition);
+        self.allow_bare_struct_literals = true;
         self.visit_statement(&mut if_stmt.if_body);
 
         for (_token, condition, body) in &mut if_stmt.elifs {
             self.parent_precedence = Expression::TOP_PRECEDENCE;
             self.parent_associativity = Associativity::Both;
+            self.allow_bare_struct_literals = false;
             self.visit_expression(condition);
+            self.allow_bare_struct_literals = true;
             self.visit_statement(&mut *body);
         }
 
@@ -142,7 +221,9 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
     ) {
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
+        self.allow_bare_struct_literals = false;
         self.visit_expression(condition);
+        self.allow_bare_struct_literals = true;
         self.visit_statement(body);
     }
     fn partial_visit_for_loop_statement(
@@ -197,13 +278,18 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                 self.parent_associativity = Associativity::Both;
                 self.visit_expression(&mut *subexpression);
 
-                if RemoveParensPass::can_parens_be_removed(
-                    old_parent_precedence,
-                    old_parent_associativity,
-                    old_side,
-                    subexpression.get_precedence(),
-                    subexpression.get_associativity(),
-                ) {
+                let not_blocked_by_struct = self.allow_bare_struct_literals
+                    || !Self::has_bare_struct_literal(subexpression);
+
+                if not_blocked_by_struct
+                    && RemoveParensPass::can_parens_be_removed(
+                        old_parent_precedence,
+                        old_parent_associativity,
+                        old_side,
+                        subexpression.get_precedence(),
+                        subexpression.get_associativity(),
+                    )
+                {
                     let mut leading_trivia = [
                         open_paren_token.leading_trivia.clone(),
                         open_paren_token.trailing_trivia.clone(),

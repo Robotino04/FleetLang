@@ -122,3 +122,42 @@ fn array_in_struct_in_array() {
         11,
     );
 }
+
+#[test]
+fn literal_in_if() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = true;
+                if a {
+                    return 8;
+                }
+                return 2;
+            }
+        "##},
+        "main",
+        8,
+    );
+}
+#[test]
+fn cast_struct_to_itself() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let x = idk {
+                    a: true,
+                };
+
+                if (x as struct {
+                    a: bool,
+                }).a {
+                    return 2;
+                }
+
+                return 9123;
+            }
+        "##},
+        "main",
+        2,
+    );
+}

@@ -1565,6 +1565,14 @@ impl AstVisitor for TypePropagator<'_> {
             match (&from_clone, &to_clone) {
                 (_, T::Error) | (T::Error, _) => CastResult::Possible,
 
+                (a, b) if a == b => {
+                    self_errors.push(ErrorKind::Lint(Lint::SelfCast {
+                        expression: find_node_bounds(&expression_clone),
+                        type_: PrefetchedType::fetch(from_ptr, types),
+                    }));
+                    CastResult::Redundant
+                }
+
                 (T::I8, T::I8)
                 | (T::I16, T::I16)
                 | (T::I32, T::I32)
@@ -1665,40 +1673,25 @@ impl AstVisitor for TypePropagator<'_> {
                 }
                 (
                     T::ArrayOf {
-                        subtype: _,
+                        subtype: a_subtype,
                         size: a_size,
                     },
                     T::ArrayOf {
-                        subtype: _,
+                        subtype: b_subtype,
                         size: b_size,
                     },
                 ) if a_size == b_size || a_size.is_none() || b_size.is_none() => {
-                    let _ = RuntimeTypeKind::merge_types(from_ptr, to_ptr, types);
-                    let res = perform_cast(
-                        expression_clone.clone(),
-                        from_ptr,
-                        to_ptr,
-                        self_errors,
-                        types,
-                    );
-                    match res {
-                        CastResult::Possible => CastResult::Possible,
-                        CastResult::Redundant => {
-                            self_errors.push(ErrorKind::Lint(Lint::SelfCast {
-                                expression: find_node_bounds(&expression_clone),
-                                type_: PrefetchedType::fetch(from_ptr, types),
-                            }));
-                            CastResult::Redundant
-                        }
-                        CastResult::Impossible => {
-                            self_errors.push(ErrorKind::ImpossibleCast {
-                                reason: ImpossibleCastReason::ArrayElementsIncompatible,
-                                expression: find_node_bounds(&expression_clone),
-                                from: PrefetchedType::fetch(from_ptr, types),
-                                to: PrefetchedType::fetch(to_ptr, types),
-                            });
-                            CastResult::Impossible
-                        }
+                    if RuntimeTypeKind::can_merge_types(*a_subtype, *b_subtype, types) {
+                        let _ = RuntimeTypeKind::merge_types(from_ptr, to_ptr, types);
+                        CastResult::Possible
+                    } else {
+                        self_errors.push(ErrorKind::ImpossibleCast {
+                            reason: ImpossibleCastReason::ArrayElementsIncompatible,
+                            expression: find_node_bounds(&expression_clone),
+                            from: PrefetchedType::fetch(from_ptr, types),
+                            to: PrefetchedType::fetch(to_ptr, types),
+                        });
+                        CastResult::Impossible
                     }
                 }
                 (
@@ -1767,16 +1760,25 @@ impl AstVisitor for TypePropagator<'_> {
                         source_hash: b_hash,
                     },
                 ) => {
-                    let members_equal = a_members == b_members;
-                    let hash_equal = a_hash == b_hash;
+                    let members_equal =
+                        a_members
+                            .iter()
+                            .zip_longest(b_members)
+                            .all(|pair| match pair {
+                                EitherOrBoth::Both(
+                                    (_a_name, _a_range, a_type),
+                                    (_b_name, _b_range, b_type),
+                                ) => RuntimeTypeKind::can_merge_types(*a_type, *b_type, types),
+                                EitherOrBoth::Left(_) | EitherOrBoth::Right(_) => false,
+                            });
+
+                    let hash_equal = a_hash == b_hash || a_hash.is_none() || b_hash.is_none();
 
                     match (hash_equal, members_equal) {
                         (true, true) => {
-                            self_errors.push(ErrorKind::Lint(Lint::SelfCast {
-                                expression: find_node_bounds(&expression_clone),
-                                type_: PrefetchedType::fetch(from_ptr, types),
-                            }));
-                            CastResult::Redundant
+                            let _ = RuntimeTypeKind::merge_types(from_ptr, to_ptr, types);
+                            // identical types handled above
+                            CastResult::Possible
                         }
                         (true, false) => {
                             unreachable!(

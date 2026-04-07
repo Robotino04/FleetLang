@@ -343,3 +343,21 @@ fn length_nested_outer() {
         2,
     );
 }
+#[test]
+fn cast_array_to_itself() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let x = [1, 2];
+
+                if (x as i32[2])[0] == 2 {
+                    return 2;
+                }
+
+                return 9123;
+            }
+        "##},
+        "main",
+        9123,
+    );
+}

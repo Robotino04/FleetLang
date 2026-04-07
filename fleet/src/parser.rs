@@ -405,7 +405,7 @@ impl<'state> Parser<'state> {
                         open_bracket_token: expect!(self, TokenType::OpenBracket)?,
                         binding: self.parse_simple_binding()?,
                         equal_token: expect!(self, TokenType::EqualSign)?,
-                        max_value: Box::new(self.parse_expression()?),
+                        max_value: Box::new(self.parse_expression(true)?),
                         close_bracket_token: expect!(self, TokenType::CloseBracket)?,
                     });
                 }
@@ -415,7 +415,7 @@ impl<'state> Parser<'state> {
                 let mut bindings = vec![];
 
                 while self.current_token_type() != Some(TokenType::CloseParen) {
-                    let binding = self.parse_lvalue()?;
+                    let binding = self.parse_lvalue(true)?;
                     match self.current_token_type() {
                         Some(TokenType::Comma) => {
                             bindings.push((binding, Some(expect!(self, TokenType::Comma)?)))
@@ -479,7 +479,7 @@ impl<'state> Parser<'state> {
                 let value = if let Some(TokenType::Semicolon) = self.current_token_type() {
                     None
                 } else {
-                    Some(Box::new(self.parse_expression()?))
+                    Some(Box::new(self.parse_expression(true)?))
                 };
 
                 Some(Statement::Return(ReturnStatement {
@@ -496,21 +496,21 @@ impl<'state> Parser<'state> {
                     let_token,
                     binding: Box::new(self.parse_simple_binding()?),
                     equals_token: expect!(self, TokenType::EqualSign)?,
-                    value: Box::new(self.parse_expression()?),
+                    value: Box::new(self.parse_expression(true)?),
                     semicolon_token: expect!(self, TokenType::Semicolon)?,
                     id: self.id_generator.next_node_id(),
                 }))
             }
             Some(TokenType::Keyword(Keyword::If)) => {
                 let if_token = expect!(self, TokenType::Keyword(Keyword::If))?;
-                let condition = self.parse_expression()?;
+                let condition = self.parse_expression(false)?;
                 let if_body = self.parse_statement()?;
 
                 let mut elifs = vec![];
 
                 while let Some(TokenType::Keyword(Keyword::Elif)) = self.current_token_type() {
                     let elif_token = expect!(self, TokenType::Keyword(Keyword::Elif))?;
-                    let elif_condition = self.parse_expression()?;
+                    let elif_condition = self.parse_expression(false)?;
                     let elif_body = self.parse_statement()?;
                     elifs.push((elif_token, elif_condition, elif_body));
                 }
@@ -534,7 +534,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::Keyword(Keyword::While)) => {
                 let while_token = expect!(self, TokenType::Keyword(Keyword::While))?;
-                let condition = self.parse_expression()?;
+                let condition = self.parse_expression(false)?;
                 let body = self.parse_statement()?;
                 Some(Statement::WhileLoop(WhileLoopStatement {
                     while_token,
@@ -552,7 +552,7 @@ impl<'state> Parser<'state> {
                 let condition = if matches!(self.current_token_type(), Some(TokenType::Semicolon)) {
                     None
                 } else {
-                    Some(Box::new(self.parse_expression()?))
+                    Some(Box::new(self.parse_expression(true)?))
                 };
                 let second_semicolon_token = expect!(self, TokenType::Semicolon)?;
 
@@ -560,7 +560,7 @@ impl<'state> Parser<'state> {
                     if matches!(self.current_token_type(), Some(TokenType::CloseParen)) {
                         None
                     } else {
-                        Some(Box::new(self.parse_expression()?))
+                        Some(Box::new(self.parse_expression(true)?))
                     };
                 let close_paren_token = expect!(self, TokenType::CloseParen)?;
 
@@ -588,14 +588,14 @@ impl<'state> Parser<'state> {
                 id: self.id_generator.next_node_id(),
             })),
             _ => Some(Statement::Expression(ExpressionStatement {
-                expression: Box::new(self.parse_expression()?),
+                expression: Box::new(self.parse_expression(true)?),
                 semicolon_token: expect!(self, TokenType::Semicolon)?,
                 id: self.id_generator.next_node_id(),
             })),
         }
     }
-    fn parse_expression(&mut self) -> Result<Expression> {
-        self.parse_assignment_expression()
+    fn parse_expression(&mut self, allow_struct_expressions: bool) -> Result<Expression> {
+        self.parse_assignment_expression(allow_struct_expressions)
     }
 
     fn parse_primary_expression(&mut self) -> Result<Expression> {
@@ -633,7 +633,7 @@ impl<'state> Parser<'state> {
                 let open_bracket_token = expect!(self, TokenType::OpenBracket)?;
                 let mut elements = vec![];
                 while self.current_token_type() != Some(TokenType::CloseBracket) {
-                    let element = self.parse_expression()?;
+                    let element = self.parse_expression(true)?;
 
                     match self.current_token_type() {
                         Some(TokenType::Comma) => {
@@ -661,7 +661,7 @@ impl<'state> Parser<'state> {
                 let open_paren_token = expect!(self, TokenType::OpenParen)?;
                 let mut arguments = vec![];
                 while self.current_token_type() != Some(TokenType::CloseParen) {
-                    let arg = self.parse_expression()?;
+                    let arg = self.parse_expression(true)?;
 
                     match self.current_token_type() {
                         Some(TokenType::Comma) => {
@@ -692,7 +692,7 @@ impl<'state> Parser<'state> {
                         let open_paren_token = expect!(self, TokenType::OpenParen)?;
                         let mut arguments = vec![];
                         while self.current_token_type() != Some(TokenType::CloseParen) {
-                            let arg = self.parse_expression()?;
+                            let arg = self.parse_expression(true)?;
 
                             match self.current_token_type() {
                                 Some(TokenType::Comma) => {
@@ -723,22 +723,22 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::OpenParen) => Some(Expression::Grouping(GroupingExpression {
                 open_paren_token: expect!(self, TokenType::OpenParen)?,
-                subexpression: Box::new(self.parse_expression()?),
+                subexpression: Box::new(self.parse_expression(true)?),
                 close_paren_token: expect!(self, TokenType::CloseParen)?,
                 id: self.id_generator.next_node_id(),
             })),
             _ => unable_to_parse!(self, "primary expression"),
         }
     }
-    fn parse_postfix_expression(&mut self) -> Result<Expression> {
-        let mut lhs = if let Ok(struct_expression) = self.try_parse(|this| {
+    fn parse_postfix_expression(&mut self, allow_struct_expressions: bool) -> Result<Expression> {
+        let mut lhs = if allow_struct_expressions && let Ok(struct_expression) = self.try_parse(|this| {
             let type_ = this.parse_type()?;
             let open_brace_token = expect!(this, TokenType::OpenBrace)?;
             let mut members = vec![];
             while this.current_token_type() != Some(TokenType::CloseBrace) {
                 let (name_token, name) = expect!(this, TokenType::Identifier(name) => (this.current_token().unwrap(), name))?;
                 let colon_token = expect!(this, TokenType::Colon)?;
-                let value = Box::new(this.parse_expression()?);
+                let value = Box::new(this.parse_expression(true)?);
 
                 let member = StructMemberValue {
                     name,
@@ -777,7 +777,7 @@ impl<'state> Parser<'state> {
                 lhs = Expression::ArrayIndex(ArrayIndexExpression {
                     array: Box::new(lhs),
                     open_bracket_token: expect!(self, TokenType::OpenBracket)?,
-                    index: Box::new(self.parse_expression()?),
+                    index: Box::new(self.parse_expression(true)?),
                     close_bracket_token: expect!(self, TokenType::CloseBracket)?,
                     id: self.id_generator.next_node_id(),
                 });
@@ -800,33 +800,33 @@ impl<'state> Parser<'state> {
 
         Some(lhs)
     }
-    fn parse_unary_expression(&mut self) -> Result<Expression> {
+    fn parse_unary_expression(&mut self, allow_struct_expressions: bool) -> Result<Expression> {
         match self.current_token_type() {
             Some(TokenType::Tilde) => Some(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::Tilde)?,
                 operation: UnaryOperation::BitwiseNot,
-                operand: Box::new(self.parse_unary_expression()?),
+                operand: Box::new(self.parse_unary_expression(allow_struct_expressions)?),
                 id: self.id_generator.next_node_id(),
             })),
             Some(TokenType::Minus) => Some(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::Minus)?,
                 operation: UnaryOperation::Negate,
-                operand: Box::new(self.parse_unary_expression()?),
+                operand: Box::new(self.parse_unary_expression(allow_struct_expressions)?),
                 id: self.id_generator.next_node_id(),
             })),
             Some(TokenType::ExclamationMark) => Some(Expression::Unary(UnaryExpression {
                 operator_token: expect!(self, TokenType::ExclamationMark)?,
                 operation: UnaryOperation::LogicalNot,
-                operand: Box::new(self.parse_unary_expression()?),
+                operand: Box::new(self.parse_unary_expression(allow_struct_expressions)?),
                 id: self.id_generator.next_node_id(),
             })),
 
-            Some(_) => self.parse_postfix_expression(),
+            Some(_) => self.parse_postfix_expression(allow_struct_expressions),
             None => unable_to_parse!(self, "unary expression"),
         }
     }
-    fn parse_cast_expression(&mut self) -> Result<Expression> {
-        let mut left = self.parse_unary_expression()?;
+    fn parse_cast_expression(&mut self, allow_struct_expressions: bool) -> Result<Expression> {
+        let mut left = self.parse_unary_expression(allow_struct_expressions)?;
 
         while match self.current_token_type() {
             Some(TokenType::Keyword(Keyword::As)) => {
@@ -845,13 +845,13 @@ impl<'state> Parser<'state> {
 
         Some(left)
     }
-    fn parse_product_expression(&mut self) -> Result<Expression> {
-        let mut left = self.parse_cast_expression()?;
+    fn parse_product_expression(&mut self, allow_struct_expressions: bool) -> Result<Expression> {
+        let mut left = self.parse_cast_expression(allow_struct_expressions)?;
 
         while match self.current_token_type() {
             Some(TokenType::Star) => {
                 let operator_token = expect!(self, TokenType::Star)?;
-                let right = self.parse_cast_expression()?;
+                let right = self.parse_cast_expression(allow_struct_expressions)?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -863,7 +863,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::Slash) => {
                 let operator_token = expect!(self, TokenType::Slash)?;
-                let right = self.parse_cast_expression()?;
+                let right = self.parse_cast_expression(allow_struct_expressions)?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -875,7 +875,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::Percent) => {
                 let operator_token = expect!(self, TokenType::Percent)?;
-                let right = self.parse_cast_expression()?;
+                let right = self.parse_cast_expression(allow_struct_expressions)?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -890,13 +890,13 @@ impl<'state> Parser<'state> {
 
         Some(left)
     }
-    fn parse_sum_expression(&mut self) -> Result<Expression> {
-        let mut left = self.parse_product_expression()?;
+    fn parse_sum_expression(&mut self, allow_struct_expressions: bool) -> Result<Expression> {
+        let mut left = self.parse_product_expression(allow_struct_expressions)?;
 
         while match self.current_token_type() {
             Some(TokenType::Plus) => {
                 let operator_token = expect!(self, TokenType::Plus)?;
-                let right = self.parse_product_expression()?;
+                let right = self.parse_product_expression(allow_struct_expressions)?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -908,7 +908,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::Minus) => {
                 let operator_token = expect!(self, TokenType::Minus)?;
-                let right = self.parse_product_expression()?;
+                let right = self.parse_product_expression(allow_struct_expressions)?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -923,13 +923,16 @@ impl<'state> Parser<'state> {
 
         Some(left)
     }
-    fn parse_comparison_expression(&mut self) -> Result<Expression> {
-        let mut left = self.parse_sum_expression()?;
+    fn parse_comparison_expression(
+        &mut self,
+        allow_struct_expressions: bool,
+    ) -> Result<Expression> {
+        let mut left = self.parse_sum_expression(allow_struct_expressions)?;
 
         while match self.current_token_type() {
             Some(TokenType::LessThan) => {
                 let operator_token = expect!(self, TokenType::LessThan)?;
-                let right = self.parse_sum_expression()?;
+                let right = self.parse_sum_expression(allow_struct_expressions)?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -941,7 +944,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::LessThanEqual) => {
                 let operator_token = expect!(self, TokenType::LessThanEqual)?;
-                let right = self.parse_sum_expression()?;
+                let right = self.parse_sum_expression(allow_struct_expressions)?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -953,7 +956,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::GreaterThan) => {
                 let operator_token = expect!(self, TokenType::GreaterThan)?;
-                let right = self.parse_sum_expression()?;
+                let right = self.parse_sum_expression(allow_struct_expressions)?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -965,7 +968,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::GreaterThanEqual) => {
                 let operator_token = expect!(self, TokenType::GreaterThanEqual)?;
-                let right = self.parse_sum_expression()?;
+                let right = self.parse_sum_expression(allow_struct_expressions)?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -980,13 +983,13 @@ impl<'state> Parser<'state> {
 
         Some(left)
     }
-    fn parse_equality_expression(&mut self) -> Result<Expression> {
-        let mut left = self.parse_comparison_expression()?;
+    fn parse_equality_expression(&mut self, allow_struct_expressions: bool) -> Result<Expression> {
+        let mut left = self.parse_comparison_expression(allow_struct_expressions)?;
 
         while match self.current_token_type() {
             Some(TokenType::DoubleEqual) => {
                 let operator_token = expect!(self, TokenType::DoubleEqual)?;
-                let right = self.parse_comparison_expression()?;
+                let right = self.parse_comparison_expression(allow_struct_expressions)?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -998,7 +1001,7 @@ impl<'state> Parser<'state> {
             }
             Some(TokenType::NotEqual) => {
                 let operator_token = expect!(self, TokenType::NotEqual)?;
-                let right = self.parse_comparison_expression()?;
+                let right = self.parse_comparison_expression(allow_struct_expressions)?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -1013,13 +1016,16 @@ impl<'state> Parser<'state> {
 
         Some(left)
     }
-    fn parse_logical_and_expression(&mut self) -> Result<Expression> {
-        let mut left = self.parse_equality_expression()?;
+    fn parse_logical_and_expression(
+        &mut self,
+        allow_struct_expressions: bool,
+    ) -> Result<Expression> {
+        let mut left = self.parse_equality_expression(allow_struct_expressions)?;
 
         while match self.current_token_type() {
             Some(TokenType::DoubleAmpersand) => {
                 let operator_token = expect!(self, TokenType::DoubleAmpersand)?;
-                let right = self.parse_equality_expression()?;
+                let right = self.parse_equality_expression(allow_struct_expressions)?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -1034,13 +1040,16 @@ impl<'state> Parser<'state> {
 
         Some(left)
     }
-    fn parse_logical_or_expression(&mut self) -> Result<Expression> {
-        let mut left = self.parse_logical_and_expression()?;
+    fn parse_logical_or_expression(
+        &mut self,
+        allow_struct_expressions: bool,
+    ) -> Result<Expression> {
+        let mut left = self.parse_logical_and_expression(allow_struct_expressions)?;
 
         while match self.current_token_type() {
             Some(TokenType::DoublePipe) => {
                 let operator_token = expect!(self, TokenType::DoublePipe)?;
-                let right = self.parse_logical_and_expression()?;
+                let right = self.parse_logical_and_expression(allow_struct_expressions)?;
                 left = Expression::Binary(BinaryExpression {
                     left: Box::new(left),
                     operator_token,
@@ -1056,8 +1065,11 @@ impl<'state> Parser<'state> {
         Some(left)
     }
 
-    fn parse_lvalue_or_experssion(&mut self) -> Result<Either<(LValue, Expression), Expression>> {
-        let expr = self.parse_logical_or_expression()?;
+    fn parse_lvalue_or_experssion(
+        &mut self,
+        allow_struct_expressions: bool,
+    ) -> Result<Either<(LValue, Expression), Expression>> {
+        let expr = self.parse_logical_or_expression(allow_struct_expressions)?;
 
         fn expression_to_lvalue(expression: &Expression) -> Option<LValue> {
             Some(match expression.clone() {
@@ -1120,8 +1132,8 @@ impl<'state> Parser<'state> {
         }
     }
 
-    fn parse_lvalue(&mut self) -> Result<LValue> {
-        match self.parse_lvalue_or_experssion()? {
+    fn parse_lvalue(&mut self, allow_struct_expressions: bool) -> Result<LValue> {
+        match self.parse_lvalue_or_experssion(allow_struct_expressions)? {
             Either::Left((lvalue, _expr)) => Some(lvalue),
             Either::Right(expr) => {
                 let err = ErrorKind::ExpressionNotLValue {
@@ -1133,8 +1145,11 @@ impl<'state> Parser<'state> {
         }
     }
 
-    fn parse_assignment_expression(&mut self) -> Result<Expression> {
-        let lv_or_expr = self.parse_lvalue_or_experssion()?;
+    fn parse_assignment_expression(
+        &mut self,
+        allow_struct_expressions: bool,
+    ) -> Result<Expression> {
+        let lv_or_expr = self.parse_lvalue_or_experssion(allow_struct_expressions)?;
 
         let (lvalue, left_expr) = match lv_or_expr {
             Either::Right(expr) => return Some(expr),
@@ -1146,7 +1161,7 @@ impl<'state> Parser<'state> {
         }
 
         let equal_token = expect!(self, TokenType::EqualSign)?;
-        let value = self.parse_assignment_expression()?;
+        let value = self.parse_assignment_expression(allow_struct_expressions)?;
 
         Some(Expression::VariableAssignment(
             VariableAssignmentExpression {
@@ -1173,7 +1188,7 @@ impl<'state> Parser<'state> {
                     dot_token,
                     thread_token: expect!(self, = TokenType::Identifier("threads".to_string()))?,
                     open_bracket_token: expect!(self, TokenType::OpenBracket)?,
-                    index: Box::new(self.parse_expression()?),
+                    index: Box::new(self.parse_expression(true)?),
                     close_bracket_token: expect!(self, TokenType::CloseBracket)?,
                     id: self.id_generator.next_node_id(),
                 }))
@@ -1184,7 +1199,7 @@ impl<'state> Parser<'state> {
                     dot_token,
                     gpus_token: expect!(self, = TokenType::Identifier("gpus".to_string()))?,
                     open_bracket_token: expect!(self, TokenType::OpenBracket)?,
-                    gpu_index: Box::new(self.parse_expression()?),
+                    gpu_index: Box::new(self.parse_expression(true)?),
                     close_bracket_token: expect!(self, TokenType::CloseBracket)?,
                     id: self.id_generator.next_node_id(),
                 }))
@@ -1202,7 +1217,7 @@ impl<'state> Parser<'state> {
             Some(TokenType::OpenBracket) => {
                 let open_bracket_token = expect!(self, TokenType::OpenBracket)?;
 
-                let size = self.try_parse(|this| this.parse_expression()).ok();
+                let size = self.try_parse(|this| this.parse_expression(true)).ok();
 
                 let close_bracket_token = expect!(self, TokenType::CloseBracket)?;
                 type_ = Type::Array(ArrayType {
