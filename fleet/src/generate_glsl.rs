@@ -1232,51 +1232,97 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                     .type_data
                     .get(id)
                     .expect("type data must exist before calling glsl_generator");
-                let (type_, after_id) = self.runtime_type_to_glsl(expected_type);
 
-                if expected_type.is_numeric() {
-                    PreStatementValue {
-                        pre_statements: "".to_string(),
-                        out_value: format!("({type_}{after_id}(0))"),
-                    }
-                } else if expected_type.is_boolean() {
-                    PreStatementValue {
-                        pre_statements: "".to_string(),
-                        out_value: "false".to_string(),
-                    }
-                } else if let ConcreteRuntimeType::ArrayOf { subtype, size } = expected_type {
-                    if !subtype.is_numeric() {
-                        self.errors.push(ErrorKind::ComplexZeroGlsl {
-                            zero: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone().into(),
-                        });
-                    }
+                fn zero_value(
+                    concrete_type: &ConcreteRuntimeType,
+                    this: &GLSLCodeGenerator<'_>,
+                    errors: &mut Errors,
+                    name: &String,
+                    name_token: &crate::tokenizer::Token,
+                ) -> PreStatementValue {
+                    let (type_, after_id) = this.runtime_type_to_glsl(concrete_type);
+                    match concrete_type {
+                        ConcreteRuntimeType::I8
+                        | ConcreteRuntimeType::I16
+                        | ConcreteRuntimeType::I32
+                        | ConcreteRuntimeType::I64
+                        | ConcreteRuntimeType::U8
+                        | ConcreteRuntimeType::U16
+                        | ConcreteRuntimeType::U32
+                        | ConcreteRuntimeType::U64
+                        | ConcreteRuntimeType::F32
+                        | ConcreteRuntimeType::F64 => PreStatementValue {
+                            pre_statements: "".to_string(),
+                            out_value: format!("({type_}{after_id}(0))"),
+                        },
+                        ConcreteRuntimeType::Boolean => PreStatementValue {
+                            pre_statements: "".to_string(),
+                            out_value: "false".to_string(),
+                        },
+                        ConcreteRuntimeType::Unit => {
+                            errors.push(ErrorKind::InvalidIntrinsicType {
+                                backend: Backend::C,
+                                intrinsic: Intrinsic::Zero,
+                                intrinsic_sym: UnresolvedSymbol::from_token(
+                                    name.clone(),
+                                    name_token,
+                                ),
+                                type_: concrete_type.clone().into(),
+                            });
+                            PreStatementValue {
+                                pre_statements: "".to_string(),
+                                out_value: "\n#error unimplemented type for @zero\n".to_string(),
+                            }
+                        }
+                        ConcreteRuntimeType::ArrayOf { subtype, size } => {
+                            let PreStatementValue {
+                                pre_statements: subtype_pre,
+                                out_value: subtype_value,
+                            } = zero_value(subtype, this, errors, name, name_token);
 
-                    let tmp = self.unique_temporary("zero");
-                    PreStatementValue {
-                        pre_statements: formatdoc!(
-                            "
-                            {type_} {tmp}{after_id};
-                            for (int i = 0; i < {size}; i++) {{
-                                {tmp}[i] = 0;
-                            }}
-                            "
-                        ),
-                        out_value: format!("(&{tmp})"),
-                    }
-                } else {
-                    self.errors.push(ErrorKind::InvalidIntrinsicType {
-                        backend: Backend::Glsl,
-                        intrinsic: Intrinsic::Zero,
-                        intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                        type_: expected_type.clone().into(),
-                    });
+                            let tmp = this.unique_temporary("zero");
+                            PreStatementValue {
+                                pre_statements: formatdoc!(
+                                    "
+                                    {type_} {tmp}{after_id};
+                                    for (int i = 0; i < {size}; i++) {{
+                                        {subtype_pre}
+                                        {tmp}[i] = {subtype_value};
+                                    }}
+                                    "
+                                ),
+                                out_value: format!("({tmp})"),
+                            }
+                        }
+                        ConcreteRuntimeType::Struct {
+                            members,
+                            source_hash: _,
+                        } => {
+                            let zero_values = members
+                                .iter()
+                                .map(|member| zero_value(&member.1, this, errors, name, name_token))
+                                .collect_vec();
 
-                    PreStatementValue {
-                        pre_statements: "".to_string(),
-                        out_value: "\n#error unimplemented type for @zero\n".to_string(),
+                            PreStatementValue {
+                                pre_statements: zero_values
+                                    .iter()
+                                    .map(|value| &value.pre_statements)
+                                    .join("\n"),
+                                out_value: format!(
+                                    "{type_}{after_id} ({})",
+                                    zero_values.iter().map(|value| &value.out_value).join(", ")
+                                ),
+                            }
+                        }
                     }
                 }
+
+                let mut errors = Default::default();
+
+                let out = zero_value(expected_type, self, &mut errors, name, name_token);
+                self.errors.append(&mut errors);
+
+                out
             }
             "sqrt" => {
                 let expected_type = self
@@ -1581,79 +1627,22 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             lvalue,
             equal_token: _,
             right,
-            id,
+            id: _,
         }: &mut VariableAssignmentExpression,
     ) -> Self::ExpressionOutput {
-        let type_ = self
-            .type_data
-            .get(id)
-            .expect("Types must exist before calling glsl_generator");
+        let PreStatementValue {
+            pre_statements: rpre_statements,
+            out_value: out_rvalue,
+        } = self.visit_expression(&mut *right);
 
-        if let ConcreteRuntimeType::ArrayOf { subtype: _, size } = type_ {
-            let size = *size;
+        let PreStatementValue {
+            pre_statements: lpre_statements,
+            out_value: out_lvalue,
+        } = self.visit_lvalue(lvalue);
 
-            let (value_type, value_postfix) = self.runtime_type_to_glsl(type_);
-
-            let lvalue_temporary = self.unique_temporary("lvalue");
-            let PreStatementValue {
-                pre_statements: lvalue_pre_statements,
-                out_value: lvalue,
-            } = self.visit_lvalue(lvalue);
-            let lvalue = format!("({lvalue})");
-
-            let lvalue_gen = format!("{value_type} ({lvalue_temporary}){value_postfix} = {lvalue}");
-
-            let rvalue_temporary = self.unique_temporary("rvalue");
-            let PreStatementValue {
-                pre_statements: rvalue_pre_statements,
-                out_value: rvalue_out_value,
-            } = self.visit_expression(&mut *right);
-
-            let rvalue_pre = format!("{value_type} {rvalue_temporary}{value_postfix};\n");
-            let rvalue_gen = format!("{rvalue_temporary} = {rvalue_out_value}");
-
-            let iterator = self.unique_temporary("i");
-
-            let memcpy = formatdoc! {
-                "
-                for (int {iterator} = 0; {iterator} < {size}; {iterator}++) {{
-                    {lvalue_temporary}[{iterator}] = {rvalue_temporary}[{iterator}];
-                }}
-                "
-            };
-
-            PreStatementValue {
-                pre_statements: lvalue_pre_statements + &rvalue_pre + &rvalue_pre_statements,
-                out_value: formatdoc!(
-                    "
-                    ({{
-                        {};
-                        {};
-                        {};
-                        {};
-                    }})\
-                    ",
-                    indent::indent_by(4, lvalue_gen),
-                    indent::indent_by(4, rvalue_gen),
-                    indent::indent_by(4, memcpy),
-                    indent::indent_by(4, rvalue_temporary),
-                ),
-            }
-        } else {
-            let PreStatementValue {
-                pre_statements: rpre_statements,
-                out_value: out_rvalue,
-            } = self.visit_expression(&mut *right);
-
-            let PreStatementValue {
-                pre_statements: lpre_statements,
-                out_value: out_lvalue,
-            } = self.visit_lvalue(lvalue);
-
-            PreStatementValue {
-                pre_statements: lpre_statements + &rpre_statements,
-                out_value: format!("(({out_lvalue}) = ({out_rvalue}))"),
-            }
+        PreStatementValue {
+            pre_statements: lpre_statements + &rpre_statements,
+            out_value: format!("(({out_lvalue}) = ({out_rvalue}))"),
         }
     }
 

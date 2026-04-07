@@ -197,3 +197,70 @@ fn _3d_tensor_contraction() {
         606,
     );
 }
+
+#[test]
+fn array_zero() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a: i32[2] = [5, 1];
+
+                on self.gpus[0][i = 1] (a) {
+                    a = @zero();
+                }
+
+                return a[0];
+            }
+        "##},
+        "main",
+        0,
+    );
+}
+
+#[test]
+fn complex_zero() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a: i32[2][2] = [[5, 1], [7, 2]];
+
+                on self.gpus[0][i = 1] (a) {
+                    a = @zero();
+                }
+
+                return a[1][0];
+            }
+        "##},
+        "main",
+        0,
+    );
+}
+
+#[test]
+fn struct_zero() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a: struct {
+                    a: i32,
+                }[2][2] = [[idk {
+                    a: 5,
+                }, idk {
+                    a: 1,
+                }], [idk {
+                    a: 7,
+                }, idk {
+                    a: 2,
+                }]];
+
+                on self.gpus[0][i = 1] (a) {
+                    a = @zero();
+                }
+
+                return a[1][0].a;
+            }
+        "##},
+        "main",
+        0,
+    );
+}

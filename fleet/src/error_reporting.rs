@@ -349,10 +349,6 @@ pub enum ErrorKind {
 
     GpuLimitationUsed(GpuLimitation),
 
-    ComplexZeroGlsl {
-        zero: UnresolvedSymbol,
-        type_: ConcreteRuntimeTypeMarkdown,
-    },
     ImpossibleCast {
         reason: ImpossibleCastReason,
         expression: NamedSourceRange,
@@ -1265,14 +1261,6 @@ impl ErrorKind {
                     ),
                     severity: ErrorSeverity::Error,
                 },
-            },
-            ErrorKind::ComplexZeroGlsl { zero, type_ } => RenderedError {
-                highlight_groups: vec![error(&zero.use_range, "type too complicated")],
-                main_message: format!(
-                    "The GLSL backend doesn't yet support `@zero` intrinsics of type {type_}. \
-                    Only primitive types and one-dimensional number arrays are supported.",
-                ),
-                severity: ErrorSeverity::Error,
             },
             ErrorKind::ImpossibleCast {
                 reason,
