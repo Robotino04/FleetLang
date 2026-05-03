@@ -1,4 +1,7 @@
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    hash::{DefaultHasher, Hash, Hasher},
+};
 
 use itertools::{EitherOrBoth, Itertools};
 
@@ -12,7 +15,7 @@ pub struct RuntimeType {
     pub kind: RuntimeTypeKind,
     pub definition_range: Option<NamedSourceRange>,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum RuntimeTypeKind {
     Number {
         signed: Option<bool>,
@@ -39,8 +42,47 @@ pub enum RuntimeTypeKind {
     Struct {
         members: Vec<(String, NamedSourceRange, UnionFindSetPtr<RuntimeType>)>,
         /// indicates which struct{} type definition this one originated from
-        source_hash: Option<u64>,
+        source_hash: StructHash,
     },
+}
+
+#[derive(Copy, Clone, Debug, Hash)]
+pub enum StructHash {
+    AdHoc(u64),
+    Named(u64),
+}
+
+impl StructHash {
+    #[must_use]
+    pub fn new_named(lbrace_range: &NamedSourceRange) -> Self {
+        let mut hasher = DefaultHasher::new();
+        lbrace_range.hash(&mut hasher);
+        Self::Named(hasher.finish())
+    }
+    #[must_use]
+    pub fn new_adhoc(lbrace_range: &NamedSourceRange) -> Self {
+        let mut hasher = DefaultHasher::new();
+        lbrace_range.hash(&mut hasher);
+        Self::AdHoc(hasher.finish())
+    }
+
+    #[must_use]
+    pub fn inner(self) -> u64 {
+        match self {
+            StructHash::AdHoc(x) => x,
+            StructHash::Named(x) => x,
+        }
+    }
+
+    #[must_use]
+    pub fn is_adhoc(&self) -> bool {
+        matches!(self, Self::AdHoc(..))
+    }
+
+    #[must_use]
+    pub fn is_named(&self) -> bool {
+        matches!(self, Self::Named(..))
+    }
 }
 
 impl RuntimeTypeKind {
@@ -418,6 +460,20 @@ impl RuntimeTypeKind {
         Self::merge_types(types.detach(a), types.detach(b), types)
     }
 
+    pub fn can_merge_hashes(mut a_hash: StructHash, mut b_hash: StructHash) -> bool {
+        Self::merge_hashes(&mut a_hash, &mut b_hash)
+    }
+
+    pub fn merge_hashes(a_hash: &mut StructHash, b_hash: &mut StructHash) -> bool {
+        match (a_hash, b_hash) {
+            (adhoc @ StructHash::AdHoc(_), other) | (other, adhoc @ StructHash::AdHoc(_)) => {
+                *adhoc = *other;
+                true
+            }
+            (StructHash::Named(a), StructHash::Named(b)) => a == b,
+        }
+    }
+
     /// Returns true on successful merge
     #[must_use = "Failed merges usually indicate a compile error"]
     pub fn merge_types(
@@ -430,22 +486,43 @@ impl RuntimeTypeKind {
             let a = &mut a_full.kind;
             let b = &mut b_full.kind;
 
-            if *b == RuntimeTypeKind::Unknown {
+            if matches!(*b, RuntimeTypeKind::Unknown) {
                 a_full.definition_range = a_full.definition_range.or(b_full.definition_range);
                 return R::Merged(a_full);
             }
 
-            if *a == RuntimeTypeKind::Error {
+            if matches!(*a, RuntimeTypeKind::Error) {
                 return R::Merged(a_full);
             }
-            if *b == RuntimeTypeKind::Error {
+            if matches!(*b, RuntimeTypeKind::Error) {
                 return R::Merged(b_full);
             }
 
-            match a {
-                _ if a == b => R::Merged(a_full),
+            use RuntimeTypeKind as T;
 
-                RuntimeTypeKind::Number { signed, integer } => {
+            match (a, b) {
+                (_, T::Error) => R::Merged(a_full),
+                (T::Error, _) => R::Merged(b_full),
+
+                (T::I8, T::I8)
+                | (T::I16, T::I16)
+                | (T::I32, T::I32)
+                | (T::I64, T::I64)
+                | (T::U8, T::U8)
+                | (T::U16, T::U16)
+                | (T::U32, T::U32)
+                | (T::U64, T::U64)
+                | (T::F32, T::F32)
+                | (T::F64, T::F64)
+                | (T::Boolean, T::Boolean)
+                | (T::Unit, T::Unit) => R::Merged(a_full),
+
+                (T::Boolean | T::Unit, _) => R::NotMerged {
+                    a: a_full,
+                    b: b_full,
+                },
+
+                (T::Number { signed, integer }, b) => {
                     if !match signed {
                         Some(true) => b.could_be_signed(),
                         Some(false) => b.could_be_unsigned(),
@@ -469,11 +546,11 @@ impl RuntimeTypeKind {
                     }
 
                     match b {
-                        RuntimeTypeKind::Number {
+                        T::Number {
                             signed: b_signed,
                             integer: b_integer,
                         } => R::Merged(RuntimeType {
-                            kind: RuntimeTypeKind::Number {
+                            kind: T::Number {
                                 signed: match (*signed, *b_signed) {
                                     (None, None) => None,
                                     (None, Some(x)) => Some(x),
@@ -502,44 +579,27 @@ impl RuntimeTypeKind {
                     }
                 }
 
-                RuntimeTypeKind::I8
-                | RuntimeTypeKind::I16
-                | RuntimeTypeKind::I32
-                | RuntimeTypeKind::I64 => {
-                    if let RuntimeTypeKind::Number { .. } = b
-                        && b.could_be_integer()
-                        && b.could_be_signed()
-                    {
-                        R::Merged(a_full)
-                    } else if a == b {
-                        R::Merged(a_full)
-                    } else {
-                        R::NotMerged {
-                            a: a_full,
-                            b: b_full,
-                        }
-                    }
+                (T::I8 | T::I16 | T::I32 | T::I64, b @ T::Number { .. })
+                    if b.could_be_integer() && b.could_be_signed() =>
+                {
+                    R::Merged(a_full)
                 }
-                RuntimeTypeKind::U8
-                | RuntimeTypeKind::U16
-                | RuntimeTypeKind::U32
-                | RuntimeTypeKind::U64 => {
-                    if let RuntimeTypeKind::Number { .. } = b
-                        && b.could_be_integer()
-                        && b.could_be_unsigned()
-                    {
-                        R::Merged(a_full)
-                    } else if a == b {
-                        R::Merged(a_full)
-                    } else {
-                        R::NotMerged {
-                            a: a_full,
-                            b: b_full,
-                        }
-                    }
-                }
+                (T::I8 | T::I16 | T::I32 | T::I64, _) => R::NotMerged {
+                    a: a_full,
+                    b: b_full,
+                },
 
-                RuntimeTypeKind::F32 | RuntimeTypeKind::F64 => {
+                (T::U8 | T::U16 | T::U32 | T::U64, b @ T::Number { .. })
+                    if b.could_be_integer() && b.could_be_unsigned() =>
+                {
+                    R::Merged(a_full)
+                }
+                (T::U8 | T::U16 | T::U32 | T::U64, _) => R::NotMerged {
+                    a: a_full,
+                    b: b_full,
+                },
+
+                (T::F32 | T::F64, b) => {
                     if b.could_be_float() {
                         R::Merged(a_full)
                     } else {
@@ -550,66 +610,40 @@ impl RuntimeTypeKind {
                     }
                 }
 
-                RuntimeTypeKind::Boolean => {
-                    if b.is_boolean() {
-                        R::Merged(b_full)
-                    } else {
-                        R::NotMerged {
-                            a: a_full,
-                            b: b_full,
-                        }
-                    }
-                }
-                RuntimeTypeKind::Unit => {
-                    if *b == RuntimeTypeKind::Unit {
-                        R::Merged(b_full)
-                    } else {
-                        R::NotMerged {
-                            a: a_full,
-                            b: b_full,
-                        }
-                    }
-                }
-                RuntimeTypeKind::Unknown => {
+                (T::Unknown, _) => {
                     b_full.definition_range = a_full.definition_range.or(b_full.definition_range);
                     R::Merged(b_full)
                 }
-                RuntimeTypeKind::Error => R::Merged(a_full),
-                RuntimeTypeKind::ArrayOf {
-                    subtype: a_subtype,
-                    size: a_size,
-                } => {
-                    if let RuntimeTypeKind::ArrayOf {
+                (
+                    T::ArrayOf {
+                        subtype: a_subtype,
+                        size: a_size,
+                    },
+                    T::ArrayOf {
                         subtype: b_subtype,
                         size: b_size,
-                    } = b
-                    {
-                        let mut do_merge = true;
-                        if !RuntimeTypeKind::merge_types(*a_subtype, *b_subtype, types) {
-                            do_merge = false;
+                    },
+                ) => {
+                    let mut do_merge = true;
+                    if !T::merge_types(*a_subtype, *b_subtype, types) {
+                        do_merge = false;
+                    }
+                    match (*a_size, *b_size) {
+                        (None, None) => {}
+                        (None, Some(_)) => {
+                            *a_size = *b_size;
                         }
-                        match (*a_size, *b_size) {
-                            (None, None) => {}
-                            (None, Some(_)) => {
-                                *a_size = *b_size;
-                            }
-                            (Some(_), None) => {
-                                *b_size = *a_size;
-                            }
-                            (Some(a_size), Some(b_size)) => {
-                                if a_size != b_size {
-                                    do_merge = false;
-                                }
-                            }
+                        (Some(_), None) => {
+                            *b_size = *a_size;
                         }
-                        if do_merge {
-                            R::Merged(a_full)
-                        } else {
-                            R::NotMerged {
-                                a: a_full,
-                                b: b_full,
+                        (Some(a_size), Some(b_size)) => {
+                            if a_size != b_size {
+                                do_merge = false;
                             }
                         }
+                    }
+                    if do_merge {
+                        R::Merged(a_full)
                     } else {
                         R::NotMerged {
                             a: a_full,
@@ -617,68 +651,68 @@ impl RuntimeTypeKind {
                         }
                     }
                 }
-                RuntimeTypeKind::Struct {
-                    members,
-                    source_hash,
-                } => {
-                    if let RuntimeTypeKind::Struct {
+                (T::ArrayOf { .. }, _) => R::NotMerged {
+                    a: a_full,
+                    b: b_full,
+                },
+
+                (
+                    T::Struct {
+                        members,
+                        source_hash,
+                    },
+                    T::Struct {
                         members: members_2,
                         source_hash: source_hash_2,
-                    } = b
-                        && (source_hash == source_hash_2
-                            || source_hash.is_none()
-                            || source_hash_2.is_none())
-                    {
-                        for member_pair in members.iter().zip_longest(members_2) {
-                            match member_pair {
-                                EitherOrBoth::Both(
-                                    (member1_name, _range1, member1_type),
-                                    (member2_name, _range2, member2_type),
-                                ) => {
-                                    if !RuntimeTypeKind::merge_types(
-                                        *member1_type,
-                                        *member2_type,
-                                        types,
-                                    ) {
-                                        return R::NotMerged {
-                                            a: a_full,
-                                            b: b_full,
-                                        };
-                                    }
-                                    if member1_name != member2_name {
-                                        return R::NotMerged {
-                                            a: a_full,
-                                            b: b_full,
-                                        };
-                                    }
-                                }
-                                EitherOrBoth::Left(_) => {
+                    },
+                ) => {
+                    if !Self::merge_hashes(source_hash, source_hash_2) {
+                        return R::NotMerged {
+                            a: a_full,
+                            b: b_full,
+                        };
+                    }
+
+                    for member_pair in members.iter().zip_longest(members_2) {
+                        match member_pair {
+                            EitherOrBoth::Both(
+                                (member1_name, _range1, member1_type),
+                                (member2_name, _range2, member2_type),
+                            ) => {
+                                if !T::merge_types(*member1_type, *member2_type, types) {
                                     return R::NotMerged {
                                         a: a_full,
                                         b: b_full,
                                     };
                                 }
-                                EitherOrBoth::Right(_) => {
+                                if member1_name != member2_name {
                                     return R::NotMerged {
                                         a: a_full,
                                         b: b_full,
                                     };
                                 }
                             }
-                        }
-
-                        if source_hash.is_some() {
-                            R::Merged(a_full)
-                        } else {
-                            R::Merged(b_full)
-                        }
-                    } else {
-                        R::NotMerged {
-                            a: a_full,
-                            b: b_full,
+                            EitherOrBoth::Left(_) => {
+                                return R::NotMerged {
+                                    a: a_full,
+                                    b: b_full,
+                                };
+                            }
+                            EitherOrBoth::Right(_) => {
+                                return R::NotMerged {
+                                    a: a_full,
+                                    b: b_full,
+                                };
+                            }
                         }
                     }
+
+                    R::Merged(a_full)
                 }
+                (T::Struct { .. }, _) => R::NotMerged {
+                    a: a_full,
+                    b: b_full,
+                },
             }
         })
     }

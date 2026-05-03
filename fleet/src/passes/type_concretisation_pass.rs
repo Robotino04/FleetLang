@@ -168,11 +168,7 @@ impl TypeConcretisationPass<'_> {
         let out = || {
             let type_ = self.type_sets.get(type_ptr);
             Some(match type_.kind.clone() {
-                RuntimeTypeKind::Struct {
-                    members: _,
-                    source_hash: None,
-                }
-                | RuntimeTypeKind::ArrayOf {
+                RuntimeTypeKind::ArrayOf {
                     subtype: _,
                     size: None,
                 }
@@ -214,9 +210,9 @@ impl TypeConcretisationPass<'_> {
                 },
                 RuntimeTypeKind::Struct {
                     members,
-                    source_hash: Some(source_hash),
-                } => ConcreteRuntimeType::Struct {
                     source_hash,
+                } => ConcreteRuntimeType::Struct {
+                    source_hash: source_hash.inner(),
                     members: members
                         .clone()
                         .into_iter()

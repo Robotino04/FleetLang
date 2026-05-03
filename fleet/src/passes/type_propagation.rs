@@ -1,7 +1,6 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
-    hash::{DefaultHasher, Hash, Hasher},
     rc::Rc,
 };
 
@@ -33,7 +32,7 @@ use crate::{
             FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData, TypeData,
             TypeSets, VariableData,
         },
-        runtime_type::{RuntimeType, RuntimeTypeKind},
+        runtime_type::{RuntimeType, RuntimeTypeKind, StructHash},
         scope_analysis::Function,
         union_find_set::UnionFindSetPtr,
     },
@@ -355,7 +354,10 @@ impl AstVisitor for TypePropagator<'_> {
                 definition_range: None,
             })
         };
-        if self.type_sets.get(defined_type_ptr).kind == RuntimeTypeKind::Unit {
+        if matches!(
+            self.type_sets.get(defined_type_ptr).kind,
+            RuntimeTypeKind::Unit
+        ) {
             self.errors.push(ErrorKind::UnitVariable {
                 variable: SymbolDefinition::from_token(name.clone(), name_token),
                 type_range: type_
@@ -971,7 +973,7 @@ impl AstVisitor for TypePropagator<'_> {
         let constructed_type_ptr = self.type_sets.insert_set(RuntimeType {
             kind: RuntimeTypeKind::Struct {
                 members: member_types,
-                source_hash: None,
+                source_hash: StructHash::new_adhoc(&open_brace_token.range),
             },
             definition_range: None,
         });
@@ -1398,7 +1400,7 @@ impl AstVisitor for TypePropagator<'_> {
             source_hash: _,
         } = &self.type_sets.get(value_type).kind
         else {
-            if self.type_sets.get(value_type).kind != RuntimeTypeKind::Error {
+            if !matches!(self.type_sets.get(value_type).kind, RuntimeTypeKind::Error) {
                 self.errors.push(ErrorKind::StructAccessNonStruct {
                     value: find_node_bounds(&**value),
                     wrong_type: PrefetchedType::fetch(value_type, &self.type_sets),
@@ -1577,14 +1579,6 @@ impl AstVisitor for TypePropagator<'_> {
             let to_clone = types.get(to_ptr).kind.clone();
             match (&from_clone, &to_clone) {
                 (_, T::Error) | (T::Error, _) => CastResult::Possible,
-
-                (a, b) if a == b => {
-                    self_errors.push(ErrorKind::Lint(Lint::SelfCast {
-                        expression: find_node_bounds(&expression_clone),
-                        type_: PrefetchedType::fetch(from_ptr, types),
-                    }));
-                    CastResult::Redundant
-                }
 
                 (T::I8, T::I8)
                 | (T::I16, T::I16)
@@ -1773,51 +1767,54 @@ impl AstVisitor for TypePropagator<'_> {
                         source_hash: b_hash,
                     },
                 ) => {
-                    let members_equal =
-                        a_members
-                            .iter()
-                            .zip_longest(b_members)
-                            .all(|pair| match pair {
-                                EitherOrBoth::Both(
-                                    (_a_name, _a_range, a_type),
-                                    (_b_name, _b_range, b_type),
-                                ) => RuntimeTypeKind::can_merge_types(*a_type, *b_type, types),
-                                EitherOrBoth::Left(_) | EitherOrBoth::Right(_) => false,
-                            });
+                    if !RuntimeTypeKind::merge_types(from_ptr, to_ptr, types) {
+                        let members_equal =
+                            a_members
+                                .iter()
+                                .zip_longest(b_members)
+                                .all(|pair| match pair {
+                                    EitherOrBoth::Both(
+                                        (_a_name, _a_range, a_type),
+                                        (_b_name, _b_range, b_type),
+                                    ) => RuntimeTypeKind::can_merge_types(*a_type, *b_type, types),
+                                    EitherOrBoth::Left(_) | EitherOrBoth::Right(_) => false,
+                                });
 
-                    let hash_equal = a_hash == b_hash || a_hash.is_none() || b_hash.is_none();
+                        let hashes_mergable = RuntimeTypeKind::can_merge_hashes(*a_hash, *b_hash);
 
-                    match (hash_equal, members_equal) {
-                        (true, true) => {
-                            let _ = RuntimeTypeKind::merge_types(from_ptr, to_ptr, types);
-                            // identical types handled above
-                            CastResult::Possible
+                        match (hashes_mergable, members_equal) {
+                            (true, true) => {
+                                unreachable!(
+                                    "Two struct types have equal members and compatible hashes, but they didn't merge:\na: {a:#?}\nb: {b:#?}"
+                                )
+                            }
+                            (true, false) => {
+                                unreachable!(
+                                    "Two struct types have different members but same struct hash:\na: {a:#?}\nb: {b:#?}"
+                                )
+                            }
+                            (false, true) => {
+                                self_errors.push(ErrorKind::ImpossibleCast {
+                                    reason: ImpossibleCastReason::DifferentStructOrigin,
+                                    expression: find_node_bounds(&expression_clone),
+                                    from: PrefetchedType::fetch(from_ptr, types),
+                                    to: PrefetchedType::fetch(to_ptr, types),
+                                });
+                            }
+                            (false, false) => {
+                                self_errors.push(ErrorKind::ImpossibleCast {
+                                    reason: ImpossibleCastReason::StructMembersDiffer,
+                                    expression: find_node_bounds(&expression_clone),
+                                    from: PrefetchedType::fetch(from_ptr, types),
+                                    to: PrefetchedType::fetch(to_ptr, types),
+                                });
+                            }
                         }
-                        (true, false) => {
-                            unreachable!(
-                                "Two struct types have different members but same source hash:\na: {a:#?}\nb: {b:#?}"
-                            )
-                        }
-                        (false, true) => {
-                            self_errors.push(ErrorKind::ImpossibleCast {
-                                reason: ImpossibleCastReason::DifferentStructOrigin,
-                                expression: find_node_bounds(&expression_clone),
-                                from: PrefetchedType::fetch(from_ptr, types),
-                                to: PrefetchedType::fetch(to_ptr, types),
-                            });
 
-                            CastResult::Impossible
-                        }
-                        (false, false) => {
-                            self_errors.push(ErrorKind::ImpossibleCast {
-                                reason: ImpossibleCastReason::StructMembersDiffer,
-                                expression: find_node_bounds(&expression_clone),
-                                from: PrefetchedType::fetch(from_ptr, types),
-                                to: PrefetchedType::fetch(to_ptr, types),
-                            });
-                            CastResult::Impossible
-                        }
+                        return CastResult::Impossible;
                     }
+
+                    CastResult::Possible
                 }
                 (
                     T::Struct {
@@ -2146,7 +2143,7 @@ impl AstVisitor for TypePropagator<'_> {
             source_hash: _,
         } = &self.type_sets.get(value_type).kind
         else {
-            if self.type_sets.get(value_type).kind != RuntimeTypeKind::Error {
+            if !matches!(self.type_sets.get(value_type).kind, RuntimeTypeKind::Error) {
                 self.errors.push(ErrorKind::StructAccessNonStruct {
                     value: find_node_bounds(&**value),
                     wrong_type: PrefetchedType::fetch(value_type, &self.type_sets),
@@ -2310,7 +2307,7 @@ impl AstVisitor for TypePropagator<'_> {
         &mut self,
         StructType {
             struct_token,
-            open_brace_token: _,
+            open_brace_token,
             members,
             close_brace_token,
             id,
@@ -2332,7 +2329,7 @@ impl AstVisitor for TypePropagator<'_> {
         {
             let subtype = self.visit_type(type_);
 
-            if self.type_sets.get(subtype).kind == RuntimeTypeKind::Unit {
+            if matches!(self.type_sets.get(subtype).kind, RuntimeTypeKind::Unit) {
                 self.errors.push(ErrorKind::StructOfUnit {
                     member: SymbolDefinition::from_token(name.clone(), name_token),
                     type_: PrefetchedType::fetch(subtype, &self.type_sets),
@@ -2343,13 +2340,10 @@ impl AstVisitor for TypePropagator<'_> {
             rt_members.push((name.clone(), name_token.range.clone(), subtype));
         }
 
-        let mut hash = DefaultHasher::new();
-        struct_token.range.hash(&mut hash);
-
         let struct_t = self.type_sets.insert_set(RuntimeType {
             kind: RuntimeTypeKind::Struct {
                 members: rt_members,
-                source_hash: Some(hash.finish()),
+                source_hash: StructHash::new_named(&open_brace_token.range),
             },
             definition_range: Some(
                 struct_token
@@ -2358,7 +2352,9 @@ impl AstVisitor for TypePropagator<'_> {
                     .extend_with(close_brace_token.range.clone()),
             ),
         });
+
         self.node_types.insert(*id, struct_t);
+
         struct_t
     }
 

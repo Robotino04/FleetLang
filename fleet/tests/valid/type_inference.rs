@@ -121,3 +121,41 @@ fn as_bool_dont_truncate() {
         1,
     );
 }
+
+#[test]
+fn adhoc_struct() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i64 {
+                return idk {
+                    b: 2,
+                    a: false,
+                }.b;
+            }
+        "##},
+        "main",
+        2i64,
+    );
+}
+#[test]
+fn different_adhoc_struct() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a = idk {
+                    b: 2,
+                };
+
+                let b = idk {
+                    b: 5,
+                };
+
+                a = b;
+
+                return a.b;
+            }
+        "##},
+        "main",
+        5,
+    );
+}

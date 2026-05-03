@@ -143,12 +143,6 @@ If something doesn't make sense or isn't accurate anymore, feel free to reach ou
       return x as i32;
   }
   ```
-- Allow inference here:
-  ```rust
-  idk {
-      b: 2,
-  };
-  ```
 
 #### Medium
 - real mutability/constant system
