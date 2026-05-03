@@ -3,6 +3,18 @@ use indoc::indoc;
 use crate::common::{assert_compile_and_output_subprocess, assert_compile_and_return_value};
 
 #[test]
+fn main_returning_unit() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let main = () -> () {
+                return;
+            }
+        "##},
+        "main",
+        (),
+    );
+}
+#[test]
 fn main_returning_0() {
     assert_compile_and_return_value(
         indoc! {r##"

@@ -866,6 +866,25 @@ impl ConcreteRuntimeType {
             | T::Struct { .. } => false,
         }
     }
+    pub fn is_unit(&self) -> bool {
+        use ConcreteRuntimeType as T;
+        match self {
+            T::Unit => true,
+            T::I8
+            | T::I16
+            | T::I32
+            | T::I64
+            | T::U8
+            | T::U16
+            | T::U32
+            | T::U64
+            | T::F32
+            | T::F64
+            | T::Boolean
+            | T::ArrayOf { .. }
+            | T::Struct { .. } => false,
+        }
+    }
 
     pub fn sizeof(&self) -> usize {
         match self {

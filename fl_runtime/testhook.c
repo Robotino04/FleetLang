@@ -92,6 +92,12 @@ static void fleetc_test_entry(void) {
         bool result = fleet_main_typed();
         write_status = write(fd, &result, sizeof(result));
     }
+    else if (strcmp("unit", result_type) == 0) {
+        void (*fleet_main_typed)(void) = fleet_main;
+        fleet_main_typed();
+        // write nothing
+        write_status = 0;
+    }
     else {
         fprintf(stderr, "Invalid FLEETC_TEST_TYPE value: %s\n", result_type);
         exit(7);

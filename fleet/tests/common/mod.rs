@@ -1,6 +1,7 @@
 #[cfg(test)]
 use std::fmt::Debug;
 use std::{
+    any::{TypeId, type_name},
     ffi::CString,
     fs::File,
     io::Read,
@@ -21,7 +22,8 @@ use fleet::{
     },
     ir_generator::{IrGenerator, LLVMOptimizerPass},
     passes::{
-        pass_manager::{InputSource, PassError, PassManager, StatData},
+        pass_manager::{ConcreteFunctionData, InputSource, PassError, PassManager, StatData},
+        runtime_type::ConcreteRuntimeType,
         save_artifact_pass::{ArtifactType, SaveArtifactPass},
     },
     tokenizer::SourceLocation,
@@ -72,6 +74,14 @@ impl SubprocessTestableReturnType for bool {
     }
     fn type_signifier(&self) -> String {
         "bool".to_string()
+    }
+}
+impl SubprocessTestableReturnType for () {
+    fn expected_bytes(self) -> Vec<u8> {
+        vec![]
+    }
+    fn type_signifier(&self) -> String {
+        "unit".to_string()
     }
 }
 impl SubprocessTestableReturnType for f32 {
@@ -200,7 +210,7 @@ pub fn assert_compile_and_return_value<ReturnType>(
     function_name: &str,
     expected_return_value: ReturnType,
 ) where
-    ReturnType: Debug + PartialEq + SubprocessTestableReturnType + Clone,
+    ReturnType: Debug + PartialEq + SubprocessTestableReturnType + Clone + 'static,
 {
     assert_eq!(
         function_name, "main",
@@ -218,12 +228,60 @@ pub fn assert_compile_and_return_value<ReturnType>(
     println!("Subprocess execution succeeded");
 }
 
+fn assert_function_return_type<ReturnType>(pm: &PassManager, function_name: &str)
+where
+    ReturnType: 'static,
+{
+    let function_data = pm.state.get::<ConcreteFunctionData>().unwrap();
+
+    let function = function_data
+        .iter()
+        .find(|(_id, function)| function.borrow().symbol.name == function_name)
+        .unwrap()
+        .1;
+
+    let actual_return_type = function.borrow().return_type.clone();
+
+    fn type_name_and_id<T: 'static>() -> (TypeId, &'static str) {
+        (TypeId::of::<T>(), type_name::<T>())
+    }
+
+    let (actual_return_type_id, actual_return_type_name) = match actual_return_type {
+        ConcreteRuntimeType::I8 => type_name_and_id::<i8>(),
+        ConcreteRuntimeType::I16 => type_name_and_id::<i16>(),
+        ConcreteRuntimeType::I32 => type_name_and_id::<i32>(),
+        ConcreteRuntimeType::I64 => type_name_and_id::<i64>(),
+        ConcreteRuntimeType::U8 => type_name_and_id::<u8>(),
+        ConcreteRuntimeType::U16 => type_name_and_id::<u16>(),
+        ConcreteRuntimeType::U32 => type_name_and_id::<u32>(),
+        ConcreteRuntimeType::U64 => type_name_and_id::<u64>(),
+        ConcreteRuntimeType::F32 => type_name_and_id::<f32>(),
+        ConcreteRuntimeType::F64 => type_name_and_id::<f64>(),
+        ConcreteRuntimeType::Boolean => type_name_and_id::<bool>(),
+        ConcreteRuntimeType::Unit => type_name_and_id::<()>(),
+        ConcreteRuntimeType::ArrayOf { .. } => {
+            panic!("Testing functions that return `{actual_return_type}` isn't supported")
+        }
+        ConcreteRuntimeType::Struct { .. } => {
+            panic!("Testing functions that return `{actual_return_type}` isn't supported")
+        }
+    };
+
+    let (expected_return_type_id, expected_return_type_name) = type_name_and_id::<ReturnType>();
+
+    assert_eq!(
+        actual_return_type_id, expected_return_type_id,
+        "The function `{function_name}` returns `{actual_return_type_name}` \
+        instead of the expected `{expected_return_type_name}`."
+    );
+}
+
 pub fn assert_compile_and_return_value_unformatted<ReturnType>(
     src: &str,
     function_name: &str,
     expected_return_value: ReturnType,
 ) where
-    ReturnType: Debug + PartialEq,
+    ReturnType: Debug + PartialEq + 'static,
 {
     let pm = compile_or_panic(src);
 
@@ -236,14 +294,19 @@ pub fn assert_compile_and_return_value_unformatted<ReturnType>(
         .uses_gpu
         .at_least_maybe();
 
-    assert_eq!(function_name, "main");
-    let function_name = "fleet_main";
+    assert_function_return_type::<ReturnType>(&pm, function_name);
 
-    let actual_return_value = execute_function::<ReturnType>(
-        &pm.state.get::<Module>().unwrap(),
-        function_name,
-        needs_runtime,
-    );
+    assert_eq!(function_name, "main");
+    let function_symbol = "fleet_main";
+
+    let actual_return_value = unsafe {
+        // SAFETY: we just asserted that the return type of the function is `ReturnType`
+        execute_function::<ReturnType>(
+            &pm.state.get::<Module>().unwrap(),
+            function_symbol,
+            needs_runtime,
+        )
+    };
     assert_eq!(
         actual_return_value, expected_return_value,
         "expected {function_name:?} to return {expected_return_value:?} instead of {actual_return_value:?}"
@@ -265,11 +328,8 @@ pub fn assert_formatting_and_same_behaviour<ReturnType>(
     expected_fmt: &str,
     function_name: &str,
 ) where
-    ReturnType: Debug + PartialEq,
+    ReturnType: Debug + PartialEq + 'static,
 {
-    assert_eq!(function_name, "main");
-    let function_name = "fleet_main";
-
     let formatted_src = assert_formatting(src, expected_fmt);
 
     let unformatted_retvalue = execute_or_panic::<ReturnType>(src, function_name);
@@ -318,7 +378,10 @@ fn format_or_panic(src: &str) -> String {
     .unwrap()
 }
 
-fn execute_or_panic<ReturnType>(src: &str, function_name: &str) -> ReturnType {
+fn execute_or_panic<ReturnType>(src: &str, function_name: &str) -> ReturnType
+where
+    ReturnType: 'static,
+{
     let pm = compile_or_panic(src);
 
     let needs_runtime = pm
@@ -330,14 +393,22 @@ fn execute_or_panic<ReturnType>(src: &str, function_name: &str) -> ReturnType {
         .uses_gpu
         .at_least_maybe();
 
-    execute_function::<ReturnType>(
-        &pm.state.get::<Module>().unwrap(),
-        function_name,
-        needs_runtime,
-    )
+    assert_function_return_type::<ReturnType>(&pm, function_name);
+
+    assert_eq!(function_name, "main");
+    let function_symbol = "fleet_main";
+
+    unsafe {
+        // SAFETY: we just asserted that the return type of the function is `ReturnType`
+        execute_function::<ReturnType>(
+            &pm.state.get::<Module>().unwrap(),
+            function_symbol,
+            needs_runtime,
+        )
+    }
 }
 
-fn execute_function<ReturnType>(
+unsafe fn execute_function<ReturnType>(
     module: &Module<'_>,
     function_name: &str,
     needs_runtime: bool,
@@ -602,13 +673,16 @@ fn clean_stderr(stderr: String) -> String {
         .join("\n")
 }
 
-fn run_and_check_output(
+fn run_and_check_output<ReturnType>(
+    pm: &PassManager,
     binary: String,
-    expected_result: impl SubprocessTestableReturnType,
+    expected_result: ReturnType,
     expected_stdout: impl AsRef<str>,
     expected_stderr: impl AsRef<str>,
     dir: &TempDir,
-) {
+) where
+    ReturnType: SubprocessTestableReturnType + 'static,
+{
     let testhook_lib = dir.path().join("testhook.so");
     std::fs::write(
         &testhook_lib,
@@ -668,9 +742,11 @@ fn run_and_check_output(
 
     let result = result.unwrap();
 
+    assert_function_return_type::<ReturnType>(pm, "main");
+
     assert_eq!(
         result, expected,
-        "exit code doesn't match (left should be right)"
+        "returned bytes don't match (left should be right)"
     );
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
@@ -684,28 +760,33 @@ fn run_and_check_output(
     );
 }
 
-pub fn assert_compile_and_output_subprocess(
+pub fn assert_compile_and_output_subprocess<ReturnType>(
     src: &str,
-    expected_exit_code: impl SubprocessTestableReturnType + Clone,
+    expected_exit_code: ReturnType,
     expected_stdout: impl AsRef<str> + Clone,
     expected_stderr: impl AsRef<str> + Clone,
-) {
+) where
+    ReturnType: SubprocessTestableReturnType + Clone + 'static,
+{
     assert_is_formatted(src);
     println!("Source is formatted");
 
+    let pm = compile_or_panic(src);
     {
-        let pm = compile_or_panic(src);
         let errors = pm.state.get::<Errors>().unwrap();
         assert!(
             errors.is_empty(),
             "Expected no errors, but still got some: {errors:#?}"
         );
+
+        assert_function_return_type::<ReturnType>(&pm, "main");
     }
 
     {
         let llvm_tmpdir = tempdir().unwrap();
         let llvm_bin = compile_to_binary_llvm(src, &llvm_tmpdir);
         run_and_check_output(
+            &pm,
             llvm_bin,
             expected_exit_code.clone(),
             expected_stdout.clone(),
@@ -719,6 +800,7 @@ pub fn assert_compile_and_output_subprocess(
         let c_tmpdir = tempdir().unwrap();
         let c_bin = compile_to_binary_c(src, &c_tmpdir);
         run_and_check_output(
+            &pm,
             c_bin,
             expected_exit_code.clone(),
             expected_stdout.clone(),

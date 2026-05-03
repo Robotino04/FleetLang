@@ -281,6 +281,19 @@ impl AstVisitor for CCodeGenerator<'_> {
             ("", "", "")
         };
 
+        let main_function = self
+            .function_data
+            .iter()
+            .find(|(_, func)| func.borrow().symbol.name == "main")
+            .unwrap()
+            .1;
+
+        let main_call = if main_function.borrow().return_type.is_unit() {
+            "fleet_main();\nint retvalue = 0;"
+        } else {
+            "int retvalue = fleet_main();"
+        };
+
         formatdoc!(
             r##"
             #include <stdio.h>
@@ -310,7 +323,7 @@ impl AstVisitor for CCodeGenerator<'_> {
 
             int main(int argc, const char** argv) {{
                 initialize_fleet();
-                int retvalue = fleet_main();
+                {main_call}
                 deinitialize_fleet();
                 return retvalue;
             }}
