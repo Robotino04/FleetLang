@@ -2395,7 +2395,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .into_int_type();
 
                 let ir_value = match value {
-                    RuntimeValueIR::Bool(value) | RuntimeValueIR::SignedInt(value)
+                    RuntimeValueIR::Bool(value)
+                    | RuntimeValueIR::SignedInt(value)
+                    | RuntimeValueIR::UnsignedInt(value)
                         if expected_type_ir.get_bit_width() <= value.get_type().get_bit_width() =>
                     {
                         self.builder.build_int_truncate_or_bit_cast(

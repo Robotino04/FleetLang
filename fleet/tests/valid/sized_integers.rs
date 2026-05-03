@@ -245,6 +245,23 @@ fn upcast_i8_i64_negative() {
 }
 
 #[test]
+fn cast_u64_i32() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let test = (x: u64) -> i32 {
+                return x as i32;
+            }
+
+            let main = () -> i32 {
+                return test(5);
+            }
+        "##},
+        "main",
+        5,
+    );
+}
+
+#[test]
 fn unsized_int_expression() {
     assert_compile_and_return_value(
         indoc! {r##"

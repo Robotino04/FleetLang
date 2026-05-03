@@ -137,12 +137,6 @@ If something doesn't make sense or isn't accurate anymore, feel free to reach ou
 - add different errors for missing Pass dependencies and for failed check_empty calls
 - allow on-statements without iterators again
 - allow struct initializers to have any order
-- Invalid IR:
-  ```rust
-  let test = (x: u64) -> i32 {
-      return x as i32;
-  }
-  ```
 
 #### Medium
 - real mutability/constant system
