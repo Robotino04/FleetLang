@@ -254,3 +254,27 @@ fn for_no_condition() {
         2,
     );
 }
+
+#[test]
+#[ignore = "LLVM doesn't like unreachable blocks. This can't easily be resolved without waiting for FIL"]
+fn code_after_skip() {
+    assert_compile_and_return_value(
+        indoc! {r##"
+            let putchar = (char: i32) -> i32 @extern "putchar";
+
+            let main = () -> i32 {
+                let i = 0;
+                while i < 1 {
+                    putchar('A' as i32);
+                    i = 1;
+                    skip;
+                    putchar('B' as i32);
+                }
+
+                return i;
+            }
+        "##},
+        "main",
+        1,
+    );
+}
