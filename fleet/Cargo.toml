@@ -4,20 +4,20 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-either = "1.15.0"
+either = "1.18.0"
 indent = "0.1.1"
-indoc = "2.0.6"
+indoc = "2.0.7"
 inkwell = { version = "0.5.0", features = [
     "llvm18-0-force-static",
 ], optional = true }
 itertools = "0.14.0"
-log = "0.4.28"
+log = "0.4.34"
 shaderc = { version = "0.9.1", optional = true }
-thiserror = "2.0.12"
+thiserror = "2.0.20"
 
 [dev-dependencies]
-libc = "0.2.174"
-tempfile = "3.20.0"
+libc = "0.2.189"
+tempfile = "3.27.0"
 
 [features]
 llvm_backend = ["dep:inkwell"]

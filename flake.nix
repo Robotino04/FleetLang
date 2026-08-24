@@ -73,7 +73,8 @@
           '';
 
           buildInputs = [
-            pkgs.libz
+            pkgs.zlib
+            pkgs.libbfd
             pkgs.libxml2
             pkgs.libffi
             pkgs.ncurses # pkgs.libtinfo is broken atm (see https://github.com/NixOS/nixpkgs/issues/387912)
@@ -84,15 +85,20 @@
             pkgs.vulkan-validation-layers
           ];
 
-          LLVM_SYS_180_PREFIX = "${llvmPackages.libllvm.dev}";
-          VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
-          SHADERC_LIB_DIR = "${pkgs.shaderc.static}/lib/";
+          env = {
+            LLVM_SYS_180_PREFIX = "${llvmPackages.libllvm.dev}";
+            VK_LAYER_PATH = "${pkgs.vulkan-validation-layers}/share/vulkan/explicit_layer.d";
+            SHADERC_LIB_DIR = lib.makeLibraryPath [pkgs.shaderc.lib];
 
-          LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath buildInputs}";
+            LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath buildInputs}";
 
-          # nvidia drivers don't clean up on shutdown and thus ASan/LSan will detect the leaks and exit the program early
-          # needs to be here for tests
-          LSAN_OPTIONS = "suppressions=${./lsan.supp}";
+            # nvidia drivers don't clean up on shutdown and thus ASan/LSan will detect the leaks and exit the program early
+            # needs to be here for tests
+            LSAN_OPTIONS = "suppressions=${./lsan.supp}";
+
+            # rustc segfaults inside lsp-types otherwise
+            RUST_MIN_STACK = 16777216;
+          };
         };
       in rec {
         defaultPackage = packages.fleet;
@@ -195,7 +201,11 @@
               pkgs.binaryen
               pkgs.nodejs
             ];
-            LD_LIBRARY_PATH = "/run/opengl-driver/lib:/run/opengl-driver-32/lib:" + shared_attrs.LD_LIBRARY_PATH;
+            env =
+              shared_attrs.env
+              // {
+                LD_LIBRARY_PATH = "/run/opengl-driver/lib:/run/opengl-driver-32/lib:" + shared_attrs.env.LD_LIBRARY_PATH;
+              };
           }
         );
       }

@@ -8,20 +8,20 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 console_error_panic_hook = "0.1.7"
-console_log = { version = "1.0.0", features = ["color"] }
+console_log = { version = "1.1.0", features = ["color"] }
 fleetls-lib = { path = "../fleetls-lib", default-features = false }
-futures = "0.3.21"
+futures = "0.3.34"
 gloo-timers = { version = "0.3.0", features = ["futures"] }
-js-sys = "0.3.57"
-log = "0.4.28"
-wasm-bindgen = "0.2.81"
-wasm-bindgen-futures = { version = "0.4.30", features = [
+js-sys = "0.3.98"
+log = "0.4.34"
+wasm-bindgen = "=0.2.121"
+wasm-bindgen-futures = { version = "0.4.71", features = [
     "futures-core-03-stream",
 ] }
 wasm-streams = "0.2.3"
 
 [dependencies.web-sys]
-version = "0.3.57"
+version = "0.3.98"
 features = [
     "console",
     "HtmlTextAreaElement",
