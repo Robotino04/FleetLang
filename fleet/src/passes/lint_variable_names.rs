@@ -57,7 +57,7 @@ impl LintVariableNaming<'_> {
     pub fn is_camel_case(name: &str) -> bool {
         Self::words_to_camel_case(Self::split_words(name)) == name
     }
-    pub fn split_words(name: &str) -> Vec<String> {
+    fn split_word_part(name: &str) -> Vec<String> {
         let mut words = Vec::new();
         let mut current = String::new();
 
@@ -124,6 +124,11 @@ impl LintVariableNaming<'_> {
         }
 
         words
+    }
+    pub fn split_words(name: &str) -> Vec<String> {
+        name.split('_')
+            .flat_map(Self::split_word_part)
+            .collect_vec()
     }
 
     pub fn words_to_snake_case(words: Vec<String>) -> String {
@@ -332,6 +337,15 @@ mod test {
         assert_eq!(
             LintVariableNaming::split_words("turnOn2Sv"),
             vec!["turn", "on2", "sv"]
+        );
+
+        assert_eq!(
+            LintVariableNaming::split_words("all_my_data"),
+            vec!["all", "my", "data"]
+        );
+        assert_eq!(
+            LintVariableNaming::split_words("All_MyData"),
+            vec!["all", "my", "data"]
         );
     }
 
