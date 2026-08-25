@@ -238,7 +238,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             .top_level_statements
             .iter()
             .filter_map(|f| {
-                if let TopLevelStatement::Function(_) = f {
+                if let TopLevelStatement::FunctionDefinition(_) = f {
                     Some(
                         self.generate_function_declaration(
                             &self
@@ -643,11 +643,11 @@ impl AstVisitor for CCodeGenerator<'_> {
         };
         #[cfg(not(feature = "gpu_backend"))]
         let prepare_shader = || -> Option<(String, usize)> {
-            use crate::passes::find_node_bounds::find_node_bounds;
+            use crate::ast::HasSourceRange;
 
             drop(glsl_generator);
             self.errors.push(ErrorKind::GpuBackendDisabled {
-                use_location: find_node_bounds(&**executor),
+                use_location: executor.get_source_range(),
             });
             Some(("/* GPU backend missing */".to_string(), 42))
         };

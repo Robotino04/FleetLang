@@ -11,28 +11,26 @@ use indoc::formatdoc;
 use itertools::Itertools;
 use log::warn;
 
-#[cfg(feature = "gpu_backend")]
-use crate::ast::AstNodeRef;
 use crate::{
     ast::{
         AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
         CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
-        OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, Statement, StatementFunctionBody, StructAccessExpression,
-        StructAccessLValue, StructExpression, StructMemberDefinition, StructMemberValue,
-        StructType, ThreadExecutor, TopLevelStatement, TypeAlias, UnaryExpression, UnaryOperation,
-        UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        GroupingLValue, HasID, HasSourceRange, IdkType, IfStatement, LiteralExpression,
+        LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SimpleType, SkipStatement, Statement, StatementFunctionBody,
+        StructAccessExpression, StructAccessLValue, StructExpression, StructMemberDefinition,
+        StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, TypeAlias,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     error_reporting::{
         Backend, ErrorKind, ErrorSeverity, Errors, GpuLimitation, InternalError, Intrinsic,
         UnresolvedSymbol,
     },
     passes::{
-        find_node_bounds::find_node_bounds,
         pass_manager::{
             ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData, ConcreteVariableData,
             GlobalState, Pass, PassError, PassFactory, PassResult, PrecompiledGlslFunctions,
@@ -300,7 +298,7 @@ impl<'state> GLSLCodeGenerator<'state> {
             Err(err) => {
                 self.errors.push(ErrorKind::InternalError(
                     InternalError::GlslGenerationFailed {
-                        statement: find_node_bounds(&*main_body),
+                        statement: main_body.get_source_range(),
                         error: err.to_string(),
                     },
                 ));
@@ -457,10 +455,10 @@ impl<'state> GLSLCodeGenerator<'state> {
     }
 
     #[cfg(feature = "gpu_backend")]
-    pub fn compile_on_statement_shader<'node, I: Into<AstNodeRef<'node>>>(
+    pub fn compile_on_statement_shader(
         mut self,
         source: &str,
-        error_node: I,
+        error_node: &impl HasSourceRange,
     ) -> Result<shaderc::CompilationArtifact> {
         let compiler = shaderc::Compiler::new().unwrap();
         let mut options = shaderc::CompileOptions::new().unwrap();
@@ -476,7 +474,7 @@ impl<'state> GLSLCodeGenerator<'state> {
             .inspect_err(|err| {
                 self.errors
                     .push(ErrorKind::InternalError(InternalError::ShadercError {
-                        statement: find_node_bounds(error_node),
+                        statement: error_node.get_source_range(),
                         glsl: source.to_string(),
                         error: err.to_string(),
                     }));
@@ -585,7 +583,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                 .top_level_statements
                 .iter_mut()
                 .filter_map(|tls| {
-                    if let TopLevelStatement::Function(_) = tls {
+                    if let TopLevelStatement::FunctionDefinition(_) = tls {
                         let id = self.function_data.get(&tls.get_id()).unwrap().borrow().id;
                         let tls_generated = match self.visit_top_level_statement(tls) {
                             Ok(x) => x,
@@ -720,7 +718,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
     fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
         self.errors
             .push(ErrorKind::GpuLimitationUsed(GpuLimitation::OnStatement {
-                statement: find_node_bounds(&*on_stmt),
+                statement: on_stmt.get_source_range(),
             }));
         Err("Tried using on-statement on GPU".into())
     }

@@ -12,13 +12,14 @@ use crate::{
         AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-        LiteralExpression, OnStatement, OnStatementIterator, Program, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
-        StructAccessExpression, StructAccessLValue, StructExpression, StructMemberDefinition,
-        StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, TypeAlias,
-        UnaryExpression, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasSourceRange,
+        IdkType, IfStatement, LiteralExpression, OnStatement, OnStatementIterator, Program,
+        ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
+        StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
+        StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor, TopLevelStatement,
+        TypeAlias, UnaryExpression, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
     error_reporting::{ErrorKind, Errors, Lint, LoopControl},
     passes::{
@@ -31,8 +32,6 @@ use crate::{
     },
     tokenizer::{NamedSourceRange, SourceRange},
 };
-
-use super::find_node_bounds::find_node_bounds;
 
 pub trait MergableStat {
     fn serial(self, other: Self) -> Self;
@@ -273,7 +272,7 @@ impl AstVisitor for StatTracker<'_> {
                     accessed_items: _,
                 } = self.visit_top_level_statement(tls);
 
-                if let TopLevelStatement::Function(FunctionDefinition { name, .. }) = tls
+                if let TopLevelStatement::FunctionDefinition(FunctionDefinition { name, .. }) = tls
                     && name == "main"
                 {
                     stats.terminates_function = terminates_function;
@@ -294,7 +293,7 @@ impl AstVisitor for StatTracker<'_> {
             .top_level_statements
             .iter()
             .find_map(|tls| match tls {
-                TopLevelStatement::Function(function_definition)
+                TopLevelStatement::FunctionDefinition(function_definition)
                     if function_definition.name == "main" =>
                 {
                     Some(function_definition)
@@ -431,7 +430,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_simple_binding(&mut self, binding: &mut SimpleBinding) -> Self::SimpleBindingOutput {
-        let bounds = find_node_bounds(&*binding);
+        let bounds = binding.get_source_range();
         let SimpleBinding {
             name_token: _,
             name: _,
@@ -461,7 +460,7 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         stmt: &mut ExpressionStatement,
     ) -> Self::StatementOutput {
-        let bounds = find_node_bounds(&*stmt);
+        let bounds = stmt.get_source_range();
         let ExpressionStatement {
             expression,
             semicolon_token: _,
@@ -513,7 +512,7 @@ impl AstVisitor for StatTracker<'_> {
             || binding_stats.terminates_function == YesNoMaybe::Yes
         {
             self.errors.push(ErrorKind::Lint(Lint::CodeUnreachable {
-                range: find_node_bounds(&**body),
+                range: body.get_source_range(),
             }));
         }
         let body_stats = self.visit_statement(body);
@@ -528,7 +527,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_block_statement(&mut self, stmt: &mut BlockStatement) -> Self::StatementOutput {
-        let bounds = find_node_bounds(&*stmt);
+        let bounds = stmt.get_source_range();
         let BlockStatement {
             open_brace_token: _,
             body,
@@ -541,9 +540,9 @@ impl AstVisitor for StatTracker<'_> {
         for stmt in body {
             if body_stat.terminates_function == YesNoMaybe::Yes {
                 if let Some(prev_range) = unreachable_range {
-                    unreachable_range = Some(prev_range.extend_with(find_node_bounds(&*stmt)));
+                    unreachable_range = Some(prev_range.extend_with(stmt.get_source_range()));
                 } else {
-                    unreachable_range = Some(find_node_bounds(&*stmt));
+                    unreachable_range = Some(stmt.get_source_range());
                 }
             }
             body_stat = body_stat.serial(self.visit_statement(stmt));
@@ -564,7 +563,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_return_statement(&mut self, stmt: &mut ReturnStatement) -> Self::StatementOutput {
-        let bounds = find_node_bounds(&*stmt);
+        let bounds = stmt.get_source_range();
         let ReturnStatement {
             return_token: _,
             value,
@@ -590,7 +589,7 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         stmt: &mut VariableDefinitionStatement,
     ) -> Self::StatementOutput {
-        let bounds = find_node_bounds(&*stmt);
+        let bounds = stmt.get_source_range();
         let VariableDefinitionStatement {
             let_token: _,
             binding,
@@ -608,7 +607,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_if_statement(&mut self, stmt: &mut IfStatement) -> Self::StatementOutput {
-        let bounds = find_node_bounds(&*stmt);
+        let bounds = stmt.get_source_range();
         let IfStatement {
             if_token: _,
             condition,
@@ -704,7 +703,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
-        let stat = NodeStats::default_with_range(vec![find_node_bounds(&*break_stmt)]);
+        let stat = NodeStats::default_with_range(vec![break_stmt.get_source_range()]);
         self.stats.insert(break_stmt.id, stat.clone());
         if self.loop_count == 0 {
             self.errors.push(ErrorKind::LoopControlOutsideLoop {
@@ -717,7 +716,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
-        let stat = NodeStats::default_with_range(vec![find_node_bounds(&*skip_stmt)]);
+        let stat = NodeStats::default_with_range(vec![skip_stmt.get_source_range()]);
         self.stats.insert(skip_stmt.id, stat.clone());
         if self.loop_count == 0 {
             self.errors.push(ErrorKind::LoopControlOutsideLoop {
@@ -733,7 +732,7 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         executor_host: &mut SelfExecutorHost,
     ) -> Self::ExecutorHostOutput {
-        let stat = NodeStats::default_with_range(vec![find_node_bounds(&*executor_host)]);
+        let stat = NodeStats::default_with_range(vec![executor_host.get_source_range()]);
         self.stats.insert(executor_host.id, stat.clone());
         stat
     }
@@ -758,7 +757,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_gpu_executor(&mut self, executor: &mut GPUExecutor) -> Self::ExecutorOutput {
-        let bounds = find_node_bounds(&*executor);
+        let bounds = executor.get_source_range();
         let GPUExecutor {
             host,
             dot_token: _,
@@ -781,7 +780,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_literal_expression(&mut self, expr: &mut LiteralExpression) -> Self::ExpressionOutput {
-        let bounds = find_node_bounds(&*expr);
+        let bounds = expr.get_source_range();
         let LiteralExpression {
             value: _,
             token: _,
@@ -794,7 +793,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_array_expression(&mut self, expr: &mut ArrayExpression) -> Self::ExpressionOutput {
-        let bounds = find_node_bounds(&*expr);
+        let bounds = expr.get_source_range();
         let ArrayExpression {
             open_bracket_token: _,
             elements,
@@ -811,7 +810,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_struct_expression(&mut self, expr: &mut StructExpression) -> Self::ExpressionOutput {
-        let bounds = find_node_bounds(&*expr);
+        let bounds = expr.get_source_range();
         let StructExpression {
             type_,
             open_brace_token: _,
@@ -842,7 +841,7 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         function_call: &mut FunctionCallExpression,
     ) -> Self::ExpressionOutput {
-        let bounds = find_node_bounds(&*function_call);
+        let bounds = function_call.get_source_range();
         let FunctionCallExpression {
             name: _,
             name_token: _,
@@ -881,7 +880,7 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         expr: &mut CompilerExpression,
     ) -> Self::ExpressionOutput {
-        let bounds = find_node_bounds(&*expr);
+        let bounds = expr.get_source_range();
         let CompilerExpression {
             at_token: _,
             name: _,
@@ -950,7 +949,7 @@ impl AstVisitor for StatTracker<'_> {
         &mut self,
         expr: &mut VariableAccessExpression,
     ) -> Self::ExpressionOutput {
-        let bounds = find_node_bounds(&*expr);
+        let bounds = expr.get_source_range();
         let VariableAccessExpression {
             name: _,
             name_token: _,
@@ -1036,7 +1035,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
-        let bounds = find_node_bounds(&*lvalue);
+        let bounds = lvalue.get_source_range();
         let VariableLValue {
             name: _,
             name_token: _,
@@ -1105,7 +1104,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_simple_type(&mut self, type_: &mut SimpleType) -> Self::TypeOutput {
-        let bounds = find_node_bounds(&*type_);
+        let bounds = type_.get_source_range();
         let SimpleType {
             token: _,
             type_: _,
@@ -1117,7 +1116,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_unit_type(&mut self, type_: &mut UnitType) -> Self::TypeOutput {
-        let bounds = find_node_bounds(&*type_);
+        let bounds = type_.get_source_range();
         let UnitType {
             open_paren_token: _,
             close_paren_token: _,
@@ -1129,7 +1128,7 @@ impl AstVisitor for StatTracker<'_> {
     }
 
     fn visit_idk_type(&mut self, type_: &mut IdkType) -> Self::TypeOutput {
-        let bounds = find_node_bounds(&*type_);
+        let bounds = type_.get_source_range();
         let IdkType { token: _, id } = type_;
         let stat = NodeStats::default_with_range(vec![bounds]);
         self.stats.insert(*id, stat.clone());

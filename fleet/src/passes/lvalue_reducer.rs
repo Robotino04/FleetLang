@@ -7,13 +7,13 @@ use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, AstVisitor, BinaryExpression,
         CastExpression, CompilerExpression, Expression, FunctionCallExpression, GroupingLValue,
-        HasID, LValue, LiteralExpression, OnStatement, OnStatementIterator, Program,
-        StructAccessExpression, StructAccessLValue, StructExpression, StructMemberValue, Type,
-        UnaryExpression, VariableAccessExpression, VariableAssignmentExpression, VariableLValue,
+        HasID, HasSourceRange, LValue, LiteralExpression, OnStatement, OnStatementIterator,
+        Program, StructAccessExpression, StructAccessLValue, StructExpression, StructMemberValue,
+        Type, UnaryExpression, VariableAccessExpression, VariableAssignmentExpression,
+        VariableLValue,
     },
     error_reporting::{ErrorKind, Errors},
     passes::{
-        find_node_bounds::find_node_bounds,
         partial_visitor::PartialAstVisitor,
         pass_manager::{
             ConcreteScopeData, ConcreteTypeData, ConcreteVariableData, GlobalState, Pass,
@@ -323,7 +323,7 @@ impl PartialAstVisitor for LValueReducer<'_> {
         {
             if self.is_top_level_lvalue {
                 self.errors.push(ErrorKind::LValueUnavailable {
-                    value_range: find_node_bounds(&*a),
+                    value_range: a.get_source_range(),
                 });
             }
             self.previous_lvalue_valid = false
@@ -359,7 +359,7 @@ impl PartialAstVisitor for LValueReducer<'_> {
             // invalid because the child failed too
             if self.is_top_level_lvalue {
                 self.errors.push(ErrorKind::LValueUnavailable {
-                    value_range: find_node_bounds(&*a),
+                    value_range: a.get_source_range(),
                 });
             }
             self.previous_lvalue_valid = false;

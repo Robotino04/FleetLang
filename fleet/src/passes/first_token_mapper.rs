@@ -280,7 +280,7 @@ impl<R> AstVisitor for FirstTokenMapper<'_, R> {
         tls: &mut crate::ast::TopLevelStatement,
     ) -> Self::TopLevelOutput {
         match tls {
-            crate::ast::TopLevelStatement::Function(function_definition) => {
+            crate::ast::TopLevelStatement::FunctionDefinition(function_definition) => {
                 self.visit_function_definition(function_definition)
             }
             crate::ast::TopLevelStatement::TypeAlias(type_alias) => {

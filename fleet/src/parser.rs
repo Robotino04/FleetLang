@@ -10,18 +10,17 @@ use crate::{
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
         CompilerExpression, Executor, ExecutorHost, Expression, ExpressionStatement,
         ExternFunctionBody, ForLoopStatement, FunctionBody, FunctionCallExpression,
-        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-        LValue, LiteralExpression, LiteralKind, NodeID, OnStatement, OnStatementIterator, Program,
-        ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, Statement,
-        StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
-        StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor, TopLevelStatement,
-        Type, TypeAlias, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasSourceRange,
+        IdkType, IfStatement, LValue, LiteralExpression, LiteralKind, NodeID, OnStatement,
+        OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
+        SkipStatement, Statement, StatementFunctionBody, StructAccessExpression,
+        StructAccessLValue, StructExpression, StructMemberDefinition, StructMemberValue,
+        StructType, ThreadExecutor, TopLevelStatement, Type, TypeAlias, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     error_reporting::{ErrorKind, Errors},
     passes::{
-        find_node_bounds::find_node_bounds,
         pass_manager::{GlobalState, InputSource, Pass, PassFactory, PassResult},
         runtime_type::{RuntimeType, RuntimeTypeKind},
         scope_analysis::{FunctionID, ScopeID, VariableID},
@@ -283,7 +282,7 @@ impl<'state> Parser<'state> {
             } else if let Some(function) = self.parse_function_definition() {
                 self.program
                     .top_level_statements
-                    .push(TopLevelStatement::Function(function));
+                    .push(TopLevelStatement::FunctionDefinition(function));
             } else {
                 recover_until!(self, recovery_start, TokenType::Keyword(Keyword::Let));
             }
@@ -1137,7 +1136,7 @@ impl<'state> Parser<'state> {
             Either::Left((lvalue, _expr)) => Some(lvalue),
             Either::Right(expr) => {
                 let err = ErrorKind::ExpressionNotLValue {
-                    expression: find_node_bounds(&expr),
+                    expression: expr.get_source_range(),
                 };
                 self.errors.push(err.clone());
                 None

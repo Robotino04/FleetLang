@@ -42,7 +42,7 @@ pub trait PartialAstVisitor {
 
     fn partial_visit_top_level_statement(&mut self, tls: &mut TopLevelStatement) {
         match tls {
-            TopLevelStatement::Function(function_definition) => {
+            TopLevelStatement::FunctionDefinition(function_definition) => {
                 self.partial_visit_function_definition(function_definition)
             }
             TopLevelStatement::TypeAlias(type_alias) => self.partial_visit_type_alias(type_alias),

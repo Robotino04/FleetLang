@@ -5,10 +5,9 @@ use std::{
 };
 
 use crate::{
-    ast::Program,
+    ast::{HasSourceRange, Program},
     error_reporting::{ErrorKind, Errors, PrefetchedType},
     passes::{
-        find_node_bounds::find_node_bounds,
         find_node_by_id::find_node_by_id,
         pass_manager::{
             ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData, ConcreteVariableData,
@@ -277,7 +276,7 @@ impl Pass for TypeConcretisationPass<'_> {
             let Some(type_) = self.concretisize_type(
                 *type_,
                 find_node_by_id(&*self.program, *id)
-                    .map(find_node_bounds)
+                    .map(|node| node.get_source_range())
                     .unwrap_or_else(|| {
                         SourceRange::empty_start().named(self.program.file_name.clone())
                     }),

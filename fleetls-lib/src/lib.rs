@@ -2,12 +2,13 @@ use fleet::{
     ast::{
         AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
         AstNodeRef, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, CastExpression,
-        CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
-        FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, NodeID,
-        OnStatement, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
-        StructType, ThreadExecutor, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
+        CompilerExpression, Executor, ExecutorHost, Expression, ExpressionStatement,
+        ExternFunctionBody, ForLoopStatement, FunctionBody, FunctionCallExpression,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
+        IfStatement, LValue, LiteralExpression, LiteralKind, NodeID, OnStatement, ReturnStatement,
+        SelfExecutorHost, SimpleBinding, SimpleType, Statement, StatementFunctionBody,
+        StructAccessExpression, StructAccessLValue, StructExpression, StructType, ThreadExecutor,
+        TopLevelStatement, Type, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
         VariableLValue, WhileLoopStatement,
     },
@@ -154,85 +155,96 @@ impl Backend {
     ) -> (String, String) {
         match node.into() {
             AstNodeRef::Program(_) => ("".to_string(), "program".to_string()),
-            AstNodeRef::FunctionDefinition(FunctionDefinition {
-                let_token: _,
-                name,
-                name_token: _,
-                equal_token: _,
-                open_paren_token: _,
-                parameters,
-                close_paren_token: _,
-                right_arrow_token: _,
-                return_type,
-                body: _,
-                id,
-            }) => (
-                format!(
-                    "let {name} = ({}) -> {}",
-                    Itertools::intersperse(
-                        parameters.iter().map(|(param, _comma)| self
-                            .generate_node_hover(param, analysis_data)
-                            .0),
-                        ", ".to_string()
-                    )
-                    .collect::<String>(),
-                    return_type
-                        .as_ref()
-                        .map(|t| self.generate_node_hover(t, analysis_data).0)
-                        .unwrap_or_else(|| {
-                            let Some(AnalysisData {
-                                type_data: _,
-                                type_sets,
-                                function_data,
-                                variable_data: _,
-                                scope_data: _,
-                                comptime_deps: _,
-                            }) = analysis_data
-                            else {
-                                return "/* No type data available */".to_string();
-                            };
-                            let Some(ref_func) = function_data.get(id) else {
-                                return "/* Function doesn't exist */".to_string();
-                            };
-                            let Some(return_type) = ref_func.borrow().return_type else {
-                                return "/* Not processed by ScopeAnalyzer */".to_string();
-                            };
-                            let return_type = type_sets.get(return_type);
-                            return_type.kind.stringify(type_sets)
-                        })
+
+            AstNodeRef::TopLevelStatement(node) => match node {
+                TopLevelStatement::FunctionDefinition(FunctionDefinition {
+                    let_token: _,
+                    name,
+                    name_token: _,
+                    equal_token: _,
+                    open_paren_token: _,
+                    parameters,
+                    close_paren_token: _,
+                    right_arrow_token: _,
+                    return_type,
+                    body: _,
+                    id,
+                }) => (
+                    format!(
+                        "let {name} = ({}) -> {}",
+                        Itertools::intersperse(
+                            parameters.iter().map(|(param, _comma)| {
+                                self.generate_node_hover(param, analysis_data).0
+                            }),
+                            ", ".to_string()
+                        )
+                        .collect::<String>(),
+                        return_type
+                            .as_ref()
+                            .map(|t| self.generate_node_hover(t, analysis_data).0)
+                            .unwrap_or_else(|| {
+                                let Some(AnalysisData {
+                                    type_data: _,
+                                    type_sets,
+                                    function_data,
+                                    variable_data: _,
+                                    scope_data: _,
+                                    comptime_deps: _,
+                                }) = analysis_data
+                                else {
+                                    return "/* No type data available */".to_string();
+                                };
+
+                                let Some(ref_func) = function_data.get(id) else {
+                                    return "/* Function doesn't exist */".to_string();
+                                };
+
+                                let Some(return_type) = ref_func.borrow().return_type else {
+                                    return "/* Not processed by ScopeAnalyzer */".to_string();
+                                };
+
+                                type_sets.get(return_type).kind.stringify(type_sets)
+                            })
+                    ),
+                    "function definition".to_string(),
                 ),
-                "function definition".to_string(),
-            ),
-            AstNodeRef::TypeAlias(TypeAlias {
-                let_token: _,
-                name,
-                name_token: _,
-                equal_token: _,
-                type_,
-                semicolon_token: _,
-                id: _,
-            }) => (
-                format!(
-                    "let {name} = {};",
-                    self.generate_node_hover(type_, analysis_data).0
+
+                TopLevelStatement::TypeAlias(TypeAlias {
+                    let_token: _,
+                    name,
+                    name_token: _,
+                    equal_token: _,
+                    type_,
+                    semicolon_token: _,
+                    id: _,
+                }) => (
+                    format!(
+                        "let {name} = {};",
+                        self.generate_node_hover(type_, analysis_data).0
+                    ),
+                    "type alias".to_string(),
                 ),
-                "type alias".to_string(),
-            ),
-            AstNodeRef::ExternFunctionBody(ExternFunctionBody {
-                at_token: _,
-                extern_token: _,
-                symbol,
-                symbol_token: _,
-                semicolon_token: _,
-                id: _,
-            }) => (
-                format!("@extern \"{symbol}\""),
-                "extern function body".to_string(),
-            ),
-            AstNodeRef::StatementFunctionBody(StatementFunctionBody { statement, id: _ }) => (
-                self.generate_node_hover(statement, analysis_data).0,
-                "statement function body".to_string(),
-            ),
+            },
+
+            AstNodeRef::FunctionBody(node) => match node {
+                FunctionBody::Extern(ExternFunctionBody {
+                    at_token: _,
+                    extern_token: _,
+                    symbol,
+                    symbol_token: _,
+                    semicolon_token: _,
+                    id: _,
+                }) => (
+                    format!("@extern \"{symbol}\""),
+                    "extern function body".to_string(),
+                ),
+
+                FunctionBody::Statement(StatementFunctionBody { statement, id: _ }) => (
+                    self.generate_node_hover(statement, analysis_data).0,
+                    "statement function body".to_string(),
+                ),
+            },
+
             AstNodeRef::SimpleBinding(SimpleBinding {
                 name_token: _,
                 name,
@@ -243,7 +255,7 @@ impl Backend {
                     "{name}: {}",
                     type_
                         .as_ref()
-                        .map(|(_colon, type_)| self.generate_node_hover(type_, analysis_data).0)
+                        .map(|(_colon, type_)| { self.generate_node_hover(type_, analysis_data).0 })
                         .unwrap_or_else(|| {
                             let Some(AnalysisData {
                                 type_data: _,
@@ -256,548 +268,605 @@ impl Backend {
                             else {
                                 return "/* No type data available */".to_string();
                             };
+
                             let Some(ref_var) = variable_data.get(id) else {
                                 return "/* Variable doesn't exist */".to_string();
                             };
+
                             let Some(type_) = ref_var.borrow().type_ else {
                                 return "/* Variable wasn't processed by ScopeAnalyzer */"
                                     .to_string();
                             };
 
-                            let type_ = type_sets.get(type_);
-                            type_.kind.stringify(type_sets)
+                            type_sets.get(type_).kind.stringify(type_sets)
                         })
                 ),
                 "simple binding".to_string(),
             ),
-            AstNodeRef::ExpressionStatement(ExpressionStatement {
-                expression,
-                semicolon_token: _,
-                id: _,
-            }) => (
-                self.generate_node_hover(&**expression, analysis_data).0,
-                "expression statement".to_string(),
-            ),
-            AstNodeRef::OnStatement(OnStatement {
-                on_token: _,
-                executor,
-                iterators,
-                open_paren_token: _,
-                bindings,
-                close_paren_token: _,
-                body: _,
-                id: _,
-            }) => (
-                format!(
-                    "on {}{} ({})",
-                    self.generate_node_hover(&**executor, analysis_data).0,
-                    iterators
-                        .iter()
-                        .map(|it| format!(
-                            "[{} = {}]",
-                            self.generate_node_hover(&it.binding, analysis_data).0,
-                            self.generate_node_hover(&*it.max_value, analysis_data).0,
-                        ))
-                        .collect::<String>(),
-                    bindings
-                        .iter()
-                        .map(|(binding, _comma)| {
-                            self.generate_node_hover(binding, analysis_data).0
-                        })
-                        .join(", "),
+
+            AstNodeRef::Statement(node) => match node {
+                Statement::Expression(ExpressionStatement {
+                    expression,
+                    semicolon_token: _,
+                    id: _,
+                }) => (
+                    self.generate_node_hover(&**expression, analysis_data).0,
+                    "expression statement".to_string(),
                 ),
-                "`on` statement".to_string(),
-            ),
-            AstNodeRef::BlockStatement(BlockStatement { .. }) => {
-                ("".to_string(), "block".to_string())
-            }
-            AstNodeRef::ReturnStatement(ReturnStatement { id, .. }) => (
-                format!("return {}", self.get_type_as_hover(*id, analysis_data)),
-                "`return` statement".to_string(),
-            ),
-            AstNodeRef::VariableDefinitionStatement(VariableDefinitionStatement {
-                let_token: _,
-                binding,
-                equals_token: _,
-                value: _,
-                semicolon_token: _,
-                id: _,
-            }) => (
-                format!(
-                    "let {} = ...", // TODO: once we have consteval, display that here
-                    self.generate_node_hover(&**binding, analysis_data).0
-                ),
-                "variable definition".to_string(),
-            ),
-            AstNodeRef::IfStatement(IfStatement { .. }) => {
-                ("".to_string(), "`if` statement".to_string())
-            }
-            AstNodeRef::WhileLoopStatement(WhileLoopStatement { .. }) => {
-                ("".to_string(), "`while` loop".to_string())
-            }
-            AstNodeRef::ForLoopStatement(ForLoopStatement {
-                for_token: _,
-                open_paren_token: _,
-                initializer,
-                condition,
-                second_semicolon_token: _,
-                incrementer,
-                close_paren_token: _,
-                body: _,
-                id: _,
-            }) => {
-                let condition_type = condition
-                    .as_ref()
-                    .map(|cond| self.get_type_as_hover(cond.get_id(), analysis_data))
-                    .unwrap_or("".to_string());
-                let incrementer_type = incrementer
-                    .as_ref()
-                    .map(|cond| self.get_type_as_hover(cond.get_id(), analysis_data))
-                    .unwrap_or("".to_string());
-                (
+
+                Statement::On(OnStatement {
+                    on_token: _,
+                    executor,
+                    iterators,
+                    open_paren_token: _,
+                    bindings,
+                    close_paren_token: _,
+                    body: _,
+                    id: _,
+                }) => (
                     format!(
-                        "for ({}; {}; {})",
-                        self.generate_node_hover(&**initializer, analysis_data).0,
-                        condition_type,
-                        incrementer_type
+                        "on {}{} ({})",
+                        self.generate_node_hover(&**executor, analysis_data).0,
+                        iterators
+                            .iter()
+                            .map(|it| format!(
+                                "[{} = {}]",
+                                self.generate_node_hover(&it.binding, analysis_data).0,
+                                self.generate_node_hover(&*it.max_value, analysis_data).0,
+                            ))
+                            .collect::<String>(),
+                        bindings
+                            .iter()
+                            .map(|(binding, _comma)| {
+                                self.generate_node_hover(binding, analysis_data).0
+                            })
+                            .join(", "),
                     ),
-                    "`for` loop".to_string(),
-                )
-            }
-            AstNodeRef::BreakStatement(_break_statement) => {
-                ("".to_string(), "`break` statement".to_string())
-            }
-            AstNodeRef::SkipStatement(_skip_statement) => {
-                ("".to_string(), "`skip` statement".to_string())
-            }
-            AstNodeRef::SelfExecutorHost(SelfExecutorHost { .. }) => {
-                ("self".to_string(), "`self` executor host".to_string())
-            }
-            AstNodeRef::ThreadExecutor(ThreadExecutor {
-                host,
-                dot_token: _,
-                thread_token: _,
-                open_bracket_token: _,
-                index,
-                close_bracket_token: _,
-                id: _,
-            }) => (
-                format!(
-                    "{}.threads[{}]",
-                    self.generate_node_hover(host, analysis_data).0,
-                    self.generate_node_hover(&**index, analysis_data).0
+                    "`on` statement".to_string(),
                 ),
-                "thread executor".to_string(),
-            ),
-            AstNodeRef::GPUExecutor(GPUExecutor {
-                host,
-                dot_token: _,
-                gpus_token: _,
-                open_bracket_token: _,
-                gpu_index,
-                close_bracket_token: _,
-                id: _,
-            }) => (
-                format!(
-                    "{}.gpus[{}]",
-                    self.generate_node_hover(host, analysis_data).0,
-                    self.generate_node_hover(&**gpu_index, analysis_data).0,
+
+                Statement::Block(BlockStatement { .. }) => ("".to_string(), "block".to_string()),
+
+                Statement::Return(ReturnStatement { id, .. }) => (
+                    format!("return {}", self.get_type_as_hover(*id, analysis_data)),
+                    "`return` statement".to_string(),
                 ),
-                "gpu executor".to_string(),
-            ),
-            AstNodeRef::UnaryExpression(UnaryExpression {
-                operator_token: _,
-                operation,
-                operand,
-                id,
-            }) => (
-                {
-                    let inner_type = self.get_type_as_hover(operand.get_id(), analysis_data);
-                    let outer_type = self.get_type_as_hover(*id, analysis_data);
-                    match operation {
-                        UnaryOperation::BitwiseNot => {
-                            format!("bitwise negation (~{inner_type}) => {outer_type}")
+
+                Statement::VariableDefinition(VariableDefinitionStatement {
+                    let_token: _,
+                    binding,
+                    equals_token: _,
+                    value: _,
+                    semicolon_token: _,
+                    id: _,
+                }) => (
+                    format!(
+                        "let {} = ...", // TODO: once we have consteval, display that here
+                        self.generate_node_hover(&**binding, analysis_data).0
+                    ),
+                    "variable definition".to_string(),
+                ),
+
+                Statement::If(IfStatement { .. }) => ("".to_string(), "`if` statement".to_string()),
+
+                Statement::WhileLoop(WhileLoopStatement { .. }) => {
+                    ("".to_string(), "`while` loop".to_string())
+                }
+
+                Statement::ForLoop(ForLoopStatement {
+                    for_token: _,
+                    open_paren_token: _,
+                    initializer,
+                    condition,
+                    second_semicolon_token: _,
+                    incrementer,
+                    close_paren_token: _,
+                    body: _,
+                    id: _,
+                }) => {
+                    let condition_type = condition
+                        .as_ref()
+                        .map(|cond| self.get_type_as_hover(cond.get_id(), analysis_data))
+                        .unwrap_or("".to_string());
+
+                    let incrementer_type = incrementer
+                        .as_ref()
+                        .map(|cond| self.get_type_as_hover(cond.get_id(), analysis_data))
+                        .unwrap_or("".to_string());
+
+                    (
+                        format!(
+                            "for ({}; {}; {})",
+                            self.generate_node_hover(&**initializer, analysis_data).0,
+                            condition_type,
+                            incrementer_type
+                        ),
+                        "`for` loop".to_string(),
+                    )
+                }
+
+                Statement::Break(_break_statement) => {
+                    ("".to_string(), "`break` statement".to_string())
+                }
+
+                Statement::Skip(_skip_statement) => {
+                    ("".to_string(), "`skip` statement".to_string())
+                }
+            },
+
+            AstNodeRef::ExecutorHost(node) => match node {
+                ExecutorHost::Self_(SelfExecutorHost { .. }) => {
+                    ("self".to_string(), "`self` executor host".to_string())
+                }
+            },
+
+            AstNodeRef::Executor(node) => match node {
+                Executor::Thread(ThreadExecutor {
+                    host,
+                    dot_token: _,
+                    thread_token: _,
+                    open_bracket_token: _,
+                    index,
+                    close_bracket_token: _,
+                    id: _,
+                }) => (
+                    format!(
+                        "{}.threads[{}]",
+                        self.generate_node_hover(host, analysis_data).0,
+                        self.generate_node_hover(&**index, analysis_data).0
+                    ),
+                    "thread executor".to_string(),
+                ),
+
+                Executor::GPU(GPUExecutor {
+                    host,
+                    dot_token: _,
+                    gpus_token: _,
+                    open_bracket_token: _,
+                    gpu_index,
+                    close_bracket_token: _,
+                    id: _,
+                }) => (
+                    format!(
+                        "{}.gpus[{}]",
+                        self.generate_node_hover(host, analysis_data).0,
+                        self.generate_node_hover(&**gpu_index, analysis_data).0,
+                    ),
+                    "gpu executor".to_string(),
+                ),
+            },
+
+            AstNodeRef::Expression(node) => match node {
+                Expression::Unary(UnaryExpression {
+                    operator_token: _,
+                    operation,
+                    operand,
+                    id,
+                }) => (
+                    {
+                        let inner_type = self.get_type_as_hover(operand.get_id(), analysis_data);
+                        let outer_type = self.get_type_as_hover(*id, analysis_data);
+
+                        match operation {
+                            UnaryOperation::BitwiseNot => {
+                                format!("bitwise negation (~{inner_type}) => {outer_type}")
+                            }
+                            UnaryOperation::LogicalNot => {
+                                format!("logical negation (!{inner_type}) => {outer_type}")
+                            }
+                            UnaryOperation::Negate => {
+                                format!("arithmetic negation (-{inner_type}) => {outer_type}")
+                            }
                         }
-                        UnaryOperation::LogicalNot => {
-                            format!("logical negation (!{inner_type}) => {outer_type}")
-                        }
-                        UnaryOperation::Negate => {
-                            format!("arithmetic negation (-{inner_type}) => {outer_type}")
-                        }
-                    }
-                },
-                "unary expression".to_string(),
-            ),
-            AstNodeRef::CastExpression(CastExpression {
-                operand,
-                as_token: _,
-                type_: _,
-                id,
-            }) => (
-                {
+                    },
+                    "unary expression".to_string(),
+                ),
+
+                Expression::Cast(CastExpression {
+                    operand,
+                    as_token: _,
+                    type_: _,
+                    id,
+                }) => {
                     let from_type = self.get_type_as_hover(operand.get_id(), analysis_data);
                     let to_type = self.get_type_as_hover(*id, analysis_data);
-                    format!("{from_type} as {to_type}")
-                },
-                "type cast".to_string(),
-            ),
-            AstNodeRef::LiteralExpression(LiteralExpression {
-                value,
-                token: _,
-                id,
-            }) => (
-                match value {
-                    LiteralKind::Number(value) => value.to_string(),
-                    LiteralKind::Char(value) => {
-                        format!("'{}'", escape(value.to_string(), QuoteType::Single))
-                    }
-                    LiteralKind::Float(value) => value.to_string(),
-                    LiteralKind::Bool(value) => value.to_string(),
-                },
-                format!("literal ({})", self.get_type_as_hover(*id, analysis_data)),
-            ),
-            AstNodeRef::ArrayExpression(ArrayExpression {
-                open_bracket_token: _,
-                elements: _,
-                close_bracket_token: _,
-                id,
-            }) => (
-                self.get_type_as_hover(*id, analysis_data).to_string(),
-                "array literal".to_string(),
-            ),
-            AstNodeRef::StructExpression(StructExpression {
-                type_: _,
-                open_brace_token: _,
-                members: _,
-                close_brace_token: _,
-                id,
-            }) => (
-                self.get_type_as_hover(*id, analysis_data).to_string(),
-                "struct literal".to_string(),
-            ),
-            AstNodeRef::BinaryExpression(BinaryExpression {
-                left,
-                operator_token: _,
-                operation,
-                right,
-                id,
-            }) => {
-                let left_type = self.get_type_as_hover(left.get_id(), analysis_data);
-                let right_type = self.get_type_as_hover(right.get_id(), analysis_data);
-                let result_type = self.get_type_as_hover(*id, analysis_data);
-                let (name, op) = match operation {
-                    BinaryOperation::Add => ("addition", "+"),
-                    BinaryOperation::Subtract => ("subtraction", "-"),
-                    BinaryOperation::Multiply => ("multiplication", "*"),
-                    BinaryOperation::Divide => ("division", "/"),
-                    BinaryOperation::Modulo => ("modulo", "%"),
-                    BinaryOperation::GreaterThan => ("greater than", ">"),
-                    BinaryOperation::GreaterThanOrEqual => ("greater than or equal", ">="),
-                    BinaryOperation::LessThan => ("less than", "<"),
-                    BinaryOperation::LessThanOrEqual => ("less than or equal", "<="),
-                    BinaryOperation::Equal => ("equal", "=="),
-                    BinaryOperation::NotEqual => ("not equal", "!="),
-                    BinaryOperation::LogicalAnd => ("logical and", "&&"),
-                    BinaryOperation::LogicalOr => ("logical or", "||"),
-                };
 
-                (
-                    format!("{name} ({left_type} {op} {right_type} => {result_type})"),
-                    "binary expression".to_string(),
-                )
-            }
-            AstNodeRef::GroupingExpression(GroupingExpression {
-                open_paren_token: _,
-                subexpression,
-                close_paren_token: _,
-                id: _,
-            }) => (
-                format!(
-                    "({})",
-                    self.generate_node_hover(&**subexpression, analysis_data).0
+                    (format!("{from_type} as {to_type}"), "type cast".to_string())
+                }
+
+                Expression::Literal(LiteralExpression {
+                    value,
+                    token: _,
+                    id,
+                }) => (
+                    match value {
+                        LiteralKind::Number(value) => value.to_string(),
+                        LiteralKind::Char(value) => {
+                            format!("'{}'", escape(value.to_string(), QuoteType::Single))
+                        }
+                        LiteralKind::Float(value) => value.to_string(),
+                        LiteralKind::Bool(value) => value.to_string(),
+                    },
+                    format!("literal ({})", self.get_type_as_hover(*id, analysis_data)),
                 ),
-                "expression grouping".to_string(),
-            ),
-            AstNodeRef::FunctionCallExpression(FunctionCallExpression {
-                name,
-                name_token: _,
-                open_paren_token: _,
-                arguments: _,
-                close_paren_token: _,
-                id,
-            }) => {
-                let (parameters, return_type) = (|| {
-                    let Some(AnalysisData {
-                        type_data: _,
-                        type_sets,
-                        function_data,
-                        variable_data: _,
-                        scope_data: _,
-                        comptime_deps: _,
-                    }) = analysis_data
-                    else {
-                        return (
-                            "/* No type data available */".to_string(),
-                            "/* No type data available */".to_string(),
-                        );
+
+                Expression::Array(ArrayExpression {
+                    open_bracket_token: _,
+                    elements: _,
+                    close_bracket_token: _,
+                    id,
+                }) => (
+                    self.get_type_as_hover(*id, analysis_data).to_string(),
+                    "array literal".to_string(),
+                ),
+
+                Expression::Struct(StructExpression {
+                    type_: _,
+                    open_brace_token: _,
+                    members: _,
+                    close_brace_token: _,
+                    id,
+                }) => (
+                    self.get_type_as_hover(*id, analysis_data).to_string(),
+                    "struct literal".to_string(),
+                ),
+
+                Expression::Binary(BinaryExpression {
+                    left,
+                    operator_token: _,
+                    operation,
+                    right,
+                    id,
+                }) => {
+                    let left_type = self.get_type_as_hover(left.get_id(), analysis_data);
+                    let right_type = self.get_type_as_hover(right.get_id(), analysis_data);
+                    let result_type = self.get_type_as_hover(*id, analysis_data);
+
+                    let (name, op) = match operation {
+                        BinaryOperation::Add => ("addition", "+"),
+                        BinaryOperation::Subtract => ("subtraction", "-"),
+                        BinaryOperation::Multiply => ("multiplication", "*"),
+                        BinaryOperation::Divide => ("division", "/"),
+                        BinaryOperation::Modulo => ("modulo", "%"),
+                        BinaryOperation::GreaterThan => ("greater than", ">"),
+                        BinaryOperation::GreaterThanOrEqual => ("greater than or equal", ">="),
+                        BinaryOperation::LessThan => ("less than", "<"),
+                        BinaryOperation::LessThanOrEqual => ("less than or equal", "<="),
+                        BinaryOperation::Equal => ("equal", "=="),
+                        BinaryOperation::NotEqual => ("not equal", "!="),
+                        BinaryOperation::LogicalAnd => ("logical and", "&&"),
+                        BinaryOperation::LogicalOr => ("logical or", "||"),
                     };
-                    let Some(ref_func) = function_data.get(id) else {
-                        return (
-                            "/* Function doesn't exist */".to_string(),
-                            "/* Function doesn't exist */".to_string(),
-                        );
-                    };
-                    let Some(return_type) = ref_func.borrow().return_type else {
-                        return (
-                            "/* Return type not processed by ScopeAnalyzer */".to_string(),
-                            "/* Return type not processed by ScopeAnalyzer */".to_string(),
-                        );
-                    };
-                    let return_type = type_sets.get(return_type).kind.stringify(type_sets);
-                    let parameters =
-                        if let Some(param_types) = ref_func.borrow().parameter_types.as_ref() {
-                            Itertools::intersperse(
-                                param_types.iter().map(|param| {
-                                    name.clone()
-                                        + ": "
-                                        + &type_sets
-                                            .get(param.borrow().type_.unwrap())
-                                            .kind
-                                            .stringify(type_sets)
-                                }),
-                                ", ".to_string(),
-                            )
-                            .collect::<String>()
-                        } else {
-                            "/* Param types not processed by ScopeAnalyzer */".to_string()
+
+                    (
+                        format!("{name} ({left_type} {op} {right_type} => {result_type})"),
+                        "binary expression".to_string(),
+                    )
+                }
+
+                Expression::Grouping(GroupingExpression {
+                    open_paren_token: _,
+                    subexpression,
+                    close_paren_token: _,
+                    id: _,
+                }) => (
+                    format!(
+                        "({})",
+                        self.generate_node_hover(&**subexpression, analysis_data).0
+                    ),
+                    "expression grouping".to_string(),
+                ),
+
+                Expression::FunctionCall(FunctionCallExpression {
+                    name,
+                    name_token: _,
+                    open_paren_token: _,
+                    arguments: _,
+                    close_paren_token: _,
+                    id,
+                }) => {
+                    let (parameters, return_type) = (|| {
+                        let Some(AnalysisData {
+                            type_data: _,
+                            type_sets,
+                            function_data,
+                            variable_data: _,
+                            scope_data: _,
+                            comptime_deps: _,
+                        }) = analysis_data
+                        else {
+                            return (
+                                "/* No type data available */".to_string(),
+                                "/* No type data available */".to_string(),
+                            );
                         };
 
-                    (parameters, return_type)
-                })();
-
-                (
-                    format!("let {name} = ({parameters}) -> {return_type}"),
-                    "function call".to_string(),
-                )
-            }
-            AstNodeRef::CompilerExpression(CompilerExpression {
-                at_token: _,
-                name,
-                name_token: _,
-                open_paren_token: _,
-                arguments: _,
-                close_paren_token: _,
-                id,
-            }) => {
-                let (parameters, return_type) = (|| {
-                    let Some(AnalysisData {
-                        type_data: _,
-                        type_sets,
-                        function_data,
-                        variable_data: _,
-                        scope_data: _,
-                        comptime_deps: _,
-                    }) = analysis_data
-                    else {
-                        return (
-                            "/* No type data available */".to_string(),
-                            "/* No type data available */".to_string(),
-                        );
-                    };
-                    let Some(ref_func) = function_data.get(id) else {
-                        return (
-                            "/* Compiler function doesn't exist */".to_string(),
-                            "/* Compiler function doesn't exist */".to_string(),
-                        );
-                    };
-                    let Some(return_type) = ref_func.borrow().return_type else {
-                        return (
-                            "/* Return type not processed by ScopeAnalyzer */".to_string(),
-                            "/* Return type not processed by ScopeAnalyzer */".to_string(),
-                        );
-                    };
-                    let return_type = type_sets.get(return_type).kind.stringify(type_sets);
-                    let parameters =
-                        if let Some(param_types) = ref_func.borrow().parameter_types.as_ref() {
-                            Itertools::intersperse(
-                                param_types.iter().map(|param| {
-                                    name.clone()
-                                        + ": "
-                                        + &type_sets
-                                            .get(param.borrow().type_.unwrap())
-                                            .kind
-                                            .stringify(type_sets)
-                                }),
-                                ", ".to_string(),
-                            )
-                            .collect::<String>()
-                        } else {
-                            "/* Param types not processed by ScopeAnalyzer */".to_string()
+                        let Some(ref_func) = function_data.get(id) else {
+                            return (
+                                "/* Function doesn't exist */".to_string(),
+                                "/* Function doesn't exist */".to_string(),
+                            );
                         };
 
-                    (parameters, return_type)
-                })();
+                        let Some(return_type) = ref_func.borrow().return_type else {
+                            return (
+                                "/* Return type not processed by ScopeAnalyzer */".to_string(),
+                                "/* Return type not processed by ScopeAnalyzer */".to_string(),
+                            );
+                        };
 
-                (
-                    format!("@{name}({parameters}) -> {return_type}"),
-                    "compiler expression".to_string(),
-                )
-            }
-            AstNodeRef::ArrayIndexExpression(ArrayIndexExpression {
-                array,
-                open_bracket_token: _,
-                index,
-                close_bracket_token: _,
-                id,
-            }) => (
-                format!(
-                    "({})[{}] => {}",
-                    self.get_type_as_hover(array.get_id(), analysis_data),
-                    self.get_type_as_hover(index.get_id(), analysis_data),
-                    self.get_type_as_hover(*id, analysis_data)
+                        let return_type = type_sets.get(return_type).kind.stringify(type_sets);
+
+                        let parameters =
+                            if let Some(param_types) = ref_func.borrow().parameter_types.as_ref() {
+                                Itertools::intersperse(
+                                    param_types.iter().map(|param| {
+                                        name.clone()
+                                            + ": "
+                                            + &type_sets
+                                                .get(param.borrow().type_.unwrap())
+                                                .kind
+                                                .stringify(type_sets)
+                                    }),
+                                    ", ".to_string(),
+                                )
+                                .collect::<String>()
+                            } else {
+                                "/* Param types not processed by ScopeAnalyzer */".to_string()
+                            };
+
+                        (parameters, return_type)
+                    })();
+
+                    (
+                        format!("let {name} = ({parameters}) -> {return_type}"),
+                        "function call".to_string(),
+                    )
+                }
+
+                Expression::CompilerExpression(CompilerExpression {
+                    at_token: _,
+                    name,
+                    name_token: _,
+                    open_paren_token: _,
+                    arguments: _,
+                    close_paren_token: _,
+                    id,
+                }) => {
+                    let (parameters, return_type) = (|| {
+                        let Some(AnalysisData {
+                            type_data: _,
+                            type_sets,
+                            function_data,
+                            variable_data: _,
+                            scope_data: _,
+                            comptime_deps: _,
+                        }) = analysis_data
+                        else {
+                            return (
+                                "/* No type data available */".to_string(),
+                                "/* No type data available */".to_string(),
+                            );
+                        };
+
+                        let Some(ref_func) = function_data.get(id) else {
+                            return (
+                                "/* Compiler function doesn't exist */".to_string(),
+                                "/* Compiler function doesn't exist */".to_string(),
+                            );
+                        };
+
+                        let Some(return_type) = ref_func.borrow().return_type else {
+                            return (
+                                "/* Return type not processed by ScopeAnalyzer */".to_string(),
+                                "/* Return type not processed by ScopeAnalyzer */".to_string(),
+                            );
+                        };
+
+                        let return_type = type_sets.get(return_type).kind.stringify(type_sets);
+
+                        let parameters =
+                            if let Some(param_types) = ref_func.borrow().parameter_types.as_ref() {
+                                Itertools::intersperse(
+                                    param_types.iter().map(|param| {
+                                        name.clone()
+                                            + ": "
+                                            + &type_sets
+                                                .get(param.borrow().type_.unwrap())
+                                                .kind
+                                                .stringify(type_sets)
+                                    }),
+                                    ", ".to_string(),
+                                )
+                                .collect::<String>()
+                            } else {
+                                "/* Param types not processed by ScopeAnalyzer */".to_string()
+                            };
+
+                        (parameters, return_type)
+                    })();
+
+                    (
+                        format!("@{name}({parameters}) -> {return_type}"),
+                        "compiler expression".to_string(),
+                    )
+                }
+
+                Expression::ArrayIndex(ArrayIndexExpression {
+                    array,
+                    open_bracket_token: _,
+                    index,
+                    close_bracket_token: _,
+                    id,
+                }) => (
+                    format!(
+                        "({})[{}] => {}",
+                        self.get_type_as_hover(array.get_id(), analysis_data),
+                        self.get_type_as_hover(index.get_id(), analysis_data),
+                        self.get_type_as_hover(*id, analysis_data)
+                    ),
+                    "array index".to_string(),
                 ),
-                "array index".to_string(),
-            ),
-            AstNodeRef::StructAccessExpression(StructAccessExpression {
-                value,
-                dot_token: _,
-                member_name,
-                member_name_token: _,
-                id,
-            }) => (
-                format!(
-                    "{}.{member_name} => {}",
-                    self.get_type_as_hover(value.get_id(), analysis_data),
-                    self.get_type_as_hover(*id, analysis_data)
+
+                Expression::StructAccess(StructAccessExpression {
+                    value,
+                    dot_token: _,
+                    member_name,
+                    member_name_token: _,
+                    id,
+                }) => (
+                    format!(
+                        "{}.{member_name} => {}",
+                        self.get_type_as_hover(value.get_id(), analysis_data),
+                        self.get_type_as_hover(*id, analysis_data)
+                    ),
+                    "struct access".to_string(),
                 ),
-                "struct access".to_string(),
-            ),
-            AstNodeRef::VariableAccessExpression(VariableAccessExpression {
-                name,
-                name_token: _,
-                id,
-            }) => {
-                let type_ = self.get_type_as_hover(*id, analysis_data);
-                // TODO: once we have consteval, display the value here
-                (
-                    format!("let {name}: {type_} = ..."),
-                    "variable access".to_string(),
-                )
-            }
-            AstNodeRef::VariableAssignmentExpression(VariableAssignmentExpression {
-                lvalue,
-                equal_token: _,
-                right: _,
-                id: _,
-            }) => {
-                // TODO: once we have consteval, display the value here
-                (
+
+                Expression::VariableAccess(VariableAccessExpression {
+                    name,
+                    name_token: _,
+                    id,
+                }) => {
+                    let type_ = self.get_type_as_hover(*id, analysis_data);
+                    // TODO: once we have consteval, display the value here
+
+                    (
+                        format!("let {name}: {type_} = ..."),
+                        "variable access".to_string(),
+                    )
+                }
+
+                Expression::VariableAssignment(VariableAssignmentExpression {
+                    lvalue,
+                    equal_token: _,
+                    right: _,
+                    id: _,
+                }) => (
+                    // TODO: once we have consteval, display the value here
                     self.generate_node_hover(lvalue, analysis_data).0,
                     "variable assignment".to_string(),
-                )
-            }
-            AstNodeRef::VariableLValue(VariableLValue {
-                name,
-                name_token: _,
-                id,
-            }) => {
-                // TODO: once we have consteval, display the value here
-                let type_ = self.get_type_as_hover(*id, analysis_data);
-                (
-                    format!("let {name}: {type_} = ..."),
-                    "variable lvalue".to_string(),
-                )
-            }
-            AstNodeRef::ArrayIndexLValue(ArrayIndexLValue {
-                array,
-                open_bracket_token: _,
-                index,
-                close_bracket_token: _,
-                id: _,
-            }) => {
-                // TODO: once we have consteval, display the value here
-                (
+                ),
+            },
+
+            AstNodeRef::LValue(node) => match node {
+                LValue::Variable(VariableLValue {
+                    name,
+                    name_token: _,
+                    id,
+                }) => {
+                    // TODO: once we have consteval, display the value here
+                    let type_ = self.get_type_as_hover(*id, analysis_data);
+
+                    (
+                        format!("let {name}: {type_} = ..."),
+                        "variable lvalue".to_string(),
+                    )
+                }
+
+                LValue::ArrayIndex(ArrayIndexLValue {
+                    array,
+                    open_bracket_token: _,
+                    index,
+                    close_bracket_token: _,
+                    id: _,
+                }) => (
+                    // TODO: once we have consteval, display the value here
                     format!(
                         "let {}[{}] = ...",
                         self.get_type_as_hover(array.get_id(), analysis_data),
                         self.get_type_as_hover(index.get_id(), analysis_data)
                     ),
                     "array index lvalue".to_string(),
-                )
-            }
-            AstNodeRef::StructAccessLValue(StructAccessLValue {
-                value,
-                dot_token: _,
-                member_name,
-                member_name_token: _,
-                id,
-            }) => (
-                format!(
-                    "{}.{member_name} => {}",
-                    self.get_type_as_hover(value.get_id(), analysis_data),
-                    self.get_type_as_hover(*id, analysis_data)
                 ),
-                "struct access lvalue".to_string(),
-            ),
-            AstNodeRef::GroupingLValue(GroupingLValue {
-                open_paren_token: _,
-                sublvalue,
-                close_paren_token: _,
-                id: _,
-            }) => (
-                format!(
-                    "({})",
-                    self.generate_node_hover(&**sublvalue, analysis_data).0
+
+                LValue::StructAccess(StructAccessLValue {
+                    value,
+                    dot_token: _,
+                    member_name,
+                    member_name_token: _,
+                    id,
+                }) => (
+                    format!(
+                        "{}.{member_name} => {}",
+                        self.get_type_as_hover(value.get_id(), analysis_data),
+                        self.get_type_as_hover(*id, analysis_data)
+                    ),
+                    "struct access lvalue".to_string(),
                 ),
-                "lvalue grouping".to_string(),
-            ),
-            AstNodeRef::SimpleType(SimpleType {
-                token: _,
-                type_,
-                id: _,
-            }) => (
-                analysis_data
-                    .map(|data| type_.kind.stringify(data.type_sets))
-                    .unwrap_or("/* No type data available */".to_string()),
-                "type".to_string(),
-            ),
-            AstNodeRef::UnitType(UnitType {
-                open_paren_token: _,
-                close_paren_token: _,
-                id: _,
-            }) => ("()".to_string(), "type".to_string()),
-            AstNodeRef::IdkType(IdkType { token: _, id }) => {
-                let type_ = self.get_type_as_hover(*id, analysis_data);
-                (type_.to_string(), "idk type".to_string())
-            }
-            AstNodeRef::ArrayType(ArrayType {
-                subtype: _,
-                open_bracket_token: _,
-                size: _,
-                close_bracket_token: _,
-                id,
-            }) => {
-                let type_ = self.get_type_as_hover(*id, analysis_data);
-                (type_.to_string(), "array type".to_string())
-            }
-            AstNodeRef::StructType(StructType {
-                struct_token: _,
-                open_brace_token: _,
-                members: _,
-                close_brace_token: _,
-                id,
-            }) => {
-                let type_ = self.get_type_as_hover(*id, analysis_data);
-                (type_.to_string(), "struct type".to_string())
-            }
-            AstNodeRef::AliasType(AliasType {
-                name: _,
-                name_token: _,
-                id,
-            }) => {
-                let type_ = self.get_type_as_hover(*id, analysis_data);
-                (type_.to_string(), "alias type".to_string())
-            }
+
+                LValue::Grouping(GroupingLValue {
+                    open_paren_token: _,
+                    sublvalue,
+                    close_paren_token: _,
+                    id: _,
+                }) => (
+                    format!(
+                        "({})",
+                        self.generate_node_hover(&**sublvalue, analysis_data).0
+                    ),
+                    "lvalue grouping".to_string(),
+                ),
+            },
+
+            AstNodeRef::Type(node) => match node {
+                Type::Simple(SimpleType {
+                    token: _,
+                    type_,
+                    id: _,
+                }) => (
+                    analysis_data
+                        .map(|data| type_.kind.stringify(data.type_sets))
+                        .unwrap_or("/* No type data available */".to_string()),
+                    "type".to_string(),
+                ),
+
+                Type::Unit(UnitType {
+                    open_paren_token: _,
+                    close_paren_token: _,
+                    id: _,
+                }) => ("()".to_string(), "type".to_string()),
+
+                Type::Idk(IdkType { token: _, id }) => {
+                    let type_ = self.get_type_as_hover(*id, analysis_data);
+
+                    (type_.to_string(), "idk type".to_string())
+                }
+
+                Type::Array(ArrayType {
+                    subtype: _,
+                    open_bracket_token: _,
+                    size: _,
+                    close_bracket_token: _,
+                    id,
+                }) => {
+                    let type_ = self.get_type_as_hover(*id, analysis_data);
+
+                    (type_.to_string(), "array type".to_string())
+                }
+
+                Type::Struct(StructType {
+                    struct_token: _,
+                    open_brace_token: _,
+                    members: _,
+                    close_brace_token: _,
+                    id,
+                }) => {
+                    let type_ = self.get_type_as_hover(*id, analysis_data);
+
+                    (type_.to_string(), "struct type".to_string())
+                }
+
+                Type::Alias(AliasType {
+                    name: _,
+                    name_token: _,
+                    id,
+                }) => {
+                    let type_ = self.get_type_as_hover(*id, analysis_data);
+
+                    (type_.to_string(), "alias type".to_string())
+                }
+            },
         }
     }
 
@@ -928,7 +997,9 @@ impl Backend {
         };
 
         Ok(node_hierarchy.iter().rev().find_map(|node| match node {
-            AstNode::FunctionCallExpression(FunctionCallExpression { id, .. }) => Some(
+            AstNode::Expression(Expression::FunctionCall(FunctionCallExpression {
+                id, ..
+            })) => Some(
                 function_data
                     .as_ref()?
                     .get(id)?
@@ -937,13 +1008,12 @@ impl Backend {
                     .definition
                     .clone(),
             ),
-            AstNode::VariableAccessExpression(VariableAccessExpression { id, .. })
-            | AstNode::VariableAssignmentExpression(VariableAssignmentExpression { id, .. })
-            | AstNode::VariableLValue(VariableLValue {
-                name: _,
-                name_token: _,
-                id,
-            }) => Some(
+
+            AstNode::Expression(
+                Expression::VariableAccess(VariableAccessExpression { id, .. })
+                | Expression::VariableAssignment(VariableAssignmentExpression { id, .. }),
+            )
+            | AstNode::LValue(LValue::Variable(VariableLValue { id, .. })) => Some(
                 variable_data
                     .as_ref()?
                     .get(id)?
@@ -954,7 +1024,7 @@ impl Backend {
             ),
             // TODO: AstNode::StructAccessExpression(struct_access_expression) => todo!(),
             // TODO: AstNode::StructAccessLValue(struct_access_lvalue) => todo!(),
-            AstNode::AliasType(AliasType { id, .. }) => Some(
+            AstNode::Type(Type::Alias(AliasType { id, .. })) => Some(
                 type_sets
                     .as_ref()?
                     .get(*type_data.as_ref()?.get(id)?)
@@ -1591,25 +1661,26 @@ impl LanguageServer for Backend {
             let mut prev_node = None;
             let mut function_call = None;
             for node in node_hierarchy.iter().rev() {
-                if let AstNode::FunctionCallExpression(fcall @ FunctionCallExpression { .. }) = node
-                {
-                    function_call = Some(fcall);
+                if let AstNode::Expression(expr @ Expression::FunctionCall(fcall)) = node {
+                    function_call = Some((expr, fcall));
                     break;
                 }
                 prev_node = Some(node);
             }
 
-            let Some(function_call) = function_call else {
+            let Some((function_call_expression, function_call)) = function_call else {
                 return Ok(None);
             };
 
-            let label = self.generate_node_hover(function_call, analysis_data).0;
+            let label = self
+                .generate_node_hover(function_call_expression, analysis_data)
+                .0;
 
             let Some(analysis_data) = analysis_data else {
                 return Ok(None);
             };
 
-            let Some(ref_func) = analysis_data.function_data.get(&function_call.id) else {
+            let Some(ref_func) = analysis_data.function_data.get(&function_call.get_id()) else {
                 return Ok(None);
             };
             let ref_func_borrow = ref_func.borrow();

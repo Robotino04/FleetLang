@@ -3,7 +3,7 @@ use std::cell::RefMut;
 use crate::{
     ast::{
         AstVisitor, BlockStatement, ForLoopStatement, FunctionBody, FunctionDefinition,
-        IfStatement, Program, Statement, WhileLoopStatement,
+        HasSourceRange, IfStatement, Program, Statement, WhileLoopStatement,
     },
     error_reporting::{BlockRequiredKind, ErrorKind, Errors},
     parser::IdGenerator,
@@ -11,7 +11,7 @@ use crate::{
     tokenizer::{Token, TokenType},
 };
 
-use super::{find_node_bounds::find_node_bounds, partial_visitor::PartialAstVisitor};
+use super::partial_visitor::PartialAstVisitor;
 
 pub struct FixNonBlockStatements<'state> {
     errors: RefMut<'state, Errors>,
@@ -45,7 +45,7 @@ impl Pass for FixNonBlockStatements<'_> {
 
 impl FixNonBlockStatements<'_> {
     fn create_fake_block_arround(&mut self, node: &mut Statement) -> Statement {
-        let range = find_node_bounds(&*node);
+        let range = node.get_source_range();
 
         Statement::Block(BlockStatement {
             open_brace_token: Token {
@@ -96,7 +96,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
         {
             self.errors.push(ErrorKind::BlockRequired {
                 kind: BlockRequiredKind::Function,
-                stmt_range: find_node_bounds(&stmt_body.statement),
+                stmt_range: stmt_body.statement.get_source_range(),
             });
 
             stmt_body.statement = self.create_fake_block_arround(&mut stmt_body.statement);
@@ -119,7 +119,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
         if !matches!(**if_body, Statement::Block { .. }) {
             self.errors.push(ErrorKind::BlockRequired {
                 kind: BlockRequiredKind::If,
-                stmt_range: find_node_bounds(&**if_body),
+                stmt_range: if_body.get_source_range(),
             });
 
             **if_body = self.create_fake_block_arround(&mut *if_body);
@@ -132,7 +132,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
             if !matches!(elif_body, Statement::Block { .. }) {
                 self.errors.push(ErrorKind::BlockRequired {
                     kind: BlockRequiredKind::Elif,
-                    stmt_range: find_node_bounds(&*elif_body),
+                    stmt_range: elif_body.get_source_range(),
                 });
 
                 *elif_body = self.create_fake_block_arround(elif_body);
@@ -145,7 +145,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
             if !matches!(**else_body, Statement::Block { .. }) {
                 self.errors.push(ErrorKind::BlockRequired {
                     kind: BlockRequiredKind::Else,
-                    stmt_range: find_node_bounds(&**else_body),
+                    stmt_range: else_body.get_source_range(),
                 });
 
                 **else_body = self.create_fake_block_arround(&mut *else_body);
@@ -167,7 +167,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
         if !matches!(**body, Statement::Block { .. }) {
             self.errors.push(ErrorKind::BlockRequired {
                 kind: BlockRequiredKind::While,
-                stmt_range: find_node_bounds(&**body),
+                stmt_range: body.get_source_range(),
             });
 
             **body = self.create_fake_block_arround(&mut *body);
@@ -194,7 +194,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
         if !matches!(**body, Statement::Block { .. }) {
             self.errors.push(ErrorKind::BlockRequired {
                 kind: BlockRequiredKind::For,
-                stmt_range: find_node_bounds(&**body),
+                stmt_range: body.get_source_range(),
             });
 
             **body = self.create_fake_block_arround(&mut *body);

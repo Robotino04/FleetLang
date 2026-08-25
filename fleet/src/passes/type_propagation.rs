@@ -12,13 +12,13 @@ use crate::{
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
         CompilerExpression, Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
-        OnStatementIterator, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, StructAccessExpression, StructAccessLValue,
-        StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
-        TopLevelStatement, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        GroupingLValue, HasID, HasSourceRange, IdkType, IfStatement, LiteralExpression,
+        LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression,
+        StructAccessLValue, StructExpression, StructMemberDefinition, StructMemberValue,
+        StructType, ThreadExecutor, TopLevelStatement, TypeAlias, UnaryExpression, UnaryOperation,
+        UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     error_reporting::{
         CastDirection, DuplicateKind, ErrorKind, Errors, ExtraParameter, ImpossibleCastReason,
@@ -27,7 +27,6 @@ use crate::{
     },
     parser::IdGenerator,
     passes::{
-        find_node_bounds::find_node_bounds,
         pass_manager::{
             FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData, TypeData,
             TypeSets, VariableData,
@@ -104,7 +103,7 @@ impl Pass for TypePropagator<'_> {
 impl<'a> TypePropagator<'a> {
     fn register_top_level_statements(&mut self, tls: &mut TopLevelStatement) {
         match tls {
-            TopLevelStatement::Function(function_definition) => {
+            TopLevelStatement::FunctionDefinition(function_definition) => {
                 self.register_function(function_definition)
             }
             TopLevelStatement::TypeAlias(type_alias) => self.register_type_alias(type_alias),
@@ -362,7 +361,7 @@ impl AstVisitor for TypePropagator<'_> {
                 variable: SymbolDefinition::from_token(name.clone(), name_token),
                 type_range: type_
                     .as_ref()
-                    .map(|(_colon, type_)| find_node_bounds(type_)),
+                    .map(|(_colon, type_)| type_.get_source_range()),
                 type_: PrefetchedType::fetch(defined_type_ptr, &self.type_sets),
             });
         }
@@ -424,11 +423,11 @@ impl AstVisitor for TypePropagator<'_> {
                         binding.name.clone(),
                         &binding.name_token,
                     ),
-                    max_value_range: find_node_bounds(&**max_value),
+                    max_value_range: max_value.get_source_range(),
                     type_range: binding
                         .type_
                         .as_ref()
-                        .map(|(_colon, type_)| find_node_bounds(type_)),
+                        .map(|(_colon, type_)| type_.get_source_range()),
                     iterator_type: PrefetchedType::fetch(iterator_type, &self.type_sets),
                     max_type: PrefetchedType::fetch(max_value_type, &self.type_sets),
                 });
@@ -478,7 +477,7 @@ impl AstVisitor for TypePropagator<'_> {
                     type_range: binding
                         .type_
                         .as_ref()
-                        .map(|(_colon, type_)| find_node_bounds(type_)),
+                        .map(|(_colon, type_)| type_.get_source_range()),
                     iterator_type: PrefetchedType::fetch(iterator_type, &self.type_sets),
                     possible_iterator_type: PrefetchedType::fetch(
                         possible_iterator_type,
@@ -549,7 +548,7 @@ impl AstVisitor for TypePropagator<'_> {
                 },
                 value_range: value
                     .as_ref()
-                    .map(|value| find_node_bounds(&**value))
+                    .map(|value| value.get_source_range())
                     .unwrap_or_else(|| return_token.range.clone()),
                 expected_types: vec![PrefetchedType::fetch(expected_type_ptr, &self.type_sets)],
                 actual_type: PrefetchedType::fetch(this_type_ptr, &self.type_sets),
@@ -584,7 +583,7 @@ impl AstVisitor for TypePropagator<'_> {
                 kind: TypeMismatchKind::VariableInitializer {
                     variable: var.borrow().symbol.clone(),
                 },
-                value_range: find_node_bounds(&**value),
+                value_range: value.get_source_range(),
                 expected_types: vec![PrefetchedType::fetch(defined_type_ptr, &self.type_sets)],
                 actual_type: PrefetchedType::fetch(value_type_ptr, &self.type_sets),
             });
@@ -612,7 +611,7 @@ impl AstVisitor for TypePropagator<'_> {
         if !RuntimeTypeKind::merge_types(cond_type, boolean, &mut self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::IfCondition,
-                value_range: find_node_bounds(&**condition),
+                value_range: condition.get_source_range(),
                 expected_types: vec![PrefetchedType::fetch(boolean, &self.type_sets)],
                 actual_type: PrefetchedType::fetch(cond_type, &self.type_sets),
             });
@@ -624,7 +623,7 @@ impl AstVisitor for TypePropagator<'_> {
             if !RuntimeTypeKind::merge_types(elif_type, boolean, &mut self.type_sets) {
                 self.errors.push(ErrorKind::TypeMismatch {
                     kind: TypeMismatchKind::ElifCondition,
-                    value_range: find_node_bounds(&*elif_condition),
+                    value_range: elif_condition.get_source_range(),
                     expected_types: vec![PrefetchedType::fetch(boolean, &self.type_sets)],
                     actual_type: PrefetchedType::fetch(elif_type, &self.type_sets),
                 });
@@ -656,7 +655,7 @@ impl AstVisitor for TypePropagator<'_> {
         if !RuntimeTypeKind::merge_types(cond_type, boolean, &mut self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::WhileCondition,
-                value_range: find_node_bounds(&**condition),
+                value_range: condition.get_source_range(),
                 expected_types: vec![PrefetchedType::fetch(boolean, &self.type_sets)],
                 actual_type: PrefetchedType::fetch(cond_type, &self.type_sets),
             });
@@ -692,7 +691,7 @@ impl AstVisitor for TypePropagator<'_> {
             if !RuntimeTypeKind::merge_types(cond_type, boolean, &mut self.type_sets) {
                 self.errors.push(ErrorKind::TypeMismatch {
                     kind: TypeMismatchKind::ForCondition,
-                    value_range: find_node_bounds(&**con),
+                    value_range: con.get_source_range(),
                     expected_types: vec![PrefetchedType::fetch(boolean, &self.type_sets)],
                     actual_type: PrefetchedType::fetch(cond_type, &self.type_sets),
                 });
@@ -760,7 +759,7 @@ impl AstVisitor for TypePropagator<'_> {
                 kind: TypeMismatchKind::ThreadIndex {
                     thread: thread_token.range.clone(),
                 },
-                value_range: find_node_bounds(&**index),
+                value_range: index.get_source_range(),
                 expected_types: vec![PrefetchedType::fetch(expected_type, &self.type_sets)],
                 actual_type: PrefetchedType::fetch(index_type, &self.type_sets),
             });
@@ -795,7 +794,7 @@ impl AstVisitor for TypePropagator<'_> {
                 kind: TypeMismatchKind::GpuIndex {
                     gpu: gpus_token.range.clone(),
                 },
-                value_range: find_node_bounds(&**gpu_index),
+                value_range: gpu_index.get_source_range(),
                 expected_types: vec![PrefetchedType::fetch(expected_type, &self.type_sets)],
                 actual_type: PrefetchedType::fetch(index_type, &self.type_sets),
             });
@@ -847,7 +846,7 @@ impl AstVisitor for TypePropagator<'_> {
             definition_range: None,
         });
 
-        let first_item_range = elements.first().map(|el| find_node_bounds(&el.0));
+        let first_item_range = elements.first().map(|(el, _comma)| el.get_source_range());
         for (item, _comma) in &mut *elements {
             let this_item_type_ptr = self.visit_expression(item);
 
@@ -860,7 +859,7 @@ impl AstVisitor for TypePropagator<'_> {
                     kind: TypeMismatchKind::ArrayElement {
                         first_element_range: first_item_range.clone().unwrap(),
                     },
-                    value_range: find_node_bounds(item),
+                    value_range: item.get_source_range(),
 
                     expected_types: vec![PrefetchedType::fetch(element_type_ptr, &self.type_sets)],
                     actual_type: PrefetchedType::fetch(this_item_type_ptr, &self.type_sets),
@@ -883,7 +882,7 @@ impl AstVisitor for TypePropagator<'_> {
         &mut self,
         expression: &mut StructExpression,
     ) -> Self::ExpressionOutput {
-        let expression_range = find_node_bounds(&*expression);
+        let expression_range = expression.get_source_range();
         let StructExpression {
             type_,
             open_brace_token,
@@ -905,7 +904,7 @@ impl AstVisitor for TypePropagator<'_> {
             _ => {
                 self.errors.push(ErrorKind::StructInitializeNonStruct {
                     expression_range,
-                    type_range: find_node_bounds(&*type_),
+                    type_range: type_.get_source_range(),
                     wrong_type: PrefetchedType::fetch(defined_type_ptr, &self.type_sets),
                 });
 
@@ -959,7 +958,7 @@ impl AstVisitor for TypePropagator<'_> {
                             )
                             .with_use(name_token.range.clone()),
                         },
-                        value_range: find_node_bounds(&**value),
+                        value_range: value.get_source_range(),
                         expected_types: vec![PrefetchedType::fetch(
                             this_defined_type_ptr,
                             &self.type_sets,
@@ -985,7 +984,7 @@ impl AstVisitor for TypePropagator<'_> {
         ) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::StructFields {
-                    type_expression: find_node_bounds(&*type_),
+                    type_expression: type_.get_source_range(),
                 },
                 value_range: open_brace_token
                     .range
@@ -1074,7 +1073,7 @@ impl AstVisitor for TypePropagator<'_> {
                                     .clone()
                                     .with_use(name_token.range.clone()),
                             },
-                            value_range: find_node_bounds(&**arg),
+                            value_range: arg.get_source_range(),
                             expected_types: vec![PrefetchedType::fetch(
                                 param_type_ptr,
                                 &self.type_sets,
@@ -1085,7 +1084,7 @@ impl AstVisitor for TypePropagator<'_> {
                 }
                 EitherOrBoth::Left((arg_type_ptr, arg)) => {
                     extra_parameters.push(ExtraParameter {
-                        range: find_node_bounds(&**arg),
+                        range: arg.get_source_range(),
                         type_: PrefetchedType::fetch(*arg_type_ptr, &self.type_sets),
                     });
                 }
@@ -1280,7 +1279,7 @@ impl AstVisitor for TypePropagator<'_> {
                                 parameter_name: param_name.clone(),
                                 intrinsic: UnresolvedSymbol::from_token(name.clone(), name_token),
                             },
-                            value_range: find_node_bounds(&*arg),
+                            value_range: arg.get_source_range(),
                             expected_types: vec![PrefetchedType::fetch(
                                 *param_type_ptr,
                                 &self.type_sets,
@@ -1291,7 +1290,7 @@ impl AstVisitor for TypePropagator<'_> {
                 }
                 EitherOrBoth::Left((arg_type_ptr, arg)) => {
                     extra_parameters.push(ExtraParameter {
-                        range: find_node_bounds(&*arg),
+                        range: arg.get_source_range(),
                         type_: PrefetchedType::fetch(arg_type_ptr, &self.type_sets),
                     });
                 }
@@ -1349,7 +1348,7 @@ impl AstVisitor for TypePropagator<'_> {
         let RuntimeTypeKind::ArrayOf { subtype, size: _ } = self.type_sets.get(array_type).kind
         else {
             self.errors.push(ErrorKind::ArrayIndexNonArray {
-                value: find_node_bounds(&**array),
+                value: array.get_source_range(),
                 wrong_type: PrefetchedType::fetch(array_type, &self.type_sets),
             });
             let err_type = self.type_sets.insert_set(RuntimeType {
@@ -1371,9 +1370,9 @@ impl AstVisitor for TypePropagator<'_> {
         if !RuntimeTypeKind::merge_types(index_type, expected_index_type, &mut self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::ArrayIndex {
-                    array: find_node_bounds(&**array),
+                    array: array.get_source_range(),
                 },
-                value_range: find_node_bounds(&**index),
+                value_range: index.get_source_range(),
                 expected_types: vec![PrefetchedType::fetch(expected_index_type, &self.type_sets)],
                 actual_type: PrefetchedType::fetch(index_type, &self.type_sets),
             });
@@ -1402,7 +1401,7 @@ impl AstVisitor for TypePropagator<'_> {
         else {
             if !matches!(self.type_sets.get(value_type).kind, RuntimeTypeKind::Error) {
                 self.errors.push(ErrorKind::StructAccessNonStruct {
-                    value: find_node_bounds(&**value),
+                    value: value.get_source_range(),
                     wrong_type: PrefetchedType::fetch(value_type, &self.type_sets),
                     member: UnresolvedSymbol::from_token(member_name.clone(), member_name_token),
                 });
@@ -1422,7 +1421,7 @@ impl AstVisitor for TypePropagator<'_> {
         } else {
             self.errors.push(ErrorKind::NonexistentStructMember {
                 struct_type: PrefetchedType::fetch(value_type, &self.type_sets),
-                value: find_node_bounds(&**value),
+                value: value.get_source_range(),
                 member: UnresolvedSymbol::from_token(member_name.clone(), member_name_token),
             });
 
@@ -1529,7 +1528,7 @@ impl AstVisitor for TypePropagator<'_> {
         if !is_ok {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::UnaryOperation(*operation),
-                value_range: find_node_bounds(&**operand),
+                value_range: operand.get_source_range(),
                 expected_types: allowed_types
                     .iter()
                     .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
@@ -1594,7 +1593,7 @@ impl AstVisitor for TypePropagator<'_> {
                 | (T::Unknown, T::Unknown)
                 | (T::Unit, T::Unit) => {
                     self_errors.push(ErrorKind::Lint(Lint::SelfCast {
-                        expression: find_node_bounds(&expression_clone),
+                        expression: expression_clone.get_source_range(),
                         type_: PrefetchedType::fetch(from_ptr, types),
                     }));
                     CastResult::Redundant
@@ -1661,7 +1660,7 @@ impl AstVisitor for TypePropagator<'_> {
                         reason: ImpossibleCastReason::InvolvesUnit {
                             direction: CastDirection::To,
                         },
-                        expression: find_node_bounds(&expression_clone),
+                        expression: expression_clone.get_source_range(),
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
                     });
@@ -1672,7 +1671,7 @@ impl AstVisitor for TypePropagator<'_> {
                         reason: ImpossibleCastReason::InvolvesUnit {
                             direction: CastDirection::From,
                         },
-                        expression: find_node_bounds(&expression_clone),
+                        expression: expression_clone.get_source_range(),
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
                     });
@@ -1694,7 +1693,7 @@ impl AstVisitor for TypePropagator<'_> {
                     } else {
                         self_errors.push(ErrorKind::ImpossibleCast {
                             reason: ImpossibleCastReason::ArrayElementsIncompatible,
-                            expression: find_node_bounds(&expression_clone),
+                            expression: expression_clone.get_source_range(),
                             from: PrefetchedType::fetch(from_ptr, types),
                             to: PrefetchedType::fetch(to_ptr, types),
                         });
@@ -1717,7 +1716,7 @@ impl AstVisitor for TypePropagator<'_> {
                             from_size: *from_size,
                             to_size: *to_size,
                         },
-                        expression: find_node_bounds(&expression_clone),
+                        expression: expression_clone.get_source_range(),
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
                     });
@@ -1734,7 +1733,7 @@ impl AstVisitor for TypePropagator<'_> {
                         reason: ImpossibleCastReason::ArrayAndNonArray {
                             direction: CastDirection::To,
                         },
-                        expression: find_node_bounds(&expression_clone),
+                        expression: expression_clone.get_source_range(),
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
                     });
@@ -1751,7 +1750,7 @@ impl AstVisitor for TypePropagator<'_> {
                         reason: ImpossibleCastReason::ArrayAndNonArray {
                             direction: CastDirection::From,
                         },
-                        expression: find_node_bounds(&expression_clone),
+                        expression: expression_clone.get_source_range(),
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
                     });
@@ -1796,7 +1795,7 @@ impl AstVisitor for TypePropagator<'_> {
                             (false, true) => {
                                 self_errors.push(ErrorKind::ImpossibleCast {
                                     reason: ImpossibleCastReason::DifferentStructOrigin,
-                                    expression: find_node_bounds(&expression_clone),
+                                    expression: expression_clone.get_source_range(),
                                     from: PrefetchedType::fetch(from_ptr, types),
                                     to: PrefetchedType::fetch(to_ptr, types),
                                 });
@@ -1804,7 +1803,7 @@ impl AstVisitor for TypePropagator<'_> {
                             (false, false) => {
                                 self_errors.push(ErrorKind::ImpossibleCast {
                                     reason: ImpossibleCastReason::StructMembersDiffer,
-                                    expression: find_node_bounds(&expression_clone),
+                                    expression: expression_clone.get_source_range(),
                                     from: PrefetchedType::fetch(from_ptr, types),
                                     to: PrefetchedType::fetch(to_ptr, types),
                                 });
@@ -1827,7 +1826,7 @@ impl AstVisitor for TypePropagator<'_> {
                         reason: ImpossibleCastReason::StructAndNonStruct {
                             direction: CastDirection::From,
                         },
-                        expression: find_node_bounds(&expression_clone),
+                        expression: expression_clone.get_source_range(),
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
                     });
@@ -1845,7 +1844,7 @@ impl AstVisitor for TypePropagator<'_> {
                         reason: ImpossibleCastReason::StructAndNonStruct {
                             direction: CastDirection::To,
                         },
-                        expression: find_node_bounds(&expression_clone),
+                        expression: expression_clone.get_source_range(),
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
                     });
@@ -1854,7 +1853,7 @@ impl AstVisitor for TypePropagator<'_> {
                 }
                 (_, T::Unknown) => {
                     self_errors.push(ErrorKind::Lint(Lint::ToIdkCast {
-                        expression: find_node_bounds(&expression_clone),
+                        expression: expression_clone.get_source_range(),
                         from_type: PrefetchedType::fetch(from_ptr, types),
                         to_type: PrefetchedType::fetch(to_ptr, types),
                     }));
@@ -1954,7 +1953,7 @@ impl AstVisitor for TypePropagator<'_> {
             if !is_left_ok {
                 self.errors.push(ErrorKind::TypeMismatch {
                     kind: TypeMismatchKind::BinaryOperationLeft(*operation),
-                    value_range: find_node_bounds(&**left),
+                    value_range: left.get_source_range(),
                     expected_types: allowed_types_preserved_left
                         .iter()
                         .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
@@ -1965,7 +1964,7 @@ impl AstVisitor for TypePropagator<'_> {
             if !is_right_ok {
                 self.errors.push(ErrorKind::TypeMismatch {
                     kind: TypeMismatchKind::BinaryOperationRight(*operation),
-                    value_range: find_node_bounds(&**right),
+                    value_range: right.get_source_range(),
                     expected_types: allowed_types_preserved_right
                         .iter()
                         .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
@@ -1983,7 +1982,7 @@ impl AstVisitor for TypePropagator<'_> {
                             .collect(),
                         right_actual_type: PrefetchedType::fetch(right_type, &self.type_sets),
                     },
-                    value_range: find_node_bounds(&expression_clone),
+                    value_range: expression_clone.get_source_range(),
                     expected_types: allowed_types_preserved_left
                         .iter()
                         .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
@@ -2038,9 +2037,9 @@ impl AstVisitor for TypePropagator<'_> {
         if !RuntimeTypeKind::merge_types(left_type, right_type, &mut self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::LValueAssignment {
-                    lvalue: find_node_bounds(&*lvalue),
+                    lvalue: lvalue.get_source_range(),
                 },
-                value_range: find_node_bounds(&**right),
+                value_range: right.get_source_range(),
                 expected_types: vec![PrefetchedType::fetch(left_type, &self.type_sets)],
                 actual_type: PrefetchedType::fetch(right_type, &self.type_sets),
             });
@@ -2092,7 +2091,7 @@ impl AstVisitor for TypePropagator<'_> {
         let RuntimeTypeKind::ArrayOf { subtype, size: _ } = self.type_sets.get(array_type).kind
         else {
             self.errors.push(ErrorKind::ArrayIndexNonArray {
-                value: find_node_bounds(&**array),
+                value: array.get_source_range(),
                 wrong_type: PrefetchedType::fetch(array_type, &self.type_sets),
             });
             let err_type = self.type_sets.insert_set(RuntimeType {
@@ -2114,9 +2113,9 @@ impl AstVisitor for TypePropagator<'_> {
         if !RuntimeTypeKind::merge_types(index_type, expected_type, &mut self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::ArrayIndex {
-                    array: find_node_bounds(&**array),
+                    array: array.get_source_range(),
                 },
-                value_range: find_node_bounds(&**index),
+                value_range: index.get_source_range(),
                 expected_types: vec![PrefetchedType::fetch(expected_type, &self.type_sets)],
                 actual_type: PrefetchedType::fetch(index_type, &self.type_sets),
             });
@@ -2145,7 +2144,7 @@ impl AstVisitor for TypePropagator<'_> {
         else {
             if !matches!(self.type_sets.get(value_type).kind, RuntimeTypeKind::Error) {
                 self.errors.push(ErrorKind::StructAccessNonStruct {
-                    value: find_node_bounds(&**value),
+                    value: value.get_source_range(),
                     wrong_type: PrefetchedType::fetch(value_type, &self.type_sets),
                     member: UnresolvedSymbol::from_token(member_name.clone(), member_name_token),
                 });
@@ -2165,7 +2164,7 @@ impl AstVisitor for TypePropagator<'_> {
         } else {
             self.errors.push(ErrorKind::NonexistentStructMember {
                 struct_type: PrefetchedType::fetch(value_type, &self.type_sets),
-                value: find_node_bounds(&**value),
+                value: value.get_source_range(),
                 member: UnresolvedSymbol::from_token(member_name.clone(), member_name_token),
             });
 
@@ -2249,7 +2248,7 @@ impl AstVisitor for TypePropagator<'_> {
     }
 
     fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
-        let array_type_range = find_node_bounds(&*array_type);
+        let array_type_range = array_type.get_source_range();
         let ArrayType {
             subtype,
             open_bracket_token,
@@ -2280,7 +2279,7 @@ impl AstVisitor for TypePropagator<'_> {
                 self.errors.push(ErrorKind::NonLiteralArrayLength {
                     type_range: array_type_range.clone(),
                     element_type: PrefetchedType::fetch(subtype_t, &self.type_sets),
-                    length_range: find_node_bounds(expr),
+                    length_range: expr.get_source_range(),
                 });
                 None
             }
@@ -2333,7 +2332,7 @@ impl AstVisitor for TypePropagator<'_> {
                 self.errors.push(ErrorKind::StructOfUnit {
                     member: SymbolDefinition::from_token(name.clone(), name_token),
                     type_: PrefetchedType::fetch(subtype, &self.type_sets),
-                    type_range: find_node_bounds(&*type_),
+                    type_range: type_.get_source_range(),
                 });
             }
 

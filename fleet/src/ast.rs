@@ -1,120 +1,55 @@
 use std::{
     collections::HashMap,
+    fmt::Debug,
     ops::{Deref, DerefMut},
 };
 
 use crate::{
     passes::runtime_type::RuntimeType,
-    tokenizer::{FileName, Token},
+    tokenizer::{FileName, NamedSourceRange, SourceRange, Token},
 };
 
 #[derive(Clone, Debug)]
 #[expect(clippy::large_enum_variant)]
 pub enum AstNode {
     Program(Program),
-    FunctionDefinition(FunctionDefinition),
-    TypeAlias(TypeAlias),
-
-    ExternFunctionBody(ExternFunctionBody),
-    StatementFunctionBody(StatementFunctionBody),
-
+    TopLevelStatement(TopLevelStatement),
+    FunctionBody(FunctionBody),
     SimpleBinding(SimpleBinding),
-
-    ExpressionStatement(ExpressionStatement),
-    OnStatement(OnStatement),
-    BlockStatement(BlockStatement),
-    ReturnStatement(ReturnStatement),
-    VariableDefinitionStatement(VariableDefinitionStatement),
-    IfStatement(IfStatement),
-    WhileLoopStatement(WhileLoopStatement),
-    ForLoopStatement(ForLoopStatement),
-    BreakStatement(BreakStatement),
-    SkipStatement(SkipStatement),
-
-    SelfExecutorHost(SelfExecutorHost),
-
-    ThreadExecutor(ThreadExecutor),
-    GPUExecutor(GPUExecutor),
-
-    LiteralExpression(LiteralExpression),
-    ArrayExpression(ArrayExpression),
-    StructExpression(StructExpression),
-    FunctionCallExpression(FunctionCallExpression),
-    CompilerExpression(CompilerExpression),
-    ArrayIndexExpression(ArrayIndexExpression),
-    StructAccessExpression(StructAccessExpression),
-    GroupingExpression(GroupingExpression),
-    VariableAccessExpression(VariableAccessExpression),
-    UnaryExpression(UnaryExpression),
-    CastExpression(CastExpression),
-    BinaryExpression(BinaryExpression),
-    VariableAssignmentExpression(VariableAssignmentExpression),
-
-    VariableLValue(VariableLValue),
-    ArrayIndexLValue(ArrayIndexLValue),
-    StructAccessLValue(StructAccessLValue),
-    GroupingLValue(GroupingLValue),
-
-    SimpleType(SimpleType),
-    UnitType(UnitType),
-    IdkType(IdkType),
-    ArrayType(ArrayType),
-    StructType(StructType),
-    AliasType(AliasType),
+    Statement(Statement),
+    ExecutorHost(ExecutorHost),
+    Executor(Executor),
+    Expression(Expression),
+    LValue(LValue),
+    Type(Type),
 }
 
 #[derive(Copy, Clone, Debug)]
 pub enum AstNodeRef<'a> {
     Program(&'a Program),
-    FunctionDefinition(&'a FunctionDefinition),
-    TypeAlias(&'a TypeAlias),
-
-    ExternFunctionBody(&'a ExternFunctionBody),
-    StatementFunctionBody(&'a StatementFunctionBody),
-
+    TopLevelStatement(&'a TopLevelStatement),
+    FunctionBody(&'a FunctionBody),
     SimpleBinding(&'a SimpleBinding),
+    Statement(&'a Statement),
+    ExecutorHost(&'a ExecutorHost),
+    Executor(&'a Executor),
+    Expression(&'a Expression),
+    LValue(&'a LValue),
+    Type(&'a Type),
+}
 
-    ExpressionStatement(&'a ExpressionStatement),
-    OnStatement(&'a OnStatement),
-    BlockStatement(&'a BlockStatement),
-    ReturnStatement(&'a ReturnStatement),
-    VariableDefinitionStatement(&'a VariableDefinitionStatement),
-    IfStatement(&'a IfStatement),
-    WhileLoopStatement(&'a WhileLoopStatement),
-    ForLoopStatement(&'a ForLoopStatement),
-    BreakStatement(&'a BreakStatement),
-    SkipStatement(&'a SkipStatement),
-
-    SelfExecutorHost(&'a SelfExecutorHost),
-
-    ThreadExecutor(&'a ThreadExecutor),
-    GPUExecutor(&'a GPUExecutor),
-
-    LiteralExpression(&'a LiteralExpression),
-    ArrayExpression(&'a ArrayExpression),
-    StructExpression(&'a StructExpression),
-    FunctionCallExpression(&'a FunctionCallExpression),
-    CompilerExpression(&'a CompilerExpression),
-    ArrayIndexExpression(&'a ArrayIndexExpression),
-    StructAccessExpression(&'a StructAccessExpression),
-    GroupingExpression(&'a GroupingExpression),
-    VariableAccessExpression(&'a VariableAccessExpression),
-    UnaryExpression(&'a UnaryExpression),
-    CastExpression(&'a CastExpression),
-    BinaryExpression(&'a BinaryExpression),
-    VariableAssignmentExpression(&'a VariableAssignmentExpression),
-
-    VariableLValue(&'a VariableLValue),
-    ArrayIndexLValue(&'a ArrayIndexLValue),
-    StructAccessLValue(&'a StructAccessLValue),
-    GroupingLValue(&'a GroupingLValue),
-
-    SimpleType(&'a SimpleType),
-    UnitType(&'a UnitType),
-    IdkType(&'a IdkType),
-    ArrayType(&'a ArrayType),
-    StructType(&'a StructType),
-    AliasType(&'a AliasType),
+#[derive(Debug)]
+pub enum AstNodeRefMut<'a> {
+    Program(&'a mut Program),
+    TopLevelStatement(&'a mut TopLevelStatement),
+    FunctionBody(&'a mut FunctionBody),
+    SimpleBinding(&'a mut SimpleBinding),
+    Statement(&'a mut Statement),
+    ExecutorHost(&'a mut ExecutorHost),
+    Executor(&'a mut Executor),
+    Expression(&'a mut Expression),
+    LValue(&'a mut LValue),
+    Type(&'a mut Type),
 }
 
 impl<'a> From<&'a mut AstNode> for AstNodeRef<'a> {
@@ -127,198 +62,143 @@ impl<'a> From<&'a AstNode> for AstNodeRef<'a> {
     fn from(value: &'a AstNode) -> Self {
         match value {
             AstNode::Program(program) => program.into(),
-            AstNode::FunctionDefinition(function_definition) => function_definition.into(),
-            AstNode::TypeAlias(type_alias) => type_alias.into(),
-            AstNode::ExternFunctionBody(extern_function_body) => extern_function_body.into(),
-            AstNode::StatementFunctionBody(statement_function_body) => {
-                statement_function_body.into()
-            }
+            AstNode::TopLevelStatement(top_level_statement) => top_level_statement.into(),
+            AstNode::FunctionBody(function_body) => function_body.into(),
             AstNode::SimpleBinding(simple_binding) => simple_binding.into(),
-            AstNode::ExpressionStatement(expression_statement) => expression_statement.into(),
-            AstNode::OnStatement(on_statement) => on_statement.into(),
-            AstNode::BlockStatement(block_statement) => block_statement.into(),
-            AstNode::ReturnStatement(return_statement) => return_statement.into(),
-            AstNode::VariableDefinitionStatement(variable_definition_statement) => {
-                variable_definition_statement.into()
-            }
-            AstNode::IfStatement(if_statement) => if_statement.into(),
-            AstNode::WhileLoopStatement(while_loop_statement) => while_loop_statement.into(),
-            AstNode::ForLoopStatement(for_loop_statement) => for_loop_statement.into(),
-            AstNode::BreakStatement(break_statement) => break_statement.into(),
-            AstNode::SkipStatement(skip_statement) => skip_statement.into(),
-            AstNode::SelfExecutorHost(self_executor_host) => self_executor_host.into(),
-            AstNode::ThreadExecutor(thread_executor) => thread_executor.into(),
-            AstNode::GPUExecutor(gpuexecutor) => gpuexecutor.into(),
-            AstNode::LiteralExpression(literal_expression) => literal_expression.into(),
-            AstNode::ArrayExpression(array_expression) => array_expression.into(),
-            AstNode::StructExpression(struct_expression) => struct_expression.into(),
-            AstNode::FunctionCallExpression(function_call_expression) => {
-                function_call_expression.into()
-            }
-            AstNode::CompilerExpression(compiler_expression) => compiler_expression.into(),
-            AstNode::ArrayIndexExpression(array_index_expression) => array_index_expression.into(),
-            AstNode::StructAccessExpression(struct_access_expression) => {
-                struct_access_expression.into()
-            }
-            AstNode::GroupingExpression(grouping_expression) => grouping_expression.into(),
-            AstNode::VariableAccessExpression(variable_access_expression) => {
-                variable_access_expression.into()
-            }
-            AstNode::UnaryExpression(unary_expression) => unary_expression.into(),
-            AstNode::CastExpression(cast_expression) => cast_expression.into(),
-            AstNode::BinaryExpression(binary_expression) => binary_expression.into(),
-            AstNode::VariableAssignmentExpression(variable_assignment_expression) => {
-                variable_assignment_expression.into()
-            }
-            AstNode::VariableLValue(variable_lvalue) => variable_lvalue.into(),
-            AstNode::ArrayIndexLValue(array_index_lvalue) => array_index_lvalue.into(),
-            AstNode::StructAccessLValue(struct_access_lvalue) => struct_access_lvalue.into(),
-            AstNode::GroupingLValue(grouping_lvalue) => grouping_lvalue.into(),
-            AstNode::SimpleType(simple_type) => simple_type.into(),
-            AstNode::UnitType(unit_type) => unit_type.into(),
-            AstNode::IdkType(idk_type) => idk_type.into(),
-            AstNode::ArrayType(array_type) => array_type.into(),
-            AstNode::StructType(struct_type) => struct_type.into(),
-            AstNode::AliasType(alias_type) => alias_type.into(),
+            AstNode::Statement(statement) => statement.into(),
+            AstNode::ExecutorHost(executor_host) => executor_host.into(),
+            AstNode::Executor(executor) => executor.into(),
+            AstNode::Expression(expression) => expression.into(),
+            AstNode::LValue(lvalue) => lvalue.into(),
+            AstNode::Type(ty) => ty.into(),
         }
     }
 }
 
-impl AstNode {
-    pub fn visit(&mut self, visitor: &mut impl AstVisitor) {
-        match self {
-            AstNode::Program(_program) => {
-                unimplemented!("AstNode::visit isn't implemented for AstNode::Program")
+impl<'a> From<&'a mut AstNode> for AstNodeRefMut<'a> {
+    fn from(value: &'a mut AstNode) -> Self {
+        match value {
+            AstNode::Program(program) => program.into(),
+            AstNode::TopLevelStatement(top_level_statement) => top_level_statement.into(),
+            AstNode::FunctionBody(function_body) => function_body.into(),
+            AstNode::SimpleBinding(simple_binding) => simple_binding.into(),
+            AstNode::Statement(statement) => statement.into(),
+            AstNode::ExecutorHost(executor_host) => executor_host.into(),
+            AstNode::Executor(executor) => executor.into(),
+            AstNode::Expression(expression) => expression.into(),
+            AstNode::LValue(lvalue) => lvalue.into(),
+            AstNode::Type(ty) => ty.into(),
+        }
+    }
+}
+
+impl<'a> From<AstNodeRefMut<'a>> for AstNodeRef<'a> {
+    fn from(value: AstNodeRefMut<'a>) -> Self {
+        match value {
+            AstNodeRefMut::Program(program) => AstNodeRef::Program(program),
+            AstNodeRefMut::TopLevelStatement(top_level_statement) => {
+                AstNodeRef::TopLevelStatement(top_level_statement)
             }
-            AstNode::FunctionDefinition(function_definition) => {
-                visitor.visit_function_definition(function_definition);
+            AstNodeRefMut::FunctionBody(function_body) => AstNodeRef::FunctionBody(function_body),
+            AstNodeRefMut::SimpleBinding(simple_binding) => {
+                AstNodeRef::SimpleBinding(simple_binding)
             }
-            AstNode::TypeAlias(type_alias) => {
-                visitor.visit_type_alias(type_alias);
+            AstNodeRefMut::Statement(statement) => AstNodeRef::Statement(statement),
+            AstNodeRefMut::ExecutorHost(executor_host) => AstNodeRef::ExecutorHost(executor_host),
+            AstNodeRefMut::Executor(executor) => AstNodeRef::Executor(executor),
+            AstNodeRefMut::Expression(expression) => AstNodeRef::Expression(expression),
+            AstNodeRefMut::LValue(lvalue) => AstNodeRef::LValue(lvalue),
+            AstNodeRefMut::Type(ty) => AstNodeRef::Type(ty),
+        }
+    }
+}
+impl<'a, 'b> From<&'b AstNodeRefMut<'a>> for AstNodeRef<'a>
+where
+    'b: 'a,
+{
+    fn from(value: &'b AstNodeRefMut<'a>) -> Self {
+        match value {
+            AstNodeRefMut::Program(program) => AstNodeRef::Program(program),
+            AstNodeRefMut::TopLevelStatement(top_level_statement) => {
+                AstNodeRef::TopLevelStatement(top_level_statement)
             }
-            AstNode::ExternFunctionBody(extern_function_body) => {
-                visitor.visit_extern_function_body(extern_function_body);
+            AstNodeRefMut::FunctionBody(function_body) => AstNodeRef::FunctionBody(function_body),
+            AstNodeRefMut::SimpleBinding(simple_binding) => {
+                AstNodeRef::SimpleBinding(simple_binding)
             }
-            AstNode::StatementFunctionBody(statement_function_body) => {
-                visitor.visit_statement_function_body(statement_function_body);
-            }
-            AstNode::SimpleBinding(simple_binding) => {
-                visitor.visit_simple_binding(simple_binding);
-            }
-            AstNode::ExpressionStatement(expression_statement) => {
-                visitor.visit_expression_statement(expression_statement);
-            }
-            AstNode::OnStatement(on_statement) => {
-                visitor.visit_on_statement(on_statement);
-            }
-            AstNode::BlockStatement(block_statement) => {
-                visitor.visit_block_statement(block_statement);
-            }
-            AstNode::ReturnStatement(return_statement) => {
-                visitor.visit_return_statement(return_statement);
-            }
-            AstNode::VariableDefinitionStatement(variable_definition_statement) => {
-                visitor.visit_variable_definition_statement(variable_definition_statement);
-            }
-            AstNode::IfStatement(if_statement) => {
-                visitor.visit_if_statement(if_statement);
-            }
-            AstNode::WhileLoopStatement(while_loop_statement) => {
-                visitor.visit_while_loop_statement(while_loop_statement);
-            }
-            AstNode::ForLoopStatement(for_loop_statement) => {
-                visitor.visit_for_loop_statement(for_loop_statement);
-            }
-            AstNode::BreakStatement(break_statement) => {
-                visitor.visit_break_statement(break_statement);
-            }
-            AstNode::SkipStatement(skip_statement) => {
-                visitor.visit_skip_statement(skip_statement);
-            }
-            AstNode::SelfExecutorHost(self_executor_host) => {
-                visitor.visit_self_executor_host(self_executor_host);
-            }
-            AstNode::ThreadExecutor(thread_executor) => {
-                visitor.visit_thread_executor(thread_executor);
-            }
-            AstNode::GPUExecutor(gpuexecutor) => {
-                visitor.visit_gpu_executor(gpuexecutor);
-            }
-            AstNode::LiteralExpression(literal_expression) => {
-                visitor.visit_literal_expression(literal_expression);
-            }
-            AstNode::ArrayExpression(array_expression) => {
-                visitor.visit_array_expression(array_expression);
-            }
-            AstNode::StructExpression(struct_expression) => {
-                visitor.visit_struct_expression(struct_expression);
-            }
-            AstNode::FunctionCallExpression(function_call_expression) => {
-                visitor.visit_function_call_expression(function_call_expression);
-            }
-            AstNode::CompilerExpression(compiler_expression) => {
-                visitor.visit_compiler_expression(compiler_expression);
-            }
-            AstNode::ArrayIndexExpression(array_index_expression) => {
-                visitor.visit_array_index_expression(array_index_expression);
-            }
-            AstNode::StructAccessExpression(struct_access_expression) => {
-                visitor.visit_struct_access_expression(struct_access_expression);
-            }
-            AstNode::GroupingExpression(grouping_expression) => {
-                visitor.visit_grouping_expression(grouping_expression);
-            }
-            AstNode::VariableAccessExpression(variable_access_expression) => {
-                visitor.visit_variable_access_expression(variable_access_expression);
-            }
-            AstNode::UnaryExpression(unary_expression) => {
-                visitor.visit_unary_expression(unary_expression);
-            }
-            AstNode::CastExpression(cast_expression) => {
-                visitor.visit_cast_expression(cast_expression);
-            }
-            AstNode::BinaryExpression(binary_expression) => {
-                visitor.visit_binary_expression(binary_expression);
-            }
-            AstNode::VariableAssignmentExpression(variable_assignment_expression) => {
-                visitor.visit_variable_assignment_expression(variable_assignment_expression);
-            }
-            AstNode::VariableLValue(variable_lvalue) => {
-                visitor.visit_variable_lvalue(variable_lvalue);
-            }
-            AstNode::ArrayIndexLValue(array_index_lvalue) => {
-                visitor.visit_array_index_lvalue(array_index_lvalue);
-            }
-            AstNode::StructAccessLValue(struct_access_lvalue) => {
-                visitor.visit_struct_access_lvalue(struct_access_lvalue);
-            }
-            AstNode::GroupingLValue(grouping_lvalue) => {
-                visitor.visit_grouping_lvalue(grouping_lvalue);
-            }
-            AstNode::SimpleType(simple_type) => {
-                visitor.visit_simple_type(simple_type);
-            }
-            AstNode::UnitType(unit_type) => {
-                visitor.visit_unit_type(unit_type);
-            }
-            AstNode::IdkType(idk_type) => {
-                visitor.visit_idk_type(idk_type);
-            }
-            AstNode::ArrayType(array_type) => {
-                visitor.visit_array_type(array_type);
-            }
-            AstNode::StructType(struct_type) => {
-                visitor.visit_struct_type(struct_type);
-            }
-            AstNode::AliasType(alias_type) => {
-                visitor.visit_alias_type(alias_type);
-            }
+            AstNodeRefMut::Statement(statement) => AstNodeRef::Statement(statement),
+            AstNodeRefMut::ExecutorHost(executor_host) => AstNodeRef::ExecutorHost(executor_host),
+            AstNodeRefMut::Executor(executor) => AstNodeRef::Executor(executor),
+            AstNodeRefMut::Expression(expression) => AstNodeRef::Expression(expression),
+            AstNodeRefMut::LValue(lvalue) => AstNodeRef::LValue(lvalue),
+            AstNodeRefMut::Type(ty) => AstNodeRef::Type(ty),
         }
     }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct NodeID(pub u64);
+
+pub trait HasSourceRange {
+    fn get_source_range(&self) -> NamedSourceRange;
+}
+
+impl HasSourceRange for AstNode {
+    fn get_source_range(&self) -> NamedSourceRange {
+        AstNodeRef::from(self).get_source_range()
+    }
+}
+
+impl<T> HasSourceRange for Box<T>
+where
+    T: HasSourceRange,
+{
+    fn get_source_range(&self) -> NamedSourceRange {
+        self.as_ref().get_source_range()
+    }
+}
+
+impl<T> HasSourceRange for &T
+where
+    T: HasSourceRange,
+{
+    fn get_source_range(&self) -> NamedSourceRange {
+        (*self).get_source_range()
+    }
+}
+impl<T> HasSourceRange for &mut T
+where
+    T: HasSourceRange,
+{
+    fn get_source_range(&self) -> NamedSourceRange {
+        (**self).get_source_range()
+    }
+}
+
+impl<'a> HasSourceRange for AstNodeRef<'a> {
+    fn get_source_range(&self) -> NamedSourceRange {
+        match self {
+            AstNodeRef::Program(program) => program.get_source_range(),
+            AstNodeRef::TopLevelStatement(top_level_statement) => {
+                top_level_statement.get_source_range()
+            }
+            AstNodeRef::FunctionBody(function_body) => function_body.get_source_range(),
+            AstNodeRef::SimpleBinding(simple_binding) => simple_binding.get_source_range(),
+            AstNodeRef::Statement(statement) => statement.get_source_range(),
+            AstNodeRef::ExecutorHost(executor_host) => executor_host.get_source_range(),
+            AstNodeRef::Executor(executor) => executor.get_source_range(),
+            AstNodeRef::Expression(expression) => expression.get_source_range(),
+            AstNodeRef::LValue(lvalue) => lvalue.get_source_range(),
+            AstNodeRef::Type(ty) => ty.get_source_range(),
+        }
+    }
+}
+
+impl<'a> HasSourceRange for AstNodeRefMut<'a> {
+    fn get_source_range(&self) -> NamedSourceRange {
+        AstNodeRef::from(self).get_source_range()
+    }
+}
 
 pub trait HasID {
     fn get_id(&self) -> NodeID;
@@ -332,69 +212,7 @@ impl HasID for NodeID {
 
 impl HasID for AstNode {
     fn get_id(&self) -> NodeID {
-        match self {
-            AstNode::Program(program) => program.get_id(),
-            AstNode::FunctionDefinition(function_definition) => function_definition.get_id(),
-            AstNode::TypeAlias(type_alias) => type_alias.get_id(),
-
-            AstNode::ExternFunctionBody(extern_function_body) => extern_function_body.get_id(),
-            AstNode::StatementFunctionBody(statement_function_body) => {
-                statement_function_body.get_id()
-            }
-
-            AstNode::SimpleBinding(simple_binding) => simple_binding.get_id(),
-
-            AstNode::SelfExecutorHost(executor_host) => executor_host.get_id(),
-            AstNode::ThreadExecutor(executor) => executor.get_id(),
-            AstNode::GPUExecutor(executor) => executor.get_id(),
-
-            AstNode::ExpressionStatement(expression_statement) => expression_statement.get_id(),
-            AstNode::OnStatement(on_statement) => on_statement.get_id(),
-            AstNode::BlockStatement(block_statement) => block_statement.get_id(),
-            AstNode::ReturnStatement(return_statement) => return_statement.get_id(),
-            AstNode::VariableDefinitionStatement(vardef) => vardef.get_id(),
-            AstNode::IfStatement(if_statement) => if_statement.get_id(),
-            AstNode::WhileLoopStatement(while_loop_statement) => while_loop_statement.get_id(),
-            AstNode::ForLoopStatement(for_loop_statement) => for_loop_statement.get_id(),
-            AstNode::BreakStatement(break_statement) => break_statement.get_id(),
-            AstNode::SkipStatement(skip_statement) => skip_statement.get_id(),
-
-            AstNode::LiteralExpression(literal_expression) => literal_expression.get_id(),
-            AstNode::ArrayExpression(array_expression) => array_expression.get_id(),
-            AstNode::StructExpression(struct_expression) => struct_expression.get_id(),
-            AstNode::FunctionCallExpression(function_call_expression) => {
-                function_call_expression.get_id()
-            }
-            AstNode::CompilerExpression(compiler_expression) => compiler_expression.get_id(),
-            AstNode::ArrayIndexExpression(array_index_expression) => {
-                array_index_expression.get_id()
-            }
-            AstNode::StructAccessExpression(struct_access_expression) => {
-                struct_access_expression.get_id()
-            }
-            AstNode::GroupingExpression(grouping_expression) => grouping_expression.get_id(),
-            AstNode::VariableAccessExpression(variable_access_expression) => {
-                variable_access_expression.get_id()
-            }
-            AstNode::UnaryExpression(unary_expression) => unary_expression.get_id(),
-            AstNode::CastExpression(cast_expression) => cast_expression.get_id(),
-            AstNode::BinaryExpression(binary_expression) => binary_expression.get_id(),
-            AstNode::VariableAssignmentExpression(variable_assignment_expression) => {
-                variable_assignment_expression.get_id()
-            }
-
-            AstNode::VariableLValue(var_lvalue) => var_lvalue.get_id(),
-            AstNode::ArrayIndexLValue(array_lvalue) => array_lvalue.get_id(),
-            AstNode::StructAccessLValue(struct_lvalue) => struct_lvalue.get_id(),
-            AstNode::GroupingLValue(grouping_lvalue) => grouping_lvalue.get_id(),
-
-            AstNode::SimpleType(simple_type) => simple_type.get_id(),
-            AstNode::UnitType(unit_type) => unit_type.get_id(),
-            AstNode::IdkType(idk_type) => idk_type.get_id(),
-            AstNode::ArrayType(array_type) => array_type.get_id(),
-            AstNode::StructType(struct_type) => struct_type.get_id(),
-            AstNode::AliasType(alias_type) => alias_type.get_id(),
-        }
+        AstNodeRef::from(self).get_id()
     }
 }
 
@@ -402,72 +220,61 @@ impl<'a> HasID for AstNodeRef<'a> {
     fn get_id(&self) -> NodeID {
         match self {
             AstNodeRef::Program(program) => program.get_id(),
-            AstNodeRef::FunctionDefinition(function_definition) => function_definition.get_id(),
-            AstNodeRef::TypeAlias(type_alias) => type_alias.get_id(),
-
-            AstNodeRef::ExternFunctionBody(extern_function_body) => extern_function_body.get_id(),
-            AstNodeRef::StatementFunctionBody(statement_function_body) => {
-                statement_function_body.get_id()
-            }
-
+            AstNodeRef::TopLevelStatement(top_level_statement) => top_level_statement.get_id(),
+            AstNodeRef::FunctionBody(function_body) => function_body.get_id(),
             AstNodeRef::SimpleBinding(simple_binding) => simple_binding.get_id(),
-
-            AstNodeRef::SelfExecutorHost(executor_host) => executor_host.get_id(),
-            AstNodeRef::ThreadExecutor(executor) => executor.get_id(),
-            AstNodeRef::GPUExecutor(executor) => executor.get_id(),
-
-            AstNodeRef::ExpressionStatement(expression_statement) => expression_statement.get_id(),
-            AstNodeRef::OnStatement(on_statement) => on_statement.get_id(),
-            AstNodeRef::BlockStatement(block_statement) => block_statement.get_id(),
-            AstNodeRef::ReturnStatement(return_statement) => return_statement.get_id(),
-            AstNodeRef::VariableDefinitionStatement(vardef) => vardef.get_id(),
-            AstNodeRef::IfStatement(if_statement) => if_statement.get_id(),
-            AstNodeRef::WhileLoopStatement(while_loop_statement) => while_loop_statement.get_id(),
-            AstNodeRef::ForLoopStatement(for_loop_statement) => for_loop_statement.get_id(),
-            AstNodeRef::BreakStatement(break_statement) => break_statement.get_id(),
-            AstNodeRef::SkipStatement(skip_statement) => skip_statement.get_id(),
-
-            AstNodeRef::LiteralExpression(literal_expression) => literal_expression.get_id(),
-            AstNodeRef::ArrayExpression(array_expression) => array_expression.get_id(),
-            AstNodeRef::StructExpression(struct_expression) => struct_expression.get_id(),
-            AstNodeRef::FunctionCallExpression(function_call_expression) => {
-                function_call_expression.get_id()
-            }
-            AstNodeRef::CompilerExpression(compiler_expression) => compiler_expression.get_id(),
-            AstNodeRef::ArrayIndexExpression(array_index_expression) => {
-                array_index_expression.get_id()
-            }
-            AstNodeRef::StructAccessExpression(struct_access_expression) => {
-                struct_access_expression.get_id()
-            }
-            AstNodeRef::GroupingExpression(grouping_expression) => grouping_expression.get_id(),
-            AstNodeRef::VariableAccessExpression(variable_access_expression) => {
-                variable_access_expression.get_id()
-            }
-            AstNodeRef::UnaryExpression(unary_expression) => unary_expression.get_id(),
-            AstNodeRef::CastExpression(cast_expression) => cast_expression.get_id(),
-            AstNodeRef::BinaryExpression(binary_expression) => binary_expression.get_id(),
-            AstNodeRef::VariableAssignmentExpression(variable_assignment_expression) => {
-                variable_assignment_expression.get_id()
-            }
-
-            AstNodeRef::VariableLValue(var_lvalue) => var_lvalue.get_id(),
-            AstNodeRef::ArrayIndexLValue(array_lvalue) => array_lvalue.get_id(),
-            AstNodeRef::StructAccessLValue(struct_lvalue) => struct_lvalue.get_id(),
-            AstNodeRef::GroupingLValue(grouping_lvalue) => grouping_lvalue.get_id(),
-
-            AstNodeRef::SimpleType(simple_type) => simple_type.get_id(),
-            AstNodeRef::UnitType(unit_type) => unit_type.get_id(),
-            AstNodeRef::IdkType(idk_type) => idk_type.get_id(),
-            AstNodeRef::ArrayType(array_type) => array_type.get_id(),
-            AstNodeRef::StructType(struct_type) => struct_type.get_id(),
-            AstNodeRef::AliasType(alias_type) => alias_type.get_id(),
+            AstNodeRef::Statement(statement) => statement.get_id(),
+            AstNodeRef::ExecutorHost(executor_host) => executor_host.get_id(),
+            AstNodeRef::Executor(executor) => executor.get_id(),
+            AstNodeRef::Expression(expression) => expression.get_id(),
+            AstNodeRef::LValue(lvalue) => lvalue.get_id(),
+            AstNodeRef::Type(ty) => ty.get_id(),
         }
     }
 }
 
+impl<'a> HasID for AstNodeRefMut<'a> {
+    fn get_id(&self) -> NodeID {
+        AstNodeRef::from(self).get_id()
+    }
+}
+
 macro_rules! impl_enum_node {
-    { $Self:tt $(, $variant:ident)* $(,)? } => {
+    {
+        $(
+            #[$($attr:tt)*]
+        )*
+        $visib:vis enum $Self:ident {
+            $(
+                $variant:ident($Subtype:ty),
+            )*
+        }
+    } => {
+        $(
+            #[$($attr)*]
+        )*
+        $visib enum $Self {
+            $(
+                $variant($Subtype),
+            )*
+        }
+
+        $(
+            impl From<$Subtype> for $Self {
+                fn from(value: $Subtype) -> $Self {
+                    $Self::$variant(value)
+                }
+            }
+        )*
+
+        $(
+            impl From<$Subtype> for AstNode {
+                fn from(value: $Subtype) -> AstNode {
+                    AstNode::$Self($Self::$variant(value))
+                }
+            }
+        )*
+
         impl HasID for $Self {
             fn get_id(&self) -> NodeID {
                 match self {
@@ -478,88 +285,128 @@ macro_rules! impl_enum_node {
             }
         }
 
-        impl From<$Self> for AstNode {
-            fn from(value: $Self) -> Self {
-                match value {
+        impl HasSourceRange for $Self {
+            fn get_source_range(&self) -> NamedSourceRange {
+                match self {
                     $(
-                        $Self::$variant (value) => value.into(),
+                        $Self::$variant (value) => value.get_source_range(),
                     )*
                 }
             }
         }
 
-        impl<'a> From<&'a $Self> for AstNodeRef<'a> {
-            fn from(value: &'a $Self) -> Self {
-                match value {
-                    $(
-                        $Self::$variant (value) => value.into(),
-                    )*
-                }
-            }
-        }
-
-        impl<'a> From<&'a mut $Self> for AstNodeRef<'a> {
-            fn from(value: &'a mut $Self) -> Self {
-                match value {
-                    $(
-                        $Self::$variant (value) => value.into(),
-                    )*
-                }
-            }
-        }
-
+        generate_ast_requirements!($Self);
     };
 }
-
-macro_rules! generate_ast_requirements {
-    ($Self:tt, $unwrap_name:ident) => {
-        impl AstNode {
-            pub fn $unwrap_name(self) -> $Self {
-                if let AstNode::$Self(contents) = self {
-                    contents
-                } else {
-                    panic!("Expected AstNode::{}, found {:#?}", stringify!($Self), self)
-                }
-            }
-        }
-
-        impl<'a> AstNodeRef<'a> {
-            pub fn $unwrap_name(self) -> &'a $Self {
-                if let AstNodeRef::$Self(contents) = self {
-                    contents
-                } else {
-                    panic!(
-                        "Expected AstNodeRef::{}, found {:#?}",
-                        stringify!($Self),
-                        self
-                    )
-                }
-            }
-        }
-
+macro_rules! impl_struct_node {
+    { $Self:tt, $unwrap_name:ident} => {
         impl HasID for $Self {
             fn get_id(&self) -> NodeID {
                 self.id
             }
         }
 
+        generate_ast_requirements!($Self);
+    }
+}
+
+macro_rules! impl_enum_variant {
+    { $Self:tt } => {
+        impl HasID for $Self {
+            fn get_id(&self) -> NodeID {
+                self.id
+            }
+        }
+    }
+}
+
+macro_rules! generate_ast_requirements {
+    ($Self:tt) => {
         impl From<$Self> for AstNode {
             fn from(value: $Self) -> Self {
-                Self::$Self(value)
+                AstNode::$Self(value)
+            }
+        }
+
+        impl From<Box<$Self>> for AstNode {
+            fn from(value: Box<$Self>) -> Self {
+                (*value).into()
             }
         }
 
         impl<'a> From<&'a $Self> for AstNodeRef<'a> {
             fn from(value: &'a $Self) -> Self {
-                Self::$Self(value)
+                AstNodeRef::$Self(value)
             }
         }
 
         impl<'a> From<&'a mut $Self> for AstNodeRef<'a> {
             fn from(value: &'a mut $Self) -> Self {
-                Self::$Self(value)
+                (&*value).into()
             }
         }
+
+        impl<'a> From<&'a Box<$Self>> for AstNodeRef<'a> {
+            fn from(value: &'a Box<$Self>) -> Self {
+                value.as_ref().into()
+            }
+        }
+
+        impl<'a> From<&'a mut Box<$Self>> for AstNodeRef<'a> {
+            fn from(value: &'a mut Box<$Self>) -> Self {
+                AstNodeRef::$Self(value)
+            }
+        }
+
+        impl<'a> From<&'a mut $Self> for AstNodeRefMut<'a> {
+            fn from(value: &'a mut $Self) -> Self {
+                AstNodeRefMut::$Self(value)
+            }
+        }
+
+        impl<'a> From<&'a mut Box<$Self>> for AstNodeRefMut<'a> {
+            fn from(value: &'a mut Box<$Self>) -> Self {
+                value.as_mut().into()
+            }
+        }
+
+        // impl AstNode {
+        //     pub fn $unwrap_name(self) -> $Self {
+        //         if let AstNode::$Self(contents) = self {
+        //             contents
+        //         } else {
+        //             panic!("Expected AstNode::{}, found {:#?}", stringify!($Self), self)
+        //         }
+        //     }
+        // }
+        //
+        // impl<'a> AstNodeRef<'a> {
+        //     pub fn $unwrap_name(self) -> &'a $Self {
+        //         if let AstNodeRef::$Self(contents) = self {
+        //             contents
+        //         } else {
+        //             panic!(
+        //                 "Expected AstNodeRef::{}, found {:#?}",
+        //                 stringify!($Self),
+        //                 self
+        //             )
+        //         }
+        //     }
+        // }
+        //
+        // impl<'a> AstNodeRefMut<'a> {
+        //     pub fn $unwrap_name(self) -> &'a $Self {
+        //         if let AstNodeRefMut::$Self(contents) = self {
+        //             contents
+        //         } else {
+        //             panic!(
+        //                 "Expected AstNodeRefMut::{}, found {:#?}",
+        //                 stringify!($Self),
+        //                 self
+        //             )
+        //         }
+        //     }
+        // }
     };
 }
 
@@ -578,7 +425,7 @@ pub trait AstVisitor {
     fn visit_program(self, program: &mut Program) -> Self::ProgramOutput;
     fn visit_top_level_statement(&mut self, tls: &mut TopLevelStatement) -> Self::TopLevelOutput {
         match tls {
-            TopLevelStatement::Function(function_definition) => {
+            TopLevelStatement::FunctionDefinition(function_definition) => {
                 self.visit_function_definition(function_definition)
             }
             TopLevelStatement::TypeAlias(type_alias) => self.visit_type_alias(type_alias),
@@ -826,29 +673,22 @@ pub struct Program {
 
     pub file_name: FileName,
 }
-generate_ast_requirements!(Program, unwrap_program);
+impl_struct_node!(Program, unwrap_program);
 
-#[derive(Clone, Debug)]
-#[expect(clippy::large_enum_variant)]
-pub enum TopLevelStatement {
-    Function(FunctionDefinition),
-    TypeAlias(TypeAlias),
+impl HasSourceRange for Program {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let Program {
+            top_level_statements,
+            id: _,
+            file_name,
+        } = self;
+        top_level_statements
+            .iter()
+            .map(HasSourceRange::get_source_range)
+            .reduce(|a, b| a.extend_with(b))
+            .unwrap_or(SourceRange::empty_start().named(file_name.clone()))
+    }
 }
-
-impl_enum_node! {
-    TopLevelStatement,
-    Function,
-    TypeAlias,
-}
-
-#[derive(Clone, Debug)]
-pub struct SimpleBinding {
-    pub name_token: Token,
-    pub name: String,
-    pub type_: Option<(Token, Type)>,
-    pub id: NodeID,
-}
-generate_ast_requirements!(SimpleBinding, unwrap_simple_binding);
 
 #[derive(Clone, Debug)]
 pub struct FunctionDefinition {
@@ -866,7 +706,26 @@ pub struct FunctionDefinition {
 
     pub id: NodeID,
 }
-generate_ast_requirements!(FunctionDefinition, unwrap_function_definition);
+impl_enum_variant!(FunctionDefinition);
+
+impl HasSourceRange for FunctionDefinition {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let FunctionDefinition {
+            let_token,
+            name: _,
+            name_token: _,
+            equal_token: _,
+            open_paren_token: _,
+            parameters: _,
+            close_paren_token: _,
+            right_arrow_token: _,
+            return_type: _,
+            body,
+            id: _,
+        } = self;
+        let_token.range.clone().extend_with(body.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct TypeAlias {
@@ -878,7 +737,60 @@ pub struct TypeAlias {
     pub semicolon_token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(TypeAlias, unwrap_type_alias);
+impl_enum_variant!(TypeAlias);
+
+impl HasSourceRange for TypeAlias {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let TypeAlias {
+            let_token,
+            name: _,
+            name_token: _,
+            equal_token: _,
+            type_: _,
+            semicolon_token,
+            id: _,
+        } = self;
+        let_token
+            .range
+            .clone()
+            .extend_with(semicolon_token.range.clone())
+    }
+}
+
+impl_enum_node! {
+    #[derive(Clone, Debug)]
+    #[expect(clippy::large_enum_variant)]
+    pub enum TopLevelStatement {
+        FunctionDefinition(FunctionDefinition),
+        TypeAlias(TypeAlias),
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SimpleBinding {
+    pub name_token: Token,
+    pub name: String,
+    pub type_: Option<(Token, Type)>,
+    pub id: NodeID,
+}
+impl_struct_node!(SimpleBinding, unwrap_simple_binding);
+
+impl HasSourceRange for SimpleBinding {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let SimpleBinding {
+            name_token,
+            name: _,
+            type_,
+            id: _,
+        } = self;
+
+        name_token.range.clone().maybe_extend(
+            type_
+                .as_ref()
+                .map(|(_colon, type_)| type_.get_source_range()),
+        )
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ExternFunctionBody {
@@ -889,25 +801,46 @@ pub struct ExternFunctionBody {
     pub semicolon_token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(ExternFunctionBody, unwrap_extern_function_body);
+impl_enum_variant!(ExternFunctionBody);
+
+impl HasSourceRange for ExternFunctionBody {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let ExternFunctionBody {
+            at_token,
+            extern_token: _,
+            symbol: _,
+            symbol_token: _,
+            semicolon_token,
+            id: _,
+        } = self;
+        at_token
+            .range
+            .clone()
+            .extend_with(semicolon_token.range.clone())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct StatementFunctionBody {
     pub statement: Statement,
     pub id: NodeID,
 }
-generate_ast_requirements!(StatementFunctionBody, unwrap_statement_function_body);
+impl_enum_variant!(StatementFunctionBody);
 
-#[derive(Clone, Debug)]
-pub enum FunctionBody {
-    Statement(StatementFunctionBody),
-    Extern(ExternFunctionBody),
+impl HasSourceRange for StatementFunctionBody {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let StatementFunctionBody { statement, id: _ } = self;
+
+        statement.get_source_range()
+    }
 }
 
 impl_enum_node! {
-    FunctionBody,
-    Statement,
-    Extern,
+    #[derive(Clone, Debug)]
+    pub enum FunctionBody {
+        Statement(StatementFunctionBody),
+        Extern(ExternFunctionBody),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -917,7 +850,18 @@ pub struct SimpleType {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(SimpleType, unwrap_simple_type);
+impl_enum_variant!(SimpleType);
+
+impl HasSourceRange for SimpleType {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let SimpleType {
+            token,
+            type_: _,
+            id: _,
+        } = self;
+        token.range.clone().extend_with(token.range.clone())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct UnitType {
@@ -926,7 +870,21 @@ pub struct UnitType {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(UnitType, unwrap_unit_type);
+impl_enum_variant!(UnitType);
+
+impl HasSourceRange for UnitType {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let UnitType {
+            open_paren_token,
+            close_paren_token,
+            id: _,
+        } = self;
+        open_paren_token
+            .range
+            .clone()
+            .extend_with(close_paren_token.range.clone())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct IdkType {
@@ -934,7 +892,14 @@ pub struct IdkType {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(IdkType, unwrap_idk_type);
+impl_enum_variant!(IdkType);
+
+impl HasSourceRange for IdkType {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let IdkType { token, id: _ } = self;
+        token.range.clone()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ArrayType {
@@ -945,7 +910,23 @@ pub struct ArrayType {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(ArrayType, unwrap_array_type);
+impl_enum_variant!(ArrayType);
+
+impl HasSourceRange for ArrayType {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let ArrayType {
+            subtype,
+            open_bracket_token: _,
+            size: _,
+            close_bracket_token,
+            id: _,
+        } = self;
+        close_bracket_token
+            .range
+            .clone()
+            .extend_with(subtype.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct StructMemberDefinition {
@@ -964,7 +945,23 @@ pub struct StructType {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(StructType, unwrap_struct_type);
+impl_enum_variant!(StructType);
+
+impl HasSourceRange for StructType {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let StructType {
+            struct_token,
+            open_brace_token: _,
+            members: _,
+            close_brace_token,
+            id: _,
+        } = self;
+        struct_token
+            .range
+            .clone()
+            .extend_with(close_brace_token.range.clone())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct AliasType {
@@ -973,26 +970,29 @@ pub struct AliasType {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(AliasType, unwrap_alias_type);
+impl_enum_variant!(AliasType);
 
-#[derive(Clone, Debug)]
-pub enum Type {
-    Simple(SimpleType),
-    Unit(UnitType),
-    Idk(IdkType),
-    Array(ArrayType),
-    Struct(StructType),
-    Alias(AliasType),
+impl HasSourceRange for AliasType {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let AliasType {
+            name: _,
+            name_token,
+            id: _,
+        } = self;
+        name_token.range.clone()
+    }
 }
 
 impl_enum_node! {
-    Type,
-    Simple,
-    Unit,
-    Idk,
-    Array,
-    Struct,
-    Alias,
+    #[derive(Clone, Debug)]
+    pub enum Type {
+        Simple(SimpleType),
+        Unit(UnitType),
+        Idk(IdkType),
+        Array(ArrayType),
+        Struct(StructType),
+        Alias(AliasType),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1001,7 +1001,20 @@ pub struct ExpressionStatement {
     pub semicolon_token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(ExpressionStatement, unwrap_expression_statement);
+impl_enum_variant!(ExpressionStatement);
+impl HasSourceRange for ExpressionStatement {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let ExpressionStatement {
+            expression,
+            semicolon_token,
+            id: _,
+        } = self;
+        semicolon_token
+            .range
+            .clone()
+            .extend_with(expression.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct OnStatementIterator {
@@ -1023,7 +1036,22 @@ pub struct OnStatement {
     pub body: Box<Statement>,
     pub id: NodeID,
 }
-generate_ast_requirements!(OnStatement, unwrap_or_statement);
+impl_enum_variant!(OnStatement);
+impl HasSourceRange for OnStatement {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let OnStatement {
+            on_token,
+            executor: _,
+            iterators: _,
+            open_paren_token: _,
+            bindings: _,
+            close_paren_token: _,
+            body,
+            id: _,
+        } = self;
+        on_token.range.clone().extend_with(body.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct BlockStatement {
@@ -1032,7 +1060,21 @@ pub struct BlockStatement {
     pub close_brace_token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(BlockStatement, unwrap_block_statement);
+impl_enum_variant!(BlockStatement);
+impl HasSourceRange for BlockStatement {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let BlockStatement {
+            open_brace_token,
+            body: _,
+            close_brace_token,
+            id: _,
+        } = self;
+        open_brace_token
+            .range
+            .clone()
+            .extend_with(close_brace_token.range.clone())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ReturnStatement {
@@ -1041,7 +1083,21 @@ pub struct ReturnStatement {
     pub semicolon_token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(ReturnStatement, unwrap_return_statement);
+impl_enum_variant!(ReturnStatement);
+impl HasSourceRange for ReturnStatement {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let ReturnStatement {
+            return_token,
+            value: _,
+            semicolon_token,
+            id: _,
+        } = self;
+        return_token
+            .range
+            .clone()
+            .extend_with(semicolon_token.range.clone())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct VariableDefinitionStatement {
@@ -1052,10 +1108,23 @@ pub struct VariableDefinitionStatement {
     pub semicolon_token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(
-    VariableDefinitionStatement,
-    unwrap_variable_definition_statement
-);
+impl_enum_variant!(VariableDefinitionStatement);
+impl HasSourceRange for VariableDefinitionStatement {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let VariableDefinitionStatement {
+            let_token,
+            binding: _,
+            equals_token: _,
+            value: _,
+            semicolon_token,
+            id: _,
+        } = self;
+        let_token
+            .range
+            .clone()
+            .extend_with(semicolon_token.range.clone())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct IfStatement {
@@ -1066,7 +1135,33 @@ pub struct IfStatement {
     pub else_: Option<(Token, Box<Statement>)>,
     pub id: NodeID,
 }
-generate_ast_requirements!(IfStatement, unwrap_if_statement);
+impl_enum_variant!(IfStatement);
+impl HasSourceRange for IfStatement {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let IfStatement {
+            if_token,
+            condition: _,
+            if_body,
+            elifs,
+            else_,
+            id: _,
+        } = self;
+        if_token
+            .range
+            .clone()
+            .extend_with(if_body.get_source_range())
+            .maybe_extend(
+                else_
+                    .as_ref()
+                    .map(|(_else_token, else_body)| else_body.get_source_range()),
+            )
+            .maybe_extend(
+                elifs
+                    .last()
+                    .map(|(_elif_token, _condition, elif_body)| elif_body.get_source_range()),
+            )
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct WhileLoopStatement {
@@ -1075,7 +1170,21 @@ pub struct WhileLoopStatement {
     pub body: Box<Statement>,
     pub id: NodeID,
 }
-generate_ast_requirements!(WhileLoopStatement, unwrap_while_loop_statement);
+impl_enum_variant!(WhileLoopStatement);
+impl HasSourceRange for WhileLoopStatement {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let WhileLoopStatement {
+            while_token,
+            condition: _,
+            body,
+            id: _,
+        } = self;
+        while_token
+            .range
+            .clone()
+            .extend_with(body.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ForLoopStatement {
@@ -1089,7 +1198,23 @@ pub struct ForLoopStatement {
     pub body: Box<Statement>,
     pub id: NodeID,
 }
-generate_ast_requirements!(ForLoopStatement, unwrap_for_loop_statement);
+impl_enum_variant!(ForLoopStatement);
+impl HasSourceRange for ForLoopStatement {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let ForLoopStatement {
+            for_token,
+            open_paren_token: _,
+            initializer: _,
+            condition: _,
+            second_semicolon_token: _,
+            incrementer: _,
+            close_paren_token: _,
+            body,
+            id: _,
+        } = self;
+        for_token.range.clone().extend_with(body.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct BreakStatement {
@@ -1097,7 +1222,20 @@ pub struct BreakStatement {
     pub semicolon_token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(BreakStatement, unwrap_break_statement);
+impl_enum_variant!(BreakStatement);
+impl HasSourceRange for BreakStatement {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let BreakStatement {
+            break_token,
+            semicolon_token,
+            id: _,
+        } = self;
+        break_token
+            .range
+            .clone()
+            .extend_with(semicolon_token.range.clone())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct SkipStatement {
@@ -1105,34 +1243,35 @@ pub struct SkipStatement {
     pub semicolon_token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(SkipStatement, unwrap_skip_statement);
-
-#[derive(Clone, Debug)]
-pub enum Statement {
-    Expression(ExpressionStatement),
-    On(OnStatement),
-    Block(BlockStatement),
-    Return(ReturnStatement),
-    VariableDefinition(VariableDefinitionStatement),
-    If(IfStatement),
-    WhileLoop(WhileLoopStatement),
-    ForLoop(ForLoopStatement),
-    Break(BreakStatement),
-    Skip(SkipStatement),
+impl_enum_variant!(SkipStatement);
+impl HasSourceRange for SkipStatement {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let SkipStatement {
+            skip_token,
+            semicolon_token,
+            id: _,
+        } = self;
+        skip_token
+            .range
+            .clone()
+            .extend_with(semicolon_token.range.clone())
+    }
 }
 
 impl_enum_node! {
-    Statement,
-    Expression,
-    On,
-    Block,
-    Return,
-    VariableDefinition,
-    If,
-    WhileLoop,
-    ForLoop,
-    Break,
-    Skip
+    #[derive(Clone, Debug)]
+    pub enum Statement {
+        Expression(ExpressionStatement),
+        On(OnStatement),
+        Block(BlockStatement),
+        Return(ReturnStatement),
+        VariableDefinition(VariableDefinitionStatement),
+        If(IfStatement),
+        WhileLoop(WhileLoopStatement),
+        ForLoop(ForLoopStatement),
+        Break(BreakStatement),
+        Skip(SkipStatement),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1140,16 +1279,19 @@ pub struct SelfExecutorHost {
     pub token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(SelfExecutorHost, unwrap_self_executor_host);
-
-#[derive(Clone, Debug)]
-pub enum ExecutorHost {
-    Self_(SelfExecutorHost),
+impl_enum_variant!(SelfExecutorHost);
+impl HasSourceRange for SelfExecutorHost {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let SelfExecutorHost { token, id: _ } = self;
+        token.range.clone()
+    }
 }
 
 impl_enum_node! {
-    ExecutorHost,
-    Self_,
+    #[derive(Clone, Debug)]
+    pub enum ExecutorHost {
+        Self_(SelfExecutorHost),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1162,7 +1304,24 @@ pub struct ThreadExecutor {
     pub close_bracket_token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(ThreadExecutor, unwrap_thread_executor);
+impl_enum_variant!(ThreadExecutor);
+impl HasSourceRange for ThreadExecutor {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let ThreadExecutor {
+            host,
+            dot_token: _,
+            thread_token: _,
+            open_bracket_token: _,
+            index: _,
+            close_bracket_token,
+            id: _,
+        } = self;
+        close_bracket_token
+            .range
+            .clone()
+            .extend_with(host.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct GPUExecutor {
@@ -1174,18 +1333,31 @@ pub struct GPUExecutor {
     pub close_bracket_token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(GPUExecutor, unwrap_gpu_executor);
-
-#[derive(Clone, Debug)]
-pub enum Executor {
-    Thread(ThreadExecutor),
-    GPU(GPUExecutor),
+impl_enum_variant!(GPUExecutor);
+impl HasSourceRange for GPUExecutor {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let GPUExecutor {
+            host,
+            dot_token: _,
+            gpus_token: _,
+            open_bracket_token: _,
+            gpu_index: _,
+            close_bracket_token,
+            id: _,
+        } = self;
+        close_bracket_token
+            .range
+            .clone()
+            .extend_with(host.get_source_range())
+    }
 }
 
 impl_enum_node! {
-    Executor,
-    Thread,
-    GPU,
+    #[derive(Clone, Debug)]
+    pub enum Executor {
+        Thread(ThreadExecutor),
+        GPU(GPUExecutor),
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1235,7 +1407,17 @@ pub struct LiteralExpression {
     pub token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(LiteralExpression, unwrap_literal_expression);
+impl_enum_variant!(LiteralExpression);
+impl HasSourceRange for LiteralExpression {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let LiteralExpression {
+            value: _,
+            token,
+            id: _,
+        } = self;
+        token.range.clone()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ArrayExpression {
@@ -1244,7 +1426,21 @@ pub struct ArrayExpression {
     pub close_bracket_token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(ArrayExpression, unwrap_array_expression);
+impl_enum_variant!(ArrayExpression);
+impl HasSourceRange for ArrayExpression {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let ArrayExpression {
+            open_bracket_token,
+            elements: _,
+            close_bracket_token,
+            id: _,
+        } = self;
+        open_bracket_token
+            .range
+            .clone()
+            .extend_with(close_bracket_token.range.clone())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct StructMemberValue {
@@ -1262,7 +1458,22 @@ pub struct StructExpression {
     pub close_brace_token: Token,
     pub id: NodeID,
 }
-generate_ast_requirements!(StructExpression, unwrap_struct_expression);
+impl_enum_variant!(StructExpression);
+impl HasSourceRange for StructExpression {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let StructExpression {
+            type_,
+            open_brace_token: _,
+            members: _,
+            close_brace_token,
+            id: _,
+        } = self;
+        close_brace_token
+            .range
+            .clone()
+            .extend_with(type_.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct FunctionCallExpression {
@@ -1274,7 +1485,23 @@ pub struct FunctionCallExpression {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(FunctionCallExpression, unwrap_function_call_expression);
+impl_enum_variant!(FunctionCallExpression);
+impl HasSourceRange for FunctionCallExpression {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let FunctionCallExpression {
+            name: _,
+            name_token,
+            open_paren_token: _,
+            arguments: _,
+            close_paren_token,
+            id: _,
+        } = self;
+        name_token
+            .range
+            .clone()
+            .extend_with(close_paren_token.range.clone())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct CompilerExpression {
@@ -1287,7 +1514,24 @@ pub struct CompilerExpression {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(CompilerExpression, unwrap_compiler_expression);
+impl_enum_variant!(CompilerExpression);
+impl HasSourceRange for CompilerExpression {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let CompilerExpression {
+            at_token,
+            name: _,
+            name_token: _,
+            open_paren_token: _,
+            arguments: _,
+            close_paren_token,
+            id: _,
+        } = self;
+        at_token
+            .range
+            .clone()
+            .extend_with(close_paren_token.range.clone())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ArrayIndexExpression {
@@ -1298,7 +1542,22 @@ pub struct ArrayIndexExpression {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(ArrayIndexExpression, unwrap_array_index_expression);
+impl_enum_variant!(ArrayIndexExpression);
+impl HasSourceRange for ArrayIndexExpression {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let ArrayIndexExpression {
+            array,
+            open_bracket_token: _,
+            index: _,
+            close_bracket_token,
+            id: _,
+        } = self;
+        close_bracket_token
+            .range
+            .clone()
+            .extend_with(array.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct StructAccessExpression {
@@ -1309,7 +1568,22 @@ pub struct StructAccessExpression {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(StructAccessExpression, unwrap_struct_access_expression);
+impl_enum_variant!(StructAccessExpression);
+impl HasSourceRange for StructAccessExpression {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let StructAccessExpression {
+            value,
+            dot_token: _,
+            member_name: _,
+            member_name_token,
+            id: _,
+        } = self;
+        member_name_token
+            .range
+            .clone()
+            .extend_with(value.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct GroupingExpression {
@@ -1319,7 +1593,21 @@ pub struct GroupingExpression {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(GroupingExpression, unwrap_grouping_expression);
+impl_enum_variant!(GroupingExpression);
+impl HasSourceRange for GroupingExpression {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let GroupingExpression {
+            open_paren_token,
+            subexpression: _,
+            close_paren_token,
+            id: _,
+        } = self;
+        open_paren_token
+            .range
+            .clone()
+            .extend_with(close_paren_token.range.clone())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct VariableAccessExpression {
@@ -1328,7 +1616,17 @@ pub struct VariableAccessExpression {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(VariableAccessExpression, unwrap_variable_access_expression);
+impl_enum_variant!(VariableAccessExpression);
+impl HasSourceRange for VariableAccessExpression {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let VariableAccessExpression {
+            name: _,
+            name_token,
+            id: _,
+        } = self;
+        name_token.range.clone()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct UnaryExpression {
@@ -1338,7 +1636,21 @@ pub struct UnaryExpression {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(UnaryExpression, unwrap_unary_expression);
+impl_enum_variant!(UnaryExpression);
+impl HasSourceRange for UnaryExpression {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let UnaryExpression {
+            operator_token,
+            operation: _,
+            operand,
+            id: _,
+        } = self;
+        operator_token
+            .range
+            .clone()
+            .extend_with(operand.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct CastExpression {
@@ -1348,7 +1660,20 @@ pub struct CastExpression {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(CastExpression, unwrap_cast_expression);
+impl_enum_variant!(CastExpression);
+impl HasSourceRange for CastExpression {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let CastExpression {
+            operand,
+            as_token: _,
+            type_,
+            id: _,
+        } = self;
+        operand
+            .get_source_range()
+            .extend_with(type_.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct BinaryExpression {
@@ -1358,7 +1683,20 @@ pub struct BinaryExpression {
     pub right: Box<Expression>,
     pub id: NodeID,
 }
-generate_ast_requirements!(BinaryExpression, unwrap_binary_expression);
+impl_enum_variant!(BinaryExpression);
+impl HasSourceRange for BinaryExpression {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let BinaryExpression {
+            left,
+            operator_token: _,
+            operation: _,
+            right,
+            id: _,
+        } = self;
+        left.get_source_range()
+            .extend_with(right.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct VariableAssignmentExpression {
@@ -1368,26 +1706,38 @@ pub struct VariableAssignmentExpression {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(
-    VariableAssignmentExpression,
-    unwrap_variable_asssignment_expression
-);
+impl_enum_variant!(VariableAssignmentExpression);
+impl HasSourceRange for VariableAssignmentExpression {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let VariableAssignmentExpression {
+            lvalue,
+            equal_token: _,
+            right,
+            id: _,
+        } = self;
+        lvalue
+            .get_source_range()
+            .extend_with(right.get_source_range())
+    }
+}
 
-#[derive(Clone, Debug)]
-pub enum Expression {
-    Literal(LiteralExpression),
-    Array(ArrayExpression),
-    Struct(StructExpression),
-    FunctionCall(FunctionCallExpression),
-    CompilerExpression(CompilerExpression),
-    ArrayIndex(ArrayIndexExpression),
-    StructAccess(StructAccessExpression),
-    Grouping(GroupingExpression),
-    VariableAccess(VariableAccessExpression),
-    Unary(UnaryExpression),
-    Cast(CastExpression),
-    Binary(BinaryExpression),
-    VariableAssignment(VariableAssignmentExpression),
+impl_enum_node! {
+    #[derive(Clone, Debug)]
+    pub enum Expression {
+        Literal(LiteralExpression),
+        Array(ArrayExpression),
+        Struct(StructExpression),
+        FunctionCall(FunctionCallExpression),
+        CompilerExpression(CompilerExpression),
+        ArrayIndex(ArrayIndexExpression),
+        StructAccess(StructAccessExpression),
+        Grouping(GroupingExpression),
+        VariableAccess(VariableAccessExpression),
+        Unary(UnaryExpression),
+        Cast(CastExpression),
+        Binary(BinaryExpression),
+        VariableAssignment(VariableAssignmentExpression),
+    }
 }
 
 impl Expression {
@@ -1479,23 +1829,6 @@ impl Expression {
     }
 }
 
-impl_enum_node! {
-    Expression,
-    Literal,
-    Array,
-    Struct,
-    FunctionCall,
-    CompilerExpression,
-    ArrayIndex,
-    StructAccess,
-    Grouping,
-    VariableAccess,
-    Unary,
-    Cast,
-    Binary,
-    VariableAssignment,
-}
-
 #[derive(Clone, Debug)]
 pub struct VariableLValue {
     pub name: String,
@@ -1503,7 +1836,17 @@ pub struct VariableLValue {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(VariableLValue, unwrap_variable_lvalue);
+impl_enum_variant!(VariableLValue);
+impl HasSourceRange for VariableLValue {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let VariableLValue {
+            name: _,
+            name_token,
+            id: _,
+        } = self;
+        name_token.range.clone()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ArrayIndexLValue {
@@ -1514,7 +1857,22 @@ pub struct ArrayIndexLValue {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(ArrayIndexLValue, unwrap_array_index_lvalue);
+impl_enum_variant!(ArrayIndexLValue);
+impl HasSourceRange for ArrayIndexLValue {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let ArrayIndexLValue {
+            array,
+            open_bracket_token: _,
+            index: _,
+            close_bracket_token,
+            id: _,
+        } = self;
+        close_bracket_token
+            .range
+            .clone()
+            .extend_with(array.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct StructAccessLValue {
@@ -1525,7 +1883,22 @@ pub struct StructAccessLValue {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(StructAccessLValue, unwrap_struct_access_lvalue);
+impl_enum_variant!(StructAccessLValue);
+impl HasSourceRange for StructAccessLValue {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let StructAccessLValue {
+            value,
+            dot_token: _,
+            member_name: _,
+            member_name_token,
+            id: _,
+        } = self;
+        member_name_token
+            .range
+            .clone()
+            .extend_with(value.get_source_range())
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct GroupingLValue {
@@ -1535,14 +1908,30 @@ pub struct GroupingLValue {
     pub id: NodeID,
 }
 
-generate_ast_requirements!(GroupingLValue, unwrap_grouping_lvalue);
+impl_enum_variant!(GroupingLValue);
+impl HasSourceRange for GroupingLValue {
+    fn get_source_range(&self) -> NamedSourceRange {
+        let GroupingLValue {
+            open_paren_token,
+            sublvalue: _,
+            close_paren_token,
+            id: _,
+        } = self;
+        open_paren_token
+            .range
+            .clone()
+            .extend_with(close_paren_token.range.clone())
+    }
+}
 
-#[derive(Clone, Debug)]
-pub enum LValue {
-    Variable(VariableLValue),
-    ArrayIndex(ArrayIndexLValue),
-    StructAccess(StructAccessLValue),
-    Grouping(GroupingLValue),
+impl_enum_node! {
+    #[derive(Clone, Debug)]
+    pub enum LValue {
+        Variable(VariableLValue),
+        ArrayIndex(ArrayIndexLValue),
+        StructAccess(StructAccessLValue),
+        Grouping(GroupingLValue),
+    }
 }
 
 impl LValue {
@@ -1563,14 +1952,6 @@ impl LValue {
             LValue::Grouping(..) => Associativity::Both,
         }
     }
-}
-
-impl_enum_node! {
-    LValue,
-    Variable,
-    ArrayIndex,
-    StructAccess,
-    Grouping,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

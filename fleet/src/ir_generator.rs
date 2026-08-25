@@ -29,11 +29,11 @@ use itertools::Itertools;
 
 use crate::{
     ast::{
-        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNodeRef,
-        AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, BreakStatement,
-        CastExpression, CompilerExpression, Executor, ExpressionStatement, ExternFunctionBody,
-        ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor,
-        GroupingExpression, GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
+        CompilerExpression, Executor, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+        GroupingLValue, HasID, HasSourceRange, IdkType, IfStatement, LiteralExpression,
         LiteralKind, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
         SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression,
         StructAccessLValue, StructExpression, StructMemberValue, StructType, ThreadExecutor,
@@ -47,7 +47,6 @@ use crate::{
     escape::{QuoteType, unescape},
     generate_glsl::GLSLCodeGenerator,
     passes::{
-        find_node_bounds::find_node_bounds,
         pass_manager::{
             ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData, ConcreteVariableData,
             GlobalState, Pass, PassError, PassFactory, PassResult, PrecompiledGlslFunctions,
@@ -378,26 +377,15 @@ impl<'a> IrGenerator<'_> {
         })
     }
 
-    fn llvm_type_of_node<'node, 'b, I: Into<AstNodeRef<'node>>>(
-        &'b mut self,
-        node: I,
-    ) -> AnyTypeEnum<'a> {
-        let node = node.into();
-
+    fn llvm_type_of_node<Node: HasSourceRange + HasID>(&mut self, node: &Node) -> AnyTypeEnum<'a> {
         let infered_type = self.type_data.get(&node.get_id()).unwrap_or_else(|| {
             pass_precondition!("type data should exist before calling ir_generator")
         });
 
-        self.runtime_type_to_llvm(infered_type, node)
+        self.runtime_type_to_llvm(infered_type)
     }
 
-    fn runtime_type_to_llvm<'node, I: Into<AstNodeRef<'node>>>(
-        &self,
-        type_ptr: &ConcreteRuntimeType,
-        error_node: I,
-    ) -> AnyTypeEnum<'a> {
-        let error_node = error_node.into();
-
+    fn runtime_type_to_llvm(&self, type_ptr: &ConcreteRuntimeType) -> AnyTypeEnum<'a> {
         match type_ptr {
             ConcreteRuntimeType::I8 | ConcreteRuntimeType::U8 => self.context.i8_type().into(),
             ConcreteRuntimeType::I16 | ConcreteRuntimeType::U16 => self.context.i16_type().into(),
@@ -411,7 +399,7 @@ impl<'a> IrGenerator<'_> {
                 subtype: inner_type,
                 size,
             } => {
-                let inner_type_ir = self.runtime_type_to_llvm(inner_type, error_node);
+                let inner_type_ir = self.runtime_type_to_llvm(inner_type);
 
                 match inner_type_ir.into_basic_type() {
                     Ok(type_) => type_.array_type(*size as u32).as_any_type_enum(),
@@ -433,8 +421,7 @@ impl<'a> IrGenerator<'_> {
                         .clone()
                         .into_iter()
                         .map(|(_name, type_)| {
-                            match (self.runtime_type_to_llvm(&type_, error_node)).into_basic_type()
-                            {
+                            match (self.runtime_type_to_llvm(&type_)).into_basic_type() {
                                 Ok(type_) => type_.as_basic_type_enum(),
                                 Err(Either::Left(_)) => {
                                     panic!("Cannot have struct containing function")
@@ -457,7 +444,7 @@ impl<'a> IrGenerator<'_> {
 
     fn register_top_level_statement(&mut self, tls: &mut TopLevelStatement) -> Result<()> {
         match tls {
-            TopLevelStatement::Function(function_definition) => {
+            TopLevelStatement::FunctionDefinition(function_definition) => {
                 self.register_function(function_definition)
             }
             TopLevelStatement::TypeAlias(_type_alias) => {
@@ -480,7 +467,7 @@ impl<'a> IrGenerator<'_> {
                     .return_type
                     .clone())
             })?;
-        let return_type_ir = self.runtime_type_to_llvm(&return_type, &*function);
+        let return_type_ir = self.runtime_type_to_llvm(&return_type);
 
         let name = match &*function.body {
             FunctionBody::Extern(ExternFunctionBody {
@@ -508,10 +495,10 @@ impl<'a> IrGenerator<'_> {
             })
             .collect_vec()
             .iter()
-            .flat_map(|(param, var)| -> Result<_> {
+            .flat_map(|(_param, var)| -> Result<_> {
                 Ok(
                     match self
-                        .runtime_type_to_llvm(&var.borrow().type_, param)
+                        .runtime_type_to_llvm(&var.borrow().type_)
                         .into_basic_type()
                     {
                         Ok(type_) => type_.into(),
@@ -746,7 +733,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .map(|type_| self.visit_type(type_))
             .unwrap_or_else(|| Ok(function_ref.borrow().return_type.clone()))?;
 
-        let return_type_ir = self.runtime_type_to_llvm(&return_type, &*function);
+        let return_type_ir = self.runtime_type_to_llvm(&return_type);
         let ir_function = self
             .function_locations
             .get(&function_ref.borrow().id)
@@ -886,7 +873,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .clone())
             })?;
 
-        let type_ = self.runtime_type_to_llvm(&type_, &*simple_binding);
+        let type_ = self.runtime_type_to_llvm(&type_);
 
         let ptr = match type_.into_basic_type() {
             Ok(type_) => self.builder.build_alloca(type_, &simple_binding.name)?,
@@ -1039,7 +1026,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             self.builder.position_at_end(bindings_block);
             let binding_ir = self.visit_variable_lvalue(top_level_binding)?;
             let size = self
-                .runtime_type_to_llvm(type_, top_level_binding)
+                .runtime_type_to_llvm(type_)
                 .size_of()
                 .expect("data passed to GPU must be sized");
 
@@ -1082,7 +1069,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .0;
 
                 let size = self
-                    .runtime_type_to_llvm(type_, &**body)
+                    .runtime_type_to_llvm(type_)
                     .size_of()
                     .expect("data passed to GPU must be sized");
                 Ok((size, binding_ir))
@@ -1154,7 +1141,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         if cfg!(not(feature = "gpu_backend")) {
             self.errors.push(ErrorKind::GpuBackendDisabled {
-                use_location: find_node_bounds(&**executor),
+                use_location: executor.get_source_range(),
             });
         }
 
@@ -1628,12 +1615,11 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         &mut self,
         literal: &mut LiteralExpression,
     ) -> Self::ExpressionOutput {
-        let literal_clone = literal.clone();
         let LiteralExpression {
             value,
             token: _,
             id,
-        } = literal;
+        } = &*literal;
         let rt_type_ptr = self
             .type_data
             .get(id)
@@ -1641,7 +1627,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .clone();
 
         Ok(match value {
-            LiteralKind::Number(value) => match self.llvm_type_of_node(&literal_clone) {
+            LiteralKind::Number(value) => match self.llvm_type_of_node(literal) {
                 AnyTypeEnum::FloatType(type_) => {
                     RuntimeValueIR::Float(type_.const_float(*value as f64))
                 }
@@ -1659,7 +1645,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 _ => {
                     self.errors.push(ErrorKind::InternalError(
                         InternalError::LlvmNumberLiteralMistyped {
-                            literal: find_node_bounds(&*literal),
+                            literal: literal.get_source_range(),
                         },
                     ));
 
@@ -1669,12 +1655,12 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 }
             },
             LiteralKind::Char(value) => RuntimeValueIR::UnsignedInt(
-                self.llvm_type_of_node(&literal_clone)
+                self.llvm_type_of_node(literal)
                     .into_int_type()
                     .const_int(*value as u64, false),
             ),
             LiteralKind::Float(value) => RuntimeValueIR::Float(
-                self.llvm_type_of_node(&literal_clone)
+                self.llvm_type_of_node(literal)
                     .into_float_type()
                     .const_float(*value),
             ),
@@ -1877,7 +1863,6 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         &mut self,
         expr: &mut CompilerExpression,
     ) -> Self::ExpressionOutput {
-        let expr_clone = expr.clone();
         let CompilerExpression {
             at_token: _,
             name,
@@ -1901,7 +1886,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .get(id)
                     .expect("type data must exist before calling ir_generator")
                     .clone();
-                let expected_type_ir = self.runtime_type_to_llvm(&expected_type, &expr_clone);
+                let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
 
                 Ok(match expected_type {
                     ConcreteRuntimeType::I8
@@ -1959,7 +1944,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .get(id)
                     .expect("type data must exist before calling ir_generator")
                     .clone();
-                let expected_type_ir = self.runtime_type_to_llvm(&expected_type, &expr_clone);
+                let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
 
                 Ok(match args.first().unwrap().1 {
                     RuntimeValueIR::Float(value) => {
@@ -1999,7 +1984,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .get(id)
                     .expect("type data must exist before calling ir_generator")
                     .clone();
-                let expected_type_ir = self.runtime_type_to_llvm(&expected_type, &expr_clone);
+                let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
 
                 Ok(match args.first().unwrap().1 {
                     RuntimeValueIR::Float(value) => {
@@ -2039,7 +2024,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     .get(id)
                     .expect("type data must exist before calling ir_generator")
                     .clone();
-                let expected_type_ir = self.runtime_type_to_llvm(&expected_type, &expr_clone);
+                let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
 
                 Ok(match args.first().unwrap().1 {
                     RuntimeValueIR::Float(value) => {
@@ -2092,7 +2077,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                     ),
                 };
 
-                let ir_type = self.runtime_type_to_llvm(&expected_type, &expr_clone);
+                let ir_type = self.runtime_type_to_llvm(&expected_type);
 
                 Ok(match args.first().unwrap().1 {
                     RuntimeValueIR::Array(_value) => match ir_type {
@@ -2142,7 +2127,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let array_type = self.type_data.get(&array.get_id()).unwrap().clone();
         let index_ir = self.visit_expression(index)?.unwrap_unsigned_int();
 
-        let array_type_ir = self.runtime_type_to_llvm(&array_type, &**array);
+        let array_type_ir = self.runtime_type_to_llvm(&array_type);
 
         let index_ptr = unsafe {
             self.builder.build_gep(
@@ -2190,7 +2175,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let value_ptr = self.visit_expression(value)?.unwrap_struct();
         let value_type = self.type_data.get(&value.get_id()).unwrap().clone();
 
-        let value_type_ir = self.runtime_type_to_llvm(&value_type, &**value);
+        let value_type_ir = self.runtime_type_to_llvm(&value_type);
 
         let ConcreteRuntimeType::Struct {
             members,
@@ -2248,7 +2233,6 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         &mut self,
         expr: &mut VariableAccessExpression,
     ) -> Self::ExpressionOutput {
-        let expr_clone = expr.clone();
         let VariableAccessExpression {
             name,
             name_token: _,
@@ -2274,7 +2258,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let storage = storage.clone();
 
         let result_type = var.borrow().type_.clone();
-        let result_type_ir = self.runtime_type_to_llvm(&result_type, &expr_clone);
+        let result_type_ir = self.runtime_type_to_llvm(&result_type);
 
         let result = if let ConcreteRuntimeType::ArrayOf { .. }
         | ConcreteRuntimeType::Struct { .. } = result_type
@@ -2347,7 +2331,6 @@ impl<'state> AstVisitor for IrGenerator<'state> {
     }
 
     fn visit_cast_expression(&mut self, expr: &mut CastExpression) -> Self::ExpressionOutput {
-        let expr_clone = expr.clone();
         let CastExpression {
             operand,
             as_token: _,
@@ -2390,9 +2373,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 | ConcreteRuntimeType::U64,
             ) => {
                 let expected_type = self.visit_type(type_)?;
-                let expected_type_ir = self
-                    .runtime_type_to_llvm(&expected_type, &expr_clone)
-                    .into_int_type();
+                let expected_type_ir = self.runtime_type_to_llvm(&expected_type).into_int_type();
 
                 let ir_value = match value {
                     RuntimeValueIR::Bool(value)
@@ -2440,9 +2421,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64,
             ) => {
                 let expected_type = self.visit_type(type_)?;
-                let expected_type = self
-                    .runtime_type_to_llvm(&expected_type, &expr_clone)
-                    .into_float_type();
+                let expected_type = self.runtime_type_to_llvm(&expected_type).into_float_type();
 
                 Ok(RuntimeValueIR::Float(match value {
                     RuntimeValueIR::UnsignedInt(value) | RuntimeValueIR::Bool(value) => {
@@ -2468,9 +2447,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 | ConcreteRuntimeType::I64,
             ) => {
                 let expected_type = self.visit_type(type_)?;
-                let expected_type = self
-                    .runtime_type_to_llvm(&expected_type, expr)
-                    .into_int_type();
+                let expected_type = self.runtime_type_to_llvm(&expected_type).into_int_type();
 
                 Ok(RuntimeValueIR::SignedInt(
                     self.builder.build_float_to_signed_int(
@@ -2488,9 +2465,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 | ConcreteRuntimeType::U64,
             ) => {
                 let expected_type = self.visit_type(type_)?;
-                let expected_type = self
-                    .runtime_type_to_llvm(&expected_type, expr)
-                    .into_int_type();
+                let expected_type = self.runtime_type_to_llvm(&expected_type).into_int_type();
 
                 Ok(RuntimeValueIR::UnsignedInt(
                     self.builder.build_float_to_unsigned_int(
@@ -2502,9 +2477,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             }
             (ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64, ConcreteRuntimeType::F64) => {
                 let expected_type = self.visit_type(type_)?;
-                let expected_type = self
-                    .runtime_type_to_llvm(&expected_type, expr)
-                    .into_float_type();
+                let expected_type = self.runtime_type_to_llvm(&expected_type).into_float_type();
 
                 Ok(RuntimeValueIR::Float(self.builder.build_float_ext(
                     value.unwrap_float(),
@@ -2514,9 +2487,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             }
             (ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64, ConcreteRuntimeType::F32) => {
                 let expected_type = self.visit_type(type_)?;
-                let expected_type = self
-                    .runtime_type_to_llvm(&expected_type, expr)
-                    .into_float_type();
+                let expected_type = self.runtime_type_to_llvm(&expected_type).into_float_type();
 
                 Ok(RuntimeValueIR::Float(self.builder.build_float_trunc(
                     value.unwrap_float(),
@@ -3063,12 +3034,11 @@ impl<'state> AstVisitor for IrGenerator<'state> {
     }
 
     fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
-        let lvalue_clone = lvalue.clone();
         let VariableLValue {
             name,
             name_token: _,
             id,
-        } = lvalue;
+        } = &*lvalue;
 
         let var = self.variable_data.get(id).unwrap_or_else(|| {
             pass_precondition!(
@@ -3082,7 +3052,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 panic!(
                     "Variables should have storage before being accessed.\
                         \nVarData: {:#?}\nVarStorage: {:#?}\nThis ID: {:?}",
-                    self.variable_data, self.variable_storage, lvalue_clone.id
+                    self.variable_data, self.variable_storage, id
                 )
             });
 
@@ -3120,7 +3090,6 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         &mut self,
         lvalue: &mut StructAccessLValue,
     ) -> Self::LValueOutput {
-        let lvalue_clone = lvalue.clone();
         let StructAccessLValue {
             value,
             dot_token: _,
@@ -3131,7 +3100,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let value_ptr = self.visit_lvalue(value)?;
         let value_type = self.type_data.get(&value.get_id()).unwrap().clone();
 
-        let value_type_ir = self.runtime_type_to_llvm(&value_type, &lvalue_clone);
+        let value_type_ir = self.runtime_type_to_llvm(&value_type);
 
         let ConcreteRuntimeType::Struct {
             members,

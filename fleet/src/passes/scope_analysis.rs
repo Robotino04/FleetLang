@@ -14,12 +14,12 @@ use crate::{
         AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
-        IfStatement, LiteralExpression, NodeID, OnStatement, OnStatementIterator, PerNodeData,
-        Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
-        StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
-        StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor, TopLevelStatement,
-        TypeAlias, UnaryExpression, UnitType, VariableAccessExpression,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, HasSourceRange,
+        IdkType, IfStatement, LiteralExpression, NodeID, OnStatement, OnStatementIterator,
+        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
+        SkipStatement, StatementFunctionBody, StructAccessExpression, StructAccessLValue,
+        StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
+        TopLevelStatement, TypeAlias, UnaryExpression, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
@@ -28,7 +28,6 @@ use crate::{
     },
     parser::IdGenerator,
     passes::{
-        find_node_bounds::find_node_bounds,
         pass_manager::{
             FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData, VariableData,
         },
@@ -605,7 +604,7 @@ impl Pass for ScopeAnalyzer<'_> {
 impl<'a> ScopeAnalyzer<'a> {
     fn register_top_level_statement(&mut self, tls: &mut TopLevelStatement) {
         match tls {
-            TopLevelStatement::Function(function_definition) => {
+            TopLevelStatement::FunctionDefinition(function_definition) => {
                 self.register_function(function_definition)
             }
             TopLevelStatement::TypeAlias(_type_alias) => {
@@ -790,7 +789,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             self.errors.push(ErrorKind::Duplicate {
                 kind: DuplicateKind::Variable,
                 original: present_var.borrow().symbol.clone(),
-                new_range: find_node_bounds(&simple_binding_clone),
+                new_range: simple_binding_clone.get_source_range(),
             });
         }
 
