@@ -33,7 +33,7 @@ use crate::{
     tokenizer::{NamedSourceRange, SourceRange},
 };
 
-pub trait MergableStat {
+pub trait MergeableStat {
     fn serial(self, other: Self) -> Self;
     fn parallel(self, other: Self) -> Self;
 }
@@ -50,7 +50,7 @@ pub enum YesNoMaybe {
     Maybe,
     No,
 }
-impl MergableStat for YesNoMaybe {
+impl MergeableStat for YesNoMaybe {
     fn serial(self, other: YesNoMaybe) -> YesNoMaybe {
         match (self, other) {
             (YesNoMaybe::Yes, _) => YesNoMaybe::Yes,
@@ -119,7 +119,7 @@ impl PartialEq for AccessRecord {
 
 impl Eq for AccessRecord {}
 
-impl MergableStat for AccessRecord {
+impl MergeableStat for AccessRecord {
     fn serial(mut self, mut other: Self) -> Self {
         self.functions.append(&mut other.functions);
         let mut seen_functions = HashSet::new();
@@ -158,7 +158,7 @@ impl NodeStats {
     }
 }
 
-impl MergableStat for NodeStats {
+impl MergeableStat for NodeStats {
     fn serial(self, other: Self) -> Self {
         Self {
             terminates_function: self.terminates_function.serial(other.terminates_function),
