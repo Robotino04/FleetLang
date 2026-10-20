@@ -3,6 +3,10 @@
     flake-utils.url = "github:numtide/flake-utils";
     naersk.url = "github:nix-community/naersk";
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = {
@@ -10,19 +14,34 @@
     flake-utils,
     naersk,
     nixpkgs,
+    rust-overlay,
   }:
     flake-utils.lib.eachDefaultSystem (
       system: let
         pkgs = (import nixpkgs) {
           inherit system;
+
+          overlays = [
+            (import rust-overlay)
+          ];
         };
         lib = pkgs.lib;
 
-        naersk' = pkgs.callPackage naersk {};
+        toolchain =
+          pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+
+        naersk' = pkgs.callPackage naersk {
+          cargo = toolchain;
+          rustc = toolchain;
+        };
 
         llvmPackages = pkgs.llvmPackages_18;
+        patchedClang = pkgs.writeShellScriptBin "clang++" ''
+          exec ${llvmPackages.clang}/bin/clang++ \
+            -stdlib=libc++ "$@"
+        '';
 
-        fl_runtime = llvmPackages.stdenv.mkDerivation {
+        fl_runtime = llvmPackages.libcxxStdenv.mkDerivation {
           name = "fl_runtime";
           src = ./fl_runtime;
           installPhase = ''
@@ -40,6 +59,7 @@
 
         shared_rust_src = lib.fileset.unions [
           ./Cargo.lock
+          ./rust-toolchain.toml
           ./Cargo.toml
           ./fleet
           ./fleetc
@@ -62,7 +82,8 @@
           doCheck = true;
           checkInputs = [
             pkgs.mesa
-            llvmPackages.clang
+            llvmPackages.libcxx
+            patchedClang
           ];
           preCheck = ''
             mkdir -p fl_runtime/
@@ -134,7 +155,7 @@
               };
             }
           );
-          fleetls-wasm-bindgened = pkgs.stdenv.mkDerivation {
+          fleetls-wasm-bindgened = llvmPackages.libcxxStdenv.mkDerivation {
             pname = "fleetls-wasm-bindgened";
             version = "0.1";
             src = ./fleetls-wasm;
@@ -157,7 +178,7 @@
             name = "fleetls-web-demo";
 
             src = ./web-demo;
-            npmDepsHash = "sha256-immgbSCcA1FUZ/+yx+De2mnYH4wLLtagdaMgXH2tFjw=";
+            npmDepsHash = "sha256-YKtF1opf0uMdzHH1ZgD8437gtxfe89zVez0BM1dxXpI=";
 
             npmBuildScript = "build";
 
@@ -173,20 +194,18 @@
             '';
           };
         };
-        devShell = naersk'.buildPackage (
-          shared_attrs
-          // {
-            # don't forget to merge arrays manually
-            singleStep = true;
+        devShells.default =
+          (pkgs.mkShell.override {
+            stdenv = llvmPackages.libcxxStdenv;
+          })
+          {
             nativeBuildInputs = [
-              pkgs.cargo
-              pkgs.clippy
-              pkgs.rustc
+              pkgs.rustup
               pkgs.cargo-watch
 
               llvmPackages.bintools
               llvmPackages.clang-tools
-              llvmPackages.clang
+              llvmPackages.lldb
 
               pkgs.raylib
               pkgs.python3
@@ -201,13 +220,19 @@
               pkgs.binaryen
               pkgs.nodejs
             ];
+
+            buildInputs = shared_attrs.buildInputs;
+
             env =
               shared_attrs.env
               // {
                 LD_LIBRARY_PATH = "/run/opengl-driver/lib:/run/opengl-driver-32/lib:" + shared_attrs.env.LD_LIBRARY_PATH;
+                #LD_PRELOAD = "${pkgs.libsegfault}/lib/libsegfault.so";
+
+                # stop the devshell from using the system glibc
+                NIX_CFLAGS_LINK = "-L${pkgs.glibc}/lib";
               };
-          }
-        );
+          };
       }
     );
 }

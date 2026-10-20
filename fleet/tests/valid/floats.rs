@@ -1,5 +1,3 @@
-use std::f32;
-
 use indoc::indoc;
 
 use crate::common::assert_compile_and_return_value;

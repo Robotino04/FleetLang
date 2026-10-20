@@ -4,19 +4,19 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-either = "1.18.0"
+either = "1.19.0"
 indent = "0.1.1"
-indoc = "2.0.7"
+indoc = "2.0.8"
 inkwell = { version = "0.5.0", features = [
     "llvm18-0-force-static",
 ], optional = true }
 itertools = "0.14.0"
 log = "0.4.34"
 shaderc = { version = "0.9.1", optional = true }
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 
 [dev-dependencies]
-libc = "0.2.189"
+libc = "0.2.191"
 tempfile = "3.27.0"
 
 [features]

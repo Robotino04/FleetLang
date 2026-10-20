@@ -436,7 +436,7 @@ unsafe fn execute_function<ReturnType>(
         .unwrap();
 
         load_library("libvulkan.so");
-        load_library("libstdc++.so");
+        // load_library("libstdc++.so"); // no longer needed after clang links with its own stdlib
         load_library(fl_runtime_so.to_str().unwrap());
     }
 

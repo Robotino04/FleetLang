@@ -129,6 +129,8 @@ If something doesn't make sense or isn't accurate anymore, feel free to reach ou
 - use byval attributes for arrays and structs
 - import of some sort
 - llvm crashes if skip isn't last statement in block
+- split internal errors by backend
+- make (String, ConcreteRuntimeType) its own type `StructMemberType`
 
 #### Easy
 - if expressions
