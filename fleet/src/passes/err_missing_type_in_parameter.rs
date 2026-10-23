@@ -1,9 +1,12 @@
-use std::cell::RefMut;
+use std::{cell::RefMut, ops::ControlFlow};
 
 use crate::{
-    ast::{AstVisitor, FunctionDefinition, Program},
+    ast::{FunctionDefinition, Program},
     error_reporting::{ErrorKind, Errors, SymbolDefinition},
-    passes::pass_manager::{Pass, PassFactory, PassResult},
+    passes::{
+        partial_visitor::AstWalker,
+        pass_manager::{Pass, PassFactory, PassResult},
+    },
 };
 
 use super::{partial_visitor::PartialAstVisitor, pass_manager::GlobalState};
@@ -34,44 +37,26 @@ impl Pass for ErrMissingTypeInParam<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let program = &mut self.program.take().unwrap();
 
-        self.visit_program(program);
+        let _ = self.visit_program(program);
 
         Ok(())
     }
 }
 
 impl PartialAstVisitor for ErrMissingTypeInParam<'_> {
+    type Break<'a> = ();
+
     // may get lifted in the future if lambdas are implemented
-    fn partial_visit_function_definition(
-        &mut self,
-        FunctionDefinition {
-            let_token: _,
-            name,
-            name_token,
-            equal_token: _,
-            open_paren_token: _,
-            parameters,
-            close_paren_token: _,
-            right_arrow_token: _,
-            return_type,
-            body,
-            id: _,
-        }: &mut FunctionDefinition,
-    ) {
-        for (param, _comma) in parameters {
-            self.visit_simple_binding(param);
+    fn visit_function_definition(&mut self, fdef: &mut FunctionDefinition) -> ControlFlow<()> {
+        for (param, _comma) in &fdef.parameters {
             if param.type_.is_none() {
                 self.errors.push(ErrorKind::FunctionParameterUntyped {
-                    function: SymbolDefinition::from_token(name.clone(), name_token),
+                    function: SymbolDefinition::from_token(fdef.name.clone(), &fdef.name_token),
                     parameter: SymbolDefinition::from_token(param.name.clone(), &param.name_token),
                 });
             }
         }
 
-        if let Some(return_type) = return_type {
-            self.visit_type(return_type);
-        }
-
-        self.visit_function_body(body);
+        self.walk_function_definition(fdef)
     }
 }

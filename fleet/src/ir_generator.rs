@@ -29,18 +29,19 @@ use itertools::Itertools;
 
 use crate::{
     ast::{
-        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType,
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
         CompilerExpression, Executor, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
         GroupingLValue, HasID, HasSourceRange, IdkType, IfStatement, LiteralExpression,
-        LiteralKind, OnStatement, Program, ReturnStatement, SelfExecutorHost, SimpleBinding,
-        SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression,
-        StructAccessLValue, StructExpression, StructMemberValue, StructType, ThreadExecutor,
-        TopLevelStatement, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        LiteralKind, OnStatement, Program, ReturnStatement, SimpleBinding, SimpleType,
+        SkipStatement, StatementFunctionBody, StructAccessExpression, StructAccessLValue,
+        StructExpression, StructMemberValue, StructType, TopLevelStatement, TypeAlias,
+        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
+        WhileLoopStatement,
     },
+    define_dispatch_methods,
     error_reporting::{
         Backend, ErrorKind, ErrorSeverity, Errors, InternalError, Intrinsic, UnresolvedSymbol,
     },
@@ -55,7 +56,7 @@ use crate::{
         runtime_type::ConcreteRuntimeType,
         scope_analysis::{FunctionID, VariableID},
         stat_tracker::YesNoMaybe,
-        top_level_binding_finder::TopLevelBindingFinder,
+        top_level_binding_finder::find_top_level_binding,
     },
     tokenizer::SourceRange,
 };
@@ -317,7 +318,7 @@ impl Pass for IrGenerator<'_> {
         }
 
         let mut program = self.program.take().unwrap();
-        self.visit_program(&mut program)
+        self.generate_program(&mut program)
             .map_err(|err| PassError::CompilerError {
                 producing_pass: Self::name(),
                 source: err,
@@ -457,7 +458,7 @@ impl<'a> IrGenerator<'_> {
         let return_type = function
             .return_type
             .as_mut()
-            .map(|type_| self.visit_type(type_))
+            .map(|type_| self.generate_type(type_))
             .unwrap_or_else(|| {
                 Ok(self
                     .function_data
@@ -532,19 +533,19 @@ impl<'a> IrGenerator<'_> {
     }
 }
 
-impl<'state> AstVisitor for IrGenerator<'state> {
-    type ProgramOutput = Result<()>;
-    type TopLevelOutput = Result<Option<FunctionValue<'state>>>;
-    type FunctionBodyOutput = Result<()>;
-    type SimpleBindingOutput = Result<PointerValue<'state>>;
-    type StatementOutput = Result<()>;
-    type ExecutorHostOutput = Result<()>;
-    type ExecutorOutput = Result<()>;
-    type ExpressionOutput = Result<RuntimeValueIR<'state>>;
-    type LValueOutput = Result<PointerValue<'state>>;
-    type TypeOutput = Result<ConcreteRuntimeType>;
+impl<'state> IrGenerator<'state> {
+    define_dispatch_methods! {
+        generate {
+            TopLevelStatement => Result<Option<FunctionValue<'state>>>,
+            FunctionBody => Result<()>,
+            Statement => Result<()>,
+            Expression => Result<RuntimeValueIR<'state>>,
+            LValue => Result<PointerValue<'state>>,
+            Type => Result<ConcreteRuntimeType>,
+        }
+    }
 
-    fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
+    fn generate_program(mut self, program: &mut Program) -> Result<()> {
         let needs_runtime = self
             .node_stats
             .get(&program.id)
@@ -577,7 +578,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         }
 
         for tls in &mut program.top_level_statements {
-            self.visit_top_level_statement(tls)?;
+            self.generate_top_level_statement(tls)?;
         }
 
         {
@@ -717,10 +718,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(())
     }
 
-    fn visit_function_definition(
+    fn generate_function_definition(
         &mut self,
         function: &mut FunctionDefinition,
-    ) -> Self::TopLevelOutput {
+    ) -> Result<Option<FunctionValue<'state>>> {
         let function_ref = self
             .function_data
             .get(&function.get_id())
@@ -730,7 +731,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let return_type = function
             .return_type
             .as_mut()
-            .map(|type_| self.visit_type(type_))
+            .map(|type_| self.generate_type(type_))
             .unwrap_or_else(|| Ok(function_ref.borrow().return_type.clone()))?;
 
         let return_type_ir = self.runtime_type_to_llvm(&return_type);
@@ -754,11 +755,11 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .iter_mut()
             .zip(ir_function.get_param_iter())
         {
-            let ptr = self.visit_simple_binding(param)?;
+            let ptr = self.generate_simple_binding(param)?;
             self.builder.build_store(ptr, ir_param)?;
         }
 
-        self.visit_function_body(&mut function.body)?;
+        self.generate_function_body(&mut function.body)?;
 
         if self
             .node_stats
@@ -828,20 +829,23 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(Some(ir_function))
     }
 
-    fn visit_type_alias(&mut self, _type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
+    fn generate_type_alias(
+        &mut self,
+        _type_alias: &mut TypeAlias,
+    ) -> Result<Option<FunctionValue<'state>>> {
         // type aliases get completely compiled out and aren't relevant after type propagation
         Ok(None)
     }
 
-    fn visit_statement_function_body(
+    fn generate_statement_function_body(
         &mut self,
         StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
-    ) -> Self::FunctionBodyOutput {
-        self.visit_statement(statement)?;
+    ) -> Result<()> {
+        self.generate_statement(statement)?;
         Ok(())
     }
 
-    fn visit_extern_function_body(
+    fn generate_extern_function_body(
         &mut self,
         ExternFunctionBody {
             at_token: _,
@@ -851,18 +855,18 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             semicolon_token: _,
             id: _,
         }: &mut ExternFunctionBody,
-    ) -> Self::FunctionBodyOutput {
+    ) -> Result<()> {
         Ok(())
     }
 
-    fn visit_simple_binding(
+    fn generate_simple_binding(
         &mut self,
         simple_binding: &mut SimpleBinding,
-    ) -> Self::SimpleBindingOutput {
+    ) -> Result<PointerValue<'state>> {
         let type_ = simple_binding
             .type_
             .as_mut()
-            .map(|(_colon, type_)| self.visit_type(type_))
+            .map(|(_colon, type_)| self.generate_type(type_))
             .unwrap_or_else(|| {
                 Ok(self
                     .variable_data
@@ -907,19 +911,19 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(ptr)
     }
 
-    fn visit_expression_statement(
+    fn generate_expression_statement(
         &mut self,
         ExpressionStatement {
             expression,
             semicolon_token: _,
             id: _,
         }: &mut ExpressionStatement,
-    ) -> Self::StatementOutput {
-        self.visit_expression(expression)?;
+    ) -> Result<()> {
+        self.generate_expression(expression)?;
         Ok(())
     }
 
-    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
+    fn generate_on_statement(&mut self, on_stmt: &mut OnStatement) -> Result<()> {
         let OnStatement {
             on_token: _,
             executor,
@@ -948,11 +952,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         let bindings = bindings
             .iter_mut()
-            .map(|binding| {
-                let mut tlbf = TopLevelBindingFinder::default();
-                tlbf.visit_lvalue(&mut binding.0);
-                tlbf.get_result().unwrap()
-            })
+            .map(|binding| find_top_level_binding(&mut binding.0).unwrap().clone())
             .collect_vec();
 
         let current_block = self
@@ -983,7 +983,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         let iterator_end_values_ir = iterators
             .iter_mut()
-            .map(|it| self.visit_expression(&mut it.max_value))
+            .map(|it| self.generate_expression(&mut it.max_value))
             .collect::<Result<Vec<_>>>()?;
 
         let mut buffers = vec![];
@@ -1024,7 +1024,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         for (type_, top_level_binding) in &mut bindings.rw {
             self.builder.position_at_end(bindings_block);
-            let binding_ir = self.visit_variable_lvalue(top_level_binding)?;
+            let binding_ir = self.generate_variable_lvalue(top_level_binding)?;
             let size = self
                 .runtime_type_to_llvm(type_)
                 .size_of()
@@ -1271,7 +1271,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(())
     }
 
-    fn visit_block_statement(
+    fn generate_block_statement(
         &mut self,
         BlockStatement {
             open_brace_token: _,
@@ -1279,19 +1279,16 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             close_brace_token: _,
             id: _,
         }: &mut BlockStatement,
-    ) -> Self::StatementOutput {
+    ) -> Result<()> {
         for substmt in body {
-            self.visit_statement(substmt)?;
+            self.generate_statement(substmt)?;
         }
         Ok(())
     }
 
-    fn visit_return_statement(
-        &mut self,
-        return_stmt: &mut ReturnStatement,
-    ) -> Self::StatementOutput {
+    fn generate_return_statement(&mut self, return_stmt: &mut ReturnStatement) -> Result<()> {
         if let Some(retvalue) = &mut return_stmt.value {
-            let ir_value = self.visit_expression(retvalue)?;
+            let ir_value = self.generate_expression(retvalue)?;
             let value_type = self
                 .llvm_type_of_node(&**retvalue)
                 .into_basic_type()
@@ -1318,13 +1315,13 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(())
     }
 
-    fn visit_variable_definition_statement(
+    fn generate_variable_definition_statement(
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
-    ) -> Self::StatementOutput {
-        let eval_value = self.visit_expression(&mut vardef_stmt.value)?;
+    ) -> Result<()> {
+        let eval_value = self.generate_expression(&mut vardef_stmt.value)?;
 
-        let ptr = self.visit_simple_binding(&mut vardef_stmt.binding)?;
+        let ptr = self.generate_simple_binding(&mut vardef_stmt.binding)?;
 
         if let RuntimeValueIR::Array(right_value) | RuntimeValueIR::Struct(right_value) = eval_value
         {
@@ -1348,7 +1345,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(())
     }
 
-    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::StatementOutput {
+    fn generate_if_statement(&mut self, if_stmt: &mut IfStatement) -> Result<()> {
         let current_block = self
             .builder
             .get_insert_block()
@@ -1363,13 +1360,15 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let end_block = self.context.insert_basic_block_after(next_block, "if_end");
 
         self.builder.position_at_end(current_block);
-        let condition_value = self.visit_expression(&mut if_stmt.condition)?.unwrap_bool();
+        let condition_value = self
+            .generate_expression(&mut if_stmt.condition)?
+            .unwrap_bool();
 
         self.builder
             .build_conditional_branch(condition_value, body_block, next_block)?;
 
         self.builder.position_at_end(body_block);
-        self.visit_statement(&mut if_stmt.if_body)?;
+        self.generate_statement(&mut if_stmt.if_body)?;
 
         if self
             .node_stats
@@ -1387,7 +1386,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             next_block.set_name("elif_condition");
             self.builder.position_at_end(next_block);
 
-            let condition_value = self.visit_expression(condition)?.unwrap_bool();
+            let condition_value = self.generate_expression(condition)?.unwrap_bool();
 
             let body_block = self
                 .context
@@ -1401,7 +1400,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 .build_conditional_branch(condition_value, body_block, next_block)?;
 
             self.builder.position_at_end(body_block);
-            self.visit_statement(body)?;
+            self.generate_statement(body)?;
 
             if self
                 .node_stats
@@ -1418,7 +1417,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         if let Some((_token, else_body)) = &mut if_stmt.else_ {
             next_block.set_name("else_body");
 
-            self.visit_statement(else_body)?;
+            self.generate_statement(else_body)?;
             if self
                 .node_stats
                 .get(&else_body.get_id())
@@ -1440,7 +1439,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(())
     }
 
-    fn visit_while_loop_statement(
+    fn generate_while_loop_statement(
         &mut self,
         WhileLoopStatement {
             while_token: _,
@@ -1448,7 +1447,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             body,
             id: _,
         }: &mut WhileLoopStatement,
-    ) -> Self::StatementOutput {
+    ) -> Result<()> {
         let current_block = self
             .builder
             .get_insert_block()
@@ -1466,7 +1465,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         self.builder.build_unconditional_branch(condition_block)?;
         self.builder.position_at_end(condition_block);
 
-        let cond_value = self.visit_expression(condition)?.unwrap_bool();
+        let cond_value = self.generate_expression(condition)?.unwrap_bool();
 
         self.builder
             .build_conditional_branch(cond_value, body_block, end_block)?;
@@ -1479,7 +1478,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             self.skip_block = Some(condition_block);
             self.break_block = Some(end_block);
 
-            self.visit_statement(body)?;
+            self.generate_statement(body)?;
 
             self.skip_block = prev_skip;
             self.break_block = prev_break;
@@ -1491,7 +1490,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(())
     }
 
-    fn visit_for_loop_statement(
+    fn generate_for_loop_statement(
         &mut self,
         ForLoopStatement {
             for_token: _,
@@ -1504,7 +1503,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             body,
             id: _,
         }: &mut ForLoopStatement,
-    ) -> Self::StatementOutput {
+    ) -> Result<()> {
         let current_block = self
             .builder
             .get_insert_block()
@@ -1522,14 +1521,14 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .context
             .insert_basic_block_after(incrementer_block, "for_end");
 
-        self.visit_statement(initializer)?;
+        self.generate_statement(initializer)?;
 
         self.builder.build_unconditional_branch(condition_block)?;
         self.builder.position_at_end(condition_block);
 
         let cond_value = condition
             .as_mut()
-            .map(|cond| self.visit_expression(cond))
+            .map(|cond| self.generate_expression(cond))
             .unwrap_or(Ok(RuntimeValueIR::Bool(
                 self.context.bool_type().const_int(1, false),
             )))?
@@ -1547,7 +1546,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             self.skip_block = Some(incrementer_block);
             self.break_block = Some(end_block);
 
-            self.visit_statement(body)?;
+            self.generate_statement(body)?;
 
             self.skip_block = prev_skip;
             self.break_block = prev_break;
@@ -1556,7 +1555,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         self.builder.build_unconditional_branch(incrementer_block)?;
         self.builder.position_at_end(incrementer_block);
         if let Some(inc) = incrementer {
-            self.visit_expression(inc)?;
+            self.generate_expression(inc)?;
         }
         self.builder.build_unconditional_branch(condition_block)?;
 
@@ -1565,7 +1564,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(())
     }
 
-    fn visit_break_statement(&mut self, _break_stmt: &mut BreakStatement) -> Self::StatementOutput {
+    fn generate_break_statement(&mut self, _break_stmt: &mut BreakStatement) -> Result<()> {
         let break_block = self
             .break_block
             .expect("Break statements can only appear inside of loops");
@@ -1580,7 +1579,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(())
     }
 
-    fn visit_skip_statement(&mut self, _skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
+    fn generate_skip_statement(&mut self, _skip_stmt: &mut SkipStatement) -> Result<()> {
         let skip_block = self
             .skip_block
             .expect("Skip statements can only appear inside of loops");
@@ -1596,25 +1595,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(())
     }
 
-    fn visit_self_executor_host(
-        &mut self,
-        _executor_host: &mut SelfExecutorHost,
-    ) -> Self::ExecutorHostOutput {
-        todo!()
-    }
-
-    fn visit_thread_executor(&mut self, _executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
-        todo!()
-    }
-
-    fn visit_gpu_executor(&mut self, _executor: &mut GPUExecutor) -> Self::ExecutorOutput {
-        todo!()
-    }
-
-    fn visit_literal_expression(
+    fn generate_literal_expression(
         &mut self,
         literal: &mut LiteralExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> Result<RuntimeValueIR<'state>> {
         let LiteralExpression {
             value,
             token: _,
@@ -1672,10 +1656,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         })
     }
 
-    fn visit_array_expression(
+    fn generate_array_expression(
         &mut self,
         expression: &mut ArrayExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> Result<RuntimeValueIR<'state>> {
         let expression_clone = expression.clone();
         let ArrayExpression {
             open_bracket_token: _,
@@ -1690,7 +1674,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         let mut array_ir = array_type.get_undef();
 
         for (i, (item, _comma)) in elements.iter_mut().enumerate() {
-            let item_ir = self.visit_expression(item)?;
+            let item_ir = self.generate_expression(item)?;
             if let RuntimeValueIR::Array(item_ir) | RuntimeValueIR::Struct(item_ir) = item_ir {
                 let item =
                     self.builder
@@ -1720,10 +1704,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(RuntimeValueIR::Array(ptr))
     }
 
-    fn visit_struct_expression(
+    fn generate_struct_expression(
         &mut self,
         expression: &mut crate::ast::StructExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> Result<RuntimeValueIR<'state>> {
         let expression_clone = expression.clone();
         let StructExpression {
             type_,
@@ -1733,7 +1717,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             id: _,
         } = expression;
 
-        let type_ = self.visit_type(type_)?;
+        let type_ = self.generate_type(type_)?;
         let ConcreteRuntimeType::Struct { .. } = type_ else {
             pass_precondition!("Struct doesn't have a Struct(_) type")
         };
@@ -1755,7 +1739,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             ),
         ) in members.iter_mut().enumerate()
         {
-            let item_ir = self.visit_expression(value)?;
+            let item_ir = self.generate_expression(value)?;
             let item_type = match self.llvm_type_of_node(&**value).into_basic_type() {
                 Ok(ok) => ok,
                 Err(Either::Left(_fn_type)) => {
@@ -1794,10 +1778,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(RuntimeValueIR::Struct(ptr))
     }
 
-    fn visit_function_call_expression(
+    fn generate_function_call_expression(
         &mut self,
         expr: &mut FunctionCallExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> Result<RuntimeValueIR<'state>> {
         let FunctionCallExpression {
             name,
             name_token: _,
@@ -1809,7 +1793,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         let mut args: Vec<BasicMetadataValueEnum> = vec![];
         for (arg, _comma) in arguments {
-            let ir_value = self.visit_expression(arg)?;
+            let ir_value = self.generate_expression(arg)?;
             let value_type = self.llvm_type_of_node(arg).into_basic_type().unwrap();
 
             if let RuntimeValueIR::Array(ir_ptr) | RuntimeValueIR::Struct(ir_ptr) = ir_value {
@@ -1859,10 +1843,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         self.package_llvm_in_runtime_value(retvalue, &return_type)
     }
 
-    fn visit_compiler_expression(
+    fn generate_compiler_expression(
         &mut self,
         expr: &mut CompilerExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> Result<RuntimeValueIR<'state>> {
         let CompilerExpression {
             at_token: _,
             name,
@@ -1875,7 +1859,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
 
         let mut args = vec![];
         for (arg, _comma) in arguments {
-            let ir_value = self.visit_expression(arg)?;
+            let ir_value = self.generate_expression(arg)?;
             args.push((arg, ir_value));
         }
 
@@ -2112,10 +2096,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         }
     }
 
-    fn visit_array_index_expression(
+    fn generate_array_index_expression(
         &mut self,
         expr: &mut ArrayIndexExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> Result<RuntimeValueIR<'state>> {
         let ArrayIndexExpression {
             array,
             open_bracket_token: _,
@@ -2123,9 +2107,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             close_bracket_token: _,
             id: _,
         } = expr;
-        let array_ptr = self.visit_expression(array)?.unwrap_array();
+        let array_ptr = self.generate_expression(array)?.unwrap_array();
         let array_type = self.type_data.get(&array.get_id()).unwrap().clone();
-        let index_ir = self.visit_expression(index)?.unwrap_unsigned_int();
+        let index_ir = self.generate_expression(index)?.unwrap_unsigned_int();
 
         let array_type_ir = self.runtime_type_to_llvm(&array_type);
 
@@ -2161,10 +2145,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         self.package_llvm_in_runtime_value(Some(result), &result_type)
     }
 
-    fn visit_struct_access_expression(
+    fn generate_struct_access_expression(
         &mut self,
         expr: &mut StructAccessExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> Result<RuntimeValueIR<'state>> {
         let StructAccessExpression {
             value,
             dot_token: _,
@@ -2172,7 +2156,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             member_name_token: _,
             id: _,
         } = expr;
-        let value_ptr = self.visit_expression(value)?.unwrap_struct();
+        let value_ptr = self.generate_expression(value)?.unwrap_struct();
         let value_type = self.type_data.get(&value.get_id()).unwrap().clone();
 
         let value_type_ir = self.runtime_type_to_llvm(&value_type);
@@ -2217,7 +2201,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         self.package_llvm_in_runtime_value(Some(result), member_type)
     }
 
-    fn visit_grouping_expression(
+    fn generate_grouping_expression(
         &mut self,
         GroupingExpression {
             open_paren_token: _,
@@ -2225,14 +2209,14 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             close_paren_token: _,
             id: _,
         }: &mut GroupingExpression,
-    ) -> Self::ExpressionOutput {
-        self.visit_expression(subexpression)
+    ) -> Result<RuntimeValueIR<'state>> {
+        self.generate_expression(subexpression)
     }
 
-    fn visit_variable_access_expression(
+    fn generate_variable_access_expression(
         &mut self,
         expr: &mut VariableAccessExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> Result<RuntimeValueIR<'state>> {
         let VariableAccessExpression {
             name,
             name_token: _,
@@ -2275,7 +2259,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         self.package_llvm_in_runtime_value(result, &result_type)
     }
 
-    fn visit_unary_expression(&mut self, expr: &mut UnaryExpression) -> Self::ExpressionOutput {
+    fn generate_unary_expression(
+        &mut self,
+        expr: &mut UnaryExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
         let UnaryExpression {
             operator_token: _,
             operation,
@@ -2283,7 +2270,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             id: _,
         } = expr;
 
-        let value = self.visit_expression(operand)?;
+        let value = self.generate_expression(operand)?;
 
         let result = match operation {
             UnaryOperation::BitwiseNot => match value {
@@ -2330,7 +2317,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(result)
     }
 
-    fn visit_cast_expression(&mut self, expr: &mut CastExpression) -> Self::ExpressionOutput {
+    fn generate_cast_expression(
+        &mut self,
+        expr: &mut CastExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
         let CastExpression {
             operand,
             as_token: _,
@@ -2338,7 +2328,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             id,
         } = expr;
 
-        let value = self.visit_expression(&mut *operand)?;
+        let value = self.generate_expression(&mut *operand)?;
         let value_type = self
             .type_data
             .get(&operand.get_id())
@@ -2372,7 +2362,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 | ConcreteRuntimeType::U32
                 | ConcreteRuntimeType::U64,
             ) => {
-                let expected_type = self.visit_type(type_)?;
+                let expected_type = self.generate_type(type_)?;
                 let expected_type_ir = self.runtime_type_to_llvm(&expected_type).into_int_type();
 
                 let ir_value = match value {
@@ -2420,7 +2410,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 | ConcreteRuntimeType::Boolean,
                 ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64,
             ) => {
-                let expected_type = self.visit_type(type_)?;
+                let expected_type = self.generate_type(type_)?;
                 let expected_type = self.runtime_type_to_llvm(&expected_type).into_float_type();
 
                 Ok(RuntimeValueIR::Float(match value {
@@ -2446,7 +2436,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 | ConcreteRuntimeType::I32
                 | ConcreteRuntimeType::I64,
             ) => {
-                let expected_type = self.visit_type(type_)?;
+                let expected_type = self.generate_type(type_)?;
                 let expected_type = self.runtime_type_to_llvm(&expected_type).into_int_type();
 
                 Ok(RuntimeValueIR::SignedInt(
@@ -2464,7 +2454,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 | ConcreteRuntimeType::U32
                 | ConcreteRuntimeType::U64,
             ) => {
-                let expected_type = self.visit_type(type_)?;
+                let expected_type = self.generate_type(type_)?;
                 let expected_type = self.runtime_type_to_llvm(&expected_type).into_int_type();
 
                 Ok(RuntimeValueIR::UnsignedInt(
@@ -2476,7 +2466,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 ))
             }
             (ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64, ConcreteRuntimeType::F64) => {
-                let expected_type = self.visit_type(type_)?;
+                let expected_type = self.generate_type(type_)?;
                 let expected_type = self.runtime_type_to_llvm(&expected_type).into_float_type();
 
                 Ok(RuntimeValueIR::Float(self.builder.build_float_ext(
@@ -2486,7 +2476,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
                 )?))
             }
             (ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64, ConcreteRuntimeType::F32) => {
-                let expected_type = self.visit_type(type_)?;
+                let expected_type = self.generate_type(type_)?;
                 let expected_type = self.runtime_type_to_llvm(&expected_type).into_float_type();
 
                 Ok(RuntimeValueIR::Float(self.builder.build_float_trunc(
@@ -2565,7 +2555,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         }
     }
 
-    fn visit_binary_expression(
+    fn generate_binary_expression(
         &mut self,
         BinaryExpression {
             left,
@@ -2574,10 +2564,11 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             right,
             id: _,
         }: &mut BinaryExpression,
-    ) -> Self::ExpressionOutput {
-        let left_value = self.visit_expression(left)?;
-        let mut right_value_gen =
-            |self_: &mut Self| -> Result<RuntimeValueIR<'state>> { self_.visit_expression(right) };
+    ) -> Result<RuntimeValueIR<'state>> {
+        let left_value = self.generate_expression(left)?;
+        let mut right_value_gen = |self_: &mut Self| -> Result<RuntimeValueIR<'state>> {
+            self_.generate_expression(right)
+        };
 
         match operation {
             BinaryOperation::Add => {
@@ -3000,10 +2991,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         }
     }
 
-    fn visit_variable_assignment_expression(
+    fn generate_variable_assignment_expression(
         &mut self,
         expr: &mut VariableAssignmentExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> Result<RuntimeValueIR<'state>> {
         let VariableAssignmentExpression {
             lvalue,
             equal_token: _,
@@ -3011,8 +3002,8 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             id: _,
         } = expr;
 
-        let storage = self.visit_lvalue(lvalue)?;
-        let right_value = self.visit_expression(right)?;
+        let storage = self.generate_lvalue(lvalue)?;
+        let right_value = self.generate_expression(right)?;
 
         if let RuntimeValueIR::Array(right_value) | RuntimeValueIR::Struct(right_value) =
             right_value
@@ -3033,7 +3024,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(right_value)
     }
 
-    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
+    fn generate_variable_lvalue(
+        &mut self,
+        lvalue: &mut VariableLValue,
+    ) -> Result<PointerValue<'state>> {
         let VariableLValue {
             name,
             name_token: _,
@@ -3059,7 +3053,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(storage.0)
     }
 
-    fn visit_array_index_lvalue(
+    fn generate_array_index_lvalue(
         &mut self,
         ArrayIndexLValue {
             array,
@@ -3068,9 +3062,9 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             close_bracket_token: _,
             id: _,
         }: &mut ArrayIndexLValue,
-    ) -> Self::LValueOutput {
-        let array_ptr = self.visit_lvalue(array)?;
-        let index_ir = self.visit_expression(index)?.unwrap_unsigned_int();
+    ) -> Result<PointerValue<'state>> {
+        let array_ptr = self.generate_lvalue(array)?;
+        let index_ir = self.generate_expression(index)?.unwrap_unsigned_int();
 
         let array_type_ir = self.llvm_type_of_node(&**array);
 
@@ -3086,10 +3080,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(index_ptr)
     }
 
-    fn visit_struct_access_lvalue(
+    fn generate_struct_access_lvalue(
         &mut self,
         lvalue: &mut StructAccessLValue,
-    ) -> Self::LValueOutput {
+    ) -> Result<PointerValue<'state>> {
         let StructAccessLValue {
             value,
             dot_token: _,
@@ -3097,7 +3091,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             member_name_token: _,
             id: _,
         } = lvalue;
-        let value_ptr = self.visit_lvalue(value)?;
+        let value_ptr = self.generate_lvalue(value)?;
         let value_type = self.type_data.get(&value.get_id()).unwrap().clone();
 
         let value_type_ir = self.runtime_type_to_llvm(&value_type);
@@ -3127,7 +3121,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(index_ptr)
     }
 
-    fn visit_grouping_lvalue(
+    fn generate_grouping_lvalue(
         &mut self,
         GroupingLValue {
             open_paren_token: _,
@@ -3135,11 +3129,11 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             close_paren_token: _,
             id: _,
         }: &mut GroupingLValue,
-    ) -> Self::LValueOutput {
-        self.visit_lvalue(sublvalue)
+    ) -> Result<PointerValue<'state>> {
+        self.generate_lvalue(sublvalue)
     }
 
-    fn visit_simple_type(&mut self, type_: &mut SimpleType) -> Self::TypeOutput {
+    fn generate_simple_type(&mut self, type_: &mut SimpleType) -> Result<ConcreteRuntimeType> {
         let SimpleType {
             token: _,
             type_: _,
@@ -3152,14 +3146,14 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .clone())
     }
 
-    fn visit_unit_type(
+    fn generate_unit_type(
         &mut self,
         UnitType {
             open_paren_token: _,
             close_paren_token: _,
             id,
         }: &mut UnitType,
-    ) -> Self::TypeOutput {
+    ) -> Result<ConcreteRuntimeType> {
         let infered_type = self
             .type_data
             .get(id)
@@ -3174,7 +3168,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
         Ok(infered_type)
     }
 
-    fn visit_idk_type(&mut self, type_: &mut IdkType) -> Self::TypeOutput {
+    fn generate_idk_type(&mut self, type_: &mut IdkType) -> Result<ConcreteRuntimeType> {
         let IdkType { token: _, id } = type_;
         Ok(self
             .type_data
@@ -3183,7 +3177,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .clone())
     }
 
-    fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
+    fn generate_array_type(&mut self, array_type: &mut ArrayType) -> Result<ConcreteRuntimeType> {
         let ArrayType {
             subtype: _,
             open_bracket_token: _,
@@ -3199,7 +3193,10 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .clone())
     }
 
-    fn visit_struct_type(&mut self, struct_type: &mut crate::ast::StructType) -> Self::TypeOutput {
+    fn generate_struct_type(
+        &mut self,
+        struct_type: &mut crate::ast::StructType,
+    ) -> Result<ConcreteRuntimeType> {
         let StructType {
             struct_token: _,
             open_brace_token: _,
@@ -3215,7 +3212,7 @@ impl<'state> AstVisitor for IrGenerator<'state> {
             .clone())
     }
 
-    fn visit_alias_type(&mut self, alias_type: &mut AliasType) -> Self::TypeOutput {
+    fn generate_alias_type(&mut self, alias_type: &mut AliasType) -> Result<ConcreteRuntimeType> {
         let AliasType {
             name: _,
             name_token: _,

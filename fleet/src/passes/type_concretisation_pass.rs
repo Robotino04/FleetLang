@@ -26,7 +26,7 @@ use crate::{
 pub struct TypeConcretisationPass<'state> {
     errors: RefMut<'state, Errors>,
     //source: Ref<'state, InputSource>,
-    program: Ref<'state, Program>,
+    program: RefMut<'state, Program>,
 
     referenced_variable: Ref<'state, VariableData>,
     referenced_function: Ref<'state, FunctionData>,
@@ -71,7 +71,7 @@ impl PassFactory for TypeConcretisationPass<'_> {
         Ok(Self::Output {
             errors: errors.get_mut(state),
             //source: source.get(state),
-            program: program.get(state),
+            program: program.get_mut(state),
 
             referenced_variable: referenced_variable.get(state),
             referenced_function: referenced_function.get(state),
@@ -275,14 +275,13 @@ impl Pass for TypeConcretisationPass<'_> {
             self.concrete_referenced_variable.insert(*id, var);
         }
         for (id, type_) in self.type_data.clone().iter() {
-            let Some(type_) = self.concretisize_type(
-                *type_,
-                find_node_by_id(&*self.program, *id)
-                    .map(|node| node.get_source_range())
-                    .unwrap_or_else(|| {
-                        SourceRange::empty_start().named(self.program.file_name.clone())
-                    }),
-            ) else {
+            let parent_range = find_node_by_id(&mut *self.program, *id)
+                .map(|node| node.get_source_range())
+                .unwrap_or_else(|| {
+                    SourceRange::empty_start().named(self.program.file_name.clone())
+                });
+
+            let Some(type_) = self.concretisize_type(*type_, parent_range) else {
                 failure = true;
                 continue;
             };

@@ -8,7 +8,7 @@ use itertools::{EitherOrBoth, Itertools};
 
 use crate::{
     ast::{
-        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType,
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
         CompilerExpression, Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
@@ -20,6 +20,7 @@ use crate::{
         UnitType, VariableAccessExpression, VariableAssignmentExpression,
         VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
+    define_dispatch_methods,
     error_reporting::{
         CastDirection, DuplicateKind, ErrorKind, Errors, ExtraParameter, ImpossibleCastReason,
         InternalError, Lint, MissingParameter, NotDefinedKind, ParameterCountDifference,
@@ -94,7 +95,7 @@ impl PassFactory for TypePropagator<'_> {
 impl Pass for TypePropagator<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let mut program = self.program.take().unwrap();
-        self.visit_program(&mut program);
+        self.typecheck_program(&mut program);
 
         Ok(())
     }
@@ -127,7 +128,7 @@ impl<'a> TypePropagator<'a> {
 
         let return_type = return_type
             .as_mut()
-            .map(|t| self.visit_type(t))
+            .map(|t| self.typecheck_type(t))
             .unwrap_or_else(|| {
                 self.type_sets.insert_set(RuntimeType {
                     kind: RuntimeTypeKind::Unknown,
@@ -138,7 +139,7 @@ impl<'a> TypePropagator<'a> {
         let parameter_types = parameters
             .iter_mut()
             .map(|(param, _comma)| {
-                self.visit_simple_binding(param);
+                self.typecheck_simple_binding(param);
                 self.referenced_variable.get(&param.id).unwrap().clone()
             })
             .collect();
@@ -219,24 +220,28 @@ impl<'a> TypePropagator<'a> {
     }
 }
 
-impl AstVisitor for TypePropagator<'_> {
-    type ProgramOutput = ();
-    type TopLevelOutput = ();
-    type FunctionBodyOutput = ();
-    type SimpleBindingOutput = UnionFindSetPtr<RuntimeType>;
-    type StatementOutput = ();
-    type ExecutorHostOutput = ();
-    type ExecutorOutput = ();
-    type ExpressionOutput = UnionFindSetPtr<RuntimeType>;
-    type LValueOutput = UnionFindSetPtr<RuntimeType>;
-    type TypeOutput = UnionFindSetPtr<RuntimeType>;
+type UnifiableType = UnionFindSetPtr<RuntimeType>;
 
-    fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
+impl TypePropagator<'_> {
+    define_dispatch_methods! {
+        typecheck {
+            TopLevelStatement => (),
+            FunctionBody => (),
+            Statement => (),
+            ExecutorHost => (),
+            Executor => (),
+            Expression => UnifiableType,
+            LValue => UnifiableType,
+            Type => UnifiableType,
+        }
+    }
+
+    fn typecheck_program(mut self, program: &mut Program) {
         for tls in &mut program.top_level_statements {
             self.register_top_level_statements(tls);
         }
         for tls in &mut program.top_level_statements {
-            self.visit_top_level_statement(tls);
+            self.typecheck_top_level_statement(tls);
         }
 
         // specify all int sizes
@@ -245,7 +250,7 @@ impl AstVisitor for TypePropagator<'_> {
         }
     }
 
-    fn visit_function_definition(&mut self, fdef: &mut FunctionDefinition) -> Self::TopLevelOutput {
+    fn typecheck_function_definition(&mut self, fdef: &mut FunctionDefinition) {
         let FunctionDefinition {
             let_token: _,
             name: _,
@@ -271,10 +276,10 @@ impl AstVisitor for TypePropagator<'_> {
         self.current_function = Some(this_function.clone());
 
         for (param, _comma) in parameters {
-            self.visit_simple_binding(param);
+            self.typecheck_simple_binding(param);
         }
 
-        self.visit_function_body(body);
+        self.typecheck_function_body(body);
 
         self.require_fully_specialized_scope(&**body);
 
@@ -292,7 +297,7 @@ impl AstVisitor for TypePropagator<'_> {
         }
     }
 
-    fn visit_type_alias(&mut self, type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
+    fn typecheck_type_alias(&mut self, type_alias: &mut TypeAlias) {
         let TypeAlias {
             let_token: _,
             name,
@@ -303,7 +308,7 @@ impl AstVisitor for TypePropagator<'_> {
             id: _,
         } = type_alias;
 
-        let type_ = self.visit_type(type_);
+        let type_ = self.typecheck_type(type_);
 
         self.type_sets.get_mut(type_).kind.specialize_number_size();
 
@@ -314,14 +319,14 @@ impl AstVisitor for TypePropagator<'_> {
         let _ = RuntimeTypeKind::merge_types(*aliased_type, type_, &mut self.type_sets);
     }
 
-    fn visit_statement_function_body(
+    fn typecheck_statement_function_body(
         &mut self,
         StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
-    ) -> Self::FunctionBodyOutput {
-        self.visit_statement(statement);
+    ) {
+        self.typecheck_statement(statement);
     }
 
-    fn visit_extern_function_body(
+    fn typecheck_extern_function_body(
         &mut self,
         ExternFunctionBody {
             at_token: _,
@@ -331,13 +336,10 @@ impl AstVisitor for TypePropagator<'_> {
             semicolon_token: _,
             id: _,
         }: &mut ExternFunctionBody,
-    ) -> Self::FunctionBodyOutput {
+    ) {
     }
 
-    fn visit_simple_binding(
-        &mut self,
-        simple_binding: &mut SimpleBinding,
-    ) -> Self::SimpleBindingOutput {
+    fn typecheck_simple_binding(&mut self, simple_binding: &mut SimpleBinding) -> UnifiableType {
         let SimpleBinding {
             name_token,
             name,
@@ -346,7 +348,7 @@ impl AstVisitor for TypePropagator<'_> {
         } = simple_binding;
 
         let defined_type_ptr = if let Some((_colon, type_)) = type_ {
-            self.visit_type(type_)
+            self.typecheck_type(type_)
         } else {
             self.type_sets.insert_set(RuntimeType {
                 kind: RuntimeTypeKind::Unknown,
@@ -373,18 +375,18 @@ impl AstVisitor for TypePropagator<'_> {
         defined_type_ptr
     }
 
-    fn visit_expression_statement(
+    fn typecheck_expression_statement(
         &mut self,
         ExpressionStatement {
             expression,
             semicolon_token: _,
             id: _,
         }: &mut ExpressionStatement,
-    ) -> Self::StatementOutput {
-        let _type = self.visit_expression(expression);
+    ) {
+        let _type = self.typecheck_expression(expression);
     }
 
-    fn visit_on_statement(&mut self, stmt: &mut OnStatement) -> Self::StatementOutput {
+    fn typecheck_on_statement(&mut self, stmt: &mut OnStatement) {
         let OnStatement {
             on_token,
             executor,
@@ -396,11 +398,11 @@ impl AstVisitor for TypePropagator<'_> {
             id: _,
         } = stmt;
 
-        self.visit_executor(executor);
+        self.typecheck_executor(executor);
 
         // TODO: remove/inline into loop after we allow triangular iterators
         let iterators = iterators.iter_mut().map(|osi| {
-            let max_value_type = self.visit_expression(&mut osi.max_value);
+            let max_value_type = self.typecheck_expression(&mut osi.max_value);
             (osi, max_value_type)
         });
 
@@ -415,7 +417,7 @@ impl AstVisitor for TypePropagator<'_> {
             max_value_type,
         ) in iterators.collect_vec()
         {
-            let iterator_type = self.visit_simple_binding(binding);
+            let iterator_type = self.typecheck_simple_binding(binding);
             if !RuntimeTypeKind::merge_types(iterator_type, max_value_type, &mut self.type_sets) {
                 self.errors.push(ErrorKind::IteratorValueMaxMismatch {
                     on_range: on_token.range.clone(),
@@ -489,16 +491,16 @@ impl AstVisitor for TypePropagator<'_> {
 
         self.require_constant = true;
         for (binding, _comma) in bindings {
-            self.visit_lvalue(binding);
+            self.typecheck_lvalue(binding);
         }
         self.require_constant = false;
 
-        self.visit_statement(body);
+        self.typecheck_statement(body);
 
         self.require_fully_specialized_scope(&**body);
     }
 
-    fn visit_block_statement(&mut self, stmt: &mut BlockStatement) -> Self::StatementOutput {
+    fn typecheck_block_statement(&mut self, stmt: &mut BlockStatement) {
         let BlockStatement {
             open_brace_token: _,
             body,
@@ -507,7 +509,7 @@ impl AstVisitor for TypePropagator<'_> {
         } = stmt;
 
         for stmt in &mut *body {
-            self.visit_statement(stmt);
+            self.typecheck_statement(stmt);
         }
 
         if let Some(body_part) = body.first() {
@@ -515,7 +517,7 @@ impl AstVisitor for TypePropagator<'_> {
         }
     }
 
-    fn visit_return_statement(&mut self, stmt: &mut ReturnStatement) -> Self::StatementOutput {
+    fn typecheck_return_statement(&mut self, stmt: &mut ReturnStatement) {
         let ReturnStatement {
             return_token,
             value,
@@ -525,7 +527,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         let this_type_ptr = value
             .as_mut()
-            .map(|value| self.visit_expression(value))
+            .map(|value| self.typecheck_expression(value))
             .unwrap_or_else(|| {
                 self.type_sets.insert_set(RuntimeType {
                     kind: RuntimeTypeKind::Unit,
@@ -558,10 +560,10 @@ impl AstVisitor for TypePropagator<'_> {
         self.node_types.insert(*id, this_type_ptr);
     }
 
-    fn visit_variable_definition_statement(
+    fn typecheck_variable_definition_statement(
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
-    ) -> Self::StatementOutput {
+    ) {
         let VariableDefinitionStatement {
             let_token: _,
             binding,
@@ -573,8 +575,8 @@ impl AstVisitor for TypePropagator<'_> {
 
         // evaluated before the binding so it can potentially access variables that get shadowed
         // by this binding
-        let value_type_ptr = self.visit_expression(value);
-        let defined_type_ptr = self.visit_simple_binding(binding);
+        let value_type_ptr = self.typecheck_expression(value);
+        let defined_type_ptr = self.typecheck_simple_binding(binding);
 
         let var = self.referenced_variable.get(id).unwrap();
 
@@ -590,7 +592,7 @@ impl AstVisitor for TypePropagator<'_> {
         }
     }
 
-    fn visit_if_statement(
+    fn typecheck_if_statement(
         &mut self,
         IfStatement {
             if_token: _,
@@ -600,8 +602,8 @@ impl AstVisitor for TypePropagator<'_> {
             else_,
             id: _,
         }: &mut IfStatement,
-    ) -> Self::StatementOutput {
-        let cond_type = self.visit_expression(condition);
+    ) {
+        let cond_type = self.typecheck_expression(condition);
 
         let boolean = self.type_sets.insert_set(RuntimeType {
             kind: RuntimeTypeKind::Boolean,
@@ -617,9 +619,9 @@ impl AstVisitor for TypePropagator<'_> {
             });
         }
 
-        self.visit_statement(if_body);
+        self.typecheck_statement(if_body);
         for (_elif_token, elif_condition, elif_body) in elifs {
-            let elif_type = self.visit_expression(elif_condition);
+            let elif_type = self.typecheck_expression(elif_condition);
             if !RuntimeTypeKind::merge_types(elif_type, boolean, &mut self.type_sets) {
                 self.errors.push(ErrorKind::TypeMismatch {
                     kind: TypeMismatchKind::ElifCondition,
@@ -629,14 +631,14 @@ impl AstVisitor for TypePropagator<'_> {
                 });
             }
 
-            self.visit_statement(elif_body);
+            self.typecheck_statement(elif_body);
         }
         if let Some((_else_token, else_body)) = else_ {
-            self.visit_statement(else_body);
+            self.typecheck_statement(else_body);
         }
     }
 
-    fn visit_while_loop_statement(
+    fn typecheck_while_loop_statement(
         &mut self,
         WhileLoopStatement {
             while_token: _,
@@ -644,8 +646,8 @@ impl AstVisitor for TypePropagator<'_> {
             body,
             id: _,
         }: &mut WhileLoopStatement,
-    ) -> Self::StatementOutput {
-        let cond_type = self.visit_expression(condition);
+    ) {
+        let cond_type = self.typecheck_expression(condition);
 
         let boolean = self.type_sets.insert_set(RuntimeType {
             kind: RuntimeTypeKind::Boolean,
@@ -661,10 +663,10 @@ impl AstVisitor for TypePropagator<'_> {
             });
         }
 
-        self.visit_statement(body);
+        self.typecheck_statement(body);
     }
 
-    fn visit_for_loop_statement(
+    fn typecheck_for_loop_statement(
         &mut self,
         ForLoopStatement {
             for_token: _,
@@ -677,11 +679,11 @@ impl AstVisitor for TypePropagator<'_> {
             body,
             id: _,
         }: &mut ForLoopStatement,
-    ) -> Self::StatementOutput {
-        self.visit_statement(initializer);
+    ) {
+        self.typecheck_statement(initializer);
 
         if let Some(con) = condition {
-            let cond_type = self.visit_expression(con);
+            let cond_type = self.typecheck_expression(con);
 
             let boolean = self.type_sets.insert_set(RuntimeType {
                 kind: RuntimeTypeKind::Boolean,
@@ -698,40 +700,40 @@ impl AstVisitor for TypePropagator<'_> {
             }
         }
         if let Some(inc) = incrementer {
-            self.visit_expression(inc);
+            self.typecheck_expression(inc);
         }
-        self.visit_statement(body);
+        self.typecheck_statement(body);
 
         self.require_fully_specialized_scope(&**body);
     }
 
-    fn visit_break_statement(
+    fn typecheck_break_statement(
         &mut self,
         BreakStatement {
             break_token: _,
             semicolon_token: _,
             id: _,
         }: &mut BreakStatement,
-    ) -> Self::StatementOutput {
+    ) {
     }
 
-    fn visit_skip_statement(
+    fn typecheck_skip_statement(
         &mut self,
         SkipStatement {
             skip_token: _,
             semicolon_token: _,
             id: _,
         }: &mut SkipStatement,
-    ) -> Self::StatementOutput {
+    ) {
     }
 
-    fn visit_self_executor_host(
+    fn typecheck_self_executor_host(
         &mut self,
         SelfExecutorHost { token: _, id: _ }: &mut SelfExecutorHost,
-    ) -> Self::ExecutorHostOutput {
+    ) {
     }
 
-    fn visit_thread_executor(
+    fn typecheck_thread_executor(
         &mut self,
         ThreadExecutor {
             host,
@@ -742,9 +744,9 @@ impl AstVisitor for TypePropagator<'_> {
             close_bracket_token: _,
             id: _,
         }: &mut ThreadExecutor,
-    ) -> Self::ExecutorOutput {
-        self.visit_executor_host(host);
-        let index_type = self.visit_expression(index);
+    ) {
+        self.typecheck_executor_host(host);
+        let index_type = self.typecheck_expression(index);
 
         let expected_type = self.type_sets.insert_set(RuntimeType {
             kind: RuntimeTypeKind::Number {
@@ -766,7 +768,7 @@ impl AstVisitor for TypePropagator<'_> {
         };
     }
 
-    fn visit_gpu_executor(
+    fn typecheck_gpu_executor(
         &mut self,
         GPUExecutor {
             host,
@@ -777,9 +779,9 @@ impl AstVisitor for TypePropagator<'_> {
             close_bracket_token: _,
             id: _,
         }: &mut GPUExecutor,
-    ) -> Self::ExecutorOutput {
-        self.visit_executor_host(host);
-        let index_type = self.visit_expression(gpu_index);
+    ) {
+        self.typecheck_executor_host(host);
+        let index_type = self.typecheck_expression(gpu_index);
 
         let expected_type = self.type_sets.insert_set(RuntimeType {
             kind: RuntimeTypeKind::Number {
@@ -801,10 +803,10 @@ impl AstVisitor for TypePropagator<'_> {
         };
     }
 
-    fn visit_literal_expression(
+    fn typecheck_literal_expression(
         &mut self,
         expression: &mut LiteralExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> UnifiableType {
         let LiteralExpression {
             value,
             token: _,
@@ -830,10 +832,7 @@ impl AstVisitor for TypePropagator<'_> {
         type_
     }
 
-    fn visit_array_expression(
-        &mut self,
-        expression: &mut ArrayExpression,
-    ) -> Self::ExpressionOutput {
+    fn typecheck_array_expression(&mut self, expression: &mut ArrayExpression) -> UnifiableType {
         let ArrayExpression {
             open_bracket_token: _,
             elements,
@@ -848,7 +847,7 @@ impl AstVisitor for TypePropagator<'_> {
 
         let first_item_range = elements.first().map(|(el, _comma)| el.get_source_range());
         for (item, _comma) in &mut *elements {
-            let this_item_type_ptr = self.visit_expression(item);
+            let this_item_type_ptr = self.typecheck_expression(item);
 
             if !RuntimeTypeKind::merge_types(
                 element_type_ptr,
@@ -878,10 +877,7 @@ impl AstVisitor for TypePropagator<'_> {
         type_
     }
 
-    fn visit_struct_expression(
-        &mut self,
-        expression: &mut StructExpression,
-    ) -> Self::ExpressionOutput {
+    fn typecheck_struct_expression(&mut self, expression: &mut StructExpression) -> UnifiableType {
         let expression_range = expression.get_source_range();
         let StructExpression {
             type_,
@@ -891,7 +887,7 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         } = expression;
 
-        let defined_type_ptr = self.visit_type(type_);
+        let defined_type_ptr = self.typecheck_type(type_);
 
         let mut member_types = vec![];
 
@@ -925,7 +921,7 @@ impl AstVisitor for TypePropagator<'_> {
             ),
         ) in members.iter_mut().enumerate()
         {
-            let this_type_ptr = self.visit_expression(value);
+            let this_type_ptr = self.typecheck_expression(value);
             member_types.push((name.clone(), name_token.range.clone(), this_type_ptr));
 
             // TODO: allow reordering
@@ -999,10 +995,10 @@ impl AstVisitor for TypePropagator<'_> {
         constructed_type_ptr
     }
 
-    fn visit_function_call_expression(
+    fn typecheck_function_call_expression(
         &mut self,
         expression: &mut FunctionCallExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> UnifiableType {
         let FunctionCallExpression {
             name,
             name_token,
@@ -1019,7 +1015,7 @@ impl AstVisitor for TypePropagator<'_> {
 
             // still typecheck args, even though the function doesn't exist
             for (arg, _comma) in &mut expression.arguments {
-                self.visit_expression(arg);
+                self.typecheck_expression(arg);
             }
 
             return self.type_sets.insert_set(RuntimeType {
@@ -1034,7 +1030,7 @@ impl AstVisitor for TypePropagator<'_> {
         for (i, types) in expression
             .arguments
             .iter_mut()
-            .map(|(arg, _comma)| (self.visit_expression(arg), arg))
+            .map(|(arg, _comma)| (self.typecheck_expression(arg), arg))
             .collect_vec()
             .iter()
             .zip_longest(
@@ -1155,10 +1151,10 @@ impl AstVisitor for TypePropagator<'_> {
         detached_return_type
     }
 
-    fn visit_compiler_expression(
+    fn typecheck_compiler_expression(
         &mut self,
         expression: &mut CompilerExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> UnifiableType {
         let CompilerExpression {
             at_token: _,
             name,
@@ -1244,7 +1240,7 @@ impl AstVisitor for TypePropagator<'_> {
 
                 // still typecheck args, even though the function doesn't exist
                 for (arg, _comma) in &mut expression.arguments {
-                    self.visit_expression(arg);
+                    self.typecheck_expression(arg);
                 }
 
                 return self.type_sets.insert_set(RuntimeType {
@@ -1260,7 +1256,7 @@ impl AstVisitor for TypePropagator<'_> {
         for (i, types) in expression
             .arguments
             .iter_mut()
-            .map(|(arg, _comma)| (self.visit_expression(arg), arg))
+            .map(|(arg, _comma)| (self.typecheck_expression(arg), arg))
             .collect_vec()
             .into_iter()
             .zip_longest(parameter_types.iter())
@@ -1332,7 +1328,7 @@ impl AstVisitor for TypePropagator<'_> {
         return_type
     }
 
-    fn visit_array_index_expression(
+    fn typecheck_array_index_expression(
         &mut self,
         ArrayIndexExpression {
             array,
@@ -1341,9 +1337,9 @@ impl AstVisitor for TypePropagator<'_> {
             close_bracket_token: _,
             id,
         }: &mut ArrayIndexExpression,
-    ) -> Self::ExpressionOutput {
-        let array_type = self.visit_expression(array);
-        let index_type = self.visit_expression(index);
+    ) -> UnifiableType {
+        let array_type = self.typecheck_expression(array);
+        let index_type = self.typecheck_expression(index);
 
         let RuntimeTypeKind::ArrayOf { subtype, size: _ } = self.type_sets.get(array_type).kind
         else {
@@ -1382,7 +1378,7 @@ impl AstVisitor for TypePropagator<'_> {
         subtype
     }
 
-    fn visit_struct_access_expression(
+    fn typecheck_struct_access_expression(
         &mut self,
         StructAccessExpression {
             value,
@@ -1391,8 +1387,8 @@ impl AstVisitor for TypePropagator<'_> {
             member_name_token,
             id,
         }: &mut StructAccessExpression,
-    ) -> Self::ExpressionOutput {
-        let value_type = self.visit_expression(value);
+    ) -> UnifiableType {
+        let value_type = self.typecheck_expression(value);
 
         let RuntimeTypeKind::Struct {
             members,
@@ -1435,7 +1431,7 @@ impl AstVisitor for TypePropagator<'_> {
         type_
     }
 
-    fn visit_grouping_expression(
+    fn typecheck_grouping_expression(
         &mut self,
         GroupingExpression {
             open_paren_token: _,
@@ -1443,16 +1439,16 @@ impl AstVisitor for TypePropagator<'_> {
             close_paren_token: _,
             id,
         }: &mut GroupingExpression,
-    ) -> Self::ExpressionOutput {
-        let type_ = self.visit_expression(subexpression);
+    ) -> UnifiableType {
+        let type_ = self.typecheck_expression(subexpression);
         self.node_types.insert(*id, type_);
         type_
     }
 
-    fn visit_variable_access_expression(
+    fn typecheck_variable_access_expression(
         &mut self,
         expression: &mut VariableAccessExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> UnifiableType {
         let VariableAccessExpression {
             name: _,
             name_token,
@@ -1478,10 +1474,7 @@ impl AstVisitor for TypePropagator<'_> {
         self.node_types.insert(*id, type_);
         type_
     }
-    fn visit_unary_expression(
-        &mut self,
-        expression: &mut UnaryExpression,
-    ) -> Self::ExpressionOutput {
+    fn typecheck_unary_expression(&mut self, expression: &mut UnaryExpression) -> UnifiableType {
         let UnaryExpression {
             operator_token: _,
             operation,
@@ -1489,7 +1482,7 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         } = expression;
 
-        let type_ = self.visit_expression(operand);
+        let type_ = self.typecheck_expression(operand);
 
         let allowed_types = match operation {
             UnaryOperation::BitwiseNot => vec![self.type_sets.insert_set(RuntimeType {
@@ -1549,7 +1542,7 @@ impl AstVisitor for TypePropagator<'_> {
         this_type
     }
 
-    fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
+    fn typecheck_cast_expression(&mut self, expression: &mut CastExpression) -> UnifiableType {
         let expression_clone = expression.clone();
         let CastExpression {
             operand,
@@ -1558,8 +1551,8 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         } = expression;
 
-        let from_ptr = self.visit_expression(operand);
-        let to_ptr = self.visit_type(type_);
+        let from_ptr = self.typecheck_expression(operand);
+        let to_ptr = self.typecheck_type(type_);
 
         use RuntimeTypeKind as T;
         enum CastResult {
@@ -1878,10 +1871,7 @@ impl AstVisitor for TypePropagator<'_> {
         to_ptr
     }
 
-    fn visit_binary_expression(
-        &mut self,
-        expression: &mut BinaryExpression,
-    ) -> Self::ExpressionOutput {
+    fn typecheck_binary_expression(&mut self, expression: &mut BinaryExpression) -> UnifiableType {
         let expression_clone = expression.clone();
         let BinaryExpression {
             left,
@@ -1890,8 +1880,8 @@ impl AstVisitor for TypePropagator<'_> {
             right,
             id,
         } = expression;
-        let left_type = self.visit_expression(left);
-        let right_type = self.visit_expression(right);
+        let left_type = self.typecheck_expression(left);
+        let right_type = self.typecheck_expression(right);
 
         // only works as long as this is symmetric
         let mut allowed_gen = || match operation {
@@ -2021,18 +2011,18 @@ impl AstVisitor for TypePropagator<'_> {
         }
     }
 
-    fn visit_variable_assignment_expression(
+    fn typecheck_variable_assignment_expression(
         &mut self,
         expression: &mut VariableAssignmentExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> UnifiableType {
         let VariableAssignmentExpression {
             lvalue,
             equal_token: _,
             right,
             id,
         } = expression;
-        let left_type = self.visit_lvalue(lvalue);
-        let right_type = self.visit_expression(right);
+        let left_type = self.typecheck_lvalue(lvalue);
+        let right_type = self.typecheck_expression(right);
 
         if !RuntimeTypeKind::merge_types(left_type, right_type, &mut self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
@@ -2049,7 +2039,7 @@ impl AstVisitor for TypePropagator<'_> {
         left_type
     }
 
-    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
+    fn typecheck_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> UnifiableType {
         let VariableLValue {
             name: _,
             name_token,
@@ -2076,7 +2066,7 @@ impl AstVisitor for TypePropagator<'_> {
         type_
     }
 
-    fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
+    fn typecheck_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> UnifiableType {
         let ArrayIndexLValue {
             array,
             open_bracket_token: _,
@@ -2085,8 +2075,8 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         } = lvalue;
 
-        let array_type = self.visit_lvalue(array);
-        let index_type = self.visit_expression(index);
+        let array_type = self.typecheck_lvalue(array);
+        let index_type = self.typecheck_expression(index);
 
         let RuntimeTypeKind::ArrayOf { subtype, size: _ } = self.type_sets.get(array_type).kind
         else {
@@ -2125,7 +2115,7 @@ impl AstVisitor for TypePropagator<'_> {
         subtype
     }
 
-    fn visit_struct_access_lvalue(
+    fn typecheck_struct_access_lvalue(
         &mut self,
         StructAccessLValue {
             value,
@@ -2134,8 +2124,8 @@ impl AstVisitor for TypePropagator<'_> {
             member_name_token,
             id,
         }: &mut StructAccessLValue,
-    ) -> Self::LValueOutput {
-        let value_type = self.visit_lvalue(value);
+    ) -> UnifiableType {
+        let value_type = self.typecheck_lvalue(value);
 
         let RuntimeTypeKind::Struct {
             members,
@@ -2178,7 +2168,7 @@ impl AstVisitor for TypePropagator<'_> {
         type_
     }
 
-    fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {
+    fn typecheck_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> UnifiableType {
         let _lvalue_clone = lvalue.clone();
         let GroupingLValue {
             open_paren_token: _,
@@ -2187,20 +2177,20 @@ impl AstVisitor for TypePropagator<'_> {
             id,
         } = lvalue;
 
-        let subtype = self.visit_lvalue(sublvalue);
+        let subtype = self.typecheck_lvalue(sublvalue);
 
         self.node_types.insert(*id, subtype);
         subtype
     }
 
-    fn visit_simple_type(
+    fn typecheck_simple_type(
         &mut self,
         SimpleType {
             token: _,
             type_,
             id,
         }: &mut SimpleType,
-    ) -> Self::TypeOutput {
+    ) -> UnifiableType {
         // make sure function registration gets the same type as the full eval
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
@@ -2210,14 +2200,14 @@ impl AstVisitor for TypePropagator<'_> {
         t
     }
 
-    fn visit_unit_type(
+    fn typecheck_unit_type(
         &mut self,
         UnitType {
             open_paren_token,
             close_paren_token,
             id,
         }: &mut UnitType,
-    ) -> Self::TypeOutput {
+    ) -> UnifiableType {
         // make sure function registration gets the same type as the full eval
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
@@ -2235,7 +2225,7 @@ impl AstVisitor for TypePropagator<'_> {
         t
     }
 
-    fn visit_idk_type(&mut self, IdkType { token, id }: &mut IdkType) -> Self::TypeOutput {
+    fn typecheck_idk_type(&mut self, IdkType { token, id }: &mut IdkType) -> UnifiableType {
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
         }
@@ -2247,7 +2237,7 @@ impl AstVisitor for TypePropagator<'_> {
         t
     }
 
-    fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput {
+    fn typecheck_array_type(&mut self, array_type: &mut ArrayType) -> UnifiableType {
         let array_type_range = array_type.get_source_range();
         let ArrayType {
             subtype,
@@ -2259,7 +2249,7 @@ impl AstVisitor for TypePropagator<'_> {
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
         }
-        let subtype_t = self.visit_type(subtype);
+        let subtype_t = self.typecheck_type(subtype);
 
         if matches!(self.type_sets.get(subtype_t).kind, RuntimeTypeKind::Unit) {
             self.errors.push(ErrorKind::ArrayOfUnit {
@@ -2302,7 +2292,7 @@ impl AstVisitor for TypePropagator<'_> {
         t
     }
 
-    fn visit_struct_type(
+    fn typecheck_struct_type(
         &mut self,
         StructType {
             struct_token,
@@ -2311,7 +2301,7 @@ impl AstVisitor for TypePropagator<'_> {
             close_brace_token,
             id,
         }: &mut StructType,
-    ) -> Self::TypeOutput {
+    ) -> UnifiableType {
         if let Some(type_) = self.node_types.get(id) {
             return *type_;
         }
@@ -2326,7 +2316,7 @@ impl AstVisitor for TypePropagator<'_> {
             _comma,
         ) in members
         {
-            let subtype = self.visit_type(type_);
+            let subtype = self.typecheck_type(type_);
 
             if matches!(self.type_sets.get(subtype).kind, RuntimeTypeKind::Unit) {
                 self.errors.push(ErrorKind::StructOfUnit {
@@ -2357,7 +2347,7 @@ impl AstVisitor for TypePropagator<'_> {
         struct_t
     }
 
-    fn visit_alias_type(&mut self, alias_type: &mut AliasType) -> Self::TypeOutput {
+    fn typecheck_alias_type(&mut self, alias_type: &mut AliasType) -> UnifiableType {
         let AliasType {
             name,
             name_token,

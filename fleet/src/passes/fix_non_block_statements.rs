@@ -1,13 +1,16 @@
-use std::cell::RefMut;
+use std::{cell::RefMut, ops::ControlFlow};
 
 use crate::{
     ast::{
-        AstVisitor, BlockStatement, ForLoopStatement, FunctionBody, FunctionDefinition,
-        HasSourceRange, IfStatement, Program, Statement, WhileLoopStatement,
+        BlockStatement, ForLoopStatement, FunctionBody, FunctionDefinition, HasSourceRange,
+        IfStatement, Program, Statement, WhileLoopStatement,
     },
     error_reporting::{BlockRequiredKind, ErrorKind, Errors},
     parser::IdGenerator,
-    passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+    passes::{
+        partial_visitor::AstWalker,
+        pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+    },
     tokenizer::{Token, TokenType},
 };
 
@@ -37,7 +40,8 @@ impl PassFactory for FixNonBlockStatements<'_> {
 impl Pass for FixNonBlockStatements<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let mut program = self.program.take().unwrap();
-        self.visit_program(&mut program);
+
+        let _ = self.visit_program(&mut program);
 
         Ok(())
     }
@@ -67,31 +71,10 @@ impl FixNonBlockStatements<'_> {
 }
 
 impl PartialAstVisitor for FixNonBlockStatements<'_> {
-    fn partial_visit_function_definition(
-        &mut self,
-        FunctionDefinition {
-            let_token: _,
-            name: _,
-            name_token: _,
-            equal_token: _,
-            open_paren_token: _,
-            parameters,
-            close_paren_token: _,
-            right_arrow_token: _,
-            return_type,
-            body,
-            id: _,
-        }: &mut FunctionDefinition,
-    ) {
-        for (param, _comma) in parameters {
-            self.visit_simple_binding(param);
-        }
+    type Break<'a> = ();
 
-        if let Some(return_type) = return_type {
-            self.visit_type(return_type);
-        }
-
-        if let FunctionBody::Statement(stmt_body) = &mut **body
+    fn visit_function_definition(&mut self, fdef: &mut FunctionDefinition) -> ControlFlow<()> {
+        if let FunctionBody::Statement(stmt_body) = &mut *fdef.body
             && !matches!(stmt_body.statement, Statement::Block { .. })
         {
             self.errors.push(ErrorKind::BlockRequired {
@@ -102,20 +85,19 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
             stmt_body.statement = self.create_fake_block_around(&mut stmt_body.statement);
         }
 
-        self.visit_function_body(body);
+        self.walk_function_definition(fdef)
     }
 
-    fn partial_visit_if_statement(
-        &mut self,
-        IfStatement {
+    fn visit_if_statement(&mut self, stmt: &mut IfStatement) -> ControlFlow<()> {
+        let IfStatement {
             if_token: _,
-            condition,
+            condition: _,
             if_body,
             elifs,
             else_,
             id: _,
-        }: &mut IfStatement,
-    ) {
+        } = stmt;
+
         if !matches!(**if_body, Statement::Block { .. }) {
             self.errors.push(ErrorKind::BlockRequired {
                 kind: BlockRequiredKind::If,
@@ -125,10 +107,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
             **if_body = self.create_fake_block_around(&mut *if_body);
         }
 
-        self.visit_expression(condition);
-        self.visit_statement(if_body);
-
-        for (_token, elif_condition, elif_body) in elifs {
+        for (_token, _condition, elif_body) in elifs {
             if !matches!(elif_body, Statement::Block { .. }) {
                 self.errors.push(ErrorKind::BlockRequired {
                     kind: BlockRequiredKind::Elif,
@@ -137,76 +116,45 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
 
                 *elif_body = self.create_fake_block_around(elif_body);
             }
-            self.visit_expression(elif_condition);
-            self.visit_statement(elif_body);
         }
 
-        if let Some((_token, else_body)) = else_ {
-            if !matches!(**else_body, Statement::Block { .. }) {
-                self.errors.push(ErrorKind::BlockRequired {
-                    kind: BlockRequiredKind::Else,
-                    stmt_range: else_body.get_source_range(),
-                });
+        if let Some((_token, else_body)) = else_
+            && !matches!(**else_body, Statement::Block { .. })
+        {
+            self.errors.push(ErrorKind::BlockRequired {
+                kind: BlockRequiredKind::Else,
+                stmt_range: else_body.get_source_range(),
+            });
 
-                **else_body = self.create_fake_block_around(&mut *else_body);
-            }
-
-            self.visit_statement(else_body);
+            **else_body = self.create_fake_block_around(&mut *else_body);
         }
+
+        self.walk_if_statement(stmt)
     }
 
-    fn partial_visit_while_loop_statement(
-        &mut self,
-        WhileLoopStatement {
-            while_token: _,
-            condition,
-            body,
-            id: _,
-        }: &mut WhileLoopStatement,
-    ) {
-        if !matches!(**body, Statement::Block { .. }) {
+    fn visit_while_loop_statement(&mut self, stmt: &mut WhileLoopStatement) -> ControlFlow<()> {
+        if !matches!(*stmt.body, Statement::Block { .. }) {
             self.errors.push(ErrorKind::BlockRequired {
                 kind: BlockRequiredKind::While,
-                stmt_range: body.get_source_range(),
+                stmt_range: stmt.body.get_source_range(),
             });
 
-            **body = self.create_fake_block_around(&mut *body);
+            *stmt.body = self.create_fake_block_around(&mut stmt.body);
         }
 
-        self.visit_expression(condition);
-        self.visit_statement(body);
+        self.walk_while_loop_statement(stmt)
     }
 
-    fn partial_visit_for_loop_statement(
-        &mut self,
-        ForLoopStatement {
-            for_token: _,
-            open_paren_token: _,
-            initializer,
-            condition,
-            second_semicolon_token: _,
-            incrementer,
-            close_paren_token: _,
-            body,
-            id: _,
-        }: &mut ForLoopStatement,
-    ) {
-        if !matches!(**body, Statement::Block { .. }) {
+    fn visit_for_loop_statement(&mut self, stmt: &mut ForLoopStatement) -> ControlFlow<()> {
+        if !matches!(*stmt.body, Statement::Block { .. }) {
             self.errors.push(ErrorKind::BlockRequired {
                 kind: BlockRequiredKind::For,
-                stmt_range: body.get_source_range(),
+                stmt_range: stmt.body.get_source_range(),
             });
 
-            **body = self.create_fake_block_around(&mut *body);
+            *stmt.body = self.create_fake_block_around(&mut stmt.body);
         }
 
-        self.visit_statement(initializer);
-        if let Some(cond) = condition {
-            self.visit_expression(cond);
-        }
-        if let Some(inc) = incrementer {
-            self.visit_expression(inc);
-        }
-        self.visit_statement(body);
+        self.walk_for_loop_statement(stmt)
     }
 }

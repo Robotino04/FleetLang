@@ -1,16 +1,16 @@
 use fleet::{
     ast::{
         AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstNode,
-        AstNodeRef, AstVisitor, BinaryExpression, BinaryOperation, BlockStatement, CastExpression,
+        AstNodeRef, BinaryExpression, BinaryOperation, BlockStatement, CastExpression,
         CompilerExpression, Executor, ExecutorHost, Expression, ExpressionStatement,
         ExternFunctionBody, ForLoopStatement, FunctionBody, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
-        IfStatement, LValue, LiteralExpression, LiteralKind, NodeID, OnStatement, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SimpleType, Statement, StatementFunctionBody,
-        StructAccessExpression, StructAccessLValue, StructExpression, StructType, ThreadExecutor,
-        TopLevelStatement, Type, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
-        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        IfStatement, LValue, LiteralExpression, LiteralKind, NodeID, OnStatement, Program,
+        ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, Statement,
+        StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
+        StructType, ThreadExecutor, TopLevelStatement, Type, TypeAlias, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     error_reporting::{ErrorSeverity, Errors, HighlightTag},
     escape::{QuoteType, escape},
@@ -18,7 +18,7 @@ use fleet::{
         self, insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
     },
     passes::{
-        find_containing_node::FindContainingNodePass,
+        find_containing_node::find_containing_node,
         pass_manager::{
             FunctionData, InputSource, PassError, PassManager, ScopeData, StatData, TypeData,
             TypeSets, VariableData,
@@ -984,15 +984,14 @@ impl Backend {
         let type_data = pm.state.get::<TypeData>();
         let type_sets = pm.state.get::<TypeSets>();
 
-        let find_pass = FindContainingNodePass::new(SourceLocation {
-            index: 0,
-            line: position.line as usize + 1,
-            column: position.character as usize,
-        });
-
-        let Ok((node_hierarchy, _hovered_token)) =
-            find_pass.visit_program(&mut pm.state.get_mut().unwrap())
-        else {
+        let Some((node_hierarchy, _hovered_token)) = find_containing_node(
+            &mut *pm.state.get_mut::<Program>().unwrap(),
+            SourceLocation {
+                index: 0,
+                line: position.line as usize + 1,
+                column: position.character as usize,
+            },
+        ) else {
             return Ok(None);
         };
 
@@ -1431,15 +1430,15 @@ impl LanguageServer for Backend {
         };
 
         let cpos = params.text_document_position_params.position;
-        let find_pass = FindContainingNodePass::new(SourceLocation {
-            index: 0,
-            line: cpos.line as usize + 1,
-            column: cpos.character as usize,
-        });
 
-        if let Ok((node_hierarchy, hovered_token)) =
-            find_pass.visit_program(&mut pm.state.get_mut().unwrap())
-        {
+        if let Some((node_hierarchy, hovered_token)) = find_containing_node(
+            &mut *pm.state.get_mut::<Program>().unwrap(),
+            SourceLocation {
+                index: 0,
+                line: cpos.line as usize + 1,
+                column: cpos.character as usize,
+            },
+        ) {
             Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -1447,7 +1446,7 @@ impl LanguageServer for Backend {
                         &node_hierarchy,
                         pm.state.get().as_deref(),
                         analysis_data,
-                        hovered_token.as_ref(),
+                        hovered_token.as_deref(),
                     ),
                 }),
                 range: hovered_token.map(|token| Range {
@@ -1653,10 +1652,9 @@ impl LanguageServer for Backend {
             line: cpos.line as usize + 1,
             column: cpos.character as usize,
         };
-        let find_pass = FindContainingNodePass::new(cpos_sl);
 
-        if let Ok((node_hierarchy, _hovered_token)) =
-            find_pass.visit_program(&mut pm.state.get_mut().unwrap())
+        if let Some((node_hierarchy, _hovered_token)) =
+            find_containing_node(&mut *pm.state.get_mut::<Program>().unwrap(), cpos_sl)
         {
             let mut prev_node = None;
             let mut function_call = None;

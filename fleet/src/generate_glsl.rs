@@ -13,7 +13,7 @@ use log::warn;
 
 use crate::{
     ast::{
-        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType,
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
         CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
@@ -26,6 +26,7 @@ use crate::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
+    define_dispatch_methods,
     error_reporting::{
         Backend, ErrorKind, ErrorSeverity, Errors, GpuLimitation, InternalError, Intrinsic,
         UnresolvedSymbol,
@@ -129,7 +130,7 @@ impl Pass for GLSLCodeGenerator<'_> {
             .at_least_maybe()
         {
             *output_functions =
-                self.visit_program(&mut program)
+                self.generate_program(&mut program)
                     .map_err(|err| PassError::CompilerError {
                         source: err,
                         producing_pass: Self::name(),
@@ -293,7 +294,7 @@ impl<'state> GLSLCodeGenerator<'state> {
 
         let iterator_sizes_str = "iterator_sizes";
 
-        let body_str = match self.visit_statement(main_body) {
+        let body_str = match self.generate_statement(main_body) {
             Ok(body_str) => body_str,
             Err(err) => {
                 self.errors.push(ErrorKind::InternalError(
@@ -318,7 +319,7 @@ impl<'state> GLSLCodeGenerator<'state> {
                 );
                 format!(
                     "{} = {}(((gl_GlobalInvocationID.x) {}) {});",
-                    self.visit_simple_binding(&mut it.binding),
+                    self.generate_simple_binding(&mut it.binding),
                     type_.0 + &type_.1,
                     if n == 0 {
                         "".to_string()
@@ -565,19 +566,25 @@ pub struct PreStatementValue {
     pub out_value: String,
 }
 
-impl AstVisitor for GLSLCodeGenerator<'_> {
-    type ProgramOutput = Result<PrecompiledGlslFunctions>;
-    type TopLevelOutput = Result<Option<(String, String)>>;
-    type FunctionBodyOutput = Result<String>;
-    type SimpleBindingOutput = String;
-    type StatementOutput = Result<String>;
-    type ExecutorHostOutput = String;
-    type ExecutorOutput = String;
-    type ExpressionOutput = PreStatementValue;
-    type LValueOutput = PreStatementValue;
-    type TypeOutput = String;
+impl GLSLCodeGenerator<'_> {
+    define_dispatch_methods! {
+        generate {
+            TopLevelStatement => Result<Option<(String, String)>>,
+            FunctionBody => Result<String>,
+            Statement => Result<String>,
+            #[expect(unused)]
+            ExecutorHost => String,
+            #[expect(unused)]
+            Executor => String,
+            Expression => PreStatementValue,
+            LValue => PreStatementValue,
+            // NOTE: We have to use `allow` here because `expect` can't handle the mutual recursion
+            #[allow(dead_code)]
+            Type => String,
+        }
+    }
 
-    fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
+    fn generate_program(mut self, program: &mut Program) -> Result<PrecompiledGlslFunctions> {
         Ok(PrecompiledGlslFunctions((
             program
                 .top_level_statements
@@ -585,7 +592,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                 .filter_map(|tls| {
                     if let TopLevelStatement::FunctionDefinition(_) = tls {
                         let id = self.function_data.get(&tls.get_id()).unwrap().borrow().id;
-                        let tls_generated = match self.visit_top_level_statement(tls) {
+                        let tls_generated = match self.generate_top_level_statement(tls) {
                             Ok(x) => x,
                             Err(err) => return Some(Err(err)),
                         };
@@ -608,7 +615,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         )))
     }
 
-    fn visit_function_definition(
+    fn generate_function_definition(
         &mut self,
         FunctionDefinition {
             let_token: _,
@@ -623,7 +630,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             body,
             id,
         }: &mut FunctionDefinition,
-    ) -> Self::TopLevelOutput {
+    ) -> Result<Option<(String, String)>> {
         let function = self
             .function_data
             .get(id)
@@ -639,23 +646,26 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
         Ok(Some((
             declaration.clone() + ";",
-            declaration + self.visit_function_body(body)?.as_str(),
+            declaration + self.generate_function_body(body)?.as_str(),
         )))
     }
 
-    fn visit_type_alias(&mut self, _type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
+    fn generate_type_alias(
+        &mut self,
+        _type_alias: &mut TypeAlias,
+    ) -> Result<Option<(String, String)>> {
         // type aliases get completely compiled out and aren't relevant after type propagation
         Ok(None)
     }
 
-    fn visit_statement_function_body(
+    fn generate_statement_function_body(
         &mut self,
         StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
-    ) -> Self::FunctionBodyOutput {
-        Ok(format!("{{{}}}", self.visit_statement(statement)?))
+    ) -> Result<String> {
+        Ok(format!("{{{}}}", self.generate_statement(statement)?))
     }
 
-    fn visit_extern_function_body(
+    fn generate_extern_function_body(
         &mut self,
         ExternFunctionBody {
             at_token: _,
@@ -665,7 +675,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             semicolon_token: _,
             id,
         }: &mut ExternFunctionBody,
-    ) -> Self::FunctionBodyOutput {
+    ) -> Result<String> {
         self.errors.push(ErrorKind::GpuLimitationUsed(
             GpuLimitation::ExternalFunction {
                 function: self.function_data.get(id).unwrap().borrow().symbol.clone(),
@@ -674,7 +684,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         Err("Tried using external function from gpu".into())
     }
 
-    fn visit_simple_binding(
+    fn generate_simple_binding(
         &mut self,
         SimpleBinding {
             name_token: _,
@@ -682,7 +692,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             type_: _,
             id,
         }: &mut SimpleBinding,
-    ) -> Self::SimpleBindingOutput {
+    ) -> String {
         let inferred_type = self
             .type_data
             .get(id)
@@ -700,22 +710,22 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         )
     }
 
-    fn visit_expression_statement(
+    fn generate_expression_statement(
         &mut self,
         ExpressionStatement {
             expression,
             semicolon_token: _,
             id: _,
         }: &mut ExpressionStatement,
-    ) -> Self::StatementOutput {
+    ) -> Result<String> {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(expression);
+        } = self.generate_expression(expression);
         Ok(format!("{pre_statements}{out_value};"))
     }
 
-    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput {
+    fn generate_on_statement(&mut self, on_stmt: &mut OnStatement) -> Result<String> {
         self.errors
             .push(ErrorKind::GpuLimitationUsed(GpuLimitation::OnStatement {
                 statement: on_stmt.get_source_range(),
@@ -723,7 +733,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         Err("Tried using on-statement on GPU".into())
     }
 
-    fn visit_block_statement(
+    fn generate_block_statement(
         &mut self,
         BlockStatement {
             open_brace_token: _,
@@ -731,7 +741,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             close_brace_token: _,
             id: _,
         }: &mut BlockStatement,
-    ) -> Self::StatementOutput {
+    ) -> Result<String> {
         Ok(formatdoc!(
             "
             {{
@@ -741,13 +751,13 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             indent::indent_by(
                 4,
                 body.iter_mut()
-                    .flat_map(|stmt| self.visit_statement(stmt))
+                    .flat_map(|stmt| self.generate_statement(stmt))
                     .join("\n"),
             )
         ))
     }
 
-    fn visit_return_statement(
+    fn generate_return_statement(
         &mut self,
         ReturnStatement {
             return_token: _,
@@ -755,18 +765,18 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             semicolon_token: _,
             id: _,
         }: &mut ReturnStatement,
-    ) -> Self::StatementOutput {
+    ) -> Result<String> {
         let PreStatementValue {
             pre_statements,
             out_value,
         } = value
             .as_mut()
-            .map(|expr| self.visit_expression(expr))
+            .map(|expr| self.generate_expression(expr))
             .unwrap_or(PreStatementValue::default());
         Ok(format!("{pre_statements}return {out_value};"))
     }
 
-    fn visit_variable_definition_statement(
+    fn generate_variable_definition_statement(
         &mut self,
         VariableDefinitionStatement {
             let_token: _,
@@ -776,7 +786,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             semicolon_token: _,
             id: _,
         }: &mut VariableDefinitionStatement,
-    ) -> Self::StatementOutput {
+    ) -> Result<String> {
         let ref_var = self
             .variable_data
             .get(&binding.get_id())
@@ -786,14 +796,14 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         let type_ = &ref_var.borrow().type_;
 
         if let ConcreteRuntimeType::ArrayOf { subtype: _, size } = type_ {
-            let lvalue_gen = self.visit_simple_binding(binding);
+            let lvalue_gen = self.generate_simple_binding(binding);
             let lvalue_temporary = self.mangle_variable(&ref_var.borrow());
 
             let rvalue_temporary = self.unique_temporary("rvalue");
             let PreStatementValue {
                 pre_statements: rvalue_pre_statements,
                 out_value: rvalue_out_value,
-            } = self.visit_expression(&mut *value);
+            } = self.generate_expression(&mut *value);
             let (rvalue_type, rvalue_postfix) = self.runtime_type_to_glsl(type_);
 
             let rvalue_gen =
@@ -825,15 +835,15 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             let PreStatementValue {
                 pre_statements,
                 out_value,
-            } = self.visit_expression(&mut *value);
+            } = self.generate_expression(&mut *value);
             Ok(format!(
                 "{pre_statements}{} = ({out_value});",
-                self.visit_simple_binding(binding),
+                self.generate_simple_binding(binding),
             ))
         }
     }
 
-    fn visit_if_statement(
+    fn generate_if_statement(
         &mut self,
         IfStatement {
             if_token: _,
@@ -843,11 +853,11 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             else_,
             id: _,
         }: &mut IfStatement,
-    ) -> Self::StatementOutput {
+    ) -> Result<String> {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(condition);
+        } = self.generate_expression(condition);
 
         let (elif_prestatements, elifs): (Vec<_>, Vec<_>) = elifs
             .iter_mut()
@@ -855,7 +865,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                 let PreStatementValue {
                     pre_statements,
                     out_value,
-                } = self.visit_expression(condition);
+                } = self.generate_expression(condition);
                 Ok((
                     pre_statements,
                     formatdoc!(
@@ -864,7 +874,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                             {}
                         }}\
                         ",
-                        indent::indent_by(4, self.visit_statement(body)?)
+                        indent::indent_by(4, self.generate_statement(body)?)
                     ),
                 ))
             })
@@ -881,10 +891,10 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             {}\
             ",
             elif_prestatements.concat(),
-            indent::indent_by(4, self.visit_statement(&mut *if_body)?),
+            indent::indent_by(4, self.generate_statement(&mut *if_body)?),
             elifs.join("\n")
         ) + &else_.as_mut().map_or(Ok(String::new()), |(_token, body)| {
-            self.visit_statement(&mut *body).map(|stmt| {
+            self.generate_statement(&mut *body).map(|stmt| {
                 formatdoc!(
                     "
                 else {{
@@ -897,7 +907,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         })?)
     }
 
-    fn visit_while_loop_statement(
+    fn generate_while_loop_statement(
         &mut self,
         WhileLoopStatement {
             while_token: _,
@@ -905,22 +915,22 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             body,
             id: _,
         }: &mut WhileLoopStatement,
-    ) -> Self::StatementOutput {
+    ) -> Result<String> {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(condition);
+        } = self.generate_expression(condition);
         Ok(formatdoc!(
             "
             {pre_statements}while ({out_value}) {{
                 {}
             }}\
             ",
-            indent::indent_by(4, self.visit_statement(&mut *body)?)
+            indent::indent_by(4, self.generate_statement(&mut *body)?)
         ))
     }
 
-    fn visit_for_loop_statement(
+    fn generate_for_loop_statement(
         &mut self,
         ForLoopStatement {
             for_token: _,
@@ -933,20 +943,20 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             body,
             id: _,
         }: &mut ForLoopStatement,
-    ) -> Self::StatementOutput {
+    ) -> Result<String> {
         let PreStatementValue {
             pre_statements: cond_pre_statements,
             out_value: cond_out_value,
         } = condition
             .as_mut()
-            .map(|cond| self.visit_expression(cond))
+            .map(|cond| self.generate_expression(cond))
             .unwrap_or(PreStatementValue::default());
         let PreStatementValue {
             pre_statements: inc_pre_statements,
             out_value: inc_out_value,
         } = incrementer
             .as_mut()
-            .map(|inc| self.visit_expression(inc))
+            .map(|inc| self.generate_expression(inc))
             .unwrap_or(PreStatementValue::default());
         Ok(formatdoc!(
             "
@@ -954,56 +964,53 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                 {}
             }}\
             ",
-            self.visit_statement(initializer)?,
-            indent::indent_by(4, self.visit_statement(&mut *body)?)
+            self.generate_statement(initializer)?,
+            indent::indent_by(4, self.generate_statement(&mut *body)?)
         ))
     }
 
-    fn visit_break_statement(
+    fn generate_break_statement(
         &mut self,
         BreakStatement {
             break_token: _,
             semicolon_token: _,
             id: _,
         }: &mut BreakStatement,
-    ) -> Self::StatementOutput {
+    ) -> Result<String> {
         Ok("break;".to_string())
     }
 
-    fn visit_skip_statement(
+    fn generate_skip_statement(
         &mut self,
         SkipStatement {
             skip_token: _,
             semicolon_token: _,
             id: _,
         }: &mut SkipStatement,
-    ) -> Self::StatementOutput {
+    ) -> Result<String> {
         Ok("continue;".to_string())
     }
 
-    fn visit_self_executor_host(
-        &mut self,
-        _executor_host: &mut SelfExecutorHost,
-    ) -> Self::ExecutorHostOutput {
+    fn generate_self_executor_host(&mut self, _executor_host: &mut SelfExecutorHost) -> String {
         todo!()
     }
 
-    fn visit_thread_executor(&mut self, _executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
+    fn generate_thread_executor(&mut self, _executor: &mut ThreadExecutor) -> String {
         todo!()
     }
 
-    fn visit_gpu_executor(&mut self, _executor: &mut GPUExecutor) -> Self::ExecutorOutput {
+    fn generate_gpu_executor(&mut self, _executor: &mut GPUExecutor) -> String {
         todo!()
     }
 
-    fn visit_literal_expression(
+    fn generate_literal_expression(
         &mut self,
         LiteralExpression {
             value,
             token: _,
             id: _,
         }: &mut LiteralExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         PreStatementValue {
             pre_statements: "".to_string(),
             out_value: match value {
@@ -1015,7 +1022,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_array_expression(
+    fn generate_array_expression(
         &mut self,
         ArrayExpression {
             open_bracket_token: _,
@@ -1023,7 +1030,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             close_bracket_token: _,
             id,
         }: &mut ArrayExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let inferred_type = self
             .type_data
             .get(id)
@@ -1047,7 +1054,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                     let PreStatementValue {
                         pre_statements,
                         out_value,
-                    } = self.visit_expression(element);
+                    } = self.generate_expression(element);
 
                     let rvalue_gen = format!(
                         "{rvalue_type} {rvalue_temporary}{rvalue_postfix} = {out_value};\n"
@@ -1087,7 +1094,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         } else {
             let (pre_statements, elements): (Vec<_>, Vec<_>) = elements
                 .iter_mut()
-                .map(|(element, _comma)| self.visit_expression(element))
+                .map(|(element, _comma)| self.generate_expression(element))
                 .map(
                     |PreStatementValue {
                          pre_statements,
@@ -1102,7 +1109,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_struct_expression(
+    fn generate_struct_expression(
         &mut self,
         StructExpression {
             type_: _,
@@ -1111,7 +1118,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             close_brace_token: _,
             id,
         }: &mut StructExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let inferred_type = self
             .type_data
             .get(id)
@@ -1138,7 +1145,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                     let PreStatementValue {
                         pre_statements,
                         out_value,
-                    } = self.visit_expression(value);
+                    } = self.generate_expression(value);
 
                     (pre_statements, out_value)
                 },
@@ -1151,10 +1158,10 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_function_call_expression(
+    fn generate_function_call_expression(
         &mut self,
         expr: &mut FunctionCallExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let FunctionCallExpression {
             name,
             name_token,
@@ -1166,7 +1173,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
         let (pre_statements, args): (Vec<_>, Vec<_>) = arguments
             .iter_mut()
-            .map(|(arg, _comma)| self.visit_expression(arg))
+            .map(|(arg, _comma)| self.generate_expression(arg))
             .map(
                 |PreStatementValue {
                      pre_statements,
@@ -1199,10 +1206,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_compiler_expression(
-        &mut self,
-        expr: &mut CompilerExpression,
-    ) -> Self::ExpressionOutput {
+    fn generate_compiler_expression(&mut self, expr: &mut CompilerExpression) -> PreStatementValue {
         let CompilerExpression {
             at_token: _,
             name,
@@ -1215,7 +1219,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
 
         let (_pre_statements, args): (Vec<_>, Vec<_>) = arguments
             .iter_mut()
-            .map(|(arg, _comma)| self.visit_expression(arg))
+            .map(|(arg, _comma)| self.generate_expression(arg))
             .map(
                 |PreStatementValue {
                      pre_statements,
@@ -1429,7 +1433,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_array_index_expression(
+    fn generate_array_index_expression(
         &mut self,
         ArrayIndexExpression {
             array,
@@ -1438,15 +1442,15 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             close_bracket_token: _,
             id: _,
         }: &mut ArrayIndexExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements: array_pre_statements,
             out_value: array_out_value,
-        } = self.visit_expression(&mut *array);
+        } = self.generate_expression(&mut *array);
         let PreStatementValue {
             pre_statements: index_pre_statements,
             out_value: index_out_value,
-        } = self.visit_expression(&mut *index);
+        } = self.generate_expression(&mut *index);
 
         PreStatementValue {
             pre_statements: array_pre_statements + &index_pre_statements,
@@ -1454,7 +1458,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_struct_access_expression(
+    fn generate_struct_access_expression(
         &mut self,
         StructAccessExpression {
             value,
@@ -1463,11 +1467,11 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             member_name_token: _,
             id: _,
         }: &mut StructAccessExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(&mut *value);
+        } = self.generate_expression(&mut *value);
 
         PreStatementValue {
             pre_statements,
@@ -1475,7 +1479,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_grouping_expression(
+    fn generate_grouping_expression(
         &mut self,
         GroupingExpression {
             open_paren_token: _,
@@ -1483,11 +1487,11 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             close_paren_token: _,
             id: _,
         }: &mut GroupingExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(&mut *subexpression);
+        } = self.generate_expression(&mut *subexpression);
 
         PreStatementValue {
             pre_statements,
@@ -1495,14 +1499,14 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_variable_access_expression(
+    fn generate_variable_access_expression(
         &mut self,
         VariableAccessExpression {
             name: _,
             name_token: _,
             id,
         }: &mut VariableAccessExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let ref_var = self
             .variable_data
             .get(id)
@@ -1515,7 +1519,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_unary_expression(
+    fn generate_unary_expression(
         &mut self,
         UnaryExpression {
             operator_token: _,
@@ -1523,11 +1527,11 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             operand,
             id: _,
         }: &mut UnaryExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(&mut *operand);
+        } = self.generate_expression(&mut *operand);
 
         PreStatementValue {
             pre_statements,
@@ -1542,7 +1546,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_cast_expression(
+    fn generate_cast_expression(
         &mut self,
         CastExpression {
             operand,
@@ -1550,7 +1554,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             type_: _,
             id,
         }: &mut CastExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let (type_, after_id) = self.runtime_type_to_glsl(
             self.type_data
                 .get(id)
@@ -1560,7 +1564,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(&mut *operand);
+        } = self.generate_expression(&mut *operand);
 
         PreStatementValue {
             pre_statements,
@@ -1568,7 +1572,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_binary_expression(
+    fn generate_binary_expression(
         &mut self,
         BinaryExpression {
             left,
@@ -1577,15 +1581,15 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             right,
             id: _,
         }: &mut BinaryExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements: left_pre_statements,
             out_value: left_out_value,
-        } = self.visit_expression(&mut *left);
+        } = self.generate_expression(&mut *left);
         let PreStatementValue {
             pre_statements: right_pre_statements,
             out_value: right_out_value,
-        } = self.visit_expression(&mut *right);
+        } = self.generate_expression(&mut *right);
 
         use BinaryOperation as Bo;
         PreStatementValue {
@@ -1619,7 +1623,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_variable_assignment_expression(
+    fn generate_variable_assignment_expression(
         &mut self,
         VariableAssignmentExpression {
             lvalue,
@@ -1627,16 +1631,16 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             right,
             id: _,
         }: &mut VariableAssignmentExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements: rpre_statements,
             out_value: out_rvalue,
-        } = self.visit_expression(&mut *right);
+        } = self.generate_expression(&mut *right);
 
         let PreStatementValue {
             pre_statements: lpre_statements,
             out_value: out_lvalue,
-        } = self.visit_lvalue(lvalue);
+        } = self.generate_lvalue(lvalue);
 
         PreStatementValue {
             pre_statements: lpre_statements + &rpre_statements,
@@ -1644,14 +1648,14 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_variable_lvalue(
+    fn generate_variable_lvalue(
         &mut self,
         VariableLValue {
             name: _,
             name_token: _,
             id,
         }: &mut VariableLValue,
-    ) -> Self::LValueOutput {
+    ) -> PreStatementValue {
         let ref_var = self.variable_data.get(id).unwrap();
 
         PreStatementValue {
@@ -1660,7 +1664,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_array_index_lvalue(
+    fn generate_array_index_lvalue(
         &mut self,
         ArrayIndexLValue {
             array,
@@ -1669,23 +1673,23 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             close_bracket_token: _,
             id: _,
         }: &mut ArrayIndexLValue,
-    ) -> Self::LValueOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements: rpre_statements,
             out_value: out_rvalue,
-        } = self.visit_expression(&mut *index);
+        } = self.generate_expression(&mut *index);
 
         let PreStatementValue {
             pre_statements: lpre_statements,
             out_value: out_lvalue,
-        } = self.visit_lvalue(array);
+        } = self.generate_lvalue(array);
         PreStatementValue {
             pre_statements: lpre_statements + &rpre_statements,
             out_value: format!("(({out_lvalue})[{out_rvalue}])",),
         }
     }
 
-    fn visit_struct_access_lvalue(
+    fn generate_struct_access_lvalue(
         &mut self,
         StructAccessLValue {
             value,
@@ -1694,11 +1698,11 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             member_name_token: _,
             id: _,
         }: &mut StructAccessLValue,
-    ) -> Self::LValueOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_lvalue(value);
+        } = self.generate_lvalue(value);
 
         PreStatementValue {
             pre_statements,
@@ -1706,7 +1710,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_grouping_lvalue(
+    fn generate_grouping_lvalue(
         &mut self,
         GroupingLValue {
             open_paren_token: _,
@@ -1714,11 +1718,11 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             close_paren_token: _,
             id: _,
         }: &mut GroupingLValue,
-    ) -> Self::LValueOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_lvalue(&mut *sublvalue);
+        } = self.generate_lvalue(&mut *sublvalue);
 
         PreStatementValue {
             pre_statements,
@@ -1726,14 +1730,14 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         }
     }
 
-    fn visit_simple_type(
+    fn generate_simple_type(
         &mut self,
         SimpleType {
             token: _,
             type_: _,
             id,
         }: &mut SimpleType,
-    ) -> Self::TypeOutput {
+    ) -> String {
         let (type_, after_id) = self.runtime_type_to_glsl(
             self.type_data
                 .get(id)
@@ -1742,14 +1746,14 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         type_ + &after_id
     }
 
-    fn visit_unit_type(
+    fn generate_unit_type(
         &mut self,
         UnitType {
             open_paren_token: _,
             close_paren_token: _,
             id,
         }: &mut UnitType,
-    ) -> Self::TypeOutput {
+    ) -> String {
         let (type_, after_id) = self.runtime_type_to_glsl(
             self.type_data
                 .get(id)
@@ -1758,7 +1762,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         type_ + &after_id
     }
 
-    fn visit_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> Self::TypeOutput {
+    fn generate_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> String {
         let (type_, after_id) = self.runtime_type_to_glsl(
             self.type_data
                 .get(id)
@@ -1767,7 +1771,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         type_ + &after_id
     }
 
-    fn visit_array_type(
+    fn generate_array_type(
         &mut self,
         ArrayType {
             subtype: _,
@@ -1776,7 +1780,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             close_bracket_token: _,
             id,
         }: &mut ArrayType,
-    ) -> Self::TypeOutput {
+    ) -> String {
         let (type_, after_id) = self.runtime_type_to_glsl(
             self.type_data
                 .get(id)
@@ -1785,7 +1789,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         type_ + &after_id
     }
 
-    fn visit_struct_type(
+    fn generate_struct_type(
         &mut self,
         StructType {
             struct_token: _,
@@ -1794,7 +1798,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
             close_brace_token: _,
             id: _,
         }: &mut StructType,
-    ) -> Self::TypeOutput {
+    ) -> String {
         format!(
             "struct {} {{ {} }}",
             self.unique_temporary("StructType"),
@@ -1810,7 +1814,7 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
                         },
                         _comma,
                     )| {
-                        self.visit_type(type_);
+                        self.generate_type(type_);
                         let inferred_type = self
                             .type_data
                             .get(&type_.get_id())
@@ -1824,14 +1828,14 @@ impl AstVisitor for GLSLCodeGenerator<'_> {
         )
     }
 
-    fn visit_alias_type(
+    fn generate_alias_type(
         &mut self,
         AliasType {
             name: _,
             name_token: _,
             id,
         }: &mut AliasType,
-    ) -> Self::TypeOutput {
+    ) -> String {
         let (type_, after_id) = self.runtime_type_to_glsl(
             self.type_data
                 .get(id)

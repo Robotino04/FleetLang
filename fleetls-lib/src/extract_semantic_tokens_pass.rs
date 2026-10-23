@@ -1,15 +1,16 @@
 use fleet::{
     ast::{
-        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType,
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
-        ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, IdkType, IfStatement,
-        LiteralExpression, LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement,
-        SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
+        Executor, ExecutorHost, Expression, ExpressionStatement, ExternFunctionBody,
+        ForLoopStatement, FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor,
+        GroupingExpression, GroupingLValue, IdkType, IfStatement, LValue, LiteralExpression,
+        LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
+        SimpleBinding, SimpleType, SkipStatement, Statement, StatementFunctionBody,
         StructAccessExpression, StructAccessLValue, StructExpression, StructMemberDefinition,
-        StructType, ThreadExecutor, TypeAlias, UnaryExpression, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        StructType, ThreadExecutor, TopLevelStatement, Type, TypeAlias, UnaryExpression, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     tokenizer::{SourceLocation, SourceRange, Token, Trivia, TriviaKind},
 };
@@ -123,19 +124,83 @@ impl<'inputs> ExtractSemanticTokensPass<'inputs> {
     }
 }
 
-impl AstVisitor for ExtractSemanticTokensPass<'_> {
-    type ProgramOutput = Vec<SemanticToken>;
-    type TopLevelOutput = ();
-    type FunctionBodyOutput = ();
-    type SimpleBindingOutput = ();
-    type StatementOutput = ();
-    type ExecutorHostOutput = ();
-    type ExecutorOutput = ();
-    type ExpressionOutput = ();
-    type LValueOutput = ();
-    type TypeOutput = ();
+impl ExtractSemanticTokensPass<'_> {
+    fn visit_top_level_statement(&mut self, tls: &mut TopLevelStatement) {
+        match tls {
+            TopLevelStatement::FunctionDefinition(tls) => self.visit_function_definition(tls),
+            TopLevelStatement::TypeAlias(tls) => self.visit_type_alias(tls),
+        }
+    }
 
-    fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
+    fn visit_function_body(&mut self, body: &mut FunctionBody) {
+        match body {
+            FunctionBody::Statement(body) => self.visit_statement_function_body(body),
+            FunctionBody::Extern(body) => self.visit_extern_function_body(body),
+        }
+    }
+
+    fn visit_executor(&mut self, executor: &mut Executor) {
+        match executor {
+            Executor::Thread(executor) => self.visit_thread_executor(executor),
+            Executor::GPU(executor) => self.visit_gpu_executor(executor),
+        }
+    }
+    fn visit_executor_host(&mut self, host: &mut ExecutorHost) {
+        match host {
+            ExecutorHost::Self_(host) => self.visit_self_executor_host(host),
+        }
+    }
+    fn visit_statement(&mut self, stmt: &mut Statement) {
+        match stmt {
+            Statement::Expression(stmt) => self.visit_expression_statement(stmt),
+            Statement::On(stmt) => self.visit_on_statement(stmt),
+            Statement::Block(stmt) => self.visit_block_statement(stmt),
+            Statement::Return(stmt) => self.visit_return_statement(stmt),
+            Statement::VariableDefinition(stmt) => self.visit_variable_definition_statement(stmt),
+            Statement::If(stmt) => self.visit_if_statement(stmt),
+            Statement::WhileLoop(stmt) => self.visit_while_loop_statement(stmt),
+            Statement::ForLoop(stmt) => self.visit_for_loop_statement(stmt),
+            Statement::Break(stmt) => self.visit_break_statement(stmt),
+            Statement::Skip(stmt) => self.visit_skip_statement(stmt),
+        }
+    }
+    fn visit_expression(&mut self, expr: &mut Expression) {
+        match expr {
+            Expression::Literal(expr) => self.visit_literal_expression(expr),
+            Expression::Array(expr) => self.visit_array_expression(expr),
+            Expression::Struct(expr) => self.visit_struct_expression(expr),
+            Expression::FunctionCall(expr) => self.visit_function_call_expression(expr),
+            Expression::CompilerExpression(expr) => self.visit_compiler_expression(expr),
+            Expression::ArrayIndex(expr) => self.visit_array_index_expression(expr),
+            Expression::StructAccess(expr) => self.visit_struct_access_expression(expr),
+            Expression::Grouping(expr) => self.visit_grouping_expression(expr),
+            Expression::VariableAccess(expr) => self.visit_variable_access_expression(expr),
+            Expression::Unary(expr) => self.visit_unary_expression(expr),
+            Expression::Cast(expr) => self.visit_cast_expression(expr),
+            Expression::Binary(expr) => self.visit_binary_expression(expr),
+            Expression::VariableAssignment(expr) => self.visit_variable_assignment_expression(expr),
+        }
+    }
+    fn visit_lvalue(&mut self, lvalue: &mut LValue) {
+        match lvalue {
+            LValue::Variable(lvalue) => self.visit_variable_lvalue(lvalue),
+            LValue::ArrayIndex(lvalue) => self.visit_array_index_lvalue(lvalue),
+            LValue::StructAccess(lvalue) => self.visit_struct_access_lvalue(lvalue),
+            LValue::Grouping(lvalue) => self.visit_grouping_lvalue(lvalue),
+        }
+    }
+    fn visit_type(&mut self, ty: &mut Type) {
+        match ty {
+            Type::Simple(ty) => self.visit_simple_type(ty),
+            Type::Unit(ty) => self.visit_unit_type(ty),
+            Type::Idk(ty) => self.visit_idk_type(ty),
+            Type::Array(ty) => self.visit_array_type(ty),
+            Type::Struct(ty) => self.visit_struct_type(ty),
+            Type::Alias(ty) => self.visit_alias_type(ty),
+        }
+    }
+
+    pub fn visit_program(mut self, program: &mut Program) -> Vec<SemanticToken> {
         for tls in &mut program.top_level_statements {
             self.visit_top_level_statement(tls);
         }
@@ -195,7 +260,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             semicolon_token,
             id: _,
         }: &mut TypeAlias,
-    ) -> Self::TopLevelOutput {
+    ) {
         self.build_semantic_token(let_token, SemanticTokenType::KEYWORD, vec![]);
         self.build_semantic_token(
             name_token,
@@ -213,7 +278,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
     fn visit_statement_function_body(
         &mut self,
         StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
-    ) -> Self::FunctionBodyOutput {
+    ) {
         self.visit_statement(statement);
     }
 
@@ -227,7 +292,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             semicolon_token,
             id: _,
         }: &mut ExternFunctionBody,
-    ) -> Self::FunctionBodyOutput {
+    ) {
         self.build_semantic_token(at_token, SemanticTokenType::OPERATOR, vec![]);
         self.build_semantic_token(extern_token, SemanticTokenType::KEYWORD, vec![]);
         self.build_semantic_token(
@@ -238,10 +303,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
         self.build_comment_tokens_only(semicolon_token);
     }
 
-    fn visit_simple_binding(
-        &mut self,
-        simple_binding: &mut SimpleBinding,
-    ) -> Self::SimpleBindingOutput {
+    fn visit_simple_binding(&mut self, simple_binding: &mut SimpleBinding) {
         self.build_semantic_token(
             &simple_binding.name_token,
             SemanticTokenType::VARIABLE,
@@ -260,7 +322,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             semicolon_token,
             id: _,
         }: &mut ExpressionStatement,
-    ) -> Self::StatementOutput {
+    ) {
         self.visit_expression(expression);
         self.build_comment_tokens_only(semicolon_token);
     }
@@ -277,7 +339,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             body,
             id: _,
         }: &mut OnStatement,
-    ) -> Self::StatementOutput {
+    ) {
         self.build_semantic_token(on_token, SemanticTokenType::KEYWORD, vec![]);
         self.visit_executor(executor);
 
@@ -307,7 +369,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
         self.visit_statement(body);
     }
 
-    fn visit_block_statement(&mut self, block: &mut BlockStatement) -> Self::StatementOutput {
+    fn visit_block_statement(&mut self, block: &mut BlockStatement) {
         self.build_comment_tokens_only(&block.open_brace_token);
         for stmt in &mut block.body {
             self.visit_statement(stmt);
@@ -315,10 +377,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
         self.build_comment_tokens_only(&block.close_brace_token);
     }
 
-    fn visit_return_statement(
-        &mut self,
-        return_stmt: &mut ReturnStatement,
-    ) -> Self::StatementOutput {
+    fn visit_return_statement(&mut self, return_stmt: &mut ReturnStatement) {
         self.build_semantic_token(
             &return_stmt.return_token,
             SemanticTokenType::KEYWORD,
@@ -333,7 +392,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
     fn visit_variable_definition_statement(
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
-    ) -> Self::StatementOutput {
+    ) {
         self.build_semantic_token(&vardef_stmt.let_token, SemanticTokenType::KEYWORD, vec![]);
         self.visit_simple_binding(&mut vardef_stmt.binding);
         self.build_semantic_token(
@@ -345,7 +404,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
         self.build_comment_tokens_only(&vardef_stmt.semicolon_token);
     }
 
-    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::StatementOutput {
+    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) {
         self.build_semantic_token(&if_stmt.if_token, SemanticTokenType::KEYWORD, vec![]);
         self.visit_expression(&mut if_stmt.condition);
         self.visit_statement(&mut if_stmt.if_body);
@@ -368,7 +427,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             body,
             id: _,
         }: &mut WhileLoopStatement,
-    ) -> Self::StatementOutput {
+    ) {
         self.build_semantic_token(while_token, SemanticTokenType::KEYWORD, vec![]);
         self.visit_expression(condition);
         self.visit_statement(body);
@@ -387,7 +446,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             body,
             id: _,
         }: &mut ForLoopStatement,
-    ) -> Self::StatementOutput {
+    ) {
         self.build_semantic_token(for_token, SemanticTokenType::KEYWORD, vec![]);
         self.build_comment_tokens_only(open_paren_token);
         self.visit_statement(initializer);
@@ -409,7 +468,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             semicolon_token,
             id: _,
         }: &mut BreakStatement,
-    ) -> Self::StatementOutput {
+    ) {
         self.build_semantic_token(break_token, SemanticTokenType::KEYWORD, vec![]);
         self.build_comment_tokens_only(semicolon_token);
     }
@@ -421,7 +480,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             semicolon_token,
             id: _,
         }: &mut SkipStatement,
-    ) -> Self::StatementOutput {
+    ) {
         self.build_semantic_token(skip_token, SemanticTokenType::KEYWORD, vec![]);
         self.build_comment_tokens_only(semicolon_token);
     }
@@ -461,7 +520,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             close_bracket_token: close_bracket_token_1,
             id: _,
         }: &mut GPUExecutor,
-    ) -> Self::ExecutorOutput {
+    ) {
         self.visit_executor_host(host);
         self.build_comment_tokens_only(dot_token);
         self.build_semantic_token(gpus_token, SemanticTokenType::VARIABLE, vec![]);
@@ -477,7 +536,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             token,
             id: _,
         }: &mut LiteralExpression,
-    ) -> Self::ExpressionOutput {
+    ) {
         self.build_semantic_token(
             token,
             match value {
@@ -498,7 +557,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             close_bracket_token,
             id: _,
         }: &mut ArrayExpression,
-    ) -> Self::ExpressionOutput {
+    ) {
         self.build_comment_tokens_only(open_bracket_token);
         for (item, comma) in elements {
             self.visit_expression(item);
@@ -518,7 +577,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             close_brace_token,
             id: _,
         }: &mut StructExpression,
-    ) -> Self::ExpressionOutput {
+    ) {
         self.visit_type(type_);
         self.build_comment_tokens_only(open_brace_token);
         for (
@@ -551,7 +610,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             close_paren_token,
             id: _,
         }: &mut FunctionCallExpression,
-    ) -> Self::ExpressionOutput {
+    ) {
         self.build_semantic_token(name_token, SemanticTokenType::FUNCTION, vec![]);
         self.build_comment_tokens_only(open_paren_token);
         for (arg, comma) in arguments {
@@ -574,9 +633,8 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             close_paren_token,
             id: _,
         }: &mut CompilerExpression,
-    ) -> Self::ExpressionOutput {
+    ) {
         self.build_semantic_token(at_token, SemanticTokenType::OPERATOR, vec![]);
-        self.build_comment_tokens_only(open_paren_token);
         self.build_semantic_token(
             name_token,
             SemanticTokenType::FUNCTION,
@@ -601,7 +659,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             close_bracket_token,
             id: _,
         }: &mut ArrayIndexExpression,
-    ) -> Self::ExpressionOutput {
+    ) {
         self.visit_expression(array);
         self.build_comment_tokens_only(open_bracket_token);
         self.visit_expression(index);
@@ -617,7 +675,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             member_name_token,
             id: _,
         }: &mut StructAccessExpression,
-    ) -> Self::ExpressionOutput {
+    ) {
         self.visit_expression(value);
         self.build_comment_tokens_only(dot_token);
         self.build_semantic_token(member_name_token, SemanticTokenType::PROPERTY, vec![]);
@@ -631,7 +689,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             close_paren_token,
             id: _,
         }: &mut GroupingExpression,
-    ) -> Self::ExpressionOutput {
+    ) {
         self.build_comment_tokens_only(open_paren_token);
         self.visit_expression(subexpression);
         self.build_comment_tokens_only(close_paren_token);
@@ -644,7 +702,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             name_token,
             id: _,
         }: &mut VariableAccessExpression,
-    ) -> Self::ExpressionOutput {
+    ) {
         self.build_semantic_token(name_token, SemanticTokenType::VARIABLE, vec![]);
     }
 
@@ -656,7 +714,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             operand,
             id: _,
         }: &mut UnaryExpression,
-    ) -> Self::ExpressionOutput {
+    ) {
         self.build_semantic_token(operator_token, SemanticTokenType::OPERATOR, vec![]);
         self.visit_expression(operand);
     }
@@ -669,7 +727,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             type_,
             id: _,
         }: &mut CastExpression,
-    ) -> Self::ExpressionOutput {
+    ) {
         self.visit_expression(operand);
         self.build_semantic_token(as_token, SemanticTokenType::KEYWORD, vec![]);
         self.visit_type(type_);
@@ -684,7 +742,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             right,
             id: _,
         }: &mut BinaryExpression,
-    ) -> Self::ExpressionOutput {
+    ) {
         self.visit_expression(left);
         self.build_semantic_token(operator_token, SemanticTokenType::OPERATOR, vec![]);
         self.visit_expression(right);
@@ -698,7 +756,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             right,
             id: _,
         }: &mut VariableAssignmentExpression,
-    ) -> Self::ExpressionOutput {
+    ) {
         self.visit_lvalue(lvalue);
         self.build_semantic_token(equal_token, SemanticTokenType::OPERATOR, vec![]);
         self.visit_expression(right);
@@ -711,7 +769,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             name_token,
             id: _,
         }: &mut VariableLValue,
-    ) -> Self::LValueOutput {
+    ) {
         self.build_semantic_token(
             name_token,
             SemanticTokenType::VARIABLE,
@@ -728,7 +786,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             close_bracket_token,
             id: _,
         }: &mut ArrayIndexLValue,
-    ) -> Self::LValueOutput {
+    ) {
         self.visit_lvalue(array);
         self.build_comment_tokens_only(open_bracket_token);
         self.visit_expression(index);
@@ -744,7 +802,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             member_name_token,
             id: _,
         }: &mut StructAccessLValue,
-    ) -> Self::LValueOutput {
+    ) {
         self.visit_lvalue(value);
         self.build_comment_tokens_only(dot_token);
         self.build_semantic_token(
@@ -762,7 +820,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             close_paren_token,
             id: _,
         }: &mut GroupingLValue,
-    ) -> Self::LValueOutput {
+    ) {
         self.build_comment_tokens_only(open_paren_token);
         self.visit_lvalue(sublvalue);
         self.build_comment_tokens_only(close_paren_token);
@@ -786,12 +844,12 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             close_paren_token,
             id: _,
         }: &mut UnitType,
-    ) -> Self::TypeOutput {
+    ) {
         self.build_comment_tokens_only(open_paren_token);
         self.build_comment_tokens_only(close_paren_token);
     }
 
-    fn visit_idk_type(&mut self, IdkType { token, id: _ }: &mut IdkType) -> Self::TypeOutput {
+    fn visit_idk_type(&mut self, IdkType { token, id: _ }: &mut IdkType) {
         self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
     }
 
@@ -804,7 +862,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             close_bracket_token,
             id: _,
         }: &mut ArrayType,
-    ) -> Self::TypeOutput {
+    ) {
         self.visit_type(subtype);
         self.build_comment_tokens_only(open_bracket_token);
         if let Some(size) = size {
@@ -822,7 +880,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             close_brace_token,
             id: _,
         }: &mut StructType,
-    ) -> Self::TypeOutput {
+    ) {
         self.build_semantic_token(struct_token, SemanticTokenType::KEYWORD, vec![]);
         self.build_comment_tokens_only(open_brace_token);
         for (
@@ -856,7 +914,7 @@ impl AstVisitor for ExtractSemanticTokensPass<'_> {
             name_token,
             id: _,
         }: &mut AliasType,
-    ) -> Self::TypeOutput {
+    ) {
         self.build_semantic_token(name_token, SemanticTokenType::TYPE, vec![]);
     }
 }

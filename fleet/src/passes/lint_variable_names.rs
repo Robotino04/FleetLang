@@ -1,14 +1,16 @@
-use std::cell::RefMut;
+use std::{cell::RefMut, ops::ControlFlow};
 
 use itertools::Itertools;
 
 use crate::{
     ast::{
-        AstVisitor, FunctionDefinition, Program, SimpleBinding, StructMemberDefinition, StructType,
-        TypeAlias,
+        FunctionDefinition, Program, SimpleBinding, StructMemberDefinition, StructType, TypeAlias,
     },
     error_reporting::{ErrorKind, Errors, Lint, SymbolDefinition},
-    passes::pass_manager::{Pass, PassFactory, PassResult},
+    passes::{
+        partial_visitor::AstWalker,
+        pass_manager::{Pass, PassFactory, PassResult},
+    },
 };
 
 use super::{partial_visitor::PartialAstVisitor, pass_manager::GlobalState};
@@ -39,7 +41,7 @@ impl Pass for LintVariableNaming<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let program = &mut self.program.take().unwrap();
 
-        self.visit_program(program);
+        let _ = self.visit_program(program);
 
         Ok(())
     }
@@ -156,104 +158,57 @@ impl LintVariableNaming<'_> {
 }
 
 impl PartialAstVisitor for LintVariableNaming<'_> {
+    type Break<'a> = ();
+
     // may get lifted in the future if lambdas are implemented
-    fn partial_visit_function_definition(
-        &mut self,
-        FunctionDefinition {
-            let_token: _,
-            name,
-            name_token,
-            equal_token: _,
-            open_paren_token: _,
-            parameters,
-            close_paren_token: _,
-            right_arrow_token: _,
-            return_type,
-            body,
-            id: _,
-        }: &mut FunctionDefinition,
-    ) {
-        if !Self::is_snake_case(name) {
+    fn visit_function_definition(&mut self, fdef: &mut FunctionDefinition) -> ControlFlow<()> {
+        if !Self::is_snake_case(&fdef.name) {
             self.errors
                 .push(ErrorKind::Lint(Lint::FunctionNameNotSnakeCase {
-                    function: SymbolDefinition::from_token(name.clone(), name_token),
-                    suggestion: Self::words_to_snake_case(Self::split_words(name)),
+                    function: SymbolDefinition::from_token(fdef.name.clone(), &fdef.name_token),
+                    suggestion: Self::words_to_snake_case(Self::split_words(&fdef.name)),
                 }));
         }
-        for (param, _comma) in parameters {
-            self.visit_simple_binding(param);
-        }
 
-        if let Some(return_type) = return_type {
-            self.visit_type(return_type);
-        }
-
-        self.visit_function_body(body);
+        self.walk_function_definition(fdef)
     }
 
-    fn partial_visit_simple_binding(
-        &mut self,
-        SimpleBinding {
-            name_token,
-            name,
-            type_,
-            id: _,
-        }: &mut SimpleBinding,
-    ) {
-        if !Self::is_snake_case(name) {
+    fn visit_simple_binding(&mut self, binding: &mut SimpleBinding) -> ControlFlow<()> {
+        if !Self::is_snake_case(&binding.name) {
             self.errors
                 .push(ErrorKind::Lint(Lint::VariableNameNotSnakeCase {
-                    variable: SymbolDefinition::from_token(name.clone(), name_token),
-                    suggestion: Self::words_to_snake_case(Self::split_words(name)),
+                    variable: SymbolDefinition::from_token(
+                        binding.name.clone(),
+                        &binding.name_token,
+                    ),
+                    suggestion: Self::words_to_snake_case(Self::split_words(&binding.name)),
                 }));
         }
 
-        if let Some((_colon, type_)) = type_ {
-            self.visit_type(type_);
-        }
+        self.walk_simple_binding(binding)
     }
-    fn partial_visit_type_alias(
-        &mut self,
-        TypeAlias {
-            let_token: _,
-            name,
-            name_token,
-            equal_token: _,
-            type_,
-            semicolon_token: _,
-            id: _,
-        }: &mut TypeAlias,
-    ) {
-        if !Self::is_camel_case(name) {
+    fn visit_type_alias(&mut self, alias: &mut TypeAlias) -> ControlFlow<()> {
+        if !Self::is_camel_case(&alias.name) {
             self.errors
                 .push(ErrorKind::Lint(Lint::TypeNameNotCamelCase {
-                    type_: SymbolDefinition::from_token(name.clone(), name_token),
-                    suggestion: Self::words_to_camel_case(Self::split_words(name)),
+                    type_: SymbolDefinition::from_token(alias.name.clone(), &alias.name_token),
+                    suggestion: Self::words_to_camel_case(Self::split_words(&alias.name)),
                 }));
         }
 
-        self.visit_type(type_);
+        self.walk_type_alias(alias)
     }
 
-    fn partial_visit_struct_type(
-        &mut self,
-        StructType {
-            struct_token: _,
-            open_brace_token: _,
-            members,
-            close_brace_token: _,
-            id: _,
-        }: &mut StructType,
-    ) {
+    fn visit_struct_type(&mut self, ty: &mut StructType) -> ControlFlow<()> {
         for (
             StructMemberDefinition {
                 name,
                 name_token,
                 colon_token: _,
-                type_,
+                type_: _,
             },
             _comma,
-        ) in members
+        ) in &ty.members
         {
             if !Self::is_snake_case(name) {
                 self.errors
@@ -262,9 +217,9 @@ impl PartialAstVisitor for LintVariableNaming<'_> {
                         suggestion: Self::words_to_snake_case(Self::split_words(name)),
                     }));
             }
-
-            self.visit_type(type_);
         }
+
+        self.walk_struct_type(ty)
     }
 }
 

@@ -11,7 +11,7 @@ use thiserror::Error;
 use crate::{
     NewtypeDeref,
     ast::{
-        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType,
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, HasSourceRange,
@@ -23,6 +23,7 @@ use crate::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
+    define_dispatch_methods,
     error_reporting::{
         DuplicateKind, ErrorKind, Errors, NotDefinedKind, SymbolDefinition, UnresolvedSymbol,
     },
@@ -595,7 +596,7 @@ impl PassFactory for ScopeAnalyzer<'_> {
 impl Pass for ScopeAnalyzer<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let mut program = self.program.take().unwrap();
-        self.visit_program(&mut program);
+        self.analyze_program(&mut program);
 
         Ok(())
     }
@@ -652,28 +653,30 @@ impl<'a> ScopeAnalyzer<'a> {
     }
 }
 
-impl AstVisitor for ScopeAnalyzer<'_> {
-    type ProgramOutput = ();
-    type TopLevelOutput = ();
-    type FunctionBodyOutput = ();
-    type SimpleBindingOutput = NodeID;
-    type StatementOutput = NodeID;
-    type ExecutorHostOutput = ();
-    type ExecutorOutput = NodeID;
-    type ExpressionOutput = NodeID;
-    type LValueOutput = NodeID;
-    type TypeOutput = NodeID;
+impl ScopeAnalyzer<'_> {
+    define_dispatch_methods! {
+        analyze {
+            TopLevelStatement => (),
+            FunctionBody => (),
+            Statement => NodeID,
+            ExecutorHost => (),
+            Executor => NodeID,
+            Expression => NodeID,
+            LValue => NodeID,
+            Type => NodeID,
+        }
+    }
 
-    fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
+    fn analyze_program(mut self, program: &mut Program) {
         for tls in &mut program.top_level_statements {
             self.register_top_level_statement(tls);
         }
         for tls in &mut program.top_level_statements {
-            self.visit_top_level_statement(tls);
+            self.analyze_top_level_statement(tls);
         }
     }
 
-    fn visit_function_definition(&mut self, fdef: &mut FunctionDefinition) -> Self::TopLevelOutput {
+    fn analyze_function_definition(&mut self, fdef: &mut FunctionDefinition) {
         let FunctionDefinition {
             let_token: _,
             name,
@@ -695,17 +698,17 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             .clone();
 
         if let Some(return_type) = return_type {
-            self.visit_type(return_type);
+            self.analyze_type(return_type);
         }
 
         self.current_function = Some(this_function.clone());
 
         self.variable_scopes.push_child(&mut self.id_generator); // the parameter scope
         for (param, _comma) in parameters {
-            self.visit_simple_binding(param);
+            self.analyze_simple_binding(param);
         }
 
-        self.visit_function_body(body);
+        self.analyze_function_body(body);
 
         self.variable_scopes.pop();
 
@@ -718,7 +721,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             .insert(*id, self.variable_scopes.current.clone());
     }
 
-    fn visit_type_alias(&mut self, type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
+    fn analyze_type_alias(&mut self, type_alias: &mut TypeAlias) {
         let TypeAlias {
             let_token: _,
             name: _,
@@ -729,23 +732,23 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             id,
         } = type_alias;
 
-        self.visit_type(type_);
+        self.analyze_type(type_);
 
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
     }
 
-    fn visit_statement_function_body(
+    fn analyze_statement_function_body(
         &mut self,
         StatementFunctionBody { statement, id }: &mut StatementFunctionBody,
-    ) -> Self::FunctionBodyOutput {
-        self.visit_statement(statement);
+    ) {
+        self.analyze_statement(statement);
 
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
     }
 
-    fn visit_extern_function_body(
+    fn analyze_extern_function_body(
         &mut self,
         ExternFunctionBody {
             at_token: _,
@@ -755,15 +758,12 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             semicolon_token: _,
             id,
         }: &mut ExternFunctionBody,
-    ) -> Self::FunctionBodyOutput {
+    ) {
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
     }
 
-    fn visit_simple_binding(
-        &mut self,
-        simple_binding: &mut SimpleBinding,
-    ) -> Self::SimpleBindingOutput {
+    fn analyze_simple_binding(&mut self, simple_binding: &mut SimpleBinding) -> NodeID {
         let simple_binding_clone = simple_binding.clone();
         let SimpleBinding {
             name_token,
@@ -773,7 +773,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         } = simple_binding;
 
         if let Some((_colon, type_)) = type_ {
-            let dep = self.visit_type(type_);
+            let dep = self.analyze_type(type_);
             self.comptime_deps.add_dependency(*id, dep);
             self.comptime_deps.mark_comptime_required(dep);
         }
@@ -807,15 +807,15 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_expression_statement(
+    fn analyze_expression_statement(
         &mut self,
         ExpressionStatement {
             expression,
             semicolon_token: _,
             id,
         }: &mut ExpressionStatement,
-    ) -> Self::StatementOutput {
-        let dep = self.visit_expression(expression);
+    ) -> NodeID {
+        let dep = self.analyze_expression(expression);
 
         self.comptime_deps.add_dependency(*id, dep);
 
@@ -825,7 +825,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_on_statement(&mut self, stmt: &mut OnStatement) -> Self::StatementOutput {
+    fn analyze_on_statement(&mut self, stmt: &mut OnStatement) -> NodeID {
         let OnStatement {
             on_token: _,
             executor,
@@ -840,11 +840,11 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         self.variable_scopes.push_child(&mut self.id_generator);
         self.variable_scopes.top_mut().copy_from_parent = true;
 
-        self.visit_executor(executor);
+        self.analyze_executor(executor);
 
         // TODO: remove/inline into loop after we allow triangular iterators
         let iterators = iterators.iter_mut().map(|osi| {
-            let max_value_id = self.visit_expression(&mut osi.max_value);
+            let max_value_id = self.analyze_expression(&mut osi.max_value);
             (osi, max_value_id)
         });
 
@@ -859,20 +859,20 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             max_value_id,
         ) in iterators.collect_vec()
         {
-            let iterator_id = self.visit_simple_binding(binding);
+            let iterator_id = self.analyze_simple_binding(binding);
             self.comptime_deps
                 .add_dependencies(*id, [max_value_id, iterator_id]);
         }
 
         for (binding, _comma) in bindings {
-            let dep = self.visit_lvalue(binding);
+            let dep = self.analyze_lvalue(binding);
             self.comptime_deps.add_dependency(*id, dep);
         }
 
         // cannot write to the outside anymore
         self.variable_scopes.top_mut().is_write_guard = true;
 
-        self.visit_statement(body);
+        self.analyze_statement(body);
 
         self.variable_scopes.pop();
 
@@ -882,7 +882,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_block_statement(&mut self, stmt: &mut BlockStatement) -> Self::StatementOutput {
+    fn analyze_block_statement(&mut self, stmt: &mut BlockStatement) -> NodeID {
         let BlockStatement {
             open_brace_token: _,
             body,
@@ -893,7 +893,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         self.variable_scopes.push_child(&mut self.id_generator);
 
         for stmt in body {
-            let dep = self.visit_statement(stmt);
+            let dep = self.analyze_statement(stmt);
             self.comptime_deps.add_dependency(*id, dep);
         }
 
@@ -905,7 +905,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_return_statement(&mut self, stmt: &mut ReturnStatement) -> Self::StatementOutput {
+    fn analyze_return_statement(&mut self, stmt: &mut ReturnStatement) -> NodeID {
         let ReturnStatement {
             return_token: _,
             value,
@@ -914,7 +914,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         } = stmt;
 
         if let Some(value) = value {
-            let dep = self.visit_expression(value);
+            let dep = self.analyze_expression(value);
             self.comptime_deps.add_dependency(*id, dep);
         }
 
@@ -928,10 +928,10 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_variable_definition_statement(
+    fn analyze_variable_definition_statement(
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
-    ) -> Self::StatementOutput {
+    ) -> NodeID {
         let VariableDefinitionStatement {
             let_token: _,
             binding,
@@ -943,8 +943,8 @@ impl AstVisitor for ScopeAnalyzer<'_> {
 
         // evaluated before the binding so it can potentially access variables that get shadowed
         // by this binding
-        let value_dep = self.visit_expression(value);
-        let binding_dep = self.visit_simple_binding(binding);
+        let value_dep = self.analyze_expression(value);
+        let binding_dep = self.analyze_simple_binding(binding);
 
         self.comptime_deps
             .add_dependencies(*id, [value_dep, binding_dep]);
@@ -960,7 +960,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_if_statement(
+    fn analyze_if_statement(
         &mut self,
         IfStatement {
             if_token: _,
@@ -970,21 +970,21 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             else_,
             id,
         }: &mut IfStatement,
-    ) -> Self::StatementOutput {
-        let cond_dep = self.visit_expression(condition);
-        let body_dep = self.visit_statement(if_body);
+    ) -> NodeID {
+        let cond_dep = self.analyze_expression(condition);
+        let body_dep = self.analyze_statement(if_body);
 
         self.comptime_deps
             .add_dependencies(*id, [cond_dep, body_dep]);
 
         for (_elif_token, elif_condition, elif_body) in elifs {
-            let elif_dep = self.visit_expression(elif_condition);
-            let body_dep = self.visit_statement(elif_body);
+            let elif_dep = self.analyze_expression(elif_condition);
+            let body_dep = self.analyze_statement(elif_body);
             self.comptime_deps
                 .add_dependencies(*id, [elif_dep, body_dep]);
         }
         if let Some((_else_token, else_body)) = else_ {
-            let dep = self.visit_statement(else_body);
+            let dep = self.analyze_statement(else_body);
             self.comptime_deps.add_dependency(*id, dep);
         }
 
@@ -994,7 +994,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_while_loop_statement(
+    fn analyze_while_loop_statement(
         &mut self,
         WhileLoopStatement {
             while_token: _,
@@ -1002,9 +1002,9 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             body,
             id,
         }: &mut WhileLoopStatement,
-    ) -> Self::StatementOutput {
-        let cond_dep = self.visit_expression(condition);
-        let body_dep = self.visit_statement(body);
+    ) -> NodeID {
+        let cond_dep = self.analyze_expression(condition);
+        let body_dep = self.analyze_statement(body);
 
         self.comptime_deps
             .add_dependencies(*id, [cond_dep, body_dep]);
@@ -1015,7 +1015,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_for_loop_statement(
+    fn analyze_for_loop_statement(
         &mut self,
         ForLoopStatement {
             for_token: _,
@@ -1028,19 +1028,19 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             body,
             id,
         }: &mut ForLoopStatement,
-    ) -> Self::StatementOutput {
+    ) -> NodeID {
         self.variable_scopes.push_child(&mut self.id_generator);
-        let init_dep = self.visit_statement(initializer);
+        let init_dep = self.analyze_statement(initializer);
 
         if let Some(con) = condition {
-            let cond_dep = self.visit_expression(con);
+            let cond_dep = self.analyze_expression(con);
             self.comptime_deps.add_dependency(*id, cond_dep);
         }
         if let Some(inc) = incrementer {
-            let inc_dep = self.visit_expression(inc);
+            let inc_dep = self.analyze_expression(inc);
             self.comptime_deps.add_dependency(*id, inc_dep);
         }
-        let body_dep = self.visit_statement(body);
+        let body_dep = self.analyze_statement(body);
 
         self.comptime_deps
             .add_dependencies(*id, [init_dep, body_dep]);
@@ -1053,43 +1053,43 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_break_statement(
+    fn analyze_break_statement(
         &mut self,
         BreakStatement {
             break_token: _,
             semicolon_token: _,
             id,
         }: &mut BreakStatement,
-    ) -> Self::StatementOutput {
+    ) -> NodeID {
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
 
         *id
     }
 
-    fn visit_skip_statement(
+    fn analyze_skip_statement(
         &mut self,
         SkipStatement {
             skip_token: _,
             semicolon_token: _,
             id,
         }: &mut SkipStatement,
-    ) -> Self::StatementOutput {
+    ) -> NodeID {
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
 
         *id
     }
 
-    fn visit_self_executor_host(
+    fn analyze_self_executor_host(
         &mut self,
         SelfExecutorHost { token: _, id }: &mut SelfExecutorHost,
-    ) -> Self::ExecutorHostOutput {
+    ) {
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
     }
 
-    fn visit_thread_executor(
+    fn analyze_thread_executor(
         &mut self,
         ThreadExecutor {
             host,
@@ -1100,9 +1100,9 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             close_bracket_token: _,
             id,
         }: &mut ThreadExecutor,
-    ) -> Self::ExecutorOutput {
-        self.visit_executor_host(host);
-        let index_dep = self.visit_expression(index);
+    ) -> NodeID {
+        self.analyze_executor_host(host);
+        let index_dep = self.analyze_expression(index);
         self.comptime_deps.add_dependency(*id, index_dep);
 
         self.contained_scope
@@ -1111,7 +1111,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_gpu_executor(
+    fn analyze_gpu_executor(
         &mut self,
         GPUExecutor {
             host,
@@ -1122,9 +1122,9 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             close_bracket_token: _,
             id,
         }: &mut GPUExecutor,
-    ) -> Self::ExecutorOutput {
-        self.visit_executor_host(host);
-        let index_dep = self.visit_expression(gpu_index);
+    ) -> NodeID {
+        self.analyze_executor_host(host);
+        let index_dep = self.analyze_expression(gpu_index);
         self.comptime_deps.add_dependency(*id, index_dep);
 
         self.contained_scope
@@ -1133,10 +1133,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_literal_expression(
-        &mut self,
-        expression: &mut LiteralExpression,
-    ) -> Self::ExpressionOutput {
+    fn analyze_literal_expression(&mut self, expression: &mut LiteralExpression) -> NodeID {
         let LiteralExpression {
             value: _,
             token: _,
@@ -1149,10 +1146,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_array_expression(
-        &mut self,
-        expression: &mut ArrayExpression,
-    ) -> Self::ExpressionOutput {
+    fn analyze_array_expression(&mut self, expression: &mut ArrayExpression) -> NodeID {
         let ArrayExpression {
             open_bracket_token: _,
             elements,
@@ -1161,7 +1155,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         } = expression;
 
         for (item, _comma) in &mut *elements {
-            let this_item_dep = self.visit_expression(item);
+            let this_item_dep = self.analyze_expression(item);
             self.comptime_deps.add_dependency(*id, this_item_dep);
         }
 
@@ -1171,10 +1165,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_struct_expression(
-        &mut self,
-        expression: &mut StructExpression,
-    ) -> Self::ExpressionOutput {
+    fn analyze_struct_expression(&mut self, expression: &mut StructExpression) -> NodeID {
         let StructExpression {
             type_,
             open_brace_token: _,
@@ -1183,7 +1174,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             id,
         } = expression;
 
-        let type_dep = self.visit_type(type_);
+        let type_dep = self.analyze_type(type_);
         self.comptime_deps.add_dependency(*id, type_dep);
 
         for (
@@ -1196,7 +1187,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             _comma,
         ) in members
         {
-            let value_dep = self.visit_expression(value);
+            let value_dep = self.analyze_expression(value);
             self.comptime_deps.add_dependency(*id, value_dep);
         }
 
@@ -1206,10 +1197,10 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_function_call_expression(
+    fn analyze_function_call_expression(
         &mut self,
         expression: &mut FunctionCallExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> NodeID {
         let FunctionCallExpression {
             name,
             name_token: _,
@@ -1226,7 +1217,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
 
             // still visit args, even though the function doesn't exist
             for (arg, _comma) in &mut expression.arguments {
-                self.visit_expression(arg);
+                self.analyze_expression(arg);
             }
             return *id;
         };
@@ -1238,7 +1229,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         let arg_deps = expression
             .arguments
             .iter_mut()
-            .map(|(arg, _comma)| self.visit_expression(arg))
+            .map(|(arg, _comma)| self.analyze_expression(arg))
             .collect_vec();
 
         self.comptime_deps.add_dependencies(*id, arg_deps);
@@ -1252,10 +1243,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_compiler_expression(
-        &mut self,
-        expression: &mut CompilerExpression,
-    ) -> Self::ExpressionOutput {
+    fn analyze_compiler_expression(&mut self, expression: &mut CompilerExpression) -> NodeID {
         let CompilerExpression {
             at_token: _,
             name,
@@ -1269,7 +1257,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         let arg_deps = expression
             .arguments
             .iter_mut()
-            .map(|(arg, _comma)| self.visit_expression(arg))
+            .map(|(arg, _comma)| self.analyze_expression(arg))
             .collect_vec();
 
         self.comptime_deps.add_dependencies(*id, arg_deps);
@@ -1298,7 +1286,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_array_index_expression(
+    fn analyze_array_index_expression(
         &mut self,
         ArrayIndexExpression {
             array,
@@ -1307,9 +1295,9 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             close_bracket_token: _,
             id,
         }: &mut ArrayIndexExpression,
-    ) -> Self::ExpressionOutput {
-        let array_dep = self.visit_expression(array);
-        let index_dep = self.visit_expression(index);
+    ) -> NodeID {
+        let array_dep = self.analyze_expression(array);
+        let index_dep = self.analyze_expression(index);
 
         self.comptime_deps
             .add_dependencies(*id, [array_dep, index_dep]);
@@ -1320,7 +1308,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_struct_access_expression(
+    fn analyze_struct_access_expression(
         &mut self,
         StructAccessExpression {
             value,
@@ -1329,8 +1317,8 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             member_name_token: _,
             id,
         }: &mut StructAccessExpression,
-    ) -> Self::ExpressionOutput {
-        let value_dep = self.visit_expression(value);
+    ) -> NodeID {
+        let value_dep = self.analyze_expression(value);
 
         self.comptime_deps.add_dependency(*id, value_dep);
         self.contained_scope
@@ -1339,7 +1327,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_grouping_expression(
+    fn analyze_grouping_expression(
         &mut self,
         GroupingExpression {
             open_paren_token: _,
@@ -1347,8 +1335,8 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             close_paren_token: _,
             id,
         }: &mut GroupingExpression,
-    ) -> Self::ExpressionOutput {
-        let sub_dep = self.visit_expression(subexpression);
+    ) -> NodeID {
+        let sub_dep = self.analyze_expression(subexpression);
         self.comptime_deps.add_dependency(*id, sub_dep);
 
         self.contained_scope
@@ -1357,10 +1345,10 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_variable_access_expression(
+    fn analyze_variable_access_expression(
         &mut self,
         expression: &mut VariableAccessExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> NodeID {
         let VariableAccessExpression {
             name,
             name_token: _,
@@ -1401,10 +1389,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
 
         *id
     }
-    fn visit_unary_expression(
-        &mut self,
-        expression: &mut UnaryExpression,
-    ) -> Self::ExpressionOutput {
+    fn analyze_unary_expression(&mut self, expression: &mut UnaryExpression) -> NodeID {
         let UnaryExpression {
             operator_token: _,
             operation: _,
@@ -1412,7 +1397,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             id,
         } = expression;
 
-        let dep = self.visit_expression(operand);
+        let dep = self.analyze_expression(operand);
 
         self.comptime_deps.add_dependency(*id, dep);
 
@@ -1422,7 +1407,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput {
+    fn analyze_cast_expression(&mut self, expression: &mut CastExpression) -> NodeID {
         let CastExpression {
             operand,
             as_token: _,
@@ -1430,8 +1415,8 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             id,
         } = expression;
 
-        let from_dep = self.visit_expression(operand);
-        let to_dep = self.visit_type(type_);
+        let from_dep = self.analyze_expression(operand);
+        let to_dep = self.analyze_type(type_);
 
         self.comptime_deps.add_dependencies(*id, [from_dep, to_dep]);
         self.comptime_deps.mark_comptime_required(to_dep);
@@ -1442,10 +1427,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_binary_expression(
-        &mut self,
-        expression: &mut BinaryExpression,
-    ) -> Self::ExpressionOutput {
+    fn analyze_binary_expression(&mut self, expression: &mut BinaryExpression) -> NodeID {
         let BinaryExpression {
             left,
             operator_token: _,
@@ -1453,8 +1435,8 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             right,
             id,
         } = expression;
-        let left_dep = self.visit_expression(left);
-        let right_dep = self.visit_expression(right);
+        let left_dep = self.analyze_expression(left);
+        let right_dep = self.analyze_expression(right);
 
         self.comptime_deps
             .add_dependencies(*id, [left_dep, right_dep]);
@@ -1465,18 +1447,18 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_variable_assignment_expression(
+    fn analyze_variable_assignment_expression(
         &mut self,
         expression: &mut VariableAssignmentExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> NodeID {
         let VariableAssignmentExpression {
             lvalue,
             equal_token: _,
             right,
             id,
         } = expression;
-        let left_dep = self.visit_lvalue(lvalue);
-        let right_dep = self.visit_expression(right);
+        let left_dep = self.analyze_lvalue(lvalue);
+        let right_dep = self.analyze_expression(right);
 
         // TODO: NOTE: see note above at PHI_NODE_LIMITATION
         self.comptime_deps.add_dependency(left_dep, right_dep);
@@ -1488,7 +1470,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
+    fn analyze_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> NodeID {
         let VariableLValue {
             name,
             name_token,
@@ -1521,7 +1503,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput {
+    fn analyze_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> NodeID {
         let _lvalue_clone = lvalue.clone();
         let ArrayIndexLValue {
             array,
@@ -1531,8 +1513,8 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             id,
         } = lvalue;
 
-        let array_dep = self.visit_lvalue(array);
-        let index_dep = self.visit_expression(index);
+        let array_dep = self.analyze_lvalue(array);
+        let index_dep = self.analyze_expression(index);
 
         self.comptime_deps
             .add_dependencies(*id, [array_dep, index_dep]);
@@ -1543,10 +1525,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_struct_access_lvalue(
-        &mut self,
-        lvalue: &mut StructAccessLValue,
-    ) -> Self::LValueOutput {
+    fn analyze_struct_access_lvalue(&mut self, lvalue: &mut StructAccessLValue) -> NodeID {
         let _lvalue_clone = lvalue.clone();
         let StructAccessLValue {
             value,
@@ -1556,7 +1535,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             id,
         } = lvalue;
 
-        let value_dep = self.visit_lvalue(value);
+        let value_dep = self.analyze_lvalue(value);
 
         self.comptime_deps.add_dependency(*id, value_dep);
 
@@ -1566,7 +1545,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput {
+    fn analyze_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> NodeID {
         let _lvalue_clone = lvalue.clone();
         let GroupingLValue {
             open_paren_token: _,
@@ -1575,7 +1554,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             id,
         } = lvalue;
 
-        let dep = self.visit_lvalue(sublvalue);
+        let dep = self.analyze_lvalue(sublvalue);
 
         self.comptime_deps.add_dependency(*id, dep);
 
@@ -1585,42 +1564,42 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_simple_type(
+    fn analyze_simple_type(
         &mut self,
         SimpleType {
             token: _,
             type_: _,
             id,
         }: &mut SimpleType,
-    ) -> Self::TypeOutput {
+    ) -> NodeID {
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
 
         *id
     }
 
-    fn visit_unit_type(
+    fn analyze_unit_type(
         &mut self,
         UnitType {
             open_paren_token: _,
             close_paren_token: _,
             id,
         }: &mut UnitType,
-    ) -> Self::TypeOutput {
+    ) -> NodeID {
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
 
         *id
     }
 
-    fn visit_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> Self::TypeOutput {
+    fn analyze_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> NodeID {
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
 
         *id
     }
 
-    fn visit_array_type(
+    fn analyze_array_type(
         &mut self,
         ArrayType {
             subtype: _,
@@ -1629,12 +1608,12 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             close_bracket_token: _,
             id,
         }: &mut ArrayType,
-    ) -> Self::TypeOutput {
+    ) -> NodeID {
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
 
         if let Some(size) = size {
-            let size_dep = self.visit_expression(size);
+            let size_dep = self.analyze_expression(size);
             self.comptime_deps.add_dependency(*id, size_dep);
             self.comptime_deps.mark_comptime_required(*id);
         }
@@ -1642,7 +1621,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_struct_type(
+    fn analyze_struct_type(
         &mut self,
         StructType {
             struct_token: _,
@@ -1651,7 +1630,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             close_brace_token: _,
             id,
         }: &mut StructType,
-    ) -> Self::TypeOutput {
+    ) -> NodeID {
         self.contained_scope
             .insert(*id, self.variable_scopes.current.clone());
 
@@ -1667,7 +1646,7 @@ impl AstVisitor for ScopeAnalyzer<'_> {
             _comma,
         ) in members
         {
-            let member_dep = self.visit_type(type_);
+            let member_dep = self.analyze_type(type_);
             self.comptime_deps.add_dependency(*id, member_dep);
 
             if let Some(other_range) =
@@ -1684,14 +1663,14 @@ impl AstVisitor for ScopeAnalyzer<'_> {
         *id
     }
 
-    fn visit_alias_type(
+    fn analyze_alias_type(
         &mut self,
         AliasType {
             name: _,
             name_token: _,
             id,
         }: &mut AliasType,
-    ) -> Self::TypeOutput {
+    ) -> NodeID {
         // Type aliases are handled by type propagation.
 
         *id

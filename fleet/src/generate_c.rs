@@ -7,7 +7,7 @@ use itertools::Itertools;
 
 use crate::{
     ast::{
-        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType,
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
         CompilerExpression, Executor, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
@@ -19,6 +19,7 @@ use crate::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
+    define_dispatch_methods,
     error_reporting::{Backend, ErrorKind, ErrorSeverity, Errors, Intrinsic, UnresolvedSymbol},
     generate_glsl::GLSLCodeGenerator,
     passes::{
@@ -29,7 +30,7 @@ use crate::{
         },
         runtime_type::ConcreteRuntimeType,
         scope_analysis::{ConcreteFunction, ConcreteVariable},
-        top_level_binding_finder::TopLevelBindingFinder,
+        top_level_binding_finder::find_top_level_binding,
     },
 };
 
@@ -110,7 +111,7 @@ impl Pass for CCodeGenerator<'_> {
         let mut program = self.program.take().unwrap();
         let mut output = self.output.take().unwrap();
 
-        *output = CCodeOutput(self.visit_program(&mut program));
+        *output = CCodeOutput(self.generate_program(&mut program));
 
         Ok(())
     }
@@ -215,23 +216,29 @@ pub struct PreStatementValue {
     pub out_value: String,
 }
 
-impl AstVisitor for CCodeGenerator<'_> {
-    type ProgramOutput = String;
-    type TopLevelOutput = String;
-    type FunctionBodyOutput = String;
-    type SimpleBindingOutput = String;
-    type StatementOutput = String;
-    type ExecutorHostOutput = String;
-    type ExecutorOutput = String;
-    type ExpressionOutput = PreStatementValue;
-    type LValueOutput = PreStatementValue;
-    type TypeOutput = String;
+impl CCodeGenerator<'_> {
+    define_dispatch_methods! {
+        generate {
+            TopLevelStatement => String,
+            FunctionBody => String,
+            Statement => String,
+            #[expect(unused)]
+            ExecutorHost => String,
+            #[expect(unused)]
+            Executor => String,
+            Expression => PreStatementValue,
+            LValue => PreStatementValue,
+            // NOTE: We have to use `allow` here because `expect` can't handle the mutual recursion
+            #[allow(dead_code)]
+            Type => String,
+        }
+    }
 
-    fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
+    fn generate_program(mut self, program: &mut Program) -> String {
         let function_definitions = program
             .top_level_statements
             .iter_mut()
-            .map(|tls| self.visit_top_level_statement(tls))
+            .map(|tls| self.generate_top_level_statement(tls))
             .join("\n");
 
         let function_declarations = program
@@ -331,7 +338,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         )
     }
 
-    fn visit_function_definition(
+    fn generate_function_definition(
         &mut self,
         FunctionDefinition {
             let_token: _,
@@ -346,30 +353,30 @@ impl AstVisitor for CCodeGenerator<'_> {
             body,
             id,
         }: &mut FunctionDefinition,
-    ) -> Self::TopLevelOutput {
+    ) -> String {
         let function = self
             .function_data
             .get(id)
             .expect("Functions should be tracked before calling c_generator");
 
         let decl = self.generate_function_declaration(&function.borrow().clone(), true);
-        let body = self.visit_function_body(body);
+        let body = self.generate_function_body(body);
         decl + &body
     }
 
-    fn visit_type_alias(&mut self, _type_alias: &mut TypeAlias) -> Self::TopLevelOutput {
+    fn generate_type_alias(&mut self, _type_alias: &mut TypeAlias) -> String {
         // type aliases get completely compiled out and aren't relevant after type propagation
         "".to_string()
     }
 
-    fn visit_statement_function_body(
+    fn generate_statement_function_body(
         &mut self,
         StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
-    ) -> Self::FunctionBodyOutput {
-        format!("{{{}}}", self.visit_statement(statement))
+    ) -> String {
+        format!("{{{}}}", self.generate_statement(statement))
     }
 
-    fn visit_extern_function_body(
+    fn generate_extern_function_body(
         &mut self,
         ExternFunctionBody {
             at_token: _,
@@ -379,7 +386,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             semicolon_token: _,
             id,
         }: &mut ExternFunctionBody,
-    ) -> Self::FunctionBodyOutput {
+    ) -> String {
         let parent_function = self.function_data.get(id).unwrap();
         let mut fake_extern_function = parent_function.borrow().clone();
         fake_extern_function.symbol.name = symbol.clone();
@@ -401,7 +408,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         )
     }
 
-    fn visit_simple_binding(
+    fn generate_simple_binding(
         &mut self,
         SimpleBinding {
             name_token: _,
@@ -409,7 +416,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             type_: _,
             id,
         }: &mut SimpleBinding,
-    ) -> Self::SimpleBindingOutput {
+    ) -> String {
         let inferred_type = self
             .type_data
             .get(id)
@@ -427,22 +434,22 @@ impl AstVisitor for CCodeGenerator<'_> {
         )
     }
 
-    fn visit_expression_statement(
+    fn generate_expression_statement(
         &mut self,
         ExpressionStatement {
             expression,
             semicolon_token: _,
             id: _,
         }: &mut ExpressionStatement,
-    ) -> Self::StatementOutput {
+    ) -> String {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(expression);
+        } = self.generate_expression(expression);
         format!("{pre_statements}{out_value};")
     }
 
-    fn visit_on_statement(&mut self, stmt: &mut OnStatement) -> Self::StatementOutput {
+    fn generate_on_statement(&mut self, stmt: &mut OnStatement) -> String {
         let OnStatement {
             on_token: _,
             executor,
@@ -473,16 +480,12 @@ impl AstVisitor for CCodeGenerator<'_> {
 
         let iterator_end_values = iterators
             .iter_mut()
-            .map(|it| self.visit_expression(&mut it.max_value))
+            .map(|it| self.generate_expression(&mut it.max_value))
             .collect_vec();
 
         let bindings = bindings
             .iter_mut()
-            .map(|binding| {
-                let mut tlbf = TopLevelBindingFinder::default();
-                tlbf.visit_lvalue(&mut binding.0);
-                tlbf.get_result().unwrap()
-            })
+            .map(|binding| find_top_level_binding(&mut binding.0).unwrap().clone())
             .collect_vec();
 
         let mut bindings = GLSLCodeGenerator::get_on_statement_bindings(
@@ -509,7 +512,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                 let PreStatementValue {
                     pre_statements,
                     out_value,
-                } = self.visit_variable_lvalue(top_level_binding);
+                } = self.generate_variable_lvalue(top_level_binding);
                 let size = type_.sizeof();
 
                 let temporary = self.unique_temporary("lvalue_binding");
@@ -685,7 +688,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             "}
     }
 
-    fn visit_block_statement(
+    fn generate_block_statement(
         &mut self,
         BlockStatement {
             open_brace_token: _,
@@ -693,7 +696,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             close_brace_token: _,
             id: _,
         }: &mut BlockStatement,
-    ) -> Self::StatementOutput {
+    ) -> String {
         formatdoc!(
             "
             {{
@@ -703,13 +706,13 @@ impl AstVisitor for CCodeGenerator<'_> {
             indent::indent_by(
                 4,
                 body.iter_mut()
-                    .map(|stmt| self.visit_statement(stmt))
+                    .map(|stmt| self.generate_statement(stmt))
                     .join("\n"),
             )
         )
     }
 
-    fn visit_return_statement(
+    fn generate_return_statement(
         &mut self,
         ReturnStatement {
             return_token: _,
@@ -717,18 +720,18 @@ impl AstVisitor for CCodeGenerator<'_> {
             semicolon_token: _,
             id: _,
         }: &mut ReturnStatement,
-    ) -> Self::StatementOutput {
+    ) -> String {
         let PreStatementValue {
             pre_statements,
             out_value,
         } = value
             .as_mut()
-            .map(|expr| self.visit_expression(expr))
+            .map(|expr| self.generate_expression(expr))
             .unwrap_or(PreStatementValue::default());
         format!("{pre_statements}return {out_value};")
     }
 
-    fn visit_variable_definition_statement(
+    fn generate_variable_definition_statement(
         &mut self,
         VariableDefinitionStatement {
             let_token: _,
@@ -738,18 +741,18 @@ impl AstVisitor for CCodeGenerator<'_> {
             semicolon_token: _,
             id: _,
         }: &mut VariableDefinitionStatement,
-    ) -> Self::StatementOutput {
+    ) -> String {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(&mut *value);
+        } = self.generate_expression(&mut *value);
         format!(
             "{pre_statements}{} = ({out_value});",
-            self.visit_simple_binding(binding),
+            self.generate_simple_binding(binding),
         )
     }
 
-    fn visit_if_statement(
+    fn generate_if_statement(
         &mut self,
         IfStatement {
             if_token: _,
@@ -759,11 +762,11 @@ impl AstVisitor for CCodeGenerator<'_> {
             else_,
             id: _,
         }: &mut IfStatement,
-    ) -> Self::StatementOutput {
+    ) -> String {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(condition);
+        } = self.generate_expression(condition);
 
         let (elif_prestatements, elifs): (Vec<_>, Vec<_>) = elifs
             .iter_mut()
@@ -771,7 +774,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                 let PreStatementValue {
                     pre_statements,
                     out_value,
-                } = self.visit_expression(condition);
+                } = self.generate_expression(condition);
                 (
                     pre_statements,
                     formatdoc!(
@@ -780,7 +783,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                             {}
                         }}\
                         ",
-                        indent::indent_by(4, self.visit_statement(body))
+                        indent::indent_by(4, self.generate_statement(body))
                     ),
                 )
             })
@@ -794,7 +797,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             {}\
             ",
             elif_prestatements.concat(),
-            indent::indent_by(4, self.visit_statement(&mut *if_body)),
+            indent::indent_by(4, self.generate_statement(&mut *if_body)),
             elifs.join("\n")
         ) + &else_
             .as_mut()
@@ -805,13 +808,13 @@ impl AstVisitor for CCodeGenerator<'_> {
                             {}
                         }}\
                         ",
-                    self.visit_statement(&mut *body)
+                    self.generate_statement(&mut *body)
                 )
             })
             .unwrap_or("".to_string())
     }
 
-    fn visit_while_loop_statement(
+    fn generate_while_loop_statement(
         &mut self,
         WhileLoopStatement {
             while_token: _,
@@ -819,22 +822,22 @@ impl AstVisitor for CCodeGenerator<'_> {
             body,
             id: _,
         }: &mut WhileLoopStatement,
-    ) -> Self::StatementOutput {
+    ) -> String {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(condition);
+        } = self.generate_expression(condition);
         formatdoc!(
             "
             {pre_statements}while ({out_value}) {{
                 {}
             }}\
             ",
-            indent::indent_by(4, self.visit_statement(&mut *body))
+            indent::indent_by(4, self.generate_statement(&mut *body))
         )
     }
 
-    fn visit_for_loop_statement(
+    fn generate_for_loop_statement(
         &mut self,
         ForLoopStatement {
             for_token: _,
@@ -847,20 +850,20 @@ impl AstVisitor for CCodeGenerator<'_> {
             body,
             id: _,
         }: &mut ForLoopStatement,
-    ) -> Self::StatementOutput {
+    ) -> String {
         let PreStatementValue {
             pre_statements: cond_pre_statements,
             out_value: cond_out_value,
         } = condition
             .as_mut()
-            .map(|cond| self.visit_expression(cond))
+            .map(|cond| self.generate_expression(cond))
             .unwrap_or(PreStatementValue::default());
         let PreStatementValue {
             pre_statements: inc_pre_statements,
             out_value: inc_out_value,
         } = incrementer
             .as_mut()
-            .map(|inc| self.visit_expression(inc))
+            .map(|inc| self.generate_expression(inc))
             .unwrap_or(PreStatementValue::default());
         formatdoc!(
             "
@@ -868,56 +871,53 @@ impl AstVisitor for CCodeGenerator<'_> {
                 {}
             }}\
             ",
-            self.visit_statement(initializer),
-            indent::indent_by(4, self.visit_statement(&mut *body))
+            self.generate_statement(initializer),
+            indent::indent_by(4, self.generate_statement(&mut *body))
         )
     }
 
-    fn visit_break_statement(
+    fn generate_break_statement(
         &mut self,
         BreakStatement {
             break_token: _,
             semicolon_token: _,
             id: _,
         }: &mut BreakStatement,
-    ) -> Self::StatementOutput {
+    ) -> String {
         "break;".to_string()
     }
 
-    fn visit_skip_statement(
+    fn generate_skip_statement(
         &mut self,
         SkipStatement {
             skip_token: _,
             semicolon_token: _,
             id: _,
         }: &mut SkipStatement,
-    ) -> Self::StatementOutput {
+    ) -> String {
         "continue;".to_string()
     }
 
-    fn visit_self_executor_host(
-        &mut self,
-        _executor_host: &mut SelfExecutorHost,
-    ) -> Self::ExecutorHostOutput {
+    fn generate_self_executor_host(&mut self, _executor_host: &mut SelfExecutorHost) -> String {
         todo!()
     }
 
-    fn visit_thread_executor(&mut self, _executor: &mut ThreadExecutor) -> Self::ExecutorOutput {
+    fn generate_thread_executor(&mut self, _executor: &mut ThreadExecutor) -> String {
         todo!()
     }
 
-    fn visit_gpu_executor(&mut self, _executor: &mut GPUExecutor) -> Self::ExecutorOutput {
+    fn generate_gpu_executor(&mut self, _executor: &mut GPUExecutor) -> String {
         todo!()
     }
 
-    fn visit_literal_expression(
+    fn generate_literal_expression(
         &mut self,
         LiteralExpression {
             value,
             token: _,
             id,
         }: &mut LiteralExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let format_float = |x: f64| {
             let nr = x.to_string();
             let zeroes = if x.round() == x { ".0" } else { "" };
@@ -958,7 +958,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_array_expression(
+    fn generate_array_expression(
         &mut self,
         ArrayExpression {
             open_bracket_token: _,
@@ -966,7 +966,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             close_bracket_token: _,
             id,
         }: &mut ArrayExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let inferred_type = self
             .type_data
             .get(id)
@@ -980,7 +980,7 @@ impl AstVisitor for CCodeGenerator<'_> {
 
         let (pre_statements, elements): (Vec<_>, Vec<_>) = elements
             .iter_mut()
-            .map(|(element, _comma)| self.visit_expression(element))
+            .map(|(element, _comma)| self.generate_expression(element))
             .map(
                 |PreStatementValue {
                      pre_statements,
@@ -994,7 +994,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_struct_expression(
+    fn generate_struct_expression(
         &mut self,
         StructExpression {
             type_: _,
@@ -1003,7 +1003,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             close_brace_token: _,
             id,
         }: &mut StructExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let inferred_type = self
             .type_data
             .get(id)
@@ -1030,7 +1030,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                     let PreStatementValue {
                         pre_statements,
                         out_value,
-                    } = self.visit_expression(value);
+                    } = self.generate_expression(value);
 
                     (pre_statements, format!(".{name} = {},", out_value))
                 },
@@ -1043,7 +1043,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_function_call_expression(
+    fn generate_function_call_expression(
         &mut self,
         FunctionCallExpression {
             name,
@@ -1053,10 +1053,10 @@ impl AstVisitor for CCodeGenerator<'_> {
             close_paren_token: _,
             id: _,
         }: &mut FunctionCallExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let (pre_statements, args): (Vec<_>, Vec<_>) = arguments
             .iter_mut()
-            .map(|(arg, _comma)| self.visit_expression(arg))
+            .map(|(arg, _comma)| self.generate_expression(arg))
             .map(
                 |PreStatementValue {
                      pre_statements,
@@ -1074,10 +1074,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_compiler_expression(
-        &mut self,
-        expr: &mut CompilerExpression,
-    ) -> Self::ExpressionOutput {
+    fn generate_compiler_expression(&mut self, expr: &mut CompilerExpression) -> PreStatementValue {
         let CompilerExpression {
             at_token: _,
             name,
@@ -1090,7 +1087,7 @@ impl AstVisitor for CCodeGenerator<'_> {
 
         let (pre_statements, args): (Vec<_>, Vec<_>) = arguments
             .iter_mut()
-            .map(|(arg, _comma)| self.visit_expression(arg))
+            .map(|(arg, _comma)| self.generate_expression(arg))
             .map(
                 |PreStatementValue {
                      pre_statements,
@@ -1266,7 +1263,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_array_index_expression(
+    fn generate_array_index_expression(
         &mut self,
         ArrayIndexExpression {
             array,
@@ -1275,15 +1272,15 @@ impl AstVisitor for CCodeGenerator<'_> {
             close_bracket_token: _,
             id: _,
         }: &mut ArrayIndexExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements: array_pre_statements,
             out_value: array_out_value,
-        } = self.visit_expression(&mut *array);
+        } = self.generate_expression(&mut *array);
         let PreStatementValue {
             pre_statements: index_pre_statements,
             out_value: index_out_value,
-        } = self.visit_expression(&mut *index);
+        } = self.generate_expression(&mut *index);
 
         PreStatementValue {
             pre_statements: array_pre_statements + &index_pre_statements,
@@ -1291,7 +1288,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_struct_access_expression(
+    fn generate_struct_access_expression(
         &mut self,
         StructAccessExpression {
             value,
@@ -1300,11 +1297,11 @@ impl AstVisitor for CCodeGenerator<'_> {
             member_name_token: _,
             id: _,
         }: &mut StructAccessExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(&mut *value);
+        } = self.generate_expression(&mut *value);
 
         PreStatementValue {
             pre_statements,
@@ -1312,7 +1309,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_grouping_expression(
+    fn generate_grouping_expression(
         &mut self,
         GroupingExpression {
             open_paren_token: _,
@@ -1320,11 +1317,11 @@ impl AstVisitor for CCodeGenerator<'_> {
             close_paren_token: _,
             id: _,
         }: &mut GroupingExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(&mut *subexpression);
+        } = self.generate_expression(&mut *subexpression);
 
         PreStatementValue {
             pre_statements,
@@ -1332,14 +1329,14 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_variable_access_expression(
+    fn generate_variable_access_expression(
         &mut self,
         VariableAccessExpression {
             name: _,
             name_token: _,
             id,
         }: &mut VariableAccessExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let ref_var = self.variable_data.get(id).unwrap();
 
         PreStatementValue {
@@ -1348,7 +1345,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_unary_expression(
+    fn generate_unary_expression(
         &mut self,
         UnaryExpression {
             operator_token: _,
@@ -1356,11 +1353,11 @@ impl AstVisitor for CCodeGenerator<'_> {
             operand,
             id: _,
         }: &mut UnaryExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(&mut *operand);
+        } = self.generate_expression(&mut *operand);
 
         PreStatementValue {
             pre_statements,
@@ -1375,7 +1372,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_cast_expression(
+    fn generate_cast_expression(
         &mut self,
         CastExpression {
             operand,
@@ -1383,7 +1380,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             type_: _,
             id,
         }: &mut CastExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let (type_, after_id) = self.runtime_type_to_c(
             self.type_data
                 .get(id)
@@ -1393,7 +1390,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_expression(&mut *operand);
+        } = self.generate_expression(&mut *operand);
 
         PreStatementValue {
             pre_statements,
@@ -1401,7 +1398,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_binary_expression(
+    fn generate_binary_expression(
         &mut self,
         BinaryExpression {
             left,
@@ -1410,15 +1407,15 @@ impl AstVisitor for CCodeGenerator<'_> {
             right,
             id: _,
         }: &mut BinaryExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements: left_pre_statements,
             out_value: left_out_value,
-        } = self.visit_expression(&mut *left);
+        } = self.generate_expression(&mut *left);
         let PreStatementValue {
             pre_statements: right_pre_statements,
             out_value: right_out_value,
-        } = self.visit_expression(&mut *right);
+        } = self.generate_expression(&mut *right);
 
         PreStatementValue {
             pre_statements: left_pre_statements + &right_pre_statements,
@@ -1476,7 +1473,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_variable_assignment_expression(
+    fn generate_variable_assignment_expression(
         &mut self,
         VariableAssignmentExpression {
             lvalue,
@@ -1484,16 +1481,16 @@ impl AstVisitor for CCodeGenerator<'_> {
             right,
             id: _,
         }: &mut VariableAssignmentExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements: rpre_statements,
             out_value: out_rvalue,
-        } = self.visit_expression(&mut *right);
+        } = self.generate_expression(&mut *right);
 
         let PreStatementValue {
             pre_statements: lpre_statements,
             out_value: out_lvalue,
-        } = self.visit_lvalue(lvalue);
+        } = self.generate_lvalue(lvalue);
 
         PreStatementValue {
             pre_statements: lpre_statements + &rpre_statements,
@@ -1501,14 +1498,14 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_variable_lvalue(
+    fn generate_variable_lvalue(
         &mut self,
         VariableLValue {
             name: _,
             name_token: _,
             id,
         }: &mut VariableLValue,
-    ) -> Self::LValueOutput {
+    ) -> PreStatementValue {
         let ref_var = self.variable_data.get(id).unwrap();
 
         PreStatementValue {
@@ -1517,7 +1514,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_array_index_lvalue(
+    fn generate_array_index_lvalue(
         &mut self,
         ArrayIndexLValue {
             array,
@@ -1526,23 +1523,23 @@ impl AstVisitor for CCodeGenerator<'_> {
             close_bracket_token: _,
             id: _,
         }: &mut ArrayIndexLValue,
-    ) -> Self::LValueOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements: rpre_statements,
             out_value: out_rvalue,
-        } = self.visit_expression(&mut *index);
+        } = self.generate_expression(&mut *index);
 
         let PreStatementValue {
             pre_statements: lpre_statements,
             out_value: out_lvalue,
-        } = self.visit_lvalue(array);
+        } = self.generate_lvalue(array);
         PreStatementValue {
             pre_statements: lpre_statements + &rpre_statements,
             out_value: format!("((({out_lvalue}).value)[{out_rvalue}])",),
         }
     }
 
-    fn visit_struct_access_lvalue(
+    fn generate_struct_access_lvalue(
         &mut self,
         StructAccessLValue {
             value,
@@ -1551,11 +1548,11 @@ impl AstVisitor for CCodeGenerator<'_> {
             member_name_token: _,
             id: _,
         }: &mut StructAccessLValue,
-    ) -> Self::LValueOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_lvalue(value);
+        } = self.generate_lvalue(value);
 
         PreStatementValue {
             pre_statements,
@@ -1563,7 +1560,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         }
     }
 
-    fn visit_grouping_lvalue(
+    fn generate_grouping_lvalue(
         &mut self,
         GroupingLValue {
             open_paren_token: _,
@@ -1571,26 +1568,29 @@ impl AstVisitor for CCodeGenerator<'_> {
             close_paren_token: _,
             id: _,
         }: &mut GroupingLValue,
-    ) -> Self::LValueOutput {
+    ) -> PreStatementValue {
         let PreStatementValue {
             pre_statements,
             out_value,
-        } = self.visit_lvalue(&mut *sublvalue);
+        } = self.generate_lvalue(&mut *sublvalue);
 
         PreStatementValue {
             pre_statements,
             out_value: format!("({out_value})"),
         }
     }
+}
 
-    fn visit_simple_type(
+#[allow(dead_code)]
+impl CCodeGenerator<'_> {
+    fn generate_simple_type(
         &mut self,
         SimpleType {
             token: _,
             type_: _,
             id,
         }: &mut SimpleType,
-    ) -> Self::TypeOutput {
+    ) -> String {
         let (type_, after_id) = self.runtime_type_to_c(
             self.type_data
                 .get(id)
@@ -1599,14 +1599,14 @@ impl AstVisitor for CCodeGenerator<'_> {
         type_ + &after_id
     }
 
-    fn visit_unit_type(
+    fn generate_unit_type(
         &mut self,
         UnitType {
             open_paren_token: _,
             close_paren_token: _,
             id,
         }: &mut UnitType,
-    ) -> Self::TypeOutput {
+    ) -> String {
         let (type_, after_id) = self.runtime_type_to_c(
             self.type_data
                 .get(id)
@@ -1615,7 +1615,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         type_ + &after_id
     }
 
-    fn visit_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> Self::TypeOutput {
+    fn generate_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> String {
         let (type_, after_id) = self.runtime_type_to_c(
             self.type_data
                 .get(id)
@@ -1624,7 +1624,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         type_ + &after_id
     }
 
-    fn visit_array_type(
+    fn generate_array_type(
         &mut self,
         ArrayType {
             subtype: _,
@@ -1633,7 +1633,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             close_bracket_token: _,
             id,
         }: &mut ArrayType,
-    ) -> Self::TypeOutput {
+    ) -> String {
         let (type_, after_id) = self.runtime_type_to_c(
             self.type_data
                 .get(id)
@@ -1642,7 +1642,7 @@ impl AstVisitor for CCodeGenerator<'_> {
         type_ + &after_id
     }
 
-    fn visit_struct_type(
+    fn generate_struct_type(
         &mut self,
         StructType {
             struct_token: _,
@@ -1651,7 +1651,7 @@ impl AstVisitor for CCodeGenerator<'_> {
             close_brace_token: _,
             id: _,
         }: &mut StructType,
-    ) -> Self::TypeOutput {
+    ) -> String {
         format!(
             "struct {{ {} }}",
             members
@@ -1666,7 +1666,7 @@ impl AstVisitor for CCodeGenerator<'_> {
                         },
                         _comma,
                     )| {
-                        self.visit_type(type_);
+                        self.generate_type(type_);
                         let inferred_type = self
                             .type_data
                             .get(&type_.get_id())
@@ -1680,14 +1680,14 @@ impl AstVisitor for CCodeGenerator<'_> {
         )
     }
 
-    fn visit_alias_type(
+    fn generate_alias_type(
         &mut self,
         AliasType {
             name: _,
             name_token: _,
             id,
         }: &mut AliasType,
-    ) -> Self::TypeOutput {
+    ) -> String {
         let (type_, after_id) = self.runtime_type_to_c(
             self.type_data
                 .get(id)

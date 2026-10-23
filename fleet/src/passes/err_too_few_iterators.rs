@@ -1,9 +1,12 @@
-use std::cell::RefMut;
+use std::{cell::RefMut, ops::ControlFlow};
 
 use crate::{
-    ast::{AstVisitor, OnStatement, Program},
+    ast::{OnStatement, Program},
     error_reporting::{ErrorKind, Errors},
-    passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+    passes::{
+        partial_visitor::AstWalker,
+        pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+    },
 };
 
 use super::partial_visitor::PartialAstVisitor;
@@ -29,29 +32,23 @@ impl PassFactory for ErrTooFewIterators<'_> {
 impl Pass for ErrTooFewIterators<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let mut program = self.program.take().unwrap();
-        self.visit_program(&mut program);
+
+        let _ = self.visit_program(&mut program);
 
         Ok(())
     }
 }
 
 impl PartialAstVisitor for ErrTooFewIterators<'_> {
-    fn partial_visit_on_statement(&mut self, stmt: &mut OnStatement) {
-        let OnStatement {
-            on_token: _,
-            executor: _,
-            iterators,
-            open_paren_token: _,
-            bindings: _,
-            close_paren_token: _,
-            body: _,
-            id: _,
-        } = stmt;
+    type Break<'a> = ();
 
-        if iterators.is_empty() {
+    fn visit_on_statement(&mut self, stmt: &mut OnStatement) -> ControlFlow<()> {
+        if stmt.iterators.is_empty() {
             self.errors.push(ErrorKind::OnStatementMissingIterator {
                 on_range: stmt.on_token.range.clone(),
             });
         }
+
+        self.walk_on_statement(stmt)
     }
 }

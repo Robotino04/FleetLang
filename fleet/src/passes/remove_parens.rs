@@ -1,21 +1,19 @@
-use std::cell::RefMut;
+use std::{cell::RefMut, ops::ControlFlow};
 
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, Associativity,
-        AstVisitor, BinaryExpression, CastExpression, Expression, ExpressionStatement,
-        ForLoopStatement, FunctionCallExpression, GroupingExpression, GroupingLValue, IfStatement,
-        LValue, Program, ReturnStatement, StructAccessExpression, ThreadExecutor, Type,
-        UnaryExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        WhileLoopStatement,
+        BinaryExpression, CastExpression, Expression, ExpressionStatement, ForLoopStatement,
+        FunctionCallExpression, GroupingExpression, GroupingLValue, IfStatement, LValue, Program,
+        ReturnStatement, StructAccessExpression, ThreadExecutor, Type, UnaryExpression,
+        VariableAssignmentExpression, VariableDefinitionStatement, WhileLoopStatement,
     },
     error_reporting::{ErrorKind, Errors, Lint},
-    passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
-};
-
-use super::{
-    first_token_mapper::FirstTokenMapper, last_token_mapper::LastTokenMapper,
-    partial_visitor::PartialAstVisitor,
+    passes::{
+        partial_visitor::{AstWalker, PartialAstVisitor},
+        pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+        token_accessors::{get_first_token, get_last_token},
+    },
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -57,7 +55,7 @@ impl PassFactory for RemoveParensPass<'_> {
 impl Pass for RemoveParensPass<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let mut program = self.program.take().unwrap();
-        self.visit_program(&mut program);
+        let _ = self.visit_program(&mut program);
 
         Ok(())
     }
@@ -166,51 +164,71 @@ impl RemoveParensPass<'_> {
 }
 
 impl PartialAstVisitor for RemoveParensPass<'_> {
-    fn partial_visit_expression_statement(&mut self, expr_stmt: &mut ExpressionStatement) {
+    type Break<'a> = ();
+
+    fn visit_expression_statement(
+        &mut self,
+        expr_stmt: &mut ExpressionStatement,
+    ) -> ControlFlow<()> {
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
-        self.visit_expression(&mut expr_stmt.expression);
+        self.visit_expression(&mut expr_stmt.expression)?;
+
+        ControlFlow::Continue(())
     }
-    fn partial_visit_return_statement(&mut self, return_stmt: &mut ReturnStatement) {
+    fn visit_return_statement(&mut self, return_stmt: &mut ReturnStatement) -> ControlFlow<()> {
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
         if let Some(retvalue) = &mut return_stmt.value {
-            self.visit_expression(retvalue);
+            self.visit_expression(retvalue)?;
         }
+
+        ControlFlow::Continue(())
     }
 
-    fn partial_visit_variable_definition_statement(
+    fn visit_variable_definition_statement(
         &mut self,
-        vardef_stmt: &mut VariableDefinitionStatement,
-    ) {
-        self.visit_simple_binding(&mut vardef_stmt.binding);
+        VariableDefinitionStatement {
+            let_token: _,
+            binding,
+            equals_token: _,
+            value,
+            semicolon_token: _,
+            id: _,
+        }: &mut VariableDefinitionStatement,
+    ) -> ControlFlow<()> {
+        self.visit_simple_binding(binding)?;
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
-        self.visit_expression(&mut vardef_stmt.value);
+        self.visit_expression(value)?;
+
+        ControlFlow::Continue(())
     }
 
-    fn partial_visit_if_statement(&mut self, if_stmt: &mut IfStatement) {
+    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> ControlFlow<()> {
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
         self.allow_bare_struct_literals = false;
-        self.visit_expression(&mut if_stmt.condition);
+        self.visit_expression(&mut if_stmt.condition)?;
         self.allow_bare_struct_literals = true;
-        self.visit_statement(&mut if_stmt.if_body);
+        self.visit_statement(&mut if_stmt.if_body)?;
 
         for (_token, condition, body) in &mut if_stmt.elifs {
             self.parent_precedence = Expression::TOP_PRECEDENCE;
             self.parent_associativity = Associativity::Both;
             self.allow_bare_struct_literals = false;
-            self.visit_expression(condition);
+            self.visit_expression(condition)?;
             self.allow_bare_struct_literals = true;
-            self.visit_statement(&mut *body);
+            self.visit_statement(&mut *body)?;
         }
 
         if let Some((_, else_body)) = &mut if_stmt.else_ {
-            self.visit_statement(&mut *else_body);
+            self.visit_statement(&mut *else_body)?;
         }
+
+        ControlFlow::Continue(())
     }
-    fn partial_visit_while_loop_statement(
+    fn visit_while_loop_statement(
         &mut self,
         WhileLoopStatement {
             while_token: _,
@@ -218,15 +236,17 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
             body,
             id: _,
         }: &mut WhileLoopStatement,
-    ) {
+    ) -> ControlFlow<()> {
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
         self.allow_bare_struct_literals = false;
-        self.visit_expression(condition);
+        self.visit_expression(condition)?;
         self.allow_bare_struct_literals = true;
-        self.visit_statement(body);
+        self.visit_statement(body)?;
+
+        ControlFlow::Continue(())
     }
-    fn partial_visit_for_loop_statement(
+    fn visit_for_loop_statement(
         &mut self,
         ForLoopStatement {
             for_token: _,
@@ -239,31 +259,35 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
             body,
             id: _,
         }: &mut ForLoopStatement,
-    ) {
-        self.visit_statement(initializer);
+    ) -> ControlFlow<()> {
+        self.visit_statement(initializer)?;
         if let Some(cond) = condition {
             self.parent_precedence = Expression::TOP_PRECEDENCE;
             self.parent_associativity = Associativity::Both;
-            self.visit_expression(cond);
+            self.visit_expression(cond)?;
         }
         if let Some(inc) = incrementer {
             self.parent_precedence = Expression::TOP_PRECEDENCE;
             self.parent_associativity = Associativity::Both;
-            self.visit_expression(inc);
+            self.visit_expression(inc)?;
         }
-        self.visit_statement(body);
+        self.visit_statement(body)?;
+
+        ControlFlow::Continue(())
     }
 
-    fn partial_visit_thread_executor(&mut self, executor: &mut ThreadExecutor) {
-        self.visit_executor_host(&mut executor.host);
+    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> ControlFlow<()> {
+        self.visit_executor_host(&mut executor.host)?;
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
-        self.visit_expression(&mut executor.index);
+        self.visit_expression(&mut executor.index)?;
+
+        ControlFlow::Continue(())
     }
 
-    // need to use the general function here because we may potentially change a nodes type which
-    // is impossible otherwise
-    fn partial_visit_expression(&mut self, expression: &mut Expression) {
+    // need to use the general function here because we potentially change a nodes type which is
+    // impossible otherwise
+    fn visit_expression(&mut self, expression: &mut Expression) -> ControlFlow<()> {
         match expression {
             Expression::Grouping(GroupingExpression {
                 open_paren_token,
@@ -276,7 +300,7 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                 let old_side = self.current_side;
                 self.parent_precedence = Expression::TOP_PRECEDENCE;
                 self.parent_associativity = Associativity::Both;
-                self.visit_expression(&mut *subexpression);
+                self.visit_expression(&mut *subexpression)?;
 
                 let not_blocked_by_struct = self.allow_bare_struct_literals
                     || !Self::has_bare_struct_literal(subexpression);
@@ -307,115 +331,100 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                             closing: close_paren_token.range.clone(),
                         }));
 
-                    FirstTokenMapper::new(move |token| {
-                        token.leading_trivia.append(&mut leading_trivia)
-                    })
-                    .visit_expression(&mut *subexpression);
-                    LastTokenMapper::new(move |token| {
-                        token.trailing_trivia.append(&mut trailing_trivia)
-                    })
-                    .visit_expression(&mut *subexpression);
-                    *expression = *subexpression.clone();
+                    get_first_token(&mut *subexpression)
+                        .unwrap()
+                        .leading_trivia
+                        .append(&mut leading_trivia);
+                    get_last_token(&mut *subexpression)
+                        .unwrap()
+                        .trailing_trivia
+                        .append(&mut trailing_trivia);
+                    *expression = (**subexpression).clone();
                 }
+
+                ControlFlow::Continue(())
             }
-            Expression::Literal(literal_expression) => {
-                self.partial_visit_literal_expression(literal_expression)
-            }
-            Expression::Array(array_expression) => {
-                self.partial_visit_array_expression(array_expression)
-            }
-            Expression::Struct(struct_expression) => {
-                self.partial_visit_struct_expression(struct_expression)
-            }
-            Expression::FunctionCall(function_call_expression) => {
-                self.partial_visit_function_call_expression(function_call_expression)
-            }
-            Expression::CompilerExpression(compiler_expression) => {
-                self.partial_visit_compiler_expression(compiler_expression)
-            }
-            Expression::ArrayIndex(array_index_expression) => {
-                self.partial_visit_array_index_expression(array_index_expression)
-            }
-            Expression::StructAccess(struct_expression) => {
-                self.partial_visit_struct_access_expression(struct_expression)
-            }
-            Expression::VariableAccess(variable_access_expression) => {
-                self.partial_visit_variable_access_expression(variable_access_expression)
-            }
-            Expression::Unary(unary_expression) => {
-                self.partial_visit_unary_expression(unary_expression)
-            }
-            Expression::Cast(cast_expression) => {
-                self.partial_visit_cast_expression(cast_expression)
-            }
-            Expression::Binary(binary_expression) => {
-                self.partial_visit_binary_expression(binary_expression)
-            }
-            Expression::VariableAssignment(variable_assignment_expression) => {
-                self.partial_visit_variable_assignment_expression(variable_assignment_expression)
-            }
+            _ => self.walk_expression(expression),
         }
     }
-    fn partial_visit_array_expression(&mut self, expression: &mut ArrayExpression) {
+    fn visit_array_expression(&mut self, expression: &mut ArrayExpression) -> ControlFlow<()> {
         for (item, _comma) in &mut expression.elements {
             self.parent_precedence = Expression::TOP_PRECEDENCE;
             self.parent_associativity = Associativity::Both;
-            self.visit_expression(item);
+            self.visit_expression(item)?;
         }
+
+        ControlFlow::Continue(())
     }
 
-    fn partial_visit_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
+    fn visit_function_call_expression(
+        &mut self,
+        expression: &mut FunctionCallExpression,
+    ) -> ControlFlow<()> {
         for (arg, _comma) in &mut expression.arguments {
             self.parent_precedence = Expression::TOP_PRECEDENCE;
             self.parent_associativity = Associativity::Both;
-            self.visit_expression(arg);
+            self.visit_expression(arg)?;
         }
+
+        ControlFlow::Continue(())
     }
 
-    fn partial_visit_array_index_expression(&mut self, expression: &mut ArrayIndexExpression) {
+    fn visit_array_index_expression(
+        &mut self,
+        expression: &mut ArrayIndexExpression,
+    ) -> ControlFlow<()> {
         self.parent_precedence = Expression::ArrayIndex(expression.clone()).get_precedence();
         self.parent_associativity = Expression::ArrayIndex(expression.clone()).get_associativity();
         self.current_side = OperandSide::Left;
-        self.visit_expression(&mut expression.array);
+        self.visit_expression(&mut expression.array)?;
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
-        self.visit_expression(&mut expression.index);
+        self.visit_expression(&mut expression.index)?;
+
+        ControlFlow::Continue(())
     }
-    fn partial_visit_unary_expression(&mut self, expression: &mut UnaryExpression) {
+    fn visit_unary_expression(&mut self, expression: &mut UnaryExpression) -> ControlFlow<()> {
         self.parent_precedence = Expression::Unary(expression.clone()).get_precedence();
         self.parent_associativity = Expression::Unary(expression.clone()).get_associativity();
         self.current_side = OperandSide::Left;
-        self.visit_expression(&mut expression.operand);
+        self.visit_expression(&mut expression.operand)?;
+
+        ControlFlow::Continue(())
     }
-    fn partial_visit_cast_expression(&mut self, expression: &mut CastExpression) {
+    fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> ControlFlow<()> {
         self.parent_precedence = Expression::Cast(expression.clone()).get_precedence();
         self.parent_associativity = Expression::Cast(expression.clone()).get_associativity();
         self.current_side = OperandSide::Left;
-        self.visit_expression(&mut expression.operand);
-        self.visit_type(&mut expression.type_);
+        self.visit_expression(&mut expression.operand)?;
+        self.visit_type(&mut expression.type_)?;
+
+        ControlFlow::Continue(())
     }
 
-    fn partial_visit_binary_expression(&mut self, expression: &mut BinaryExpression) {
+    fn visit_binary_expression(&mut self, expression: &mut BinaryExpression) -> ControlFlow<()> {
         let this_precedence = Expression::Binary(expression.clone()).get_precedence();
         let this_associativity = Expression::Binary(expression.clone()).get_associativity();
 
         self.parent_precedence = this_precedence;
         self.parent_associativity = this_associativity;
         self.current_side = OperandSide::Left;
-        self.visit_expression(&mut expression.left);
+        self.visit_expression(&mut expression.left)?;
 
         self.parent_precedence = this_precedence;
         self.parent_associativity = this_associativity;
         self.current_side = OperandSide::Right;
-        self.visit_expression(&mut expression.right);
+        self.visit_expression(&mut expression.right)?;
+
+        ControlFlow::Continue(())
     }
-    fn partial_visit_variable_assignment_expression(
+    fn visit_variable_assignment_expression(
         &mut self,
         expression: &mut VariableAssignmentExpression,
-    ) {
+    ) -> ControlFlow<()> {
         self.parent_precedence = LValue::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
-        self.visit_lvalue(&mut expression.lvalue);
+        self.visit_lvalue(&mut expression.lvalue)?;
 
         let this_precedence = Expression::VariableAssignment(expression.clone()).get_precedence();
         let this_associativity =
@@ -424,12 +433,14 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
         self.parent_precedence = this_precedence;
         self.parent_associativity = this_associativity;
         self.current_side = OperandSide::Right;
-        self.visit_expression(&mut expression.right);
+        self.visit_expression(&mut expression.right)?;
+
+        ControlFlow::Continue(())
     }
 
-    // need to use the general function here because we may potentially change a nodes type which
-    // is impossible otherwise
-    fn partial_visit_lvalue(&mut self, lvalue: &mut LValue) {
+    // need to use the general function here because we potentially change a nodes type which is
+    // impossible otherwise
+    fn visit_lvalue(&mut self, lvalue: &mut LValue) -> ControlFlow<()> {
         match lvalue {
             LValue::Grouping(GroupingLValue {
                 open_paren_token,
@@ -442,7 +453,7 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                 let old_side = self.current_side;
                 self.parent_precedence = LValue::TOP_PRECEDENCE;
                 self.parent_associativity = Associativity::Both;
-                self.visit_lvalue(&mut *sublvalue);
+                self.visit_lvalue(&mut *sublvalue)?;
 
                 if RemoveParensPass::can_parens_be_removed(
                     old_parent_precedence,
@@ -468,36 +479,32 @@ impl PartialAstVisitor for RemoveParensPass<'_> {
                             closing: close_paren_token.range.clone(),
                         }));
 
-                    FirstTokenMapper::new(move |token| {
-                        token.leading_trivia.append(&mut leading_trivia)
-                    })
-                    .visit_lvalue(&mut *sublvalue);
-                    LastTokenMapper::new(move |token| {
-                        token.trailing_trivia.append(&mut trailing_trivia)
-                    })
-                    .visit_lvalue(&mut *sublvalue);
-                    *lvalue = *sublvalue.clone();
+                    get_first_token(&mut *sublvalue)
+                        .unwrap()
+                        .leading_trivia
+                        .append(&mut leading_trivia);
+                    get_last_token(&mut *sublvalue)
+                        .unwrap()
+                        .trailing_trivia
+                        .append(&mut trailing_trivia);
+                    *lvalue = (**sublvalue).clone();
                 }
+
+                ControlFlow::Continue(())
             }
-            LValue::Variable(variable_lvalue) => {
-                self.partial_visit_variable_lvalue(variable_lvalue);
-            }
-            LValue::ArrayIndex(array_index_lvalue) => {
-                self.partial_visit_array_index_lvalue(array_index_lvalue);
-            }
-            LValue::StructAccess(struct_lvalue) => {
-                self.partial_visit_struct_access_lvalue(struct_lvalue);
-            }
+            _ => self.walk_lvalue(lvalue),
         }
     }
 
-    fn partial_visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) {
+    fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> ControlFlow<()> {
         self.parent_precedence = LValue::ArrayIndex(lvalue.clone()).get_precedence();
         self.parent_associativity = LValue::ArrayIndex(lvalue.clone()).get_associativity();
         self.current_side = OperandSide::Left;
-        self.visit_lvalue(&mut lvalue.array);
+        self.visit_lvalue(&mut lvalue.array)?;
         self.parent_precedence = Expression::TOP_PRECEDENCE;
         self.parent_associativity = Associativity::Both;
-        self.visit_expression(&mut lvalue.index);
+        self.visit_expression(&mut lvalue.index)?;
+
+        ControlFlow::Continue(())
     }
 }

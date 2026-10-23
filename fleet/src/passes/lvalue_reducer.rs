@@ -1,16 +1,16 @@
 use std::{
     cell::{Ref, RefMut},
     mem::swap,
+    ops::ControlFlow,
 };
 
 use crate::{
     ast::{
-        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, AstVisitor, BinaryExpression,
-        CastExpression, CompilerExpression, Expression, FunctionCallExpression, GroupingLValue,
-        HasID, HasSourceRange, LValue, LiteralExpression, OnStatement, OnStatementIterator,
-        Program, StructAccessExpression, StructAccessLValue, StructExpression, StructMemberValue,
-        Type, UnaryExpression, VariableAccessExpression, VariableAssignmentExpression,
-        VariableLValue,
+        ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, BinaryExpression, CastExpression,
+        CompilerExpression, Expression, FunctionCallExpression, GroupingLValue, HasID,
+        HasSourceRange, LValue, LiteralExpression, OnStatement, OnStatementIterator, Program,
+        StructAccessExpression, StructAccessLValue, StructExpression, StructMemberValue, Type,
+        UnaryExpression, VariableAccessExpression, VariableAssignmentExpression, VariableLValue,
     },
     error_reporting::{ErrorKind, Errors},
     passes::{
@@ -59,7 +59,8 @@ impl PassFactory for LValueReducer<'_> {
 impl Pass for LValueReducer<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let mut program = self.program.take().unwrap();
-        self.visit_program(&mut program);
+
+        let _ = self.visit_program(&mut program);
 
         Ok(())
     }
@@ -300,11 +301,13 @@ impl LValueReducer<'_> {
 }
 
 impl PartialAstVisitor for LValueReducer<'_> {
-    fn partial_visit_variable_lvalue(&mut self, a: &mut VariableLValue) {
+    type Break<'a> = ();
+
+    fn visit_variable_lvalue(&mut self, a: &mut VariableLValue) -> ControlFlow<()> {
         let Some(valid_lvalues) = &self.valid_lvalues else {
             // everything is valid
             self.previous_lvalue_valid = true;
-            return;
+            return ControlFlow::Continue(());
         };
 
         let is_defined_here = self
@@ -330,22 +333,25 @@ impl PartialAstVisitor for LValueReducer<'_> {
         } else {
             self.previous_lvalue_valid = true;
         }
+
+        // no walk on purpose
+        ControlFlow::Continue(())
     }
-    fn partial_visit_array_index_lvalue(&mut self, a: &mut ArrayIndexLValue) {
+    fn visit_array_index_lvalue(&mut self, a: &mut ArrayIndexLValue) -> ControlFlow<()> {
         let was_top_level = self.is_top_level_lvalue;
 
         self.is_top_level_lvalue = true;
-        self.partial_visit_expression(&mut a.index);
+        self.visit_expression(&mut a.index)?;
 
         self.is_top_level_lvalue = false;
-        self.partial_visit_lvalue(&mut a.array);
+        self.visit_lvalue(&mut a.array)?;
 
         self.is_top_level_lvalue = was_top_level;
 
         let Some(valid_lvalues) = &self.valid_lvalues else {
             // everything is valid
             self.previous_lvalue_valid = true;
-            return;
+            return ControlFlow::Continue(());
         };
 
         if self.previous_lvalue_valid
@@ -364,8 +370,10 @@ impl PartialAstVisitor for LValueReducer<'_> {
             }
             self.previous_lvalue_valid = false;
         }
+
+        ControlFlow::Continue(())
     }
-    fn partial_visit_on_statement(
+    fn visit_on_statement(
         &mut self,
         OnStatement {
             on_token: _,
@@ -377,8 +385,8 @@ impl PartialAstVisitor for LValueReducer<'_> {
             body,
             id: _,
         }: &mut OnStatement,
-    ) {
-        self.visit_executor(executor);
+    ) -> ControlFlow<()> {
+        self.visit_executor(executor)?;
 
         for OnStatementIterator {
             open_bracket_token: _,
@@ -388,8 +396,8 @@ impl PartialAstVisitor for LValueReducer<'_> {
             close_bracket_token: _,
         } in iterators
         {
-            self.partial_visit_simple_binding(binding);
-            self.partial_visit_expression(max_value);
+            self.visit_simple_binding(binding)?;
+            self.visit_expression(max_value)?;
         }
 
         let mut prev_lvalues = Some(
@@ -400,8 +408,10 @@ impl PartialAstVisitor for LValueReducer<'_> {
         );
         swap(&mut prev_lvalues, &mut self.valid_lvalues);
 
-        self.visit_statement(body);
+        self.visit_statement(body)?;
 
         swap(&mut prev_lvalues, &mut self.valid_lvalues);
+
+        ControlFlow::Continue(())
     }
 }

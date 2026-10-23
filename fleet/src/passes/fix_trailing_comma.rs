@@ -1,13 +1,14 @@
-use std::cell::RefMut;
+use std::{cell::RefMut, ops::ControlFlow};
 
 use crate::{
     ast::{
-        ArrayExpression, AstVisitor, FunctionCallExpression, Program, StructExpression,
-        StructMemberDefinition, StructMemberValue, StructType,
+        ArrayExpression, FunctionCallExpression, Program, StructExpression, StructMemberDefinition,
+        StructMemberValue, StructType,
     },
     passes::{
-        last_token_mapper::LastTokenMapper,
+        partial_visitor::AstWalker,
         pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+        token_accessors::get_last_token,
     },
     tokenizer::{Token, TokenType},
 };
@@ -33,86 +34,46 @@ impl PassFactory for FixTrailingComma<'_> {
 impl Pass for FixTrailingComma<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let mut program = self.program.take().unwrap();
-        self.visit_program(&mut program);
+
+        let _ = self.visit_program(&mut program);
 
         Ok(())
     }
 }
 
 impl PartialAstVisitor for FixTrailingComma<'_> {
-    fn partial_visit_function_call_expression(
-        &mut self,
-        FunctionCallExpression {
-            name: _,
-            name_token: _,
-            open_paren_token: _,
-            arguments,
-            close_paren_token: _,
-            id: _,
-        }: &mut FunctionCallExpression,
-    ) {
-        for (arg, _comma) in &mut *arguments {
-            self.visit_expression(arg);
-        }
+    type Break<'a> = ();
 
-        if let Some((arg, comma)) = arguments.last_mut() {
-            if let Some(mut comma) = comma.clone() {
-                LastTokenMapper::new(|token| {
-                    token.trailing_trivia.append(&mut comma.leading_trivia);
-                    token.trailing_trivia.append(&mut comma.trailing_trivia);
-                })
-                .visit_expression(arg);
+    fn visit_function_call_expression(
+        &mut self,
+        fcall: &mut FunctionCallExpression,
+    ) -> ControlFlow<()> {
+        if let Some((arg, comma)) = fcall.arguments.last_mut() {
+            if let Some(mut comma) = comma.clone()
+                && let Some(token) = get_last_token(arg)
+            {
+                token.trailing_trivia.append(&mut comma.leading_trivia);
+                token.trailing_trivia.append(&mut comma.trailing_trivia);
             }
             *comma = None;
         }
-    }
-    fn partial_visit_array_expression(
-        &mut self,
-        ArrayExpression {
-            open_bracket_token: _,
-            elements,
-            close_bracket_token: _,
-            id: _,
-        }: &mut ArrayExpression,
-    ) {
-        for (item, _comma) in &mut *elements {
-            self.visit_expression(item);
-        }
 
-        if let Some((item, comma)) = elements.last_mut() {
-            if let Some(mut comma) = comma.clone() {
-                LastTokenMapper::new(|token| {
-                    token.trailing_trivia.append(&mut comma.leading_trivia);
-                    token.trailing_trivia.append(&mut comma.trailing_trivia);
-                })
-                .visit_expression(item);
+        self.walk_function_call_expression(fcall)
+    }
+    fn visit_array_expression(&mut self, expr: &mut ArrayExpression) -> ControlFlow<()> {
+        if let Some((item, comma)) = expr.elements.last_mut() {
+            if let Some(mut comma) = comma.clone()
+                && let Some(token) = get_last_token(item)
+            {
+                token.trailing_trivia.append(&mut comma.leading_trivia);
+                token.trailing_trivia.append(&mut comma.trailing_trivia);
             }
             *comma = None;
         }
-    }
-    fn partial_visit_struct_type(
-        &mut self,
-        StructType {
-            struct_token: _,
-            open_brace_token: _,
-            members,
-            close_brace_token: _,
-            id: _,
-        }: &mut StructType,
-    ) {
-        for (
-            StructMemberDefinition {
-                name: _,
-                name_token: _,
-                colon_token: _,
-                type_,
-            },
-            _comma,
-        ) in &mut *members
-        {
-            self.visit_type(type_);
-        }
 
+        self.walk_array_expression(expr)
+    }
+    fn visit_struct_type(&mut self, ty: &mut StructType) -> ControlFlow<()> {
         if let Some((
             StructMemberDefinition {
                 name: _,
@@ -121,16 +82,16 @@ impl PartialAstVisitor for FixTrailingComma<'_> {
                 type_,
             },
             comma @ None,
-        )) = members.last_mut()
+        )) = ty.members.last_mut()
         {
-            let mut replace_pass = LastTokenMapper::new(|token| {
-                (
-                    std::mem::take(&mut token.trailing_trivia),
-                    token.range.end(),
-                )
-            });
-            replace_pass.visit_type(type_);
-            let (trivia, token_end) = replace_pass.result().unwrap();
+            let (trivia, token_end) = get_last_token(type_)
+                .map(|token| {
+                    (
+                        std::mem::take(&mut token.trailing_trivia),
+                        token.range.end(),
+                    )
+                })
+                .unwrap();
 
             *comma = Some(Token {
                 type_: TokenType::Comma,
@@ -139,31 +100,10 @@ impl PartialAstVisitor for FixTrailingComma<'_> {
                 trailing_trivia: trivia,
             });
         }
-    }
-    fn partial_visit_struct_expression(
-        &mut self,
-        StructExpression {
-            type_,
-            open_brace_token: _,
-            members,
-            close_brace_token: _,
-            id: _,
-        }: &mut StructExpression,
-    ) {
-        self.visit_type(type_);
-        for (
-            StructMemberValue {
-                name: _,
-                name_token: _,
-                colon_token: _,
-                value,
-            },
-            _comma,
-        ) in &mut *members
-        {
-            self.visit_expression(value);
-        }
 
+        self.walk_struct_type(ty)
+    }
+    fn visit_struct_expression(&mut self, expr: &mut StructExpression) -> ControlFlow<()> {
         if let Some((
             StructMemberValue {
                 name: _,
@@ -172,16 +112,16 @@ impl PartialAstVisitor for FixTrailingComma<'_> {
                 value,
             },
             comma @ None,
-        )) = members.last_mut()
+        )) = expr.members.last_mut()
         {
-            let mut replace_pass = LastTokenMapper::new(|token| {
-                (
-                    std::mem::take(&mut token.trailing_trivia),
-                    token.range.end(),
-                )
-            });
-            replace_pass.visit_expression(value);
-            let (trivia, token_end) = replace_pass.result().unwrap();
+            let (trivia, token_end) = get_last_token(value)
+                .map(|token| {
+                    (
+                        std::mem::take(&mut token.trailing_trivia),
+                        token.range.end(),
+                    )
+                })
+                .unwrap();
 
             *comma = Some(Token {
                 type_: TokenType::Comma,
@@ -190,5 +130,7 @@ impl PartialAstVisitor for FixTrailingComma<'_> {
                 trailing_trivia: trivia,
             });
         }
+
+        self.walk_struct_expression(expr)
     }
 }

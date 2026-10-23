@@ -9,7 +9,7 @@ use log::info;
 
 use crate::{
     ast::{
-        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType,
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasSourceRange,
@@ -21,6 +21,7 @@ use crate::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
+    define_dispatch_methods,
     error_reporting::{ErrorKind, Errors, Lint, LoopControl},
     passes::{
         pass_manager::{
@@ -234,25 +235,27 @@ impl PassFactory for StatTracker<'_> {
 impl Pass for StatTracker<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let mut program = self.program.take().unwrap();
-        self.visit_program(&mut program);
+        self.analyze_program(&mut program);
 
         Ok(())
     }
 }
 
-impl AstVisitor for StatTracker<'_> {
-    type ProgramOutput = ();
-    type TopLevelOutput = NodeStats;
-    type FunctionBodyOutput = NodeStats;
-    type SimpleBindingOutput = NodeStats;
-    type StatementOutput = NodeStats;
-    type ExecutorHostOutput = NodeStats;
-    type ExecutorOutput = NodeStats;
-    type ExpressionOutput = NodeStats;
-    type LValueOutput = NodeStats;
-    type TypeOutput = NodeStats;
+impl StatTracker<'_> {
+    define_dispatch_methods! {
+        analyze {
+            TopLevelStatement => NodeStats,
+            FunctionBody => NodeStats,
+            Statement => NodeStats,
+            ExecutorHost => NodeStats,
+            Executor => NodeStats,
+            Expression => NodeStats,
+            LValue => NodeStats,
+            Type => NodeStats,
+        }
+    }
 
-    fn visit_program(mut self, program: &mut Program) -> Self::ProgramOutput {
+    fn analyze_program(mut self, program: &mut Program) {
         let mut stats = NodeStats {
             terminates_function: YesNoMaybe::No,
             non_terminating_ranges: vec![],
@@ -270,7 +273,7 @@ impl AstVisitor for StatTracker<'_> {
                     non_terminating_ranges: _,
                     uses_gpu,
                     accessed_items: _,
-                } = self.visit_top_level_statement(tls);
+                } = self.analyze_top_level_statement(tls);
 
                 if let TopLevelStatement::FunctionDefinition(FunctionDefinition { name, .. }) = tls
                     && name == "main"
@@ -314,7 +317,7 @@ impl AstVisitor for StatTracker<'_> {
         }
     }
 
-    fn visit_function_definition(
+    fn analyze_function_definition(
         &mut self,
         FunctionDefinition {
             let_token: _,
@@ -329,7 +332,7 @@ impl AstVisitor for StatTracker<'_> {
             body,
             id,
         }: &mut FunctionDefinition,
-    ) -> Self::TopLevelOutput {
+    ) -> NodeStats {
         let referenced_function = self
             .function_data
             .get(id)
@@ -338,13 +341,13 @@ impl AstVisitor for StatTracker<'_> {
         self.current_function = Some(referenced_function.clone());
 
         for (param, _comma) in parameters {
-            self.visit_simple_binding(param);
+            self.analyze_simple_binding(param);
         }
 
         if let Some(return_type) = return_type {
-            self.visit_type(return_type);
+            self.analyze_type(return_type);
         }
-        let body_stat = self.visit_function_body(body);
+        let body_stat = self.analyze_function_body(body);
         self.stats.insert(*id, body_stat.clone());
         self.function_stats
             .insert(referenced_function.borrow().id, body_stat.clone());
@@ -354,7 +357,7 @@ impl AstVisitor for StatTracker<'_> {
         body_stat
     }
 
-    fn visit_type_alias(
+    fn analyze_type_alias(
         &mut self,
         TypeAlias {
             let_token: _,
@@ -365,19 +368,16 @@ impl AstVisitor for StatTracker<'_> {
             semicolon_token: _,
             id,
         }: &mut TypeAlias,
-    ) -> Self::TopLevelOutput {
-        let stats = self.visit_type(type_);
+    ) -> NodeStats {
+        let stats = self.analyze_type(type_);
         self.stats.insert(*id, stats.clone());
 
         stats
     }
 
-    fn visit_statement_function_body(
-        &mut self,
-        body: &mut StatementFunctionBody,
-    ) -> Self::FunctionBodyOutput {
+    fn analyze_statement_function_body(&mut self, body: &mut StatementFunctionBody) -> NodeStats {
         let StatementFunctionBody { statement, id } = body;
-        let stat = self.visit_statement(statement);
+        let stat = self.analyze_statement(statement);
 
         assert_eq!(
             (stat.terminates_function == YesNoMaybe::Yes),
@@ -406,10 +406,10 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_extern_function_body(
+    fn analyze_extern_function_body(
         &mut self,
         extern_function_body: &mut ExternFunctionBody,
-    ) -> Self::FunctionBodyOutput {
+    ) -> NodeStats {
         let ExternFunctionBody {
             at_token: _,
             extern_token: _,
@@ -429,7 +429,7 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_simple_binding(&mut self, binding: &mut SimpleBinding) -> Self::SimpleBindingOutput {
+    fn analyze_simple_binding(&mut self, binding: &mut SimpleBinding) -> NodeStats {
         let bounds = binding.get_source_range();
         let SimpleBinding {
             name_token: _,
@@ -439,7 +439,7 @@ impl AstVisitor for StatTracker<'_> {
         } = binding;
 
         let stat = if let Some((_colon, type_)) = type_ {
-            self.visit_type(type_)
+            self.analyze_type(type_)
         } else {
             NodeStats::default_with_range(vec![])
         }
@@ -456,10 +456,7 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_expression_statement(
-        &mut self,
-        stmt: &mut ExpressionStatement,
-    ) -> Self::StatementOutput {
+    fn analyze_expression_statement(&mut self, stmt: &mut ExpressionStatement) -> NodeStats {
         let bounds = stmt.get_source_range();
         let ExpressionStatement {
             expression,
@@ -467,13 +464,13 @@ impl AstVisitor for StatTracker<'_> {
             id,
         } = stmt;
         let exp_stat = self
-            .visit_expression(expression)
+            .analyze_expression(expression)
             .serial(NodeStats::default_with_range(vec![bounds]));
         self.stats.insert(*id, exp_stat.clone());
         exp_stat
     }
 
-    fn visit_on_statement(
+    fn analyze_on_statement(
         &mut self,
         OnStatement {
             on_token: _,
@@ -485,8 +482,8 @@ impl AstVisitor for StatTracker<'_> {
             body,
             id,
         }: &mut OnStatement,
-    ) -> Self::StatementOutput {
-        let exec_stats = self.visit_executor(executor);
+    ) -> NodeStats {
+        let exec_stats = self.analyze_executor(executor);
 
         let mut it_stats = NodeStats::default_with_range(vec![]);
 
@@ -499,13 +496,13 @@ impl AstVisitor for StatTracker<'_> {
         } in iterators
         {
             it_stats = it_stats
-                .serial(self.visit_simple_binding(binding))
-                .serial(self.visit_expression(max_value));
+                .serial(self.analyze_simple_binding(binding))
+                .serial(self.analyze_expression(max_value));
         }
 
         let mut binding_stats = NodeStats::default_with_range(vec![]);
         for (binding, _comma) in bindings {
-            binding_stats = binding_stats.serial(self.visit_lvalue(binding));
+            binding_stats = binding_stats.serial(self.analyze_lvalue(binding));
         }
 
         if exec_stats.terminates_function == YesNoMaybe::Yes
@@ -515,7 +512,7 @@ impl AstVisitor for StatTracker<'_> {
                 range: body.get_source_range(),
             }));
         }
-        let body_stats = self.visit_statement(body);
+        let body_stats = self.analyze_statement(body);
 
         let stats = exec_stats
             .serial(it_stats)
@@ -526,7 +523,7 @@ impl AstVisitor for StatTracker<'_> {
         stats
     }
 
-    fn visit_block_statement(&mut self, stmt: &mut BlockStatement) -> Self::StatementOutput {
+    fn analyze_block_statement(&mut self, stmt: &mut BlockStatement) -> NodeStats {
         let bounds = stmt.get_source_range();
         let BlockStatement {
             open_brace_token: _,
@@ -545,7 +542,7 @@ impl AstVisitor for StatTracker<'_> {
                     unreachable_range = Some(stmt.get_source_range());
                 }
             }
-            body_stat = body_stat.serial(self.visit_statement(stmt));
+            body_stat = body_stat.serial(self.analyze_statement(stmt));
         }
         if body_stat.non_terminating_ranges.is_empty()
             && body_stat.terminates_function != YesNoMaybe::Yes
@@ -562,7 +559,7 @@ impl AstVisitor for StatTracker<'_> {
         body_stat
     }
 
-    fn visit_return_statement(&mut self, stmt: &mut ReturnStatement) -> Self::StatementOutput {
+    fn analyze_return_statement(&mut self, stmt: &mut ReturnStatement) -> NodeStats {
         let bounds = stmt.get_source_range();
         let ReturnStatement {
             return_token: _,
@@ -572,7 +569,7 @@ impl AstVisitor for StatTracker<'_> {
         } = stmt;
 
         let stat = match value {
-            Some(retvalue) => self.visit_expression(retvalue),
+            Some(retvalue) => self.analyze_expression(retvalue),
             None => NodeStats::default_with_range(vec![]),
         }
         .serial(NodeStats {
@@ -585,10 +582,10 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_variable_definition_statement(
+    fn analyze_variable_definition_statement(
         &mut self,
         stmt: &mut VariableDefinitionStatement,
-    ) -> Self::StatementOutput {
+    ) -> NodeStats {
         let bounds = stmt.get_source_range();
         let VariableDefinitionStatement {
             let_token: _,
@@ -598,15 +595,15 @@ impl AstVisitor for StatTracker<'_> {
             semicolon_token: _,
             id,
         } = stmt;
-        self.visit_simple_binding(binding);
+        self.analyze_simple_binding(binding);
         let stat = self
-            .visit_expression(value)
+            .analyze_expression(value)
             .serial(NodeStats::default_with_range(vec![bounds]));
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_if_statement(&mut self, stmt: &mut IfStatement) -> Self::StatementOutput {
+    fn analyze_if_statement(&mut self, stmt: &mut IfStatement) -> NodeStats {
         let bounds = stmt.get_source_range();
         let IfStatement {
             if_token: _,
@@ -617,17 +614,17 @@ impl AstVisitor for StatTracker<'_> {
             id,
         } = stmt;
 
-        let mut if_stats = self.visit_expression(condition);
-        if_stats = if_stats.serial(self.visit_statement(if_body));
+        let mut if_stats = self.analyze_expression(condition);
+        if_stats = if_stats.serial(self.analyze_statement(if_body));
         for (_elif_token, elif_condition, elif_body) in elifs {
             if_stats = if_stats.parallel(
-                self.visit_expression(elif_condition)
-                    .serial(self.visit_statement(elif_body)),
+                self.analyze_expression(elif_condition)
+                    .serial(self.analyze_statement(elif_body)),
             );
         }
 
         if let Some((_else_token, else_body)) = else_ {
-            if_stats = if_stats.parallel(self.visit_statement(else_body));
+            if_stats = if_stats.parallel(self.analyze_statement(else_body));
         } else {
             // always merge with empty to indicate that this if statement isn't complete
             if_stats = if_stats.parallel(NodeStats::default_with_range(vec![
@@ -644,7 +641,7 @@ impl AstVisitor for StatTracker<'_> {
         if_stats
     }
 
-    fn visit_while_loop_statement(
+    fn analyze_while_loop_statement(
         &mut self,
         WhileLoopStatement {
             while_token: _,
@@ -652,17 +649,17 @@ impl AstVisitor for StatTracker<'_> {
             body,
             id,
         }: &mut WhileLoopStatement,
-    ) -> Self::StatementOutput {
-        let con_stat = self.visit_expression(condition);
+    ) -> NodeStats {
+        let con_stat = self.analyze_expression(condition);
         self.loop_count += 1;
-        let body_stat = self.visit_statement(body);
+        let body_stat = self.analyze_statement(body);
         self.loop_count -= 1;
         let stat = con_stat.serial(body_stat);
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_for_loop_statement(
+    fn analyze_for_loop_statement(
         &mut self,
         ForLoopStatement {
             for_token: _,
@@ -675,24 +672,24 @@ impl AstVisitor for StatTracker<'_> {
             body,
             id,
         }: &mut ForLoopStatement,
-    ) -> Self::StatementOutput {
-        let init_stat = self.visit_statement(initializer);
+    ) -> NodeStats {
+        let init_stat = self.analyze_statement(initializer);
 
         let con_stat = condition
             .as_mut()
-            .map(|condition| self.visit_expression(condition))
+            .map(|condition| self.analyze_expression(condition))
             .unwrap_or(NodeStats::default_with_range(vec![
                 second_semicolon_token.range.clone(),
             ]));
         let inc_stat = incrementer
             .as_mut()
-            .map(|incrementer| self.visit_expression(incrementer))
+            .map(|incrementer| self.analyze_expression(incrementer))
             .unwrap_or(NodeStats::default_with_range(vec![
                 close_paren_token.range.clone(),
             ]));
 
         self.loop_count += 1;
-        let body_stat = self.visit_statement(body);
+        let body_stat = self.analyze_statement(body);
         self.loop_count -= 1;
         let stat = init_stat
             .parallel(con_stat)
@@ -702,7 +699,7 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput {
+    fn analyze_break_statement(&mut self, break_stmt: &mut BreakStatement) -> NodeStats {
         let stat = NodeStats::default_with_range(vec![break_stmt.get_source_range()]);
         self.stats.insert(break_stmt.id, stat.clone());
         if self.loop_count == 0 {
@@ -715,7 +712,7 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput {
+    fn analyze_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> NodeStats {
         let stat = NodeStats::default_with_range(vec![skip_stmt.get_source_range()]);
         self.stats.insert(skip_stmt.id, stat.clone());
         if self.loop_count == 0 {
@@ -728,16 +725,13 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_self_executor_host(
-        &mut self,
-        executor_host: &mut SelfExecutorHost,
-    ) -> Self::ExecutorHostOutput {
+    fn analyze_self_executor_host(&mut self, executor_host: &mut SelfExecutorHost) -> NodeStats {
         let stat = NodeStats::default_with_range(vec![executor_host.get_source_range()]);
         self.stats.insert(executor_host.id, stat.clone());
         stat
     }
 
-    fn visit_thread_executor(
+    fn analyze_thread_executor(
         &mut self,
         ThreadExecutor {
             host,
@@ -748,15 +742,15 @@ impl AstVisitor for StatTracker<'_> {
             close_bracket_token: _,
             id,
         }: &mut ThreadExecutor,
-    ) -> Self::ExecutorOutput {
-        let host_stat = self.visit_executor_host(host);
-        let index_stat = self.visit_expression(index);
+    ) -> NodeStats {
+        let host_stat = self.analyze_executor_host(host);
+        let index_stat = self.analyze_expression(index);
         let stat = host_stat.serial(index_stat);
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_gpu_executor(&mut self, executor: &mut GPUExecutor) -> Self::ExecutorOutput {
+    fn analyze_gpu_executor(&mut self, executor: &mut GPUExecutor) -> NodeStats {
         let bounds = executor.get_source_range();
         let GPUExecutor {
             host,
@@ -773,13 +767,13 @@ impl AstVisitor for StatTracker<'_> {
             uses_gpu: YesNoMaybe::Yes,
             accessed_items: AccessRecord::default(),
         }
-        .serial(self.visit_executor_host(host))
-        .serial(self.visit_expression(gpu_index));
+        .serial(self.analyze_executor_host(host))
+        .serial(self.analyze_expression(gpu_index));
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_literal_expression(&mut self, expr: &mut LiteralExpression) -> Self::ExpressionOutput {
+    fn analyze_literal_expression(&mut self, expr: &mut LiteralExpression) -> NodeStats {
         let bounds = expr.get_source_range();
         let LiteralExpression {
             value: _,
@@ -792,7 +786,7 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_array_expression(&mut self, expr: &mut ArrayExpression) -> Self::ExpressionOutput {
+    fn analyze_array_expression(&mut self, expr: &mut ArrayExpression) -> NodeStats {
         let bounds = expr.get_source_range();
         let ArrayExpression {
             open_bracket_token: _,
@@ -802,14 +796,14 @@ impl AstVisitor for StatTracker<'_> {
         } = expr;
         let mut stat = NodeStats::default_with_range(vec![bounds]);
         for (item, _comma) in elements {
-            stat = stat.serial(self.visit_expression(item));
+            stat = stat.serial(self.analyze_expression(item));
         }
 
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_struct_expression(&mut self, expr: &mut StructExpression) -> Self::ExpressionOutput {
+    fn analyze_struct_expression(&mut self, expr: &mut StructExpression) -> NodeStats {
         let bounds = expr.get_source_range();
         let StructExpression {
             type_,
@@ -819,7 +813,7 @@ impl AstVisitor for StatTracker<'_> {
             id,
         } = expr;
         let mut stat = NodeStats::default_with_range(vec![bounds]);
-        stat = stat.serial(self.visit_type(type_));
+        stat = stat.serial(self.analyze_type(type_));
         for (
             StructMemberValue {
                 name: _,
@@ -830,17 +824,17 @@ impl AstVisitor for StatTracker<'_> {
             _comma,
         ) in members
         {
-            stat = stat.serial(self.visit_expression(value));
+            stat = stat.serial(self.analyze_expression(value));
         }
 
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_function_call_expression(
+    fn analyze_function_call_expression(
         &mut self,
         function_call: &mut FunctionCallExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> NodeStats {
         let bounds = function_call.get_source_range();
         let FunctionCallExpression {
             name: _,
@@ -870,16 +864,13 @@ impl AstVisitor for StatTracker<'_> {
         stat.terminates_function = YesNoMaybe::No;
 
         for (arg, _comma) in arguments {
-            stat = stat.serial(self.visit_expression(arg));
+            stat = stat.serial(self.analyze_expression(arg));
         }
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_compiler_expression(
-        &mut self,
-        expr: &mut CompilerExpression,
-    ) -> Self::ExpressionOutput {
+    fn analyze_compiler_expression(&mut self, expr: &mut CompilerExpression) -> NodeStats {
         let bounds = expr.get_source_range();
         let CompilerExpression {
             at_token: _,
@@ -893,13 +884,13 @@ impl AstVisitor for StatTracker<'_> {
 
         let mut stat = NodeStats::default_with_range(vec![bounds]);
         for (arg, _comma) in arguments {
-            stat = stat.serial(self.visit_expression(arg));
+            stat = stat.serial(self.analyze_expression(arg));
         }
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_array_index_expression(
+    fn analyze_array_index_expression(
         &mut self,
         ArrayIndexExpression {
             array,
@@ -908,15 +899,15 @@ impl AstVisitor for StatTracker<'_> {
             close_bracket_token: _,
             id,
         }: &mut ArrayIndexExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> NodeStats {
         let stat = self
-            .visit_expression(array)
-            .serial(self.visit_expression(index));
+            .analyze_expression(array)
+            .serial(self.analyze_expression(index));
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_struct_access_expression(
+    fn analyze_struct_access_expression(
         &mut self,
         StructAccessExpression {
             value,
@@ -925,13 +916,13 @@ impl AstVisitor for StatTracker<'_> {
             member_name_token: _,
             id,
         }: &mut StructAccessExpression,
-    ) -> Self::ExpressionOutput {
-        let stat = self.visit_expression(value);
+    ) -> NodeStats {
+        let stat = self.analyze_expression(value);
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_grouping_expression(
+    fn analyze_grouping_expression(
         &mut self,
         GroupingExpression {
             open_paren_token: _,
@@ -939,16 +930,16 @@ impl AstVisitor for StatTracker<'_> {
             close_paren_token: _,
             id,
         }: &mut GroupingExpression,
-    ) -> Self::ExpressionOutput {
-        let stat = self.visit_expression(subexpression);
+    ) -> NodeStats {
+        let stat = self.analyze_expression(subexpression);
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_variable_access_expression(
+    fn analyze_variable_access_expression(
         &mut self,
         expr: &mut VariableAccessExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> NodeStats {
         let bounds = expr.get_source_range();
         let VariableAccessExpression {
             name: _,
@@ -971,7 +962,7 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_unary_expression(
+    fn analyze_unary_expression(
         &mut self,
         UnaryExpression {
             operator_token: _,
@@ -979,13 +970,13 @@ impl AstVisitor for StatTracker<'_> {
             operand,
             id,
         }: &mut UnaryExpression,
-    ) -> Self::ExpressionOutput {
-        let stat = self.visit_expression(operand);
+    ) -> NodeStats {
+        let stat = self.analyze_expression(operand);
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_cast_expression(
+    fn analyze_cast_expression(
         &mut self,
         CastExpression {
             operand,
@@ -993,15 +984,15 @@ impl AstVisitor for StatTracker<'_> {
             type_,
             id,
         }: &mut CastExpression,
-    ) -> Self::ExpressionOutput {
-        let operand_stat = self.visit_expression(operand);
-        let type_stat = self.visit_type(type_);
+    ) -> NodeStats {
+        let operand_stat = self.analyze_expression(operand);
+        let type_stat = self.analyze_type(type_);
         let stat = operand_stat.serial(type_stat);
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_binary_expression(
+    fn analyze_binary_expression(
         &mut self,
         BinaryExpression {
             left,
@@ -1010,15 +1001,15 @@ impl AstVisitor for StatTracker<'_> {
             right,
             id,
         }: &mut BinaryExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> NodeStats {
         let stat = self
-            .visit_expression(left)
-            .serial(self.visit_expression(right));
+            .analyze_expression(left)
+            .serial(self.analyze_expression(right));
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_variable_assignment_expression(
+    fn analyze_variable_assignment_expression(
         &mut self,
         VariableAssignmentExpression {
             lvalue,
@@ -1026,15 +1017,15 @@ impl AstVisitor for StatTracker<'_> {
             right,
             id,
         }: &mut VariableAssignmentExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> NodeStats {
         let stat = self
-            .visit_lvalue(lvalue)
-            .serial(self.visit_expression(right));
+            .analyze_lvalue(lvalue)
+            .serial(self.analyze_expression(right));
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput {
+    fn analyze_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> NodeStats {
         let bounds = lvalue.get_source_range();
         let VariableLValue {
             name: _,
@@ -1057,7 +1048,7 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_array_index_lvalue(
+    fn analyze_array_index_lvalue(
         &mut self,
         ArrayIndexLValue {
             array,
@@ -1066,15 +1057,15 @@ impl AstVisitor for StatTracker<'_> {
             close_bracket_token: _,
             id,
         }: &mut ArrayIndexLValue,
-    ) -> Self::LValueOutput {
+    ) -> NodeStats {
         let stat = self
-            .visit_lvalue(array)
-            .serial(self.visit_expression(index));
+            .analyze_lvalue(array)
+            .serial(self.analyze_expression(index));
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_struct_access_lvalue(
+    fn analyze_struct_access_lvalue(
         &mut self,
         StructAccessLValue {
             value,
@@ -1083,13 +1074,13 @@ impl AstVisitor for StatTracker<'_> {
             member_name_token: _,
             id,
         }: &mut StructAccessLValue,
-    ) -> Self::LValueOutput {
-        let stat = self.visit_lvalue(value);
+    ) -> NodeStats {
+        let stat = self.analyze_lvalue(value);
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_grouping_lvalue(
+    fn analyze_grouping_lvalue(
         &mut self,
         GroupingLValue {
             open_paren_token: _,
@@ -1097,13 +1088,13 @@ impl AstVisitor for StatTracker<'_> {
             close_paren_token: _,
             id,
         }: &mut GroupingLValue,
-    ) -> Self::LValueOutput {
-        let stat = self.visit_lvalue(sublvalue);
+    ) -> NodeStats {
+        let stat = self.analyze_lvalue(sublvalue);
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_simple_type(&mut self, type_: &mut SimpleType) -> Self::TypeOutput {
+    fn analyze_simple_type(&mut self, type_: &mut SimpleType) -> NodeStats {
         let bounds = type_.get_source_range();
         let SimpleType {
             token: _,
@@ -1115,7 +1106,7 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_unit_type(&mut self, type_: &mut UnitType) -> Self::TypeOutput {
+    fn analyze_unit_type(&mut self, type_: &mut UnitType) -> NodeStats {
         let bounds = type_.get_source_range();
         let UnitType {
             open_paren_token: _,
@@ -1127,7 +1118,7 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_idk_type(&mut self, type_: &mut IdkType) -> Self::TypeOutput {
+    fn analyze_idk_type(&mut self, type_: &mut IdkType) -> NodeStats {
         let bounds = type_.get_source_range();
         let IdkType { token: _, id } = type_;
         let stat = NodeStats::default_with_range(vec![bounds]);
@@ -1135,7 +1126,7 @@ impl AstVisitor for StatTracker<'_> {
         stat
     }
 
-    fn visit_array_type(
+    fn analyze_array_type(
         &mut self,
         ArrayType {
             subtype,
@@ -1144,16 +1135,16 @@ impl AstVisitor for StatTracker<'_> {
             close_bracket_token: _,
             id,
         }: &mut ArrayType,
-    ) -> Self::TypeOutput {
-        let mut stat = self.visit_type(subtype);
+    ) -> NodeStats {
+        let mut stat = self.analyze_type(subtype);
         if let Some(size) = size {
-            stat = stat.serial(self.visit_expression(size))
+            stat = stat.serial(self.analyze_expression(size))
         }
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_struct_type(
+    fn analyze_struct_type(
         &mut self,
         StructType {
             struct_token,
@@ -1162,7 +1153,7 @@ impl AstVisitor for StatTracker<'_> {
             close_brace_token: _,
             id,
         }: &mut StructType,
-    ) -> Self::TypeOutput {
+    ) -> NodeStats {
         let mut stat = NodeStats::default_with_range(vec![struct_token.range.clone()]);
         for (
             StructMemberDefinition {
@@ -1174,20 +1165,20 @@ impl AstVisitor for StatTracker<'_> {
             _comma,
         ) in members
         {
-            stat = stat.serial(self.visit_type(type_));
+            stat = stat.serial(self.analyze_type(type_));
         }
         self.stats.insert(*id, stat.clone());
         stat
     }
 
-    fn visit_alias_type(
+    fn analyze_alias_type(
         &mut self,
         AliasType {
             name: _,
             name_token,
             id,
         }: &mut AliasType,
-    ) -> Self::TypeOutput {
+    ) -> NodeStats {
         let stat = NodeStats::default_with_range(vec![name_token.range.clone()]);
         self.stats.insert(*id, stat.clone());
         stat

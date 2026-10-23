@@ -3,7 +3,7 @@ use std::cell::RefMut;
 use crate::{
     NewtypeDeref,
     ast::{
-        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType, AstVisitor,
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType,
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
         CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
@@ -15,6 +15,7 @@ use crate::{
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
+    define_dispatch_methods,
     escape::{QuoteType, escape},
     passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
 };
@@ -31,7 +32,7 @@ impl Pass for AstJsonDumpPass<'_> {
         let mut output = self.output.take().unwrap();
         let mut program = self.program.take().unwrap();
 
-        *output = self.visit_program(&mut program).into();
+        *output = self.dump_program(&mut program).into();
         Ok(())
     }
 }
@@ -57,35 +58,39 @@ impl PassFactory for AstJsonDumpPass<'_> {
     }
 }
 
-impl AstVisitor for AstJsonDumpPass<'_> {
-    type ProgramOutput = String;
-    type TopLevelOutput = String;
-    type FunctionBodyOutput = String;
-    type SimpleBindingOutput = String;
-    type StatementOutput = String;
-    type ExecutorHostOutput = String;
-    type ExecutorOutput = String;
-    type ExpressionOutput = String;
-    type LValueOutput = String;
-    type TypeOutput = String;
+// could be simplified using PartialAstVisitor::visit_pre and ::visit_post, but then we can't name
+// children anymore
+impl AstJsonDumpPass<'_> {
+    define_dispatch_methods! {
+        dump {
+            TopLevelStatement => String,
+            FunctionBody => String,
+            Statement => String,
+            ExecutorHost => String,
+            Executor => String,
+            Expression => String,
+            LValue => String,
+            Type => String,
+        }
+    }
 
-    fn visit_program(
+    fn dump_program(
         mut self,
         Program {
             top_level_statements,
             id: _,
             file_name: _,
         }: &mut Program,
-    ) -> Self::ProgramOutput {
+    ) -> String {
         let mut children = Vec::new();
         for tls in top_level_statements.iter_mut() {
-            children.push(self.visit_top_level_statement(tls));
+            children.push(self.dump_top_level_statement(tls));
         }
         let children_str = children.join(",\n");
         format!("[\"Program\",\n{}\n]", children_str)
     }
 
-    fn visit_function_definition(
+    fn dump_function_definition(
         &mut self,
         FunctionDefinition {
             let_token: _,
@@ -100,10 +105,10 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             body,
             id: _,
         }: &mut FunctionDefinition,
-    ) -> Self::TopLevelOutput {
+    ) -> String {
         let params_str = parameters
             .iter_mut()
-            .map(|(param, _)| self.visit_simple_binding(param))
+            .map(|(param, _)| self.dump_simple_binding(param))
             .collect::<Vec<_>>()
             .join(", ");
         let params_str = if params_str.is_empty() {
@@ -112,17 +117,17 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             format!("[\"Parameters\", {params_str}]")
         };
         let ret_type_str = match return_type {
-            Some(t) => format!(",{}", self.visit_type(t)),
+            Some(t) => format!(",{}", self.dump_type(t)),
             None => String::new(),
         };
-        let body_str = self.visit_function_body(body);
+        let body_str = self.dump_function_body(body);
         format!(
             "[\"Function `{}`\",\n{}, [\"Return Type\"{}], [\"Body\", {}]\n]",
             name, params_str, ret_type_str, body_str
         )
     }
 
-    fn visit_type_alias(
+    fn dump_type_alias(
         &mut self,
         TypeAlias {
             let_token: _,
@@ -133,19 +138,19 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             semicolon_token: _,
             id: _,
         }: &mut TypeAlias,
-    ) -> Self::TopLevelOutput {
-        format!("[\"TypeAlias `{}`\",{}]", name, self.visit_type(type_))
+    ) -> String {
+        format!("[\"TypeAlias `{}`\",{}]", name, self.dump_type(type_))
     }
 
-    fn visit_statement_function_body(
+    fn dump_statement_function_body(
         &mut self,
         StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
-    ) -> Self::FunctionBodyOutput {
-        let stmt_str = self.visit_statement(statement);
+    ) -> String {
+        let stmt_str = self.dump_statement(statement);
         stmt_str.to_string()
     }
 
-    fn visit_extern_function_body(
+    fn dump_extern_function_body(
         &mut self,
         ExternFunctionBody {
             at_token: _,
@@ -155,11 +160,11 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             semicolon_token: _,
             id: _,
         }: &mut ExternFunctionBody,
-    ) -> Self::FunctionBodyOutput {
+    ) -> String {
         format!("\"Extern `{}`\"", symbol)
     }
 
-    fn visit_simple_binding(
+    fn dump_simple_binding(
         &mut self,
         SimpleBinding {
             name_token: _,
@@ -167,26 +172,26 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             type_,
             id: _,
         }: &mut SimpleBinding,
-    ) -> Self::SimpleBindingOutput {
+    ) -> String {
         match type_ {
-            Some((_, t)) => format!("[\"Binding `{}`\", {}]", name, self.visit_type(t)),
+            Some((_, t)) => format!("[\"Binding `{}`\", {}]", name, self.dump_type(t)),
             None => format!("\"Binding `{}`\"", name),
         }
     }
 
-    fn visit_expression_statement(
+    fn dump_expression_statement(
         &mut self,
         ExpressionStatement {
             expression,
             semicolon_token: _,
             id: _,
         }: &mut ExpressionStatement,
-    ) -> Self::StatementOutput {
-        let expr_str = self.visit_expression(expression);
+    ) -> String {
+        let expr_str = self.dump_expression(expression);
         format!("[\"ExpressionStatement\",\n{}\n]", expr_str)
     }
 
-    fn visit_on_statement(
+    fn dump_on_statement(
         &mut self,
         OnStatement {
             on_token: _,
@@ -198,30 +203,30 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             body,
             id: _,
         }: &mut OnStatement,
-    ) -> Self::StatementOutput {
-        let exec_str = self.visit_executor(executor);
+    ) -> String {
+        let exec_str = self.dump_executor(executor);
         let iter_str = iterators
             .iter_mut()
             .map(|it| {
-                let bind_str = self.visit_simple_binding(&mut it.binding);
-                let max_str = self.visit_expression(&mut it.max_value);
+                let bind_str = self.dump_simple_binding(&mut it.binding);
+                let max_str = self.dump_expression(&mut it.max_value);
                 format!("[\"Iterator {} = {}\"]", bind_str, max_str)
             })
             .collect::<Vec<_>>()
             .join(", ");
         let binds_str = bindings
             .iter_mut()
-            .map(|(lv, _)| self.visit_lvalue(lv))
+            .map(|(lv, _)| self.dump_lvalue(lv))
             .collect::<Vec<_>>()
             .join(", ");
-        let body_str = self.visit_statement(body);
+        let body_str = self.dump_statement(body);
         format!(
             "[\"OnStatement\",\n{},\n{},\n{},\n{}\n]",
             exec_str, iter_str, binds_str, body_str
         )
     }
 
-    fn visit_block_statement(
+    fn dump_block_statement(
         &mut self,
         BlockStatement {
             open_brace_token: _,
@@ -229,10 +234,10 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             close_brace_token: _,
             id: _,
         }: &mut BlockStatement,
-    ) -> Self::StatementOutput {
+    ) -> String {
         let stmts_str = body
             .iter_mut()
-            .map(|stmt| self.visit_statement(stmt))
+            .map(|stmt| self.dump_statement(stmt))
             .collect::<Vec<_>>()
             .join(",\n");
         if stmts_str.is_empty() {
@@ -242,7 +247,7 @@ impl AstVisitor for AstJsonDumpPass<'_> {
         }
     }
 
-    fn visit_return_statement(
+    fn dump_return_statement(
         &mut self,
         ReturnStatement {
             return_token: _,
@@ -250,15 +255,15 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             semicolon_token: _,
             id: _,
         }: &mut ReturnStatement,
-    ) -> Self::StatementOutput {
+    ) -> String {
         let val_str = match value {
-            Some(expr) => self.visit_expression(expr),
+            Some(expr) => self.dump_expression(expr),
             None => String::from("\"None\""),
         };
         format!("[\"Return\",\n{}\n]", val_str)
     }
 
-    fn visit_variable_definition_statement(
+    fn dump_variable_definition_statement(
         &mut self,
         VariableDefinitionStatement {
             let_token: _,
@@ -268,13 +273,13 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             semicolon_token: _,
             id: _,
         }: &mut VariableDefinitionStatement,
-    ) -> Self::StatementOutput {
-        let bind_str = self.visit_simple_binding(binding);
-        let val_str = self.visit_expression(value);
+    ) -> String {
+        let bind_str = self.dump_simple_binding(binding);
+        let val_str = self.dump_expression(value);
         format!("[\"VariableDefinition\",\n{},\n{}\n]", bind_str, val_str)
     }
 
-    fn visit_if_statement(
+    fn dump_if_statement(
         &mut self,
         IfStatement {
             if_token: _,
@@ -284,19 +289,19 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             else_,
             id: _,
         }: &mut IfStatement,
-    ) -> Self::StatementOutput {
-        let cond_str = self.visit_expression(condition);
-        let if_body_str = self.visit_statement(if_body);
+    ) -> String {
+        let cond_str = self.dump_expression(condition);
+        let if_body_str = self.dump_statement(if_body);
         let elifs_str = elifs
             .iter_mut()
             .map(|(_, cond, body)| {
-                let c = self.visit_expression(cond);
-                let b = self.visit_statement(body);
+                let c = self.dump_expression(cond);
+                let b = self.dump_statement(body);
                 format!(",[\"Elif\",\n{},\n{}\n]", c, b)
             })
             .collect::<String>();
         let else_str = match else_ {
-            Some((_, body)) => format!(",[\"Else\",\n{}\n]", self.visit_statement(body)),
+            Some((_, body)) => format!(",[\"Else\",\n{}\n]", self.dump_statement(body)),
             None => String::new(),
         };
         format!(
@@ -305,7 +310,7 @@ impl AstVisitor for AstJsonDumpPass<'_> {
         )
     }
 
-    fn visit_while_loop_statement(
+    fn dump_while_loop_statement(
         &mut self,
         WhileLoopStatement {
             while_token: _,
@@ -313,13 +318,13 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             body,
             id: _,
         }: &mut WhileLoopStatement,
-    ) -> Self::StatementOutput {
-        let cond_str = self.visit_expression(condition);
-        let body_str = self.visit_statement(body);
+    ) -> String {
+        let cond_str = self.dump_expression(condition);
+        let body_str = self.dump_statement(body);
         format!("[\"While\",\n{},\n{}\n]", cond_str, body_str)
     }
 
-    fn visit_for_loop_statement(
+    fn dump_for_loop_statement(
         &mut self,
         ForLoopStatement {
             for_token: _,
@@ -332,53 +337,53 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             body,
             id: _,
         }: &mut ForLoopStatement,
-    ) -> Self::StatementOutput {
-        let init_str = self.visit_statement(initializer);
+    ) -> String {
+        let init_str = self.dump_statement(initializer);
         let cond_str = match condition {
-            Some(expr) => self.visit_expression(expr),
+            Some(expr) => self.dump_expression(expr),
             None => String::from("\"None\""),
         };
         let inc_str = match incrementer {
-            Some(expr) => self.visit_expression(expr),
+            Some(expr) => self.dump_expression(expr),
             None => String::from("\"None\""),
         };
-        let body_str = self.visit_statement(body);
+        let body_str = self.dump_statement(body);
         format!(
             "[\"For\",\n{},\n{},\n{},\n{}\n]",
             init_str, cond_str, inc_str, body_str
         )
     }
 
-    fn visit_break_statement(
+    fn dump_break_statement(
         &mut self,
         BreakStatement {
             break_token: _,
             semicolon_token: _,
             id: _,
         }: &mut BreakStatement,
-    ) -> Self::StatementOutput {
+    ) -> String {
         String::from("\"Break\"")
     }
 
-    fn visit_skip_statement(
+    fn dump_skip_statement(
         &mut self,
         SkipStatement {
             skip_token: _,
             semicolon_token: _,
             id: _,
         }: &mut SkipStatement,
-    ) -> Self::StatementOutput {
+    ) -> String {
         String::from("\"Skip\"")
     }
 
-    fn visit_self_executor_host(
+    fn dump_self_executor_host(
         &mut self,
         SelfExecutorHost { token: _, id: _ }: &mut SelfExecutorHost,
-    ) -> Self::ExecutorHostOutput {
+    ) -> String {
         String::from("\"SelfExecutorHost\"")
     }
 
-    fn visit_thread_executor(
+    fn dump_thread_executor(
         &mut self,
         ThreadExecutor {
             host,
@@ -389,13 +394,13 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             close_bracket_token: _,
             id: _,
         }: &mut ThreadExecutor,
-    ) -> Self::ExecutorOutput {
-        let host_str = self.visit_executor_host(host);
-        let idx_str = self.visit_expression(index);
+    ) -> String {
+        let host_str = self.dump_executor_host(host);
+        let idx_str = self.dump_expression(index);
         format!("[\"ThreadExecutor\",\n{},\n{}\n]", host_str, idx_str)
     }
 
-    fn visit_gpu_executor(
+    fn dump_gpu_executor(
         &mut self,
         GPUExecutor {
             host,
@@ -406,20 +411,20 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             close_bracket_token: _,
             id: _,
         }: &mut GPUExecutor,
-    ) -> Self::ExecutorOutput {
-        let host_str = self.visit_executor_host(host);
-        let idx_str = self.visit_expression(gpu_index);
+    ) -> String {
+        let host_str = self.dump_executor_host(host);
+        let idx_str = self.dump_expression(gpu_index);
         format!("[\"GPUExecutor\",\n{},\n{}\n]", host_str, idx_str)
     }
 
-    fn visit_literal_expression(
+    fn dump_literal_expression(
         &mut self,
         LiteralExpression {
             value,
             token: _,
             id: _,
         }: &mut LiteralExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> String {
         match value {
             LiteralKind::Number(n) => format!("\"Number ${}$\"", n),
             LiteralKind::Char(c) => {
@@ -430,7 +435,7 @@ impl AstVisitor for AstJsonDumpPass<'_> {
         }
     }
 
-    fn visit_array_expression(
+    fn dump_array_expression(
         &mut self,
         ArrayExpression {
             open_bracket_token: _,
@@ -438,16 +443,16 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             close_bracket_token: _,
             id: _,
         }: &mut ArrayExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> String {
         let elems_str = elements
             .iter_mut()
-            .map(|(el, _comma)| self.visit_expression(el))
+            .map(|(el, _comma)| self.dump_expression(el))
             .collect::<Vec<_>>()
             .join(", ");
         format!("[\"Array\",\n{}\n]", elems_str)
     }
 
-    fn visit_struct_expression(
+    fn dump_struct_expression(
         &mut self,
         StructExpression {
             type_,
@@ -456,7 +461,7 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             close_brace_token: _,
             id: _,
         }: &mut StructExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> String {
         let elems_str = members
             .iter_mut()
             .map(
@@ -468,18 +473,18 @@ impl AstVisitor for AstJsonDumpPass<'_> {
                         value,
                     },
                     _comma,
-                )| format!("[\"`{name}`\", {}]", self.visit_expression(value)),
+                )| format!("[\"`{name}`\", {}]", self.dump_expression(value)),
             )
             .collect::<Vec<_>>()
             .join(", ");
         format!(
             "[\"Struct\", {}, [\"Members\", {}]]",
-            self.visit_type(type_),
+            self.dump_type(type_),
             elems_str
         )
     }
 
-    fn visit_function_call_expression(
+    fn dump_function_call_expression(
         &mut self,
         FunctionCallExpression {
             name,
@@ -489,16 +494,16 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             close_paren_token: _,
             id: _,
         }: &mut FunctionCallExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> String {
         let args_str = arguments
             .iter_mut()
-            .map(|(expr, _)| self.visit_expression(expr))
+            .map(|(expr, _)| self.dump_expression(expr))
             .collect::<Vec<_>>()
             .join(", ");
         format!("[\"Call `{}`\",\n{}\n]", name, args_str)
     }
 
-    fn visit_compiler_expression(
+    fn dump_compiler_expression(
         &mut self,
         CompilerExpression {
             at_token: _,
@@ -509,16 +514,16 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             close_paren_token: _,
             id: _,
         }: &mut CompilerExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> String {
         let args_str = arguments
             .iter_mut()
-            .map(|(arg, _comma)| self.visit_expression(arg))
+            .map(|(arg, _comma)| self.dump_expression(arg))
             .collect::<Vec<_>>()
             .join(", ");
         format!("[\"CompilerCall `{}`\",\n{}\n]", name, args_str)
     }
 
-    fn visit_array_index_expression(
+    fn dump_array_index_expression(
         &mut self,
         ArrayIndexExpression {
             array,
@@ -527,13 +532,13 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             close_bracket_token: _,
             id: _,
         }: &mut ArrayIndexExpression,
-    ) -> Self::ExpressionOutput {
-        let arr_str = self.visit_expression(array);
-        let idx_str = self.visit_expression(index);
+    ) -> String {
+        let arr_str = self.dump_expression(array);
+        let idx_str = self.dump_expression(index);
         format!("[\"ArrayIndex\",\n{},\n{}\n]", arr_str, idx_str)
     }
 
-    fn visit_struct_access_expression(
+    fn dump_struct_access_expression(
         &mut self,
         StructAccessExpression {
             value,
@@ -542,12 +547,12 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             member_name_token: _,
             id: _,
         }: &mut StructAccessExpression,
-    ) -> Self::ExpressionOutput {
-        let value_str = self.visit_expression(value);
+    ) -> String {
+        let value_str = self.dump_expression(value);
         format!("[\"StructAccess\",\n{},\n\"{member_name}\"\n]", value_str)
     }
 
-    fn visit_grouping_expression(
+    fn dump_grouping_expression(
         &mut self,
         GroupingExpression {
             open_paren_token: _,
@@ -555,23 +560,23 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             close_paren_token: _,
             id: _,
         }: &mut GroupingExpression,
-    ) -> Self::ExpressionOutput {
-        let sub_str = self.visit_expression(subexpression);
+    ) -> String {
+        let sub_str = self.dump_expression(subexpression);
         format!("[\"Grouping\",\n{}\n]", sub_str)
     }
 
-    fn visit_variable_access_expression(
+    fn dump_variable_access_expression(
         &mut self,
         VariableAccessExpression {
             name,
             name_token: _,
             id: _,
         }: &mut VariableAccessExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> String {
         format!("\"Var `{}`\"", name)
     }
 
-    fn visit_unary_expression(
+    fn dump_unary_expression(
         &mut self,
         UnaryExpression {
             operator_token: _,
@@ -579,17 +584,17 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             operand,
             id: _,
         }: &mut UnaryExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> String {
         let op_str = match operation {
             UnaryOperation::BitwiseNot => "~",
             UnaryOperation::LogicalNot => "!",
             UnaryOperation::Negate => "-",
         };
-        let operand_str = self.visit_expression(operand);
+        let operand_str = self.dump_expression(operand);
         format!("[\"Unary {}\",\n{}\n]", op_str, operand_str)
     }
 
-    fn visit_cast_expression(
+    fn dump_cast_expression(
         &mut self,
         CastExpression {
             operand,
@@ -597,13 +602,13 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             type_,
             id: _,
         }: &mut CastExpression,
-    ) -> Self::ExpressionOutput {
-        let op_str = self.visit_expression(operand);
-        let type_str = self.visit_type(type_);
+    ) -> String {
+        let op_str = self.dump_expression(operand);
+        let type_str = self.dump_type(type_);
         format!("[\"Cast\",\n{},\n{}\n]", op_str, type_str)
     }
 
-    fn visit_binary_expression(
+    fn dump_binary_expression(
         &mut self,
         BinaryExpression {
             left,
@@ -612,7 +617,7 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             right,
             id: _,
         }: &mut BinaryExpression,
-    ) -> Self::ExpressionOutput {
+    ) -> String {
         let op_str = match operation {
             BinaryOperation::Add => "+",
             BinaryOperation::Subtract => "-",
@@ -628,12 +633,12 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             BinaryOperation::LogicalAnd => "&&",
             BinaryOperation::LogicalOr => "||",
         };
-        let left_str = self.visit_expression(left);
-        let right_str = self.visit_expression(right);
+        let left_str = self.dump_expression(left);
+        let right_str = self.dump_expression(right);
         format!("[\"`{}`\",\n{},\n{}\n]", op_str, left_str, right_str)
     }
 
-    fn visit_variable_assignment_expression(
+    fn dump_variable_assignment_expression(
         &mut self,
         VariableAssignmentExpression {
             lvalue,
@@ -641,24 +646,24 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             right,
             id: _,
         }: &mut VariableAssignmentExpression,
-    ) -> Self::ExpressionOutput {
-        let lv_str = self.visit_lvalue(lvalue);
-        let right_str = self.visit_expression(right);
+    ) -> String {
+        let lv_str = self.dump_lvalue(lvalue);
+        let right_str = self.dump_expression(right);
         format!("[\"Assign\",\n{},\n{}\n]", lv_str, right_str)
     }
 
-    fn visit_variable_lvalue(
+    fn dump_variable_lvalue(
         &mut self,
         VariableLValue {
             name,
             name_token: _,
             id: _,
         }: &mut VariableLValue,
-    ) -> Self::LValueOutput {
+    ) -> String {
         format!("\"LValue `{}`\"", name)
     }
 
-    fn visit_array_index_lvalue(
+    fn dump_array_index_lvalue(
         &mut self,
         ArrayIndexLValue {
             array,
@@ -667,13 +672,13 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             close_bracket_token: _,
             id: _,
         }: &mut ArrayIndexLValue,
-    ) -> Self::LValueOutput {
-        let arr_str = self.visit_lvalue(array);
-        let idx_str = self.visit_expression(index);
+    ) -> String {
+        let arr_str = self.dump_lvalue(array);
+        let idx_str = self.dump_expression(index);
         format!("[\"ArrayIndexLValue\",\n{},\n{}\n]", arr_str, idx_str)
     }
 
-    fn visit_struct_access_lvalue(
+    fn dump_struct_access_lvalue(
         &mut self,
         StructAccessLValue {
             value,
@@ -682,15 +687,15 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             member_name_token: _,
             id: _,
         }: &mut StructAccessLValue,
-    ) -> Self::LValueOutput {
-        let value_str = self.visit_lvalue(value);
+    ) -> String {
+        let value_str = self.dump_lvalue(value);
         format!(
             "[\"StructAccessLValue\",\n{},\n\"{member_name}\"\n]",
             value_str
         )
     }
 
-    fn visit_grouping_lvalue(
+    fn dump_grouping_lvalue(
         &mut self,
         GroupingLValue {
             open_paren_token: _,
@@ -698,38 +703,38 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             close_paren_token: _,
             id: _,
         }: &mut GroupingLValue,
-    ) -> Self::LValueOutput {
-        let sub_str = self.visit_lvalue(sublvalue);
+    ) -> String {
+        let sub_str = self.dump_lvalue(sublvalue);
         format!("[\"GroupingLValue\",\n{}\n]", sub_str)
     }
 
-    fn visit_simple_type(
+    fn dump_simple_type(
         &mut self,
         SimpleType {
             token: _,
             type_,
             id: _,
         }: &mut SimpleType,
-    ) -> Self::TypeOutput {
+    ) -> String {
         format!("\"Type `{}`\"", type_.kind.stringify_one_level())
     }
 
-    fn visit_unit_type(
+    fn dump_unit_type(
         &mut self,
         UnitType {
             open_paren_token: _,
             close_paren_token: _,
             id: _,
         }: &mut UnitType,
-    ) -> Self::TypeOutput {
+    ) -> String {
         String::from("\"UnitType\"")
     }
 
-    fn visit_idk_type(&mut self, IdkType { token: _, id: _ }: &mut IdkType) -> Self::TypeOutput {
+    fn dump_idk_type(&mut self, IdkType { token: _, id: _ }: &mut IdkType) -> String {
         String::from("\"IdkType\"")
     }
 
-    fn visit_array_type(
+    fn dump_array_type(
         &mut self,
         ArrayType {
             subtype,
@@ -738,16 +743,16 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             close_bracket_token: _,
             id: _,
         }: &mut ArrayType,
-    ) -> Self::TypeOutput {
-        let subtype_str = self.visit_type(subtype);
+    ) -> String {
+        let subtype_str = self.dump_type(subtype);
         let size_str = match size {
-            Some(expr) => self.visit_expression(expr),
+            Some(expr) => self.dump_expression(expr),
             None => String::from("\"None\""),
         };
         format!("[\"ArrayType\",\n{},\n{}]", subtype_str, size_str)
     }
 
-    fn visit_struct_type(
+    fn dump_struct_type(
         &mut self,
         StructType {
             struct_token: _,
@@ -756,7 +761,7 @@ impl AstVisitor for AstJsonDumpPass<'_> {
             close_brace_token: _,
             id: _,
         }: &mut StructType,
-    ) -> Self::TypeOutput {
+    ) -> String {
         let member_str = members
             .iter_mut()
             .map(
@@ -768,7 +773,7 @@ impl AstVisitor for AstJsonDumpPass<'_> {
                         type_,
                     },
                     _comma,
-                )| format!("[\"Member `{name}`\", {}]", self.visit_type(type_)),
+                )| format!("[\"Member `{name}`\", {}]", self.dump_type(type_)),
             )
             .collect::<Vec<_>>()
             .join(", ");
@@ -779,7 +784,7 @@ impl AstVisitor for AstJsonDumpPass<'_> {
         }
     }
 
-    fn visit_alias_type(&mut self, _alias_type: &mut AliasType) -> Self::TypeOutput {
+    fn dump_alias_type(&mut self, _alias_type: &mut AliasType) -> String {
         String::from("\"AliasType\"")
     }
 }

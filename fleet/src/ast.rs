@@ -52,6 +52,53 @@ pub enum AstNodeRefMut<'a> {
     Type(&'a mut Type),
 }
 
+impl AstNodeRef<'_> {
+    // For stupid reasons, we can't impl ToOwned so we just have a normal method
+    pub fn to_owned(&self) -> AstNode {
+        match self {
+            AstNodeRef::Program(program) => AstNode::Program((*program).to_owned()),
+            AstNodeRef::TopLevelStatement(tls) => AstNode::TopLevelStatement((*tls).to_owned()),
+            AstNodeRef::FunctionBody(function_body) => {
+                AstNode::FunctionBody((*function_body).to_owned())
+            }
+            AstNodeRef::SimpleBinding(simple_binding) => {
+                AstNode::SimpleBinding((*simple_binding).to_owned())
+            }
+            AstNodeRef::Statement(statement) => AstNode::Statement((*statement).to_owned()),
+            AstNodeRef::ExecutorHost(executor_host) => {
+                AstNode::ExecutorHost((*executor_host).to_owned())
+            }
+            AstNodeRef::Executor(executor) => AstNode::Executor((*executor).to_owned()),
+            AstNodeRef::Expression(expression) => AstNode::Expression((*expression).to_owned()),
+            AstNodeRef::LValue(lvalue) => AstNode::LValue((*lvalue).to_owned()),
+            AstNodeRef::Type(ty) => AstNode::Type((*ty).to_owned()),
+        }
+    }
+}
+impl AstNodeRefMut<'_> {
+    // For stupid reasons, we can't impl ToOwned so we just have a normal method
+    pub fn to_owned(&self) -> AstNode {
+        match self {
+            AstNodeRefMut::Program(program) => AstNode::Program((*program).to_owned()),
+            AstNodeRefMut::TopLevelStatement(tls) => AstNode::TopLevelStatement((*tls).to_owned()),
+            AstNodeRefMut::FunctionBody(function_body) => {
+                AstNode::FunctionBody((*function_body).to_owned())
+            }
+            AstNodeRefMut::SimpleBinding(simple_binding) => {
+                AstNode::SimpleBinding((*simple_binding).to_owned())
+            }
+            AstNodeRefMut::Statement(statement) => AstNode::Statement((*statement).to_owned()),
+            AstNodeRefMut::ExecutorHost(executor_host) => {
+                AstNode::ExecutorHost((*executor_host).to_owned())
+            }
+            AstNodeRefMut::Executor(executor) => AstNode::Executor((*executor).to_owned()),
+            AstNodeRefMut::Expression(expression) => AstNode::Expression((*expression).to_owned()),
+            AstNodeRefMut::LValue(lvalue) => AstNode::LValue((*lvalue).to_owned()),
+            AstNodeRefMut::Type(ty) => AstNode::Type((*ty).to_owned()),
+        }
+    }
+}
+
 impl<'a> From<&'a mut AstNode> for AstNodeRef<'a> {
     fn from(value: &'a mut AstNode) -> Self {
         (&*value).into()
@@ -410,260 +457,210 @@ macro_rules! generate_ast_requirements {
     };
 }
 
-pub trait AstVisitor {
-    type ProgramOutput;
-    type TopLevelOutput;
-    type FunctionBodyOutput;
-    type SimpleBindingOutput;
-    type StatementOutput;
-    type ExecutorHostOutput;
-    type ExecutorOutput;
-    type ExpressionOutput;
-    type LValueOutput;
-    type TypeOutput;
+/// Generates dispatch methods for the visitor pattern. You can pick-and-choose the methods you want
+/// and also add attributes to them.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// define_dispatch_methods! {
+///     generate {
+///         TopLevelStatement => String,
+///         FunctionBody => String,
+///         Statement => String,
+///         #[expect(unused)]
+///         ExecutorHost => String,
+///         #[expect(unused)]
+///         Executor => String,
+///         Expression => PreStatementValue,
+///         LValue => PreStatementValue,
+///         Type => String,
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! define_dispatch_methods {
+    ($prefix:ident { $($input:tt)* }) => {
+        $crate::define_dispatch_methods!(@parse $prefix; $($input)*);
+    };
 
-    fn visit_program(self, program: &mut Program) -> Self::ProgramOutput;
-    fn visit_top_level_statement(&mut self, tls: &mut TopLevelStatement) -> Self::TopLevelOutput {
-        match tls {
-            TopLevelStatement::FunctionDefinition(function_definition) => {
-                self.visit_function_definition(function_definition)
-            }
-            TopLevelStatement::TypeAlias(type_alias) => self.visit_type_alias(type_alias),
-        }
-    }
+    (@parse $prefix:ident;) => {};
 
-    fn visit_function_definition(
-        &mut self,
-        function_definition: &mut FunctionDefinition,
-    ) -> Self::TopLevelOutput;
-    fn visit_type_alias(&mut self, type_alias: &mut TypeAlias) -> Self::TopLevelOutput;
-
-    fn visit_function_body(
-        &mut self,
-        function_body: &mut FunctionBody,
-    ) -> Self::FunctionBodyOutput {
-        match function_body {
-            FunctionBody::Statement(statement_function_body) => {
-                self.visit_statement_function_body(statement_function_body)
-            }
-            FunctionBody::Extern(extern_function_body) => {
-                self.visit_extern_function_body(extern_function_body)
-            }
-        }
-    }
-    fn visit_statement_function_body(
-        &mut self,
-        statement_function_body: &mut StatementFunctionBody,
-    ) -> Self::FunctionBodyOutput;
-    fn visit_extern_function_body(
-        &mut self,
-        extern_function_body: &mut ExternFunctionBody,
-    ) -> Self::FunctionBodyOutput;
-
-    fn visit_simple_binding(
-        &mut self,
-        simple_binding: &mut SimpleBinding,
-    ) -> Self::SimpleBindingOutput;
-
-    // statements
-    fn visit_statement(&mut self, statement: &mut Statement) -> Self::StatementOutput {
-        match statement {
-            Statement::Expression(expression_statement) => {
-                self.visit_expression_statement(expression_statement)
-            }
-            Statement::On(on_statement) => self.visit_on_statement(on_statement),
-            Statement::Block(block_statement) => self.visit_block_statement(block_statement),
-            Statement::Return(return_statement) => self.visit_return_statement(return_statement),
-            Statement::VariableDefinition(variable_definition_statement) => {
-                self.visit_variable_definition_statement(variable_definition_statement)
-            }
-            Statement::If(if_statement) => self.visit_if_statement(if_statement),
-            Statement::WhileLoop(while_loop_statement) => {
-                self.visit_while_loop_statement(while_loop_statement)
-            }
-            Statement::ForLoop(for_loop_statement) => {
-                self.visit_for_loop_statement(for_loop_statement)
-            }
-            Statement::Break(break_statement) => self.visit_break_statement(break_statement),
-            Statement::Skip(skip_statement) => self.visit_skip_statement(skip_statement),
-        }
-    }
-    fn visit_expression_statement(
-        &mut self,
-        expr_stmt: &mut ExpressionStatement,
-    ) -> Self::StatementOutput;
-    fn visit_on_statement(&mut self, on_stmt: &mut OnStatement) -> Self::StatementOutput;
-    fn visit_block_statement(&mut self, block: &mut BlockStatement) -> Self::StatementOutput;
-    fn visit_return_statement(
-        &mut self,
-        return_stmt: &mut ReturnStatement,
-    ) -> Self::StatementOutput;
-    fn visit_variable_definition_statement(
-        &mut self,
-        vardef_stmt: &mut VariableDefinitionStatement,
-    ) -> Self::StatementOutput;
-    fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) -> Self::StatementOutput;
-    fn visit_while_loop_statement(
-        &mut self,
-        while_stmt: &mut WhileLoopStatement,
-    ) -> Self::StatementOutput;
-    fn visit_for_loop_statement(
-        &mut self,
-        for_stmt: &mut ForLoopStatement,
-    ) -> Self::StatementOutput;
-    fn visit_break_statement(&mut self, break_stmt: &mut BreakStatement) -> Self::StatementOutput;
-    fn visit_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> Self::StatementOutput;
-
-    // executor hosts
-    fn visit_executor_host(
-        &mut self,
-        executor_host: &mut ExecutorHost,
-    ) -> Self::ExecutorHostOutput {
-        match executor_host {
-            ExecutorHost::Self_(self_executor_host) => {
-                self.visit_self_executor_host(self_executor_host)
+    (
+        @parse $prefix:ident;
+        $(#[$attr:meta])*
+        TopLevelStatement => $Output:ty,
+        $($rest:tt)*
+    ) => {
+        paste::paste! {
+            $(#[$attr])*
+            fn [<$prefix _top_level_statement>](&mut self, tls: &mut $crate::ast::TopLevelStatement) -> $Output {
+                match tls {
+                    $crate::ast::TopLevelStatement::FunctionDefinition(tls) => self.[<$prefix _function_definition>](tls),
+                    $crate::ast::TopLevelStatement::TypeAlias(tls) => self.[<$prefix _type_alias>](tls),
+                }
             }
         }
-    }
-    fn visit_self_executor_host(
-        &mut self,
-        executor_host: &mut SelfExecutorHost,
-    ) -> Self::ExecutorHostOutput;
 
-    // executors
-    fn visit_executor(&mut self, executor: &mut Executor) -> Self::ExecutorOutput {
-        match executor {
-            Executor::Thread(thread_executor) => self.visit_thread_executor(thread_executor),
-            Executor::GPU(gpu_executor) => self.visit_gpu_executor(gpu_executor),
-        }
-    }
-    fn visit_thread_executor(&mut self, executor: &mut ThreadExecutor) -> Self::ExecutorOutput;
-    fn visit_gpu_executor(&mut self, executor: &mut GPUExecutor) -> Self::ExecutorOutput;
+        $crate::define_dispatch_methods!(@parse $prefix; $($rest)*);
+    };
 
-    // expressions
-    fn visit_expression(&mut self, expression: &mut Expression) -> Self::ExpressionOutput {
-        match expression {
-            Expression::Literal(literal_expression) => {
-                self.visit_literal_expression(literal_expression)
-            }
-            Expression::Array(array_expression) => self.visit_array_expression(array_expression),
-            Expression::Struct(struct_expression) => {
-                self.visit_struct_expression(struct_expression)
-            }
-            Expression::FunctionCall(function_call_expression) => {
-                self.visit_function_call_expression(function_call_expression)
-            }
-            Expression::CompilerExpression(compiler_expression) => {
-                self.visit_compiler_expression(compiler_expression)
-            }
-            Expression::ArrayIndex(array_index_expression) => {
-                self.visit_array_index_expression(array_index_expression)
-            }
-            Expression::StructAccess(struct_access_expression) => {
-                self.visit_struct_access_expression(struct_access_expression)
-            }
-            Expression::Grouping(grouping_expression) => {
-                self.visit_grouping_expression(grouping_expression)
-            }
-            Expression::VariableAccess(variable_access_expression) => {
-                self.visit_variable_access_expression(variable_access_expression)
-            }
-            Expression::Cast(cast_expression) => self.visit_cast_expression(cast_expression),
-            Expression::Unary(unary_expression) => self.visit_unary_expression(unary_expression),
-            Expression::Binary(binary_expression) => {
-                self.visit_binary_expression(binary_expression)
-            }
-            Expression::VariableAssignment(variable_assignment_expression) => {
-                self.visit_variable_assignment_expression(variable_assignment_expression)
+    (
+        @parse $prefix:ident;
+        $(#[$attr:meta])*
+        FunctionBody => $Output:ty,
+        $($rest:tt)*
+    ) => {
+        paste::paste! {
+            $(#[$attr])*
+            fn [<$prefix _function_body>](&mut self, body: &mut $crate::ast::FunctionBody) -> $Output {
+                match body {
+                    $crate::ast::FunctionBody::Statement(body) => self.[<$prefix _statement_function_body>](body),
+                    $crate::ast::FunctionBody::Extern(body) => self.[<$prefix _extern_function_body>](body),
+                }
             }
         }
-    }
-    fn visit_literal_expression(
-        &mut self,
-        expression: &mut LiteralExpression,
-    ) -> Self::ExpressionOutput;
-    fn visit_array_expression(
-        &mut self,
-        expression: &mut ArrayExpression,
-    ) -> Self::ExpressionOutput;
-    fn visit_struct_expression(
-        &mut self,
-        expression: &mut StructExpression,
-    ) -> Self::ExpressionOutput;
-    fn visit_function_call_expression(
-        &mut self,
-        expression: &mut FunctionCallExpression,
-    ) -> Self::ExpressionOutput;
-    fn visit_compiler_expression(
-        &mut self,
-        expression: &mut CompilerExpression,
-    ) -> Self::ExpressionOutput;
-    fn visit_array_index_expression(
-        &mut self,
-        expression: &mut ArrayIndexExpression,
-    ) -> Self::ExpressionOutput;
-    fn visit_struct_access_expression(
-        &mut self,
-        expression: &mut StructAccessExpression,
-    ) -> Self::ExpressionOutput;
-    fn visit_grouping_expression(
-        &mut self,
-        expression: &mut GroupingExpression,
-    ) -> Self::ExpressionOutput;
-    fn visit_variable_access_expression(
-        &mut self,
-        expression: &mut VariableAccessExpression,
-    ) -> Self::ExpressionOutput;
-    fn visit_unary_expression(
-        &mut self,
-        expression: &mut UnaryExpression,
-    ) -> Self::ExpressionOutput;
-    fn visit_cast_expression(&mut self, expression: &mut CastExpression) -> Self::ExpressionOutput;
-    fn visit_binary_expression(
-        &mut self,
-        expression: &mut BinaryExpression,
-    ) -> Self::ExpressionOutput;
-    fn visit_variable_assignment_expression(
-        &mut self,
-        expression: &mut VariableAssignmentExpression,
-    ) -> Self::ExpressionOutput;
 
-    fn visit_lvalue(&mut self, lvalue: &mut LValue) -> Self::LValueOutput {
-        match lvalue {
-            LValue::Variable(var_lvalue) => self.visit_variable_lvalue(var_lvalue),
-            LValue::ArrayIndex(array_index_lvalue) => {
-                self.visit_array_index_lvalue(array_index_lvalue)
+        $crate::define_dispatch_methods!(@parse $prefix; $($rest)*);
+    };
+
+    (
+        @parse $prefix:ident;
+        $(#[$attr:meta])*
+        Statement => $Output:ty,
+        $($rest:tt)*
+    ) => {
+        paste::paste! {
+            $(#[$attr])*
+            fn [<$prefix _statement>](&mut self, stmt: &mut $crate::ast::Statement) -> $Output {
+                match stmt {
+                    $crate::ast::Statement::Expression(stmt) => self.[<$prefix _expression_statement>](stmt),
+                    $crate::ast::Statement::On(stmt) => self.[<$prefix _on_statement>](stmt),
+                    $crate::ast::Statement::Block(stmt) => self.[<$prefix _block_statement>](stmt),
+                    $crate::ast::Statement::Return(stmt) => self.[<$prefix _return_statement>](stmt),
+                    $crate::ast::Statement::VariableDefinition(stmt) => self.[<$prefix _variable_definition_statement>](stmt),
+                    $crate::ast::Statement::If(stmt) => self.[<$prefix _if_statement>](stmt),
+                    $crate::ast::Statement::WhileLoop(stmt) => self.[<$prefix _while_loop_statement>](stmt),
+                    $crate::ast::Statement::ForLoop(stmt) => self.[<$prefix _for_loop_statement>](stmt),
+                    $crate::ast::Statement::Break(stmt) => self.[<$prefix _break_statement>](stmt),
+                    $crate::ast::Statement::Skip(stmt) => self.[<$prefix _skip_statement>](stmt),
+                }
             }
-            LValue::StructAccess(struct_access_lvalue) => {
-                self.visit_struct_access_lvalue(struct_access_lvalue)
+        }
+
+        $crate::define_dispatch_methods!(@parse $prefix; $($rest)*);
+    };
+
+    (
+        @parse $prefix:ident;
+        $(#[$attr:meta])*
+        ExecutorHost => $Output:ty,
+        $($rest:tt)*
+    ) => {
+        paste::paste! {
+            $(#[$attr])*
+            fn [<$prefix _executor_host>](&mut self, host: &mut $crate::ast::ExecutorHost) -> $Output {
+                match host {
+                    $crate::ast::ExecutorHost::Self_(host) => self.[<$prefix _self_executor_host>](host),
+                }
             }
-            LValue::Grouping(grouping_lvalue) => self.visit_grouping_lvalue(grouping_lvalue),
         }
-    }
-    fn visit_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> Self::LValueOutput;
-    fn visit_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> Self::LValueOutput;
-    fn visit_struct_access_lvalue(&mut self, lvalue: &mut StructAccessLValue)
-    -> Self::LValueOutput;
-    fn visit_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> Self::LValueOutput;
 
-    // types
-    fn visit_type(&mut self, type_: &mut Type) -> Self::TypeOutput {
-        match type_ {
-            Type::Simple(simple_type) => self.visit_simple_type(simple_type),
-            Type::Unit(unit_type) => self.visit_unit_type(unit_type),
-            Type::Idk(idk_type) => self.visit_idk_type(idk_type),
-            Type::Array(array_type) => self.visit_array_type(array_type),
-            Type::Struct(struct_type) => self.visit_struct_type(struct_type),
-            Type::Alias(alias_type) => self.visit_alias_type(alias_type),
+        $crate::define_dispatch_methods!(@parse $prefix; $($rest)*);
+    };
+
+    (
+        @parse $prefix:ident;
+        $(#[$attr:meta])*
+        Executor => $Output:ty,
+        $($rest:tt)*
+    ) => {
+        paste::paste! {
+            $(#[$attr])*
+            fn [<$prefix _executor>](&mut self, executor: &mut $crate::ast::Executor) -> $Output {
+                match executor {
+                    $crate::ast::Executor::Thread(executor) => self.[<$prefix _thread_executor>](executor),
+                    $crate::ast::Executor::GPU(executor) => self.[<$prefix _gpu_executor>](executor),
+                }
+            }
         }
-    }
 
-    fn visit_simple_type(&mut self, simple_type: &mut SimpleType) -> Self::TypeOutput;
-    fn visit_unit_type(&mut self, unit_type: &mut UnitType) -> Self::TypeOutput;
-    fn visit_idk_type(&mut self, idk_type: &mut IdkType) -> Self::TypeOutput;
-    fn visit_array_type(&mut self, array_type: &mut ArrayType) -> Self::TypeOutput;
-    fn visit_struct_type(&mut self, struct_type: &mut StructType) -> Self::TypeOutput;
-    fn visit_alias_type(&mut self, alias_type: &mut AliasType) -> Self::TypeOutput;
+        $crate::define_dispatch_methods!(@parse $prefix; $($rest)*);
+    };
+
+    (
+        @parse $prefix:ident;
+        $(#[$attr:meta])*
+        Expression => $Output:ty,
+        $($rest:tt)*
+    ) => {
+        paste::paste! {
+            $(#[$attr])*
+            fn [<$prefix _expression>](&mut self, expr: &mut $crate::ast::Expression) -> $Output {
+                match expr {
+                    $crate::ast::Expression::Literal(expr) => self.[<$prefix _literal_expression>](expr),
+                    $crate::ast::Expression::Array(expr) => self.[<$prefix _array_expression>](expr),
+                    $crate::ast::Expression::Struct(expr) => self.[<$prefix _struct_expression>](expr),
+                    $crate::ast::Expression::FunctionCall(expr) => self.[<$prefix _function_call_expression>](expr),
+                    $crate::ast::Expression::CompilerExpression(expr) => self.[<$prefix _compiler_expression>](expr),
+                    $crate::ast::Expression::ArrayIndex(expr) => self.[<$prefix _array_index_expression>](expr),
+                    $crate::ast::Expression::StructAccess(expr) => self.[<$prefix _struct_access_expression>](expr),
+                    $crate::ast::Expression::Grouping(expr) => self.[<$prefix _grouping_expression>](expr),
+                    $crate::ast::Expression::VariableAccess(expr) => self.[<$prefix _variable_access_expression>](expr),
+                    $crate::ast::Expression::Cast(expr) => self.[<$prefix _cast_expression>](expr),
+                    $crate::ast::Expression::Unary(expr) => self.[<$prefix _unary_expression>](expr),
+                    $crate::ast::Expression::Binary(expr) => self.[<$prefix _binary_expression>](expr),
+                    $crate::ast::Expression::VariableAssignment(expr) => self.[<$prefix _variable_assignment_expression>](expr),
+                }
+            }
+        }
+
+        $crate::define_dispatch_methods!(@parse $prefix; $($rest)*);
+    };
+
+    (
+        @parse $prefix:ident;
+        $(#[$attr:meta])*
+        LValue => $Output:ty,
+        $($rest:tt)*
+    ) => {
+        paste::paste! {
+            $(#[$attr])*
+            fn [<$prefix _lvalue>](&mut self, lvalue: &mut $crate::ast::LValue) -> $Output {
+                match lvalue {
+                    $crate::ast::LValue::Variable(lvalue) => self.[<$prefix _variable_lvalue>](lvalue),
+                    $crate::ast::LValue::ArrayIndex(lvalue) => self.[<$prefix _array_index_lvalue>](lvalue),
+                    $crate::ast::LValue::StructAccess(lvalue) => self.[<$prefix _struct_access_lvalue>](lvalue),
+                    $crate::ast::LValue::Grouping(lvalue) => self.[<$prefix _grouping_lvalue>](lvalue),
+                }
+            }
+        }
+
+        $crate::define_dispatch_methods!(@parse $prefix; $($rest)*);
+    };
+
+    (
+        @parse $prefix:ident;
+        $(#[$attr:meta])*
+        Type => $Output:ty,
+        $($rest:tt)*
+    ) => {
+        paste::paste! {
+            $(#[$attr])*
+            fn [<$prefix _type>](&mut self, ty: &mut $crate::ast::Type) -> $Output {
+                match ty {
+                    $crate::ast::Type::Simple(ty) => self.[<$prefix _simple_type>](ty),
+                    $crate::ast::Type::Unit(ty) => self.[<$prefix _unit_type>](ty),
+                    $crate::ast::Type::Idk(ty) => self.[<$prefix _idk_type>](ty),
+                    $crate::ast::Type::Array(ty) => self.[<$prefix _array_type>](ty),
+                    $crate::ast::Type::Struct(ty) => self.[<$prefix _struct_type>](ty),
+                    $crate::ast::Type::Alias(ty) => self.[<$prefix _alias_type>](ty),
+                }
+            }
+        }
+
+        $crate::define_dispatch_methods!(@parse $prefix; $($rest)*);
+    };
 }
 
 #[derive(Clone, Debug)]
