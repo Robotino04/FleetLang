@@ -29,7 +29,7 @@ impl Errors {
 
         let ansi_reset = if ansi { UNCONDITIONAL_ANSI_RESET } else { "" };
 
-        // error -> warning -> node, then sort by file location
+        // error -> warning -> note, then sort by file location
         self.sort_by_key(|err| {
             err.render()
                 .highlight_groups
@@ -1293,7 +1293,7 @@ impl ErrorKind {
                     } => "Casting from an array to a non-array is always impossible.".to_string(),
                     ImpossibleCastReason::DifferentStructOrigin => {
                         "Casting between structs with equal members \
-                        that stem from different places is forbidden.\
+                        that stem from different places is forbidden. \
                         This ensures forwards compatibility for when \
                         generics are implemented."
                             .to_string()

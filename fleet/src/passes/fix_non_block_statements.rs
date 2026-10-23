@@ -44,7 +44,7 @@ impl Pass for FixNonBlockStatements<'_> {
 }
 
 impl FixNonBlockStatements<'_> {
-    fn create_fake_block_arround(&mut self, node: &mut Statement) -> Statement {
+    fn create_fake_block_around(&mut self, node: &mut Statement) -> Statement {
         let range = node.get_source_range();
 
         Statement::Block(BlockStatement {
@@ -99,7 +99,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                 stmt_range: stmt_body.statement.get_source_range(),
             });
 
-            stmt_body.statement = self.create_fake_block_arround(&mut stmt_body.statement);
+            stmt_body.statement = self.create_fake_block_around(&mut stmt_body.statement);
         }
 
         self.visit_function_body(body);
@@ -122,7 +122,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                 stmt_range: if_body.get_source_range(),
             });
 
-            **if_body = self.create_fake_block_arround(&mut *if_body);
+            **if_body = self.create_fake_block_around(&mut *if_body);
         }
 
         self.visit_expression(condition);
@@ -135,7 +135,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                     stmt_range: elif_body.get_source_range(),
                 });
 
-                *elif_body = self.create_fake_block_arround(elif_body);
+                *elif_body = self.create_fake_block_around(elif_body);
             }
             self.visit_expression(elif_condition);
             self.visit_statement(elif_body);
@@ -148,7 +148,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                     stmt_range: else_body.get_source_range(),
                 });
 
-                **else_body = self.create_fake_block_arround(&mut *else_body);
+                **else_body = self.create_fake_block_around(&mut *else_body);
             }
 
             self.visit_statement(else_body);
@@ -170,7 +170,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                 stmt_range: body.get_source_range(),
             });
 
-            **body = self.create_fake_block_arround(&mut *body);
+            **body = self.create_fake_block_around(&mut *body);
         }
 
         self.visit_expression(condition);
@@ -197,7 +197,7 @@ impl PartialAstVisitor for FixNonBlockStatements<'_> {
                 stmt_range: body.get_source_range(),
             });
 
-            **body = self.create_fake_block_arround(&mut *body);
+            **body = self.create_fake_block_around(&mut *body);
         }
 
         self.visit_statement(initializer);

@@ -258,6 +258,8 @@ impl TypeConcretisationPass<'_> {
                 None
             },
         })))
+
+        // TODO: actually cache scope
     }
 }
 
