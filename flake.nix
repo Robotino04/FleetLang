@@ -122,6 +122,7 @@
           };
         };
       in rec {
+        formatter = pkgs.alejandra;
         defaultPackage = packages.fleet;
         packages = {
           all = pkgs.writeTextFile {
