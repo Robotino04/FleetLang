@@ -1,15 +1,16 @@
 use std::{
     any::TypeId,
     borrow::BorrowMut,
-    cell::RefMut,
     marker::PhantomData,
-    mem::swap,
     ops::{Deref, DerefMut},
 };
 
-use crate::passes::pass_manager::{Pass, PassFactory};
+use crate::passes::{
+    global_state::{FetchError, Fetched, GlobalState},
+    pass_manager::{Pass, PassFactory},
+};
 
-use super::pass_manager::{GlobalState, PassResult};
+use super::pass_manager::PassResult;
 
 /// Swaps the data in `From` and `To`
 ///
@@ -28,8 +29,8 @@ where
     To: DerefMut,
     From: BorrowMut<<To as Deref>::Target>,
 {
-    from: RefMut<'state, From>,
-    to: RefMut<'state, To>,
+    from: &'state mut From,
+    to: &'state mut To,
 }
 
 impl<From, To> PassFactory for SwapPass<From, To>
@@ -43,7 +44,7 @@ where
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String>
+    ) -> Result<Self::Output<'state>, FetchError>
     where
         Self: Sized,
     {
@@ -53,13 +54,13 @@ where
             "Cannot swap a single value with itself"
         );
 
-        let from = state.check_named::<From>()?;
-        let to = state.check_named::<To>()?;
+        let Fetched {
+            read: (),
+            write: (from, to),
+            empty: (),
+        } = state.fetch()?;
 
-        Ok(Self::Output {
-            from: from.get_mut(state),
-            to: to.get_mut(state),
-        })
+        Ok(Self::Output { from, to })
     }
 }
 
@@ -68,10 +69,10 @@ where
     To: DerefMut<Target: Sized>,
     From: BorrowMut<<To as Deref>::Target>,
 {
-    fn run(mut self: Box<Self>) -> PassResult {
-        let to = self.to.deref_mut().deref_mut();
-        let from = self.from.deref_mut().borrow_mut();
-        swap(to, from);
+    fn run(self: Box<Self>) -> PassResult {
+        let to = self.to.deref_mut();
+        let from = self.from.borrow_mut();
+        std::mem::swap(to, from);
 
         Ok(())
     }

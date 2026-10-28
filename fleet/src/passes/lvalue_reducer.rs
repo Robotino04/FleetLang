@@ -1,8 +1,4 @@
-use std::{
-    cell::{Ref, RefMut},
-    mem::swap,
-    ops::ControlFlow,
-};
+use std::{mem::swap, ops::ControlFlow};
 
 use crate::{
     ast::{
@@ -14,23 +10,24 @@ use crate::{
     },
     error_reporting::{ErrorKind, Errors},
     passes::{
+        global_state::{FetchError, Fetched, GlobalState},
         partial_visitor::PartialAstVisitor,
         pass_manager::{
-            ConcreteScopeData, ConcreteTypeData, ConcreteVariableData, GlobalState, Pass,
-            PassFactory, PassResult,
+            ConcreteScopeData, ConcreteTypeData, ConcreteVariableData, Pass, PassFactory,
+            PassResult,
         },
         scope_analysis::ConcreteVariableScopeReader,
     },
 };
 
 pub struct LValueReducer<'state> {
-    errors: RefMut<'state, Errors>,
-    program: Option<RefMut<'state, Program>>,
+    errors: &'state mut Errors,
+    program: Option<&'state mut Program>,
     valid_lvalues: Option<Vec<LValue>>,
 
-    variable_data: Ref<'state, ConcreteVariableData>,
-    type_data: Ref<'state, ConcreteTypeData>,
-    scope_data: Ref<'state, ConcreteScopeData>,
+    variable_data: &'state ConcreteVariableData,
+    type_data: &'state ConcreteTypeData,
+    scope_data: &'state ConcreteScopeData,
 
     is_top_level_lvalue: bool,
     previous_lvalue_valid: bool,
@@ -43,13 +40,19 @@ impl PassFactory for LValueReducer<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String> {
+    ) -> Result<Self::Output<'state>, FetchError> {
+        let Fetched {
+            read: (variable_data, scope_data, type_data),
+            write: (program, errors),
+            empty: (),
+        } = state.fetch()?;
+
         Ok(Self::Output {
-            errors: state.get_mut_named::<Errors>()?,
-            program: Some(state.get_mut_named::<Program>()?),
-            variable_data: state.get_named::<ConcreteVariableData>()?,
-            scope_data: state.get_named::<ConcreteScopeData>()?,
-            type_data: state.get_named::<ConcreteTypeData>()?,
+            errors,
+            program: Some(program),
+            variable_data,
+            scope_data,
+            type_data,
             valid_lvalues: None,
             is_top_level_lvalue: true,
             previous_lvalue_valid: true,
@@ -58,9 +61,9 @@ impl PassFactory for LValueReducer<'_> {
 }
 impl Pass for LValueReducer<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
-        let mut program = self.program.take().unwrap();
+        let program = self.program.take().unwrap();
 
-        let _ = self.visit_program(&mut program);
+        let _ = self.visit_program(program);
 
         Ok(())
     }

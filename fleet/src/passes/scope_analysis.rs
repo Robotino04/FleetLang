@@ -29,9 +29,8 @@ use crate::{
     },
     parser::IdGenerator,
     passes::{
-        pass_manager::{
-            FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData, VariableData,
-        },
+        global_state::{FetchError, Fetched, GlobalState},
+        pass_manager::{FunctionData, Pass, PassFactory, PassResult, ScopeData, VariableData},
         runtime_type::{ConcreteRuntimeType, RuntimeType},
         union_find_set::UnionFindSetPtr,
     },
@@ -543,14 +542,14 @@ impl ComptimeDeps {
 }
 
 pub struct ScopeAnalyzer<'state> {
-    errors: RefMut<'state, Errors>,
-    program: Option<RefMut<'state, Program>>,
-    id_generator: RefMut<'state, IdGenerator>,
+    errors: &'state mut Errors,
+    program: Option<&'state mut Program>,
+    id_generator: &'state mut IdGenerator,
 
-    comptime_deps: RefMut<'state, ComptimeDeps>,
-    referenced_variable: RefMut<'state, VariableData>,
-    referenced_function: RefMut<'state, FunctionData>,
-    contained_scope: RefMut<'state, ScopeData>,
+    comptime_deps: &'state mut ComptimeDeps,
+    referenced_variable: &'state mut VariableData,
+    referenced_function: &'state mut FunctionData,
+    contained_scope: &'state mut ScopeData,
 
     variable_scopes: VariableScopeStack,
     function_list: HashMap<String, Rc<RefCell<Function>>>,
@@ -564,28 +563,24 @@ impl PassFactory for ScopeAnalyzer<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String> {
-        let errors = state.check_named()?;
-        let program = state.check_named()?;
-        let id_generator = state.check_named()?;
+    ) -> Result<Self::Output<'state>, FetchError> {
+        let Fetched {
+            read: (),
+            write: (errors, program, id_generator),
+            empty: (comptime_deps, referenced_variable, referenced_function, contained_scope),
+        } = state.fetch()?;
 
-        let comptime_deps = state.insert_default();
-        let referenced_variable = state.insert_default();
-        let referenced_function = state.insert_default();
-        let contained_scope = state.insert_default();
-
-        let mut id_generator = id_generator.get_mut(state);
-        let variable_scopes = VariableScopeStack::new(&mut id_generator);
+        let variable_scopes = VariableScopeStack::new(id_generator);
 
         Ok(Self::Output {
-            errors: errors.get_mut(state),
-            program: Some(program.get_mut(state)),
+            errors,
+            program: Some(program),
             id_generator,
 
-            comptime_deps: comptime_deps.get_mut(state),
-            referenced_variable: referenced_variable.get_mut(state),
-            referenced_function: referenced_function.get_mut(state),
-            contained_scope: contained_scope.get_mut(state),
+            comptime_deps: comptime_deps.insert_default(),
+            referenced_variable: referenced_variable.insert_default(),
+            referenced_function: referenced_function.insert_default(),
+            contained_scope: contained_scope.insert_default(),
 
             variable_scopes,
             function_list: HashMap::new(),
@@ -595,8 +590,8 @@ impl PassFactory for ScopeAnalyzer<'_> {
 }
 impl Pass for ScopeAnalyzer<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
-        let mut program = self.program.take().unwrap();
-        self.analyze_program(&mut program);
+        let program = self.program.take().unwrap();
+        self.analyze_program(program);
 
         Ok(())
     }
@@ -628,7 +623,7 @@ impl<'a> ScopeAnalyzer<'a> {
             id,
         } = function;
 
-        self.variable_scopes.push_child(&mut self.id_generator); // temporary parameter scope
+        self.variable_scopes.push_child(self.id_generator); // temporary parameter scope
 
         if let Some(original) = self.function_list.insert(
             name.clone(),
@@ -703,7 +698,7 @@ impl ScopeAnalyzer<'_> {
 
         self.current_function = Some(this_function.clone());
 
-        self.variable_scopes.push_child(&mut self.id_generator); // the parameter scope
+        self.variable_scopes.push_child(self.id_generator); // the parameter scope
         for (param, _comma) in parameters {
             self.analyze_simple_binding(param);
         }
@@ -837,7 +832,7 @@ impl ScopeAnalyzer<'_> {
             id,
         } = stmt;
 
-        self.variable_scopes.push_child(&mut self.id_generator);
+        self.variable_scopes.push_child(self.id_generator);
         self.variable_scopes.top_mut().copy_from_parent = true;
 
         self.analyze_executor(executor);
@@ -890,7 +885,7 @@ impl ScopeAnalyzer<'_> {
             id,
         } = stmt;
 
-        self.variable_scopes.push_child(&mut self.id_generator);
+        self.variable_scopes.push_child(self.id_generator);
 
         for stmt in body {
             let dep = self.analyze_statement(stmt);
@@ -1029,7 +1024,7 @@ impl ScopeAnalyzer<'_> {
             id,
         }: &mut ForLoopStatement,
     ) -> NodeID {
-        self.variable_scopes.push_child(&mut self.id_generator);
+        self.variable_scopes.push_child(self.id_generator);
         let init_dep = self.analyze_statement(initializer);
 
         if let Some(con) = condition {

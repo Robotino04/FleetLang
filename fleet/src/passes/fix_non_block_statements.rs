@@ -1,4 +1,4 @@
-use std::{cell::RefMut, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 use crate::{
     ast::{
@@ -8,8 +8,9 @@ use crate::{
     error_reporting::{BlockRequiredKind, ErrorKind, Errors},
     parser::IdGenerator,
     passes::{
+        global_state::{FetchError, Fetched, GlobalState},
         partial_visitor::AstWalker,
-        pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+        pass_manager::{Pass, PassFactory, PassResult},
     },
     tokenizer::{Token, TokenType},
 };
@@ -17,9 +18,9 @@ use crate::{
 use super::partial_visitor::PartialAstVisitor;
 
 pub struct FixNonBlockStatements<'state> {
-    errors: RefMut<'state, Errors>,
-    program: Option<RefMut<'state, Program>>,
-    id_generator: RefMut<'state, IdGenerator>,
+    errors: &'state mut Errors,
+    program: Option<&'state mut Program>,
+    id_generator: &'state mut IdGenerator,
 }
 
 impl PassFactory for FixNonBlockStatements<'_> {
@@ -29,19 +30,25 @@ impl PassFactory for FixNonBlockStatements<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String> {
+    ) -> Result<Self::Output<'state>, FetchError> {
+        let Fetched {
+            read: (),
+            write: (errors, program, id_generator),
+            empty: (),
+        } = state.fetch()?;
+
         Ok(Self::Output {
-            errors: state.get_mut_named::<Errors>()?,
-            program: Some(state.get_mut_named::<Program>()?),
-            id_generator: state.get_mut_named::<IdGenerator>()?,
+            errors,
+            program: Some(program),
+            id_generator,
         })
     }
 }
 impl Pass for FixNonBlockStatements<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
-        let mut program = self.program.take().unwrap();
+        let program = self.program.take().unwrap();
 
-        let _ = self.visit_program(&mut program);
+        let _ = self.visit_program(program);
 
         Ok(())
     }

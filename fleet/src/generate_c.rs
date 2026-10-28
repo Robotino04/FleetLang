@@ -1,4 +1,4 @@
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::RefCell;
 
 use indent::indent_all_by;
 use indoc::formatdoc;
@@ -23,9 +23,10 @@ use crate::{
     error_reporting::{Backend, ErrorKind, ErrorSeverity, Errors, Intrinsic, UnresolvedSymbol},
     generate_glsl::GLSLCodeGenerator,
     passes::{
+        global_state::{Empty, FetchError, Fetched, GlobalState},
         pass_manager::{
             CCodeOutput, ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData,
-            ConcreteVariableData, GlobalState, Pass, PassError, PassFactory, PassResult,
+            ConcreteVariableData, Pass, PassError, PassFactory, PassResult,
             PrecompiledGlslFunctions, StatData, StructAliasMap,
         },
         runtime_type::ConcreteRuntimeType,
@@ -35,18 +36,18 @@ use crate::{
 };
 
 pub struct CCodeGenerator<'state> {
-    errors: RefMut<'state, Errors>,
-    program: Option<RefMut<'state, Program>>,
+    errors: &'state mut Errors,
+    program: Option<&'state mut Program>,
 
-    output: Option<RefMut<'state, CCodeOutput>>,
+    output: Empty<'state, CCodeOutput>,
 
-    node_stats: Ref<'state, StatData>,
+    node_stats: &'state StatData,
 
-    variable_data: Ref<'state, ConcreteVariableData>,
-    function_data: Ref<'state, ConcreteFunctionData>,
-    type_data: Ref<'state, ConcreteTypeData>,
-    scope_data: Ref<'state, ConcreteScopeData>,
-    glsl_functions: Ref<'state, PrecompiledGlslFunctions>,
+    variable_data: &'state ConcreteVariableData,
+    function_data: &'state ConcreteFunctionData,
+    type_data: &'state ConcreteTypeData,
+    scope_data: &'state ConcreteScopeData,
+    glsl_functions: &'state PrecompiledGlslFunctions,
 
     struct_aliases: RefCell<StructAliasMap>,
     temporary_counter: RefCell<u64>,
@@ -59,36 +60,30 @@ impl PassFactory for CCodeGenerator<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String>
+    ) -> Result<Self::Output<'state>, FetchError>
     where
         Self: Sized,
     {
-        let program = state.check_named()?;
-        let errors = state.check_named()?;
-        let node_stats = state.check_named()?;
-
-        let variable_data = state.check_named()?;
-        let function_data = state.check_named()?;
-        let type_data = state.check_named()?;
-        let scope_data = state.check_named()?;
-        let glsl_functions = state.check_named()?;
-
-        let output = state.insert_default();
+        let Fetched {
+            read: (variable_data, function_data, type_data, scope_data, glsl_functions, node_stats),
+            write: (errors, program),
+            empty: (output,),
+        } = state.fetch()?;
 
         Ok(Self::Output {
-            errors: errors.get_mut(state),
-            program: Some(program.get_mut(state)),
+            errors,
+            program: Some(program),
 
-            output: Some(output.get_mut(state)),
+            output,
 
-            node_stats: node_stats.get(state),
+            node_stats,
 
-            variable_data: variable_data.get(state),
-            function_data: function_data.get(state),
+            variable_data,
+            function_data,
 
-            type_data: type_data.get(state),
-            scope_data: scope_data.get(state),
-            glsl_functions: glsl_functions.get(state),
+            type_data,
+            scope_data,
+            glsl_functions,
 
             struct_aliases: Default::default(),
             temporary_counter: RefCell::new(0),
@@ -108,10 +103,10 @@ impl Pass for CCodeGenerator<'_> {
             });
         }
 
-        let mut program = self.program.take().unwrap();
-        let mut output = self.output.take().unwrap();
+        let program = self.program.take().unwrap();
 
-        *output = CCodeOutput(self.generate_program(&mut program));
+        let output = CCodeOutput(self.generate_program(program));
+        self.output.insert(output);
 
         Ok(())
     }
@@ -234,7 +229,7 @@ impl CCodeGenerator<'_> {
         }
     }
 
-    fn generate_program(mut self, program: &mut Program) -> String {
+    fn generate_program(&mut self, program: &mut Program) -> String {
         let function_definitions = program
             .top_level_statements
             .iter_mut()
@@ -489,9 +484,9 @@ impl CCodeGenerator<'_> {
             .collect_vec();
 
         let mut bindings = GLSLCodeGenerator::get_on_statement_bindings(
-            &self.variable_data,
-            &self.scope_data,
-            &self.type_data,
+            self.variable_data,
+            self.scope_data,
+            self.type_data,
             bindings,
             iterators
                 .iter()
@@ -608,14 +603,14 @@ impl CCodeGenerator<'_> {
         let buffers_str = format!("void* {buffers_name}[] = {{ {} }};", buffers.join(", "));
         let buffers_len = buffers.len();
 
-        let glsl_errors = RefCell::new(Errors::default());
+        let mut glsl_errors = Errors::default();
 
         let mut glsl_generator = GLSLCodeGenerator::new(
-            glsl_errors.borrow_mut(),
-            Ref::clone(&self.variable_data),
-            Ref::clone(&self.function_data),
-            Ref::clone(&self.type_data),
-            Ref::clone(&self.node_stats),
+            &mut glsl_errors,
+            self.variable_data,
+            self.function_data,
+            self.type_data,
+            self.node_stats,
         );
 
         let Ok(glsl_source) = glsl_generator.generate_on_statement_shader(
@@ -656,7 +651,7 @@ impl CCodeGenerator<'_> {
         };
 
         let prepare_output = prepare_shader();
-        self.errors.append(&mut glsl_errors.borrow_mut());
+        self.errors.append(&mut glsl_errors);
 
         let Some((bytes_str, spirv_size)) = prepare_output else {
             return format!("#error malformed on-statement\n/*\n{glsl_source}\n*/\n");

@@ -1,4 +1,4 @@
-use std::{cell::RefMut, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 use crate::{
     ast::{
@@ -10,8 +10,9 @@ use crate::{
     },
     error_reporting::{ErrorKind, Errors, Lint},
     passes::{
+        global_state::{FetchError, Fetched, GlobalState},
         partial_visitor::{AstWalker, PartialAstVisitor},
-        pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+        pass_manager::{Pass, PassFactory, PassResult},
         token_accessors::{get_first_token, get_last_token},
     },
 };
@@ -23,8 +24,8 @@ enum OperandSide {
 }
 
 pub struct RemoveParensPass<'state> {
-    errors: RefMut<'state, Errors>,
-    program: Option<RefMut<'state, Program>>,
+    errors: &'state mut Errors,
+    program: Option<&'state mut Program>,
 
     parent_precedence: usize,
     parent_associativity: Associativity,
@@ -41,10 +42,16 @@ impl PassFactory for RemoveParensPass<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String> {
+    ) -> Result<Self::Output<'state>, FetchError> {
+        let Fetched {
+            read: (),
+            write: (errors, program),
+            empty: (),
+        } = state.fetch()?;
+
         Ok(Self::Output {
-            errors: state.get_mut_named()?,
-            program: Some(state.get_mut_named()?),
+            errors,
+            program: Some(program),
             parent_precedence: Expression::TOP_PRECEDENCE,
             parent_associativity: Associativity::Both,
             current_side: OperandSide::Left,
@@ -54,8 +61,8 @@ impl PassFactory for RemoveParensPass<'_> {
 }
 impl Pass for RemoveParensPass<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
-        let mut program = self.program.take().unwrap();
-        let _ = self.visit_program(&mut program);
+        let program = self.program.take().unwrap();
+        let _ = self.visit_program(program);
 
         Ok(())
     }

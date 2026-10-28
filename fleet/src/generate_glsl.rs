@@ -1,5 +1,5 @@
 use std::{
-    cell::{Ref, RefCell, RefMut},
+    cell::RefCell,
     collections::{HashMap, HashSet},
     error::Error,
     rc::Rc,
@@ -32,10 +32,10 @@ use crate::{
         UnresolvedSymbol,
     },
     passes::{
+        global_state::{Empty, FetchError, Fetched, GlobalState},
         pass_manager::{
-            ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData, ConcreteVariableData,
-            GlobalState, Pass, PassError, PassFactory, PassResult, PrecompiledGlslFunctions,
-            StatData, StructAliasMap,
+            ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData, ConcreteVariableData, Pass,
+            PassError, PassFactory, PassResult, PrecompiledGlslFunctions, StatData, StructAliasMap,
         },
         runtime_type::ConcreteRuntimeType,
         scope_analysis::{ConcreteFunction, ConcreteVariable},
@@ -45,16 +45,16 @@ use crate::{
 type Result<T> = ::core::result::Result<T, Box<dyn Error>>;
 
 pub struct GLSLCodeGenerator<'state> {
-    errors: RefMut<'state, Errors>,
-    program: Option<RefMut<'state, Program>>,
+    errors: &'state mut Errors,
+    program: Option<&'state mut Program>,
 
-    output_functions: Option<RefMut<'state, PrecompiledGlslFunctions>>,
+    output_functions: Option<Empty<'state, PrecompiledGlslFunctions>>,
 
-    variable_data: Ref<'state, ConcreteVariableData>,
-    function_data: Ref<'state, ConcreteFunctionData>,
-    type_data: Ref<'state, ConcreteTypeData>,
+    variable_data: &'state ConcreteVariableData,
+    function_data: &'state ConcreteFunctionData,
+    type_data: &'state ConcreteTypeData,
 
-    stats: Ref<'state, StatData>,
+    stats: &'state StatData,
 
     struct_aliases: RefCell<StructAliasMap>,
     temporary_counter: RefCell<u64>,
@@ -67,32 +67,28 @@ impl PassFactory for GLSLCodeGenerator<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> ::core::result::Result<Self::Output<'state>, String>
+    ) -> ::core::result::Result<Self::Output<'state>, FetchError>
     where
         Self: Sized,
     {
-        let program = state.check_named()?;
-        let errors = state.check_named()?;
-        let stats = state.check_named()?;
-
-        let variable_data = state.check_named()?;
-        let function_data = state.check_named()?;
-        let type_data = state.check_named()?;
-
-        let output_functions = state.insert_default();
+        let Fetched {
+            read: (variable_data, function_data, stats, type_data),
+            write: (errors, program),
+            empty: (output_functions,),
+        } = state.fetch()?;
 
         Ok(Self::Output {
-            errors: errors.get_mut(state),
-            program: Some(program.get_mut(state)),
+            errors,
+            program: Some(program),
 
-            stats: stats.get(state),
+            stats,
 
-            variable_data: variable_data.get(state),
-            function_data: function_data.get(state),
+            variable_data,
+            function_data,
 
-            type_data: type_data.get(state),
+            type_data,
 
-            output_functions: Some(output_functions.get_mut(state)),
+            output_functions: Some(output_functions),
 
             struct_aliases: Default::default(),
             temporary_counter: RefCell::new(0),
@@ -112,32 +108,32 @@ impl Pass for GLSLCodeGenerator<'_> {
             });
         }
 
-        let mut program = self
+        let program = self
             .program
             .take()
             .expect("This GLSLCodeGenerator was constructed using ::new. It cannot run as a pass");
 
-        let mut output_functions = self
-            .output_functions
-            .take()
-            .expect("This GLSLCodeGenerator was constructed using ::new. It cannot run as a pass");
-
-        if self
+        let output = if self
             .stats
             .get(&program.id)
             .expect("No stats available for program")
             .uses_gpu
             .at_least_maybe()
         {
-            *output_functions =
-                self.generate_program(&mut program)
-                    .map_err(|err| PassError::CompilerError {
-                        source: err,
-                        producing_pass: Self::name(),
-                    })?;
+            self.generate_program(program)
+                .map_err(|err| PassError::CompilerError {
+                    source: err,
+                    producing_pass: Self::name(),
+                })?
         } else {
             warn!("Skipping glsl pregen because nothing uses the gpu");
-        }
+
+            PrecompiledGlslFunctions::default()
+        };
+
+        self.output_functions
+            .expect("This GLSLCodeGenerator was constructed using ::new. It cannot run as a pass")
+            .insert(output);
 
         Ok(())
     }
@@ -150,11 +146,11 @@ pub struct OnStatementBindings {
 
 impl<'state> GLSLCodeGenerator<'state> {
     pub fn new(
-        errors: RefMut<'state, Errors>,
-        variable_data: Ref<'state, ConcreteVariableData>,
-        function_data: Ref<'state, ConcreteFunctionData>,
-        type_data: Ref<'state, ConcreteTypeData>,
-        stats: Ref<'state, StatData>,
+        errors: &'state mut Errors,
+        variable_data: &'state ConcreteVariableData,
+        function_data: &'state ConcreteFunctionData,
+        type_data: &'state ConcreteTypeData,
+        stats: &'state StatData,
     ) -> Self {
         Self {
             errors,
@@ -457,7 +453,7 @@ impl<'state> GLSLCodeGenerator<'state> {
 
     #[cfg(feature = "gpu_backend")]
     pub fn compile_on_statement_shader(
-        mut self,
+        self,
         source: &str,
         error_node: &impl HasSourceRange,
     ) -> Result<shaderc::CompilationArtifact> {
@@ -584,7 +580,7 @@ impl GLSLCodeGenerator<'_> {
         }
     }
 
-    fn generate_program(mut self, program: &mut Program) -> Result<PrecompiledGlslFunctions> {
+    fn generate_program(&mut self, program: &mut Program) -> Result<PrecompiledGlslFunctions> {
         Ok(PrecompiledGlslFunctions((
             program
                 .top_level_statements
@@ -611,7 +607,7 @@ impl GLSLCodeGenerator<'_> {
                 })
                 .collect::<Result<HashMap<_, _>>>()?,
             self.struct_aliases.borrow().clone(),
-            self.temporary_counter.into_inner(),
+            *self.temporary_counter.get_mut(),
         )))
     }
 

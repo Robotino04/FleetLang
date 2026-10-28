@@ -1,4 +1,4 @@
-use std::{cell::RefMut, cmp::Ordering, fmt::Debug, ops::Index, rc::Rc};
+use std::{cmp::Ordering, fmt::Debug, ops::Index, rc::Rc};
 
 use itertools::Itertools;
 use log::{error, info};
@@ -7,7 +7,10 @@ use crate::{
     NewtypeDeref,
     error_reporting::{ErrorKind, Errors},
     escape::{QuoteType, unescape},
-    passes::pass_manager::{GlobalState, InputSource, Pass, PassFactory, PassResult},
+    passes::{
+        global_state::{FetchError, Fetched, GlobalState},
+        pass_manager::{InputSource, Pass, PassFactory, PassResult},
+    },
 };
 
 #[derive(Clone, PartialEq, Debug)]
@@ -357,11 +360,11 @@ impl NamedSourceRange {
 }
 
 pub struct Tokenizer<'state> {
-    errors: RefMut<'state, Errors>,
+    errors: &'state mut Errors,
     chars: Vec<char>,
-    file_name: FileName,
+    file_name: &'state FileName,
 
-    tokens: RefMut<'state, Vec<Token>>,
+    tokens: &'state mut Vec<Token>,
 
     current_location: SourceLocation,
 
@@ -378,28 +381,29 @@ impl PassFactory for Tokenizer<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String>
+    ) -> Result<Self::Output<'state>, FetchError>
     where
         Self: Sized,
     {
-        let source = state.check_named::<InputSource>()?;
-        let file_name = state.get_named::<InputSource>()?.file_name.clone();
+        let Fetched {
+            read: (source,),
+            write: (errors,),
+            empty: (tokens,),
+        } = state.fetch()?;
 
-        let errors = state.check_named()?;
-
-        let tokens = state.insert(vec![]);
+        let source: &InputSource = source;
 
         Ok(Self::Output {
-            errors: errors.get_mut(state),
-            tokens: tokens.get_mut(state),
+            errors,
+            tokens: tokens.insert_default(),
 
-            chars: source.get(state).source.chars().collect(),
-            file_name: file_name.clone(),
+            chars: source.source.chars().collect(),
+            file_name: &source.file_name,
 
             current_location: SourceLocation::start(),
 
             unk_char_accumulator: "".to_string(),
-            unk_char_range: SourceRange::empty_start().named(file_name),
+            unk_char_range: SourceRange::empty_start().named(source.file_name.clone()),
 
             trivia_accumulator: vec![],
         })

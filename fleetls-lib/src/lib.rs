@@ -19,6 +19,7 @@ use fleet::{
     },
     passes::{
         find_containing_node::find_containing_node,
+        global_state::Fetched,
         pass_manager::{
             FunctionData, InputSource, PassError, PassManager, ScopeData, StatData, TypeData,
             TypeSets, VariableData,
@@ -965,11 +966,13 @@ impl Backend {
         insert_minimal_pipeline(&mut pm);
         insert_compile_passes(&mut pm);
 
-        pm.state.insert_default::<Errors>();
-        pm.state.insert(InputSource {
-            source: src.to_string(),
-            file_name: FileName(Rc::new(text_document.uri.as_str().to_string())),
-        });
+        pm.state.insert_default::<Errors>().unwrap();
+        pm.state
+            .insert(InputSource {
+                source: src.to_string(),
+                file_name: FileName(Rc::new(text_document.uri.as_str().to_string())),
+            })
+            .unwrap();
 
         if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
             return Err(tower_lsp_server::jsonrpc::Error {
@@ -979,13 +982,8 @@ impl Backend {
             });
         };
 
-        let variable_data = pm.state.get::<VariableData>();
-        let function_data = pm.state.get::<FunctionData>();
-        let type_data = pm.state.get::<TypeData>();
-        let type_sets = pm.state.get::<TypeSets>();
-
         let Some((node_hierarchy, _hovered_token)) = find_containing_node(
-            &mut *pm.state.get_mut::<Program>().unwrap(),
+            pm.state.get_mut::<Program>().unwrap(),
             SourceLocation {
                 index: 0,
                 line: position.line as usize + 1,
@@ -999,8 +997,8 @@ impl Backend {
             AstNode::Expression(Expression::FunctionCall(FunctionCallExpression {
                 id, ..
             })) => Some(
-                function_data
-                    .as_ref()?
+                pm.state
+                    .get::<FunctionData>()?
                     .get(id)?
                     .borrow()
                     .symbol
@@ -1013,8 +1011,8 @@ impl Backend {
                 | Expression::VariableAssignment(VariableAssignmentExpression { id, .. }),
             )
             | AstNode::LValue(LValue::Variable(VariableLValue { id, .. })) => Some(
-                variable_data
-                    .as_ref()?
+                pm.state
+                    .get::<VariableData>()?
                     .get(id)?
                     .borrow()
                     .symbol
@@ -1023,13 +1021,17 @@ impl Backend {
             ),
             // TODO: AstNode::StructAccessExpression(struct_access_expression) => todo!(),
             // TODO: AstNode::StructAccessLValue(struct_access_lvalue) => todo!(),
-            AstNode::Type(Type::Alias(AliasType { id, .. })) => Some(
-                type_sets
-                    .as_ref()?
-                    .get(*type_data.as_ref()?.get(id)?)
-                    .definition_range
-                    .clone()?,
-            ),
+            AstNode::Type(Type::Alias(AliasType { id, .. })) => {
+                let ptr = pm.state.get::<TypeData>()?.get(id)?;
+
+                Some(
+                    pm.state
+                        .get::<TypeSets>()?
+                        .get(*ptr)
+                        .definition_range
+                        .clone()?,
+                )
+            }
             _ => None,
         }))
     }
@@ -1150,11 +1152,13 @@ impl LanguageServer for Backend {
 
         let file_name: FileName = params.text_document.uri.path().to_string().into();
 
-        let errors = pm.state.insert_default::<Errors>();
-        pm.state.insert(InputSource {
-            source: src.to_string(),
-            file_name: file_name.clone(),
-        });
+        pm.state.insert_default::<Errors>().unwrap();
+        pm.state
+            .insert(InputSource {
+                source: src.to_string(),
+                file_name: file_name.clone(),
+            })
+            .unwrap();
 
         if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
             return Err(tower_lsp_server::jsonrpc::Error {
@@ -1164,7 +1168,7 @@ impl LanguageServer for Backend {
             });
         };
 
-        let errors = errors.get(&pm.state).0.clone();
+        let errors = &pm.state.get::<Errors>().unwrap().0;
 
         Ok(DocumentDiagnosticReportResult::Report(
             DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
@@ -1379,17 +1383,19 @@ impl LanguageServer for Backend {
         insert_minimal_pipeline(&mut pm);
         insert_compile_passes(&mut pm);
 
-        pm.state.insert_default::<Errors>();
-        pm.state.insert(InputSource {
-            source: src.to_string(),
-            file_name: params
-                .text_document_position_params
-                .text_document
-                .uri
-                .path()
-                .to_string()
-                .into(),
-        });
+        pm.state.insert_default::<Errors>().unwrap();
+        pm.state
+            .insert(InputSource {
+                source: src.to_string(),
+                file_name: params
+                    .text_document_position_params
+                    .text_document
+                    .uri
+                    .path()
+                    .to_string()
+                    .into(),
+            })
+            .unwrap();
 
         if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
             return Err(tower_lsp_server::jsonrpc::Error {
@@ -1399,54 +1405,64 @@ impl LanguageServer for Backend {
             });
         };
 
-        let analysis_data = (
-            pm.state.get(),
-            pm.state.get(),
-            pm.state.get(),
-            pm.state.get(),
-            pm.state.get(),
-            pm.state.get(),
-        );
-
-        let analysis_data = if let (
-            Some(type_data),
-            Some(type_sets),
-            Some(function_data),
-            Some(variable_data),
-            Some(scope_data),
-            Some(comptime_deps),
-        ) = &analysis_data
-        {
-            Some(AnalysisData {
-                type_data,
-                type_sets,
-                function_data,
-                variable_data,
-                scope_data,
-                comptime_deps,
-            })
-        } else {
-            None
-        };
-
         let cpos = params.text_document_position_params.position;
 
         if let Some((node_hierarchy, hovered_token)) = find_containing_node(
-            &mut *pm.state.get_mut::<Program>().unwrap(),
+            pm.state.get_mut::<Program>().unwrap(),
             SourceLocation {
                 index: 0,
                 line: cpos.line as usize + 1,
                 column: cpos.character as usize,
             },
         ) {
+            let hovered_token = hovered_token.cloned();
+
+            let out = pm
+                .state
+                .fetch()
+                .map(|x| {
+                    let Fetched {
+                        read:
+                            (
+                                type_data,
+                                type_sets,
+                                function_data,
+                                variable_data,
+                                scope_data,
+                                comptime_deps,
+                                stats,
+                            ),
+                        write: (),
+                        empty: (),
+                    } = x;
+
+                    (
+                        AnalysisData {
+                            type_data,
+                            type_sets,
+                            function_data,
+                            variable_data,
+                            scope_data,
+                            comptime_deps,
+                        },
+                        stats,
+                    )
+                })
+                .ok();
+
+            let (analysis_data, stats) = match out {
+                Some((analysis_data, stats)) => (Some(analysis_data), Some(stats)),
+                None => (None, None),
+            };
+
             Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
                     value: self.full_hover_text(
                         &node_hierarchy,
-                        pm.state.get().as_deref(),
+                        stats,
                         analysis_data,
-                        hovered_token.as_deref(),
+                        hovered_token.as_ref(),
                     ),
                 }),
                 range: hovered_token.map(|token| Range {
@@ -1487,11 +1503,13 @@ impl LanguageServer for Backend {
         let mut pm = PassManager::default();
         insert_minimal_pipeline(&mut pm);
 
-        pm.state.insert_default::<Errors>();
-        pm.state.insert(InputSource {
-            source: src.to_string(),
-            file_name: params.text_document.uri.path().to_string().into(),
-        });
+        pm.state.insert_default::<Errors>().unwrap();
+        pm.state
+            .insert(InputSource {
+                source: src.to_string(),
+                file_name: params.text_document.uri.path().to_string().into(),
+            })
+            .unwrap();
 
         if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
             return Err(tower_lsp_server::jsonrpc::Error {
@@ -1503,7 +1521,7 @@ impl LanguageServer for Backend {
 
         let semantic_tokens =
             ExtractSemanticTokensPass::new(&SEMANTIC_TOKEN_TYPES, &SEMANTIC_TOKEN_MODIFIERS)
-                .visit_program(&mut pm.state.get_mut().unwrap());
+                .visit_program(pm.state.get_mut().unwrap());
 
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             result_id: None,
@@ -1596,17 +1614,19 @@ impl LanguageServer for Backend {
         insert_fix_passes(&mut pm);
         insert_compile_passes(&mut pm);
 
-        pm.state.insert_default::<Errors>();
-        pm.state.insert(InputSource {
-            source: src.to_string(),
-            file_name: params
-                .text_document_position_params
-                .text_document
-                .uri
-                .path()
-                .to_string()
-                .into(),
-        });
+        pm.state.insert_default::<Errors>().unwrap();
+        pm.state
+            .insert(InputSource {
+                source: src.to_string(),
+                file_name: params
+                    .text_document_position_params
+                    .text_document
+                    .uri
+                    .path()
+                    .to_string()
+                    .into(),
+            })
+            .unwrap();
 
         if let Err(err @ PassError::CompilerError { .. }) = pm.run() {
             return Err(tower_lsp_server::jsonrpc::Error {
@@ -1614,36 +1634,6 @@ impl LanguageServer for Backend {
                 message: format!("Compilation failed: {err}").into(),
                 data: None,
             });
-        };
-
-        let analysis_data = (
-            pm.state.get(),
-            pm.state.get(),
-            pm.state.get(),
-            pm.state.get(),
-            pm.state.get(),
-            pm.state.get(),
-        );
-
-        let analysis_data = if let (
-            Some(type_data),
-            Some(type_sets),
-            Some(function_data),
-            Some(variable_data),
-            Some(scope_data),
-            Some(comptime_deps),
-        ) = &analysis_data
-        {
-            Some(AnalysisData {
-                type_data,
-                type_sets,
-                function_data,
-                variable_data,
-                scope_data,
-                comptime_deps,
-            })
-        } else {
-            None
         };
 
         let cpos = params.text_document_position_params.position;
@@ -1654,8 +1644,36 @@ impl LanguageServer for Backend {
         };
 
         if let Some((node_hierarchy, _hovered_token)) =
-            find_containing_node(&mut *pm.state.get_mut::<Program>().unwrap(), cpos_sl)
+            find_containing_node(pm.state.get_mut::<Program>().unwrap(), cpos_sl)
         {
+            let analysis_data = pm
+                .state
+                .fetch()
+                .map(|x| {
+                    let Fetched {
+                        read:
+                            (
+                                type_data,
+                                type_sets,
+                                function_data,
+                                variable_data,
+                                scope_data,
+                                comptime_deps,
+                            ),
+                        write: (),
+                        empty: (),
+                    } = x;
+                    AnalysisData {
+                        type_data,
+                        type_sets,
+                        function_data,
+                        variable_data,
+                        scope_data,
+                        comptime_deps,
+                    }
+                })
+                .ok();
+
             let mut prev_node = None;
             let mut function_call = None;
             for node in node_hierarchy.iter().rev() {

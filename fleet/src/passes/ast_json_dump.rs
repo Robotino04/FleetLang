@@ -1,5 +1,3 @@
-use std::cell::RefMut;
-
 use crate::{
     NewtypeDeref,
     ast::{
@@ -17,22 +15,24 @@ use crate::{
     },
     define_dispatch_methods,
     escape::{QuoteType, escape},
-    passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+    passes::{
+        global_state::{Empty, FetchError, Fetched, GlobalState},
+        pass_manager::{Pass, PassFactory, PassResult},
+    },
 };
 
 NewtypeDeref!(pub AstJsonOutput, String);
 
 pub struct AstJsonDumpPass<'state> {
-    program: Option<RefMut<'state, Program>>,
-    output: Option<RefMut<'state, AstJsonOutput>>,
+    program: Option<&'state mut Program>,
+    output: Empty<'state, AstJsonOutput>,
 }
 
 impl Pass for AstJsonDumpPass<'_> {
     fn run(mut self: Box<Self>) -> PassResult {
-        let mut output = self.output.take().unwrap();
-        let mut program = self.program.take().unwrap();
-
-        *output = self.dump_program(&mut program).into();
+        let program = self.program.take().unwrap();
+        let output = self.dump_program(program).into();
+        self.output.insert(output);
         Ok(())
     }
 }
@@ -44,16 +44,19 @@ impl PassFactory for AstJsonDumpPass<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String>
+    ) -> Result<Self::Output<'state>, FetchError>
     where
         Self: Sized,
     {
-        let program = state.check_named()?;
-        let output = state.insert_default();
+        let Fetched {
+            read: (),
+            write: (program,),
+            empty: (output,),
+        } = state.fetch()?;
 
         Ok(AstJsonDumpPass {
-            program: Some(program.get_mut(state)),
-            output: Some(output.get_mut(state)),
+            program: Some(program),
+            output,
         })
     }
 }
@@ -75,7 +78,7 @@ impl AstJsonDumpPass<'_> {
     }
 
     fn dump_program(
-        mut self,
+        &mut self,
         Program {
             top_level_statements,
             id: _,

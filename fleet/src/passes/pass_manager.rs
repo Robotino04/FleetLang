@@ -1,12 +1,11 @@
 use std::{
-    any::{Any, TypeId, type_name},
+    any::type_name,
     boxed::Box,
-    cell::{Ref, RefCell, RefMut},
+    cell::RefCell,
     collections::{HashMap, VecDeque},
     error::Error,
     fmt::Debug,
     marker::PhantomData,
-    option::Option,
     rc::Rc,
 };
 
@@ -17,6 +16,7 @@ use thiserror::Error;
 use crate::{
     ast::PerNodeData,
     passes::{
+        global_state::{FetchError, GlobalState},
         runtime_type::{ConcreteRuntimeType, RuntimeType},
         scope_analysis::{
             ConcreteFunction, ConcreteVariable, ConcreteVariableScope, Function, FunctionID,
@@ -82,6 +82,9 @@ macro_rules! NewtypeDeref {
     };
 }
 
+pub use NewtypeDeref;
+pub use NewtypeDerefNoDefault;
+
 NewtypeDeref!(pub VariableData, PerNodeData<Rc<RefCell<Variable>>>);
 NewtypeDeref!(pub FunctionData, PerNodeData<Rc<RefCell<Function>>>);
 NewtypeDeref!(pub TypeData, PerNodeData<UnionFindSetPtr<RuntimeType>>);
@@ -104,144 +107,6 @@ pub struct InputSource {
     pub file_name: FileName,
 }
 
-pub use NewtypeDeref;
-pub use NewtypeDerefNoDefault;
-
-#[derive(Debug, Default)]
-pub struct GlobalState {
-    entries: HashMap<TypeId, Box<dyn Any>>,
-}
-
-impl GlobalState {
-    pub fn insert<T>(&mut self, t: T) -> CheckedEntry<T>
-    where
-        T: Any,
-    {
-        let existing_entry = self.entries.insert(t.type_id(), Box::new(RefCell::new(t)));
-        assert!(
-            existing_entry.is_none(),
-            "Tried inserting {:?} but it was already present",
-            type_name::<T>()
-        );
-        CheckedEntry(PhantomData)
-    }
-
-    pub fn insert_default<T>(&mut self) -> CheckedEntry<T>
-    where
-        T: Any + Default,
-    {
-        self.insert(T::default())
-    }
-
-    pub fn get<T>(&self) -> Option<Ref<'_, T>>
-    where
-        T: Any,
-    {
-        Some(
-            self.entries
-                .get(&TypeId::of::<T>())?
-                .downcast_ref::<RefCell<T>>()
-                .expect("Type id matched, but downcast failed")
-                .borrow(),
-        )
-    }
-
-    pub fn get_mut<T>(&self) -> Option<RefMut<'_, T>>
-    where
-        T: Any,
-    {
-        Some(
-            self.entries
-                .get(&TypeId::of::<T>())?
-                .downcast_ref::<RefCell<T>>()
-                .expect("Type id matched, but downcast failed")
-                .borrow_mut(),
-        )
-    }
-
-    pub fn get_named<T>(&self) -> Result<Ref<'_, T>, String>
-    where
-        T: Any,
-    {
-        self.get().ok_or(type_name::<T>().to_string())
-    }
-
-    pub fn get_mut_named<T>(&self) -> Result<RefMut<'_, T>, String>
-    where
-        T: Any,
-    {
-        self.get_mut().ok_or(type_name::<T>().to_string())
-    }
-
-    pub fn check<T>(&self) -> Option<CheckedEntry<T>>
-    where
-        T: Any,
-    {
-        self.get::<T>()?;
-        Some(CheckedEntry(PhantomData))
-    }
-
-    pub fn check_named<T>(&self) -> Result<CheckedEntry<T>, String>
-    where
-        T: Any,
-    {
-        self.check().ok_or(type_name::<T>().to_string())
-    }
-
-    pub fn check_empty<T>(&self) -> Option<EmptyEntry<T>>
-    where
-        T: Any,
-    {
-        match self.get::<T>() {
-            Some(_) => None,
-            None => Some(EmptyEntry(PhantomData)),
-        }
-    }
-
-    pub fn check_empty_named<T>(&self) -> Result<EmptyEntry<T>, String>
-    where
-        T: Any,
-    {
-        self.check_empty().ok_or(type_name::<T>().to_string())
-    }
-}
-
-pub struct CheckedEntry<T>(PhantomData<T>);
-
-impl<T> CheckedEntry<T> {
-    pub fn get(self, state: &GlobalState) -> Ref<'_, T>
-    where
-        T: Any,
-    {
-        state.get().expect(
-            "Entry must exist because CheckedEntry can only be obtained via get_token or insert",
-        )
-    }
-
-    pub fn get_mut(self, state: &GlobalState) -> RefMut<'_, T>
-    where
-        T: Any,
-    {
-        state.get_mut().expect(
-            "Entry must exist because CheckedEntry can only be obtained via get_token or insert",
-        )
-    }
-}
-
-pub struct EmptyEntry<T>(PhantomData<T>);
-
-impl<T> EmptyEntry<T> {
-    pub fn set(self, state: &mut GlobalState, t: T) -> CheckedEntry<T>
-    where
-        T: Any,
-    {
-        state.insert::<T>(t);
-        state
-            .check::<T>()
-            .expect("This element should have just been inserted")
-    }
-}
-
 pub trait PassFactory {
     type Output<'state>: Pass + 'state;
     type Params: Clone + 'static;
@@ -249,7 +114,7 @@ pub trait PassFactory {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         params: Self::Params,
-    ) -> Result<Self::Output<'state>, String>
+    ) -> Result<Self::Output<'state>, FetchError>
     where
         Self: Sized;
 }
@@ -290,7 +155,7 @@ pub trait DynPassFactory {
     fn try_new_dyn<'state>(
         &self,
         state: &'state mut GlobalState,
-    ) -> Result<Box<dyn Pass + 'state>, String>;
+    ) -> Result<Box<dyn Pass + 'state>, FetchError>;
 }
 
 pub struct PassFactoryWrapper<T: PassFactory> {
@@ -309,7 +174,7 @@ where
     fn try_new_dyn<'state>(
         &self,
         state: &'state mut GlobalState,
-    ) -> Result<Box<dyn Pass + 'state>, String> {
+    ) -> Result<Box<dyn Pass + 'state>, FetchError> {
         T::try_new(state, self.params.clone()).map(|p| Box::new(p) as Box<dyn Pass + 'state>)
     }
 }

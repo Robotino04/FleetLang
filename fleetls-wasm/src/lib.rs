@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     rc::Rc,
     sync::{Arc, Mutex, atomic::AtomicBool},
     time::Duration,
@@ -53,11 +54,13 @@ pub fn extract_ast(src: String) -> Option<String> {
     insert_minimal_pipeline(&mut pm);
     pm.insert::<AstJsonDumpPass>();
 
-    pm.state.insert(InputSource {
-        source: src,
-        file_name: FileName(Rc::new("web-ui.fl".to_string())),
-    });
-    pm.state.insert(Errors::default());
+    pm.state
+        .insert(InputSource {
+            source: src,
+            file_name: FileName(Rc::new("web-ui.fl".to_string())),
+        })
+        .unwrap();
+    pm.state.insert(Errors::default()).unwrap();
 
     match pm.run() {
         Ok(()) => Some(pm.state.get::<AstJsonOutput>()?.0.clone()),
@@ -82,23 +85,27 @@ pub fn compile_to_c(source: String) -> Result<CompileOutput, String> {
 
     let file_name = FileName(Rc::new("web-ui.fl".to_string()));
 
-    let documents = vec![(file_name.clone(), source.clone())]
+    let documents: HashMap<_, _> = vec![(file_name.clone(), source.clone())]
         .into_iter()
         .collect();
 
-    pm.state.insert(InputSource { source, file_name });
-    let errors = pm.state.insert(Errors::default());
+    pm.state.insert(InputSource { source, file_name }).unwrap();
+    pm.state.insert(Errors::default()).unwrap();
 
     let run_result = pm.run();
-    let mut errors = errors.get(&pm.state).clone();
 
     let ccode = match run_result {
-        Err(err @ (PassError::CompilerError { .. } | PassError::PassManagerStall { .. })) => Err(
-            errors.format_all_errors_and_message("Compilation failed internally", &documents, true)
-                + "\n"
-                + &err.to_string(),
-        ),
+        Err(err @ (PassError::CompilerError { .. } | PassError::PassManagerStall { .. })) => {
+            let errors = pm.state.get_mut::<Errors>().unwrap();
+            Err(errors.format_all_errors_and_message(
+                "Compilation failed internally",
+                &documents,
+                true,
+            ) + "\n"
+                + &err.to_string())
+        }
         Err(PassError::InvalidInput { .. }) => {
+            let errors = pm.state.get_mut::<Errors>().unwrap();
             Err(errors.format_all_errors_and_message("Program has errors", &documents, true))
         }
         Ok(()) => Ok(pm
@@ -108,6 +115,8 @@ pub fn compile_to_c(source: String) -> Result<CompileOutput, String> {
             .0
             .clone()),
     }?;
+
+    let errors = pm.state.get_mut::<Errors>().unwrap();
 
     if errors
         .iter()

@@ -59,16 +59,10 @@ pub fn format(source: InputSource) -> Result<String, PassError> {
     insert_fix_passes(&mut pm);
     pm.insert::<AstToDocumentModelConverter>();
 
-    pm.state.insert(source);
-    pm.state.insert_default::<Errors>();
+    pm.state.insert(source).unwrap();
+    pm.state.insert_default::<Errors>().unwrap();
 
     pm.run()?;
-
-    let de = pm
-        .state
-        .get::<DocumentElement>()
-        .expect("Formatting passes failed")
-        .clone();
 
     if pm
         .state
@@ -78,10 +72,11 @@ pub fn format(source: InputSource) -> Result<String, PassError> {
         .any(|err| err.severity() == ErrorSeverity::Error)
     {
         return Err(PassError::InvalidInput {
-            producing_pass: "Formatting function".to_string(),
+            producing_pass: "format() function".to_string(),
             source: "Not formatting malformed input".into(),
         });
     }
+    let de = pm.state.get::<DocumentElement>().unwrap();
 
-    Ok(stringify_document(de))
+    Ok(stringify_document(de.clone()))
 }

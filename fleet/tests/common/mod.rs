@@ -103,17 +103,20 @@ impl SubprocessTestableReturnType for f64 {
 
 pub fn assert_parser_or_tokenizer_error(src: &str, error_start: SourceLocation) {
     let mut pm = PassManager::default();
-    let errors = pm.state.insert_default::<Errors>();
-    pm.state.insert(InputSource {
-        source: src.to_string(),
-        file_name: "test.fl".to_string().into(),
-    });
+
+    pm.state.insert_default::<Errors>().unwrap();
+    pm.state
+        .insert(InputSource {
+            source: src.to_string(),
+            file_name: "test.fl".to_string().into(),
+        })
+        .unwrap();
 
     insert_minimal_pipeline(&mut pm);
 
     pm.run().unwrap();
 
-    let errors = errors.get(&pm.state);
+    let errors = pm.state.get::<Errors>().unwrap();
 
     assert_error_at_position(&errors.0, error_start);
 }
@@ -161,11 +164,14 @@ pub fn assert_compile_error(src: &str, error_start: SourceLocation) {
 }
 pub fn assert_compile_error_no_formatting(src: &str, error_start: SourceLocation) {
     let mut pm = PassManager::default();
-    let errors = pm.state.insert_default::<Errors>();
-    pm.state.insert(InputSource {
-        source: src.to_string(),
-        file_name: "test.fl".to_string().into(),
-    });
+
+    pm.state.insert_default::<Errors>().unwrap();
+    pm.state
+        .insert(InputSource {
+            source: src.to_string(),
+            file_name: "test.fl".to_string().into(),
+        })
+        .unwrap();
 
     insert_minimal_pipeline(&mut pm);
     insert_fix_passes(&mut pm);
@@ -180,17 +186,20 @@ pub fn assert_compile_error_no_formatting(src: &str, error_start: SourceLocation
         Ok(()) => panic!("Should have produced an InvalidInput error. Got: Ok(())"),
     }
 
-    let errors = errors.get(&pm.state);
+    let errors = pm.state.get::<Errors>().unwrap();
 
     assert_error_at_position(&errors.0, error_start);
 }
 pub fn assert_compile_and_warning(src: &str, warning_start: SourceLocation) {
     let mut pm = PassManager::default();
-    let errors = pm.state.insert_default::<Errors>();
-    pm.state.insert(InputSource {
-        source: src.to_string(),
-        file_name: "test.fl".to_string().into(),
-    });
+
+    pm.state.insert_default::<Errors>().unwrap();
+    pm.state
+        .insert(InputSource {
+            source: src.to_string(),
+            file_name: "test.fl".to_string().into(),
+        })
+        .unwrap();
 
     insert_minimal_pipeline(&mut pm);
     insert_fix_passes(&mut pm);
@@ -199,10 +208,10 @@ pub fn assert_compile_and_warning(src: &str, warning_start: SourceLocation) {
 
     pm.run().unwrap();
 
-    let errors = errors.get(&pm.state);
+    let errors = pm.state.get::<Errors>().unwrap();
 
     assert_no_fatal_errors(&errors.0);
-    assert_warning_at_position(&errors, warning_start);
+    assert_warning_at_position(errors, warning_start);
 }
 
 pub fn assert_compile_and_return_value<ReturnType>(
@@ -285,11 +294,13 @@ pub fn assert_compile_and_return_value_unformatted<ReturnType>(
 {
     let pm = compile_or_panic(src);
 
+    let program_id = pm.state.get::<Program>().unwrap().id;
+
     let needs_runtime = pm
         .state
         .get::<StatData>()
         .expect("Compilation failed before inserting stats")
-        .get(&pm.state.get::<Program>().unwrap().id)
+        .get(&program_id)
         .expect("No stats available for function to test")
         .uses_gpu
         .at_least_maybe();
@@ -302,7 +313,7 @@ pub fn assert_compile_and_return_value_unformatted<ReturnType>(
     let actual_return_value = unsafe {
         // SAFETY: we just asserted that the return type of the function is `ReturnType`
         execute_function::<ReturnType>(
-            &pm.state.get::<Module>().unwrap(),
+            pm.state.get::<Module>().unwrap(),
             function_symbol,
             needs_runtime,
         )
@@ -343,11 +354,13 @@ pub fn assert_formatting_and_same_behaviour<ReturnType>(
 
 fn compile_or_panic(src: &str) -> PassManager {
     let mut pm = PassManager::default();
-    let errors = pm.state.insert_default::<Errors>();
-    pm.state.insert(InputSource {
-        source: src.to_string(),
-        file_name: "test.fl".to_string().into(),
-    });
+    pm.state.insert_default::<Errors>().unwrap();
+    pm.state
+        .insert(InputSource {
+            source: src.to_string(),
+            file_name: "test.fl".to_string().into(),
+        })
+        .unwrap();
 
     insert_minimal_pipeline(&mut pm);
     insert_fix_passes(&mut pm);
@@ -364,7 +377,9 @@ fn compile_or_panic(src: &str) -> PassManager {
         }
     }
 
-    assert_no_fatal_errors(&errors.get(&pm.state).0);
+    let errors = pm.state.get::<Errors>().unwrap();
+
+    assert_no_fatal_errors(&errors.0);
     pm.state.get::<Module>().unwrap().verify().unwrap();
 
     pm
@@ -401,7 +416,7 @@ where
     unsafe {
         // SAFETY: we just asserted that the return type of the function is `ReturnType`
         execute_function::<ReturnType>(
-            &pm.state.get::<Module>().unwrap(),
+            pm.state.get::<Module>().unwrap(),
             function_symbol,
             needs_runtime,
         )
@@ -501,18 +516,18 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
     let object_file = dir.path().join("test.o");
     let binary_file = dir.path().join("test");
 
-    let target_machine = pm.state.insert(target_machine);
+    pm.state.insert(target_machine).unwrap();
     pm.insert::<LLVMOptimizerPass>();
     pm.insert_params::<SaveArtifactPass>((object_file.clone(), ArtifactType::Object));
     pm.run().unwrap();
 
-    let _target_machine = target_machine.get(&pm.state);
+    let program_id = pm.state.get::<Program>().unwrap().id;
 
     let needs_runtime = pm
         .state
         .get::<StatData>()
         .unwrap()
-        .get(&pm.state.get::<Program>().unwrap().id)
+        .get(&program_id)
         .expect("No stats available for function to test")
         .uses_gpu
         .at_least_maybe();

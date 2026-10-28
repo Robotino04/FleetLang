@@ -1,19 +1,20 @@
-use std::{cell::RefMut, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 use crate::{
     ast::{OnStatement, Program},
     error_reporting::{ErrorKind, Errors},
     passes::{
+        global_state::{FetchError, Fetched, GlobalState},
         partial_visitor::AstWalker,
-        pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+        pass_manager::{Pass, PassFactory, PassResult},
     },
 };
 
 use super::partial_visitor::PartialAstVisitor;
 
 pub struct ErrTooFewIterators<'state> {
-    errors: RefMut<'state, Errors>,
-    program: Option<RefMut<'state, Program>>,
+    errors: &'state mut Errors,
+    program: Option<&'state mut Program>,
 }
 impl PassFactory for ErrTooFewIterators<'_> {
     type Output<'state> = ErrTooFewIterators<'state>;
@@ -22,18 +23,24 @@ impl PassFactory for ErrTooFewIterators<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String> {
+    ) -> Result<Self::Output<'state>, FetchError> {
+        let Fetched {
+            read: (),
+            write: (errors, program),
+            empty: (),
+        } = state.fetch()?;
+
         Ok(Self::Output {
-            errors: state.get_mut_named::<Errors>()?,
-            program: Some(state.get_mut_named::<Program>()?),
+            errors,
+            program: Some(program),
         })
     }
 }
 impl Pass for ErrTooFewIterators<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
-        let mut program = self.program.take().unwrap();
+        let program = self.program.take().unwrap();
 
-        let _ = self.visit_program(&mut program);
+        let _ = self.visit_program(program);
 
         Ok(())
     }

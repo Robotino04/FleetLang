@@ -1,4 +1,4 @@
-use std::{cell::RefMut, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 use crate::{
     ast::{
@@ -6,8 +6,9 @@ use crate::{
         StructMemberValue, StructType,
     },
     passes::{
+        global_state::{FetchError, Fetched, GlobalState},
         partial_visitor::AstWalker,
-        pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+        pass_manager::{Pass, PassFactory, PassResult},
         token_accessors::get_last_token,
     },
     tokenizer::{Token, TokenType},
@@ -16,7 +17,7 @@ use crate::{
 use super::partial_visitor::PartialAstVisitor;
 
 pub struct FixTrailingComma<'state> {
-    program: Option<RefMut<'state, Program>>,
+    program: Option<&'state mut Program>,
 }
 impl PassFactory for FixTrailingComma<'_> {
     type Output<'state> = FixTrailingComma<'state>;
@@ -25,17 +26,23 @@ impl PassFactory for FixTrailingComma<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String> {
+    ) -> Result<Self::Output<'state>, FetchError> {
+        let Fetched {
+            read: (),
+            write: (program,),
+            empty: (),
+        } = state.fetch()?;
+
         Ok(Self::Output {
-            program: Some(state.get_mut_named::<Program>()?),
+            program: Some(program),
         })
     }
 }
 impl Pass for FixTrailingComma<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
-        let mut program = self.program.take().unwrap();
+        let program = self.program.take().unwrap();
 
-        let _ = self.visit_program(&mut program);
+        let _ = self.visit_program(program);
 
         Ok(())
     }

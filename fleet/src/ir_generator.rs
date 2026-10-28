@@ -1,5 +1,4 @@
 use std::{
-    cell::{Ref, RefCell, RefMut},
     collections::HashMap,
     error::Error,
     ops::{Deref, DerefMut},
@@ -48,10 +47,10 @@ use crate::{
     escape::{QuoteType, unescape},
     generate_glsl::GLSLCodeGenerator,
     passes::{
+        global_state::{FetchError, Fetched, GlobalState},
         pass_manager::{
-            ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData, ConcreteVariableData,
-            GlobalState, Pass, PassError, PassFactory, PassResult, PrecompiledGlslFunctions,
-            StatData,
+            ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData, ConcreteVariableData, Pass,
+            PassError, PassFactory, PassResult, PrecompiledGlslFunctions, StatData,
         },
         runtime_type::ConcreteRuntimeType,
         scope_analysis::{FunctionID, VariableID},
@@ -233,22 +232,22 @@ thread_local! {
 }
 
 pub struct IrGenerator<'state> {
-    errors: RefMut<'state, Errors>,
-    program: Option<RefMut<'state, Program>>,
+    errors: &'state mut Errors,
+    program: Option<&'state mut Program>,
 
     context: &'static Context,
-    module: Ref<'state, Module<'static>>,
-    builder: Ref<'state, Builder<'static>>,
+    module: &'state mut Module<'static>,
+    builder: &'state mut Builder<'static>,
 
-    node_stats: Ref<'state, StatData>,
+    node_stats: &'state StatData,
     variable_storage: HashMap<VariableID, VariableStorage<'state>>,
     function_locations: HashMap<FunctionID, FunctionLocation<'state>>,
 
-    variable_data: Ref<'state, ConcreteVariableData>,
-    function_data: Ref<'state, ConcreteFunctionData>,
-    type_data: Ref<'state, ConcreteTypeData>,
-    scope_data: Ref<'state, ConcreteScopeData>,
-    glsl_functions: Ref<'state, PrecompiledGlslFunctions>,
+    variable_data: &'state ConcreteVariableData,
+    function_data: &'state ConcreteFunctionData,
+    type_data: &'state ConcreteTypeData,
+    scope_data: &'state ConcreteScopeData,
+    glsl_functions: &'state PrecompiledGlslFunctions,
 
     break_block: Option<BasicBlock<'state>>,
     skip_block: Option<BasicBlock<'state>>,
@@ -261,43 +260,39 @@ impl PassFactory for IrGenerator<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> ::core::result::Result<Self::Output<'state>, String>
+    ) -> ::core::result::Result<Self::Output<'state>, FetchError>
     where
         Self: Sized,
     {
         enable_llvm_pretty_stack_trace();
 
-        let program = state.check_named()?;
-        let errors = state.check_named()?;
-        let node_stats = state.check_named()?;
+        let Fetched {
+            read: (node_stats, variable_data, function_data, type_data, scope_data, glsl_functions),
+            write: (errors, program),
+            empty: (module, builder),
+        } = state.fetch()?;
 
-        let variable_data = state.check_named()?;
-        let function_data = state.check_named()?;
-        let type_data = state.check_named()?;
-        let scope_data = state.check_named()?;
-        let glsl_functions = state.check_named()?;
-
-        let module = state.insert(THREAD_LLVM_CONTEXT.with(|ctx| ctx.create_module("module")));
-        let builder = state.insert(THREAD_LLVM_CONTEXT.with(|ctx| ctx.create_builder()));
+        let module = module.insert(THREAD_LLVM_CONTEXT.with(|ctx| ctx.create_module("module")));
+        let builder = builder.insert(THREAD_LLVM_CONTEXT.with(|ctx| ctx.create_builder()));
 
         Ok(Self::Output {
-            errors: errors.get_mut(state),
-            program: Some(program.get_mut(state)),
+            errors,
+            program: Some(program),
 
             context: THREAD_LLVM_CONTEXT.with(|&ctx| ctx),
-            module: module.get(state),
-            builder: builder.get(state),
+            module,
+            builder,
 
-            node_stats: node_stats.get(state),
+            node_stats,
 
-            variable_data: variable_data.get(state),
+            variable_data,
             variable_storage: HashMap::new(),
-            function_data: function_data.get(state),
+            function_data,
             function_locations: HashMap::new(),
 
-            type_data: type_data.get(state),
-            scope_data: scope_data.get(state),
-            glsl_functions: glsl_functions.get(state),
+            type_data,
+            scope_data,
+            glsl_functions,
 
             break_block: None,
             skip_block: None,
@@ -317,8 +312,8 @@ impl Pass for IrGenerator<'_> {
             });
         }
 
-        let mut program = self.program.take().unwrap();
-        self.generate_program(&mut program)
+        let program = self.program.take().unwrap();
+        self.generate_program(program)
             .map_err(|err| PassError::CompilerError {
                 producing_pass: Self::name(),
                 source: err,
@@ -989,9 +984,9 @@ impl<'state> IrGenerator<'state> {
         let mut buffers = vec![];
 
         let mut bindings = GLSLCodeGenerator::get_on_statement_bindings(
-            &self.variable_data,
-            &self.scope_data,
-            &self.type_data,
+            self.variable_data,
+            self.scope_data,
+            self.type_data,
             bindings,
             iterators
                 .iter()
@@ -1145,14 +1140,14 @@ impl<'state> IrGenerator<'state> {
             });
         }
 
-        let glsl_errors = RefCell::new(Errors::default());
+        let mut glsl_errors = Errors::default();
 
         let mut glsl_generator = GLSLCodeGenerator::new(
-            glsl_errors.borrow_mut(),
-            Ref::clone(&self.variable_data),
-            Ref::clone(&self.function_data),
-            Ref::clone(&self.type_data),
-            Ref::clone(&self.node_stats),
+            &mut glsl_errors,
+            self.variable_data,
+            self.function_data,
+            self.type_data,
+            self.node_stats,
         );
         let glsl_source = glsl_generator.generate_on_statement_shader(
             &bindings,
@@ -1172,7 +1167,7 @@ impl<'state> IrGenerator<'state> {
             let shaderc_output =
                 glsl_generator.compile_on_statement_shader(&glsl_source, &**body)?;
 
-            self.errors.append(&mut glsl_errors.borrow_mut());
+            self.errors.append(&mut glsl_errors);
 
             self.builder.position_at_end(exec_block);
 
@@ -1935,7 +1930,7 @@ impl<'state> IrGenerator<'state> {
                         let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.sqrt").unwrap();
                         let intrinsic = intrinsic
                             .get_declaration(
-                                &self.module,
+                                self.module,
                                 &[expected_type_ir.into_basic_type().unwrap()],
                             )
                             .unwrap();
@@ -1975,7 +1970,7 @@ impl<'state> IrGenerator<'state> {
                         let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.sin").unwrap();
                         let intrinsic = intrinsic
                             .get_declaration(
-                                &self.module,
+                                self.module,
                                 &[expected_type_ir.into_basic_type().unwrap()],
                             )
                             .unwrap();
@@ -2015,7 +2010,7 @@ impl<'state> IrGenerator<'state> {
                         let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.cos").unwrap();
                         let intrinsic = intrinsic
                             .get_declaration(
-                                &self.module,
+                                self.module,
                                 &[expected_type_ir.into_basic_type().unwrap()],
                             )
                             .unwrap();
@@ -3227,8 +3222,8 @@ impl<'state> IrGenerator<'state> {
 }
 
 pub struct LLVMOptimizerPass<'state> {
-    module: Ref<'state, Module<'static>>,
-    target_machine: Ref<'state, TargetMachine>,
+    module: &'state Module<'static>,
+    target_machine: &'state TargetMachine,
 }
 
 impl PassFactory for LLVMOptimizerPass<'_> {
@@ -3238,13 +3233,19 @@ impl PassFactory for LLVMOptimizerPass<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> ::core::result::Result<Self::Output<'state>, String>
+    ) -> ::core::result::Result<Self::Output<'state>, FetchError>
     where
         Self: Sized,
     {
+        let Fetched {
+            read: (module, target_machine),
+            write: (),
+            empty: (),
+        } = state.fetch()?;
+
         Ok(Self::Output {
-            module: state.get_named()?,
-            target_machine: state.get_named()?,
+            module,
+            target_machine,
         })
     }
 }
@@ -3253,7 +3254,7 @@ impl Pass for LLVMOptimizerPass<'_> {
         self.module
             .run_passes(
                 "default<O1>,asan",
-                &self.target_machine,
+                self.target_machine,
                 PassBuilderOptions::create(),
             )
             .map_err(|err| PassError::CompilerError {

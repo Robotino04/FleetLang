@@ -1,8 +1,11 @@
-use std::{borrow::Borrow, marker::PhantomData};
+use std::marker::PhantomData;
 
-use crate::passes::pass_manager::{CheckedEntry, Pass, PassFactory};
+use crate::passes::{
+    global_state::{FetchError, Fetched, GlobalState},
+    pass_manager::{Pass, PassFactory},
+};
 
-use super::pass_manager::{GlobalState, PassResult};
+use super::pass_manager::PassResult;
 
 pub struct SingleFunctionPass<T, F>
 where
@@ -15,9 +18,8 @@ pub struct SingleFunctionPassImpl<'state, T, F>
 where
     F: FnOnce(&T) -> PassResult + Clone,
 {
-    from: CheckedEntry<T>,
+    input: &'state T,
     function: F,
-    state: &'state mut GlobalState,
     _marker: PhantomData<T>,
 }
 
@@ -32,16 +34,19 @@ where
     fn try_new<'state>(
         state: &'state mut GlobalState,
         params: Self::Params,
-    ) -> Result<Self::Output<'state>, String>
+    ) -> Result<Self::Output<'state>, FetchError>
     where
         Self: Sized,
     {
-        let from = state.check_named::<T>()?;
+        let Fetched {
+            read: (input,),
+            write: (),
+            empty: (),
+        } = state.fetch()?;
 
         Ok(Self::Output {
-            from,
+            input,
             function: params,
-            state,
             _marker: PhantomData,
         })
     }
@@ -53,7 +58,6 @@ where
     F: FnOnce(&T) -> PassResult + Clone,
 {
     fn run(self: Box<Self>) -> PassResult {
-        let binding = self.from.get(self.state);
-        (self.function)(binding.borrow())
+        (self.function)(self.input)
     }
 }

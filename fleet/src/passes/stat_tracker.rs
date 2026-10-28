@@ -1,5 +1,5 @@
 use std::{
-    cell::{Ref, RefCell, RefMut},
+    cell::RefCell,
     collections::{HashMap, HashSet},
     rc::Rc,
     vec::Vec,
@@ -24,9 +24,9 @@ use crate::{
     define_dispatch_methods,
     error_reporting::{ErrorKind, Errors, Lint, LoopControl},
     passes::{
+        global_state::{FetchError, Fetched, GlobalState},
         pass_manager::{
-            ConcreteFunctionData, ConcreteVariableData, GlobalState, Pass, PassFactory, PassResult,
-            StatData,
+            ConcreteFunctionData, ConcreteVariableData, Pass, PassFactory, PassResult, StatData,
         },
         runtime_type::ConcreteRuntimeType,
         scope_analysis::{ConcreteFunction, ConcreteVariable, FunctionID},
@@ -189,13 +189,13 @@ impl MergeableStat for NodeStats {
 }
 
 pub struct StatTracker<'state> {
-    errors: RefMut<'state, Errors>,
-    program: Option<RefMut<'state, Program>>,
+    errors: &'state mut Errors,
+    program: Option<&'state mut Program>,
 
-    variable_data: Ref<'state, ConcreteVariableData>,
-    function_data: Ref<'state, ConcreteFunctionData>,
+    variable_data: &'state ConcreteVariableData,
+    function_data: &'state ConcreteFunctionData,
 
-    stats: RefMut<'state, StatData>,
+    stats: &'state mut StatData,
 
     function_stats: HashMap<FunctionID, NodeStats>,
     current_function: Option<Rc<RefCell<ConcreteFunction>>>,
@@ -209,22 +209,21 @@ impl PassFactory for StatTracker<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String> {
-        let errors = state.check_named()?;
-        let program = state.check_named()?;
-        let variable_data = state.check_named()?;
-        let function_data = state.check_named()?;
-
-        let stats = state.insert_default::<StatData>();
+    ) -> Result<Self::Output<'state>, FetchError> {
+        let Fetched {
+            read: (variable_data, function_data),
+            write: (errors, program),
+            empty: (stats,),
+        } = state.fetch()?;
 
         Ok(Self::Output {
-            errors: errors.get_mut(state),
-            program: Some(program.get_mut(state)),
+            errors,
+            program: Some(program),
 
-            variable_data: variable_data.get(state),
-            function_data: function_data.get(state),
+            variable_data,
+            function_data,
 
-            stats: stats.get_mut(state),
+            stats: stats.insert_default(),
 
             function_stats: HashMap::default(),
             current_function: None,
@@ -234,8 +233,8 @@ impl PassFactory for StatTracker<'_> {
 }
 impl Pass for StatTracker<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
-        let mut program = self.program.take().unwrap();
-        self.analyze_program(&mut program);
+        let program = self.program.take().unwrap();
+        self.analyze_program(program);
 
         Ok(())
     }

@@ -1,8 +1,4 @@
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    collections::HashMap,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use itertools::{EitherOrBoth, Itertools};
 
@@ -28,9 +24,10 @@ use crate::{
     },
     parser::IdGenerator,
     passes::{
+        global_state::{FetchError, Fetched, GlobalState},
         pass_manager::{
-            FunctionData, GlobalState, Pass, PassFactory, PassResult, ScopeData, TypeData,
-            TypeSets, VariableData,
+            FunctionData, Pass, PassFactory, PassResult, ScopeData, TypeData, TypeSets,
+            VariableData,
         },
         runtime_type::{RuntimeType, RuntimeTypeKind, StructHash},
         scope_analysis::Function,
@@ -40,15 +37,15 @@ use crate::{
 };
 
 pub struct TypePropagator<'state> {
-    errors: RefMut<'state, Errors>,
-    program: Option<RefMut<'state, Program>>,
-    id_generator: RefMut<'state, IdGenerator>,
+    errors: &'state mut Errors,
+    program: Option<&'state mut Program>,
+    id_generator: &'state mut IdGenerator,
 
-    type_sets: RefMut<'state, TypeSets>,
-    node_types: RefMut<'state, TypeData>,
-    referenced_variable: Ref<'state, VariableData>,
-    referenced_function: Ref<'state, FunctionData>,
-    containing_scope: Ref<'state, ScopeData>,
+    type_sets: &'state mut TypeSets,
+    node_types: &'state mut TypeData,
+    referenced_variable: &'state VariableData,
+    referenced_function: &'state FunctionData,
+    containing_scope: &'state ScopeData,
 
     type_aliases: HashMap<String, (NamedSourceRange, UnionFindSetPtr<RuntimeType>)>,
 
@@ -63,27 +60,23 @@ impl PassFactory for TypePropagator<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String> {
-        let errors = state.check_named()?;
-        let program = state.check_named()?;
-        let id_generator = state.check_named()?;
-
-        let type_sets = state.insert_default();
-        let node_types = state.insert_default();
-        let referenced_variable = state.check_named()?;
-        let referenced_function = state.check_named()?;
-        let scope_data = state.check_named()?;
+    ) -> Result<Self::Output<'state>, FetchError> {
+        let Fetched {
+            read: (referenced_variable, referenced_function, containing_scope),
+            write: (errors, program, id_generator),
+            empty: (type_sets, node_types),
+        } = state.fetch()?;
 
         Ok(Self::Output {
-            errors: errors.get_mut(state),
-            program: Some(program.get_mut(state)),
-            id_generator: id_generator.get_mut(state),
+            errors,
+            program: Some(program),
+            id_generator,
 
-            type_sets: type_sets.get_mut(state),
-            node_types: node_types.get_mut(state),
-            referenced_variable: referenced_variable.get(state),
-            referenced_function: referenced_function.get(state),
-            containing_scope: scope_data.get(state),
+            type_sets: type_sets.insert_default(),
+            node_types: node_types.insert_default(),
+            referenced_variable,
+            referenced_function,
+            containing_scope,
 
             type_aliases: Default::default(),
 
@@ -94,8 +87,8 @@ impl PassFactory for TypePropagator<'_> {
 }
 impl Pass for TypePropagator<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
-        let mut program = self.program.take().unwrap();
-        self.typecheck_program(&mut program);
+        let program = self.program.take().unwrap();
+        self.typecheck_program(program);
 
         Ok(())
     }
@@ -213,7 +206,7 @@ impl<'a> TypePropagator<'a> {
                 self.errors
                     .push(ErrorKind::IncompleteTypeInferenceVariable {
                         variable: variable.borrow().symbol.clone(),
-                        best_guess: Some(PrefetchedType::fetch(actual_type_ptr, &self.type_sets)),
+                        best_guess: Some(PrefetchedType::fetch(actual_type_ptr, self.type_sets)),
                     });
             }
         }
@@ -292,7 +285,7 @@ impl TypePropagator<'_> {
                     kind: RuntimeTypeKind::Unit,
                     definition_range: None
                 }),
-                &mut self.type_sets
+                self.type_sets
             ));
         }
     }
@@ -316,7 +309,7 @@ impl TypePropagator<'_> {
 
         // ignore failures because this should always succeed for valid programs
         // make sure to pass aliased_type first so the definition range gets preserved
-        let _ = RuntimeTypeKind::merge_types(*aliased_type, type_, &mut self.type_sets);
+        let _ = RuntimeTypeKind::merge_types(*aliased_type, type_, self.type_sets);
     }
 
     fn typecheck_statement_function_body(
@@ -364,7 +357,7 @@ impl TypePropagator<'_> {
                 type_range: type_
                     .as_ref()
                     .map(|(_colon, type_)| type_.get_source_range()),
-                type_: PrefetchedType::fetch(defined_type_ptr, &self.type_sets),
+                type_: PrefetchedType::fetch(defined_type_ptr, self.type_sets),
             });
         }
 
@@ -418,7 +411,7 @@ impl TypePropagator<'_> {
         ) in iterators.collect_vec()
         {
             let iterator_type = self.typecheck_simple_binding(binding);
-            if !RuntimeTypeKind::merge_types(iterator_type, max_value_type, &mut self.type_sets) {
+            if !RuntimeTypeKind::merge_types(iterator_type, max_value_type, self.type_sets) {
                 self.errors.push(ErrorKind::IteratorValueMaxMismatch {
                     on_range: on_token.range.clone(),
                     iterator: SymbolDefinition::from_token(
@@ -430,8 +423,8 @@ impl TypePropagator<'_> {
                         .type_
                         .as_ref()
                         .map(|(_colon, type_)| type_.get_source_range()),
-                    iterator_type: PrefetchedType::fetch(iterator_type, &self.type_sets),
-                    max_type: PrefetchedType::fetch(max_value_type, &self.type_sets),
+                    iterator_type: PrefetchedType::fetch(iterator_type, self.type_sets),
+                    max_type: PrefetchedType::fetch(max_value_type, self.type_sets),
                 });
             }
 
@@ -465,11 +458,8 @@ impl TypePropagator<'_> {
                 },
                 definition_range: None,
             });
-            if !RuntimeTypeKind::merge_types(
-                possible_iterator_type,
-                iterator_type,
-                &mut self.type_sets,
-            ) {
+            if !RuntimeTypeKind::merge_types(possible_iterator_type, iterator_type, self.type_sets)
+            {
                 self.errors.push(ErrorKind::ImpossibleIteratorType {
                     on_range: on_token.range.clone(),
                     iterator: SymbolDefinition::from_token(
@@ -480,10 +470,10 @@ impl TypePropagator<'_> {
                         .type_
                         .as_ref()
                         .map(|(_colon, type_)| type_.get_source_range()),
-                    iterator_type: PrefetchedType::fetch(iterator_type, &self.type_sets),
+                    iterator_type: PrefetchedType::fetch(iterator_type, self.type_sets),
                     possible_iterator_type: PrefetchedType::fetch(
                         possible_iterator_type,
-                        &self.type_sets,
+                        self.type_sets,
                     ),
                 });
             }
@@ -543,7 +533,7 @@ impl TypePropagator<'_> {
 
         let expected_type_ptr = current_function.return_type.unwrap();
 
-        if !RuntimeTypeKind::merge_types(this_type_ptr, expected_type_ptr, &mut self.type_sets) {
+        if !RuntimeTypeKind::merge_types(this_type_ptr, expected_type_ptr, self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::FunctionReturn {
                     function: current_function.symbol.clone(),
@@ -552,8 +542,8 @@ impl TypePropagator<'_> {
                     .as_ref()
                     .map(|value| value.get_source_range())
                     .unwrap_or_else(|| return_token.range.clone()),
-                expected_types: vec![PrefetchedType::fetch(expected_type_ptr, &self.type_sets)],
-                actual_type: PrefetchedType::fetch(this_type_ptr, &self.type_sets),
+                expected_types: vec![PrefetchedType::fetch(expected_type_ptr, self.type_sets)],
+                actual_type: PrefetchedType::fetch(this_type_ptr, self.type_sets),
             });
         }
 
@@ -580,14 +570,14 @@ impl TypePropagator<'_> {
 
         let var = self.referenced_variable.get(id).unwrap();
 
-        if !RuntimeTypeKind::merge_types(value_type_ptr, defined_type_ptr, &mut self.type_sets) {
+        if !RuntimeTypeKind::merge_types(value_type_ptr, defined_type_ptr, self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::VariableInitializer {
                     variable: var.borrow().symbol.clone(),
                 },
                 value_range: value.get_source_range(),
-                expected_types: vec![PrefetchedType::fetch(defined_type_ptr, &self.type_sets)],
-                actual_type: PrefetchedType::fetch(value_type_ptr, &self.type_sets),
+                expected_types: vec![PrefetchedType::fetch(defined_type_ptr, self.type_sets)],
+                actual_type: PrefetchedType::fetch(value_type_ptr, self.type_sets),
             });
         }
     }
@@ -610,24 +600,24 @@ impl TypePropagator<'_> {
             definition_range: None,
         });
 
-        if !RuntimeTypeKind::merge_types(cond_type, boolean, &mut self.type_sets) {
+        if !RuntimeTypeKind::merge_types(cond_type, boolean, self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::IfCondition,
                 value_range: condition.get_source_range(),
-                expected_types: vec![PrefetchedType::fetch(boolean, &self.type_sets)],
-                actual_type: PrefetchedType::fetch(cond_type, &self.type_sets),
+                expected_types: vec![PrefetchedType::fetch(boolean, self.type_sets)],
+                actual_type: PrefetchedType::fetch(cond_type, self.type_sets),
             });
         }
 
         self.typecheck_statement(if_body);
         for (_elif_token, elif_condition, elif_body) in elifs {
             let elif_type = self.typecheck_expression(elif_condition);
-            if !RuntimeTypeKind::merge_types(elif_type, boolean, &mut self.type_sets) {
+            if !RuntimeTypeKind::merge_types(elif_type, boolean, self.type_sets) {
                 self.errors.push(ErrorKind::TypeMismatch {
                     kind: TypeMismatchKind::ElifCondition,
                     value_range: elif_condition.get_source_range(),
-                    expected_types: vec![PrefetchedType::fetch(boolean, &self.type_sets)],
-                    actual_type: PrefetchedType::fetch(elif_type, &self.type_sets),
+                    expected_types: vec![PrefetchedType::fetch(boolean, self.type_sets)],
+                    actual_type: PrefetchedType::fetch(elif_type, self.type_sets),
                 });
             }
 
@@ -654,12 +644,12 @@ impl TypePropagator<'_> {
             definition_range: None,
         });
 
-        if !RuntimeTypeKind::merge_types(cond_type, boolean, &mut self.type_sets) {
+        if !RuntimeTypeKind::merge_types(cond_type, boolean, self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::WhileCondition,
                 value_range: condition.get_source_range(),
-                expected_types: vec![PrefetchedType::fetch(boolean, &self.type_sets)],
-                actual_type: PrefetchedType::fetch(cond_type, &self.type_sets),
+                expected_types: vec![PrefetchedType::fetch(boolean, self.type_sets)],
+                actual_type: PrefetchedType::fetch(cond_type, self.type_sets),
             });
         }
 
@@ -690,12 +680,12 @@ impl TypePropagator<'_> {
                 definition_range: None,
             });
 
-            if !RuntimeTypeKind::merge_types(cond_type, boolean, &mut self.type_sets) {
+            if !RuntimeTypeKind::merge_types(cond_type, boolean, self.type_sets) {
                 self.errors.push(ErrorKind::TypeMismatch {
                     kind: TypeMismatchKind::ForCondition,
                     value_range: con.get_source_range(),
-                    expected_types: vec![PrefetchedType::fetch(boolean, &self.type_sets)],
-                    actual_type: PrefetchedType::fetch(cond_type, &self.type_sets),
+                    expected_types: vec![PrefetchedType::fetch(boolean, self.type_sets)],
+                    actual_type: PrefetchedType::fetch(cond_type, self.type_sets),
                 });
             }
         }
@@ -756,14 +746,14 @@ impl TypePropagator<'_> {
             definition_range: None,
         });
 
-        if !RuntimeTypeKind::merge_types(index_type, expected_type, &mut self.type_sets) {
+        if !RuntimeTypeKind::merge_types(index_type, expected_type, self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::ThreadIndex {
                     thread: thread_token.range.clone(),
                 },
                 value_range: index.get_source_range(),
-                expected_types: vec![PrefetchedType::fetch(expected_type, &self.type_sets)],
-                actual_type: PrefetchedType::fetch(index_type, &self.type_sets),
+                expected_types: vec![PrefetchedType::fetch(expected_type, self.type_sets)],
+                actual_type: PrefetchedType::fetch(index_type, self.type_sets),
             });
         };
     }
@@ -791,14 +781,14 @@ impl TypePropagator<'_> {
             definition_range: None,
         });
 
-        if !RuntimeTypeKind::merge_types(index_type, expected_type, &mut self.type_sets) {
+        if !RuntimeTypeKind::merge_types(index_type, expected_type, self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::GpuIndex {
                     gpu: gpus_token.range.clone(),
                 },
                 value_range: gpu_index.get_source_range(),
-                expected_types: vec![PrefetchedType::fetch(expected_type, &self.type_sets)],
-                actual_type: PrefetchedType::fetch(index_type, &self.type_sets),
+                expected_types: vec![PrefetchedType::fetch(expected_type, self.type_sets)],
+                actual_type: PrefetchedType::fetch(index_type, self.type_sets),
             });
         };
     }
@@ -849,19 +839,15 @@ impl TypePropagator<'_> {
         for (item, _comma) in &mut *elements {
             let this_item_type_ptr = self.typecheck_expression(item);
 
-            if !RuntimeTypeKind::merge_types(
-                element_type_ptr,
-                this_item_type_ptr,
-                &mut self.type_sets,
-            ) {
+            if !RuntimeTypeKind::merge_types(element_type_ptr, this_item_type_ptr, self.type_sets) {
                 self.errors.push(ErrorKind::TypeMismatch {
                     kind: TypeMismatchKind::ArrayElement {
                         first_element_range: first_item_range.clone().unwrap(),
                     },
                     value_range: item.get_source_range(),
 
-                    expected_types: vec![PrefetchedType::fetch(element_type_ptr, &self.type_sets)],
-                    actual_type: PrefetchedType::fetch(this_item_type_ptr, &self.type_sets),
+                    expected_types: vec![PrefetchedType::fetch(element_type_ptr, self.type_sets)],
+                    actual_type: PrefetchedType::fetch(this_item_type_ptr, self.type_sets),
                 });
             }
         }
@@ -901,7 +887,7 @@ impl TypePropagator<'_> {
                 self.errors.push(ErrorKind::StructInitializeNonStruct {
                     expression_range,
                     type_range: type_.get_source_range(),
-                    wrong_type: PrefetchedType::fetch(defined_type_ptr, &self.type_sets),
+                    wrong_type: PrefetchedType::fetch(defined_type_ptr, self.type_sets),
                 });
 
                 None
@@ -932,7 +918,7 @@ impl TypePropagator<'_> {
                 if *name != this_defined_name {
                     self.errors.push(ErrorKind::StructMemberMismatch {
                         member_index: i,
-                        struct_type: PrefetchedType::fetch(defined_type_ptr, &self.type_sets),
+                        struct_type: PrefetchedType::fetch(defined_type_ptr, self.type_sets),
                         expected: SymbolDefinition::new(
                             this_defined_name.clone(),
                             this_defined_range.clone(),
@@ -943,7 +929,7 @@ impl TypePropagator<'_> {
                 if !RuntimeTypeKind::merge_types(
                     this_type_ptr,
                     this_defined_type_ptr,
-                    &mut self.type_sets,
+                    self.type_sets,
                 ) {
                     self.errors.push(ErrorKind::TypeMismatch {
                         kind: TypeMismatchKind::StructMember {
@@ -957,9 +943,9 @@ impl TypePropagator<'_> {
                         value_range: value.get_source_range(),
                         expected_types: vec![PrefetchedType::fetch(
                             this_defined_type_ptr,
-                            &self.type_sets,
+                            self.type_sets,
                         )],
-                        actual_type: PrefetchedType::fetch(this_type_ptr, &self.type_sets),
+                        actual_type: PrefetchedType::fetch(this_type_ptr, self.type_sets),
                     });
                 }
             }
@@ -973,11 +959,7 @@ impl TypePropagator<'_> {
             definition_range: None,
         });
 
-        if !RuntimeTypeKind::merge_types(
-            defined_type_ptr,
-            constructed_type_ptr,
-            &mut self.type_sets,
-        ) {
+        if !RuntimeTypeKind::merge_types(defined_type_ptr, constructed_type_ptr, self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::StructFields {
                     type_expression: type_.get_source_range(),
@@ -986,8 +968,8 @@ impl TypePropagator<'_> {
                     .range
                     .clone()
                     .extend_with(close_brace_token.range.clone()),
-                expected_types: vec![PrefetchedType::fetch(defined_type_ptr, &self.type_sets)],
-                actual_type: PrefetchedType::fetch(constructed_type_ptr, &self.type_sets),
+                expected_types: vec![PrefetchedType::fetch(defined_type_ptr, self.type_sets)],
+                actual_type: PrefetchedType::fetch(constructed_type_ptr, self.type_sets),
             });
         }
 
@@ -1054,11 +1036,8 @@ impl TypePropagator<'_> {
                     });
                     let param_type_ptr = self.type_sets.detach(param_type_ptr);
 
-                    if !RuntimeTypeKind::merge_types(
-                        *arg_type_ptr,
-                        param_type_ptr,
-                        &mut self.type_sets,
-                    ) {
+                    if !RuntimeTypeKind::merge_types(*arg_type_ptr, param_type_ptr, self.type_sets)
+                    {
                         self.errors.push(ErrorKind::TypeMismatch {
                             kind: TypeMismatchKind::FunctionCallParameter {
                                 parameter_index: i,
@@ -1072,16 +1051,16 @@ impl TypePropagator<'_> {
                             value_range: arg.get_source_range(),
                             expected_types: vec![PrefetchedType::fetch(
                                 param_type_ptr,
-                                &self.type_sets,
+                                self.type_sets,
                             )],
-                            actual_type: PrefetchedType::fetch(*arg_type_ptr, &self.type_sets),
+                            actual_type: PrefetchedType::fetch(*arg_type_ptr, self.type_sets),
                         });
                     }
                 }
                 EitherOrBoth::Left((arg_type_ptr, arg)) => {
                     extra_parameters.push(ExtraParameter {
                         range: arg.get_source_range(),
-                        type_: PrefetchedType::fetch(*arg_type_ptr, &self.type_sets),
+                        type_: PrefetchedType::fetch(*arg_type_ptr, self.type_sets),
                     });
                 }
                 EitherOrBoth::Right(param) => {
@@ -1095,7 +1074,7 @@ impl TypePropagator<'_> {
                     missing_parameters.push(MissingParameter {
                         name: param.borrow().symbol.name.clone(),
                         name_range: Some(param.borrow().symbol.definition.clone()),
-                        type_: PrefetchedType::fetch(param_type_ptr, &self.type_sets),
+                        type_: PrefetchedType::fetch(param_type_ptr, self.type_sets),
                     });
                 }
             }
@@ -1264,11 +1243,8 @@ impl TypePropagator<'_> {
         {
             match types {
                 EitherOrBoth::Both((arg_type_ptr, arg), (param_type_ptr, param_name)) => {
-                    if !RuntimeTypeKind::merge_types(
-                        arg_type_ptr,
-                        *param_type_ptr,
-                        &mut self.type_sets,
-                    ) {
+                    if !RuntimeTypeKind::merge_types(arg_type_ptr, *param_type_ptr, self.type_sets)
+                    {
                         self.errors.push(ErrorKind::TypeMismatch {
                             kind: TypeMismatchKind::IntrinsicCallParameter {
                                 parameter_index: i,
@@ -1278,23 +1254,23 @@ impl TypePropagator<'_> {
                             value_range: arg.get_source_range(),
                             expected_types: vec![PrefetchedType::fetch(
                                 *param_type_ptr,
-                                &self.type_sets,
+                                self.type_sets,
                             )],
-                            actual_type: PrefetchedType::fetch(arg_type_ptr, &self.type_sets),
+                            actual_type: PrefetchedType::fetch(arg_type_ptr, self.type_sets),
                         });
                     }
                 }
                 EitherOrBoth::Left((arg_type_ptr, arg)) => {
                     extra_parameters.push(ExtraParameter {
                         range: arg.get_source_range(),
-                        type_: PrefetchedType::fetch(arg_type_ptr, &self.type_sets),
+                        type_: PrefetchedType::fetch(arg_type_ptr, self.type_sets),
                     });
                 }
                 EitherOrBoth::Right((param_type_ptr, param_name)) => {
                     missing_parameters.push(MissingParameter {
                         name: param_name.clone(),
                         name_range: None,
-                        type_: PrefetchedType::fetch(*param_type_ptr, &self.type_sets),
+                        type_: PrefetchedType::fetch(*param_type_ptr, self.type_sets),
                     });
                 }
             }
@@ -1345,7 +1321,7 @@ impl TypePropagator<'_> {
         else {
             self.errors.push(ErrorKind::ArrayIndexNonArray {
                 value: array.get_source_range(),
-                wrong_type: PrefetchedType::fetch(array_type, &self.type_sets),
+                wrong_type: PrefetchedType::fetch(array_type, self.type_sets),
             });
             let err_type = self.type_sets.insert_set(RuntimeType {
                 kind: RuntimeTypeKind::Error,
@@ -1363,14 +1339,14 @@ impl TypePropagator<'_> {
             definition_range: None,
         });
 
-        if !RuntimeTypeKind::merge_types(index_type, expected_index_type, &mut self.type_sets) {
+        if !RuntimeTypeKind::merge_types(index_type, expected_index_type, self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::ArrayIndex {
                     array: array.get_source_range(),
                 },
                 value_range: index.get_source_range(),
-                expected_types: vec![PrefetchedType::fetch(expected_index_type, &self.type_sets)],
-                actual_type: PrefetchedType::fetch(index_type, &self.type_sets),
+                expected_types: vec![PrefetchedType::fetch(expected_index_type, self.type_sets)],
+                actual_type: PrefetchedType::fetch(index_type, self.type_sets),
             });
         }
 
@@ -1398,7 +1374,7 @@ impl TypePropagator<'_> {
             if !matches!(self.type_sets.get(value_type).kind, RuntimeTypeKind::Error) {
                 self.errors.push(ErrorKind::StructAccessNonStruct {
                     value: value.get_source_range(),
-                    wrong_type: PrefetchedType::fetch(value_type, &self.type_sets),
+                    wrong_type: PrefetchedType::fetch(value_type, self.type_sets),
                     member: UnresolvedSymbol::from_token(member_name.clone(), member_name_token),
                 });
             }
@@ -1416,7 +1392,7 @@ impl TypePropagator<'_> {
             *member_type
         } else {
             self.errors.push(ErrorKind::NonexistentStructMember {
-                struct_type: PrefetchedType::fetch(value_type, &self.type_sets),
+                struct_type: PrefetchedType::fetch(value_type, self.type_sets),
                 value: value.get_source_range(),
                 member: UnresolvedSymbol::from_token(member_name.clone(), member_name_token),
             });
@@ -1515,7 +1491,7 @@ impl TypePropagator<'_> {
         };
 
         let is_ok = allowed_types.iter().any(|expected_type| {
-            RuntimeTypeKind::merge_types(type_, *expected_type, &mut self.type_sets)
+            RuntimeTypeKind::merge_types(type_, *expected_type, self.type_sets)
         });
 
         if !is_ok {
@@ -1524,9 +1500,9 @@ impl TypePropagator<'_> {
                 value_range: operand.get_source_range(),
                 expected_types: allowed_types
                     .iter()
-                    .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
+                    .map(|ptr| PrefetchedType::fetch(*ptr, self.type_sets))
                     .collect(),
-                actual_type: PrefetchedType::fetch(type_, &self.type_sets),
+                actual_type: PrefetchedType::fetch(type_, self.type_sets),
             });
         }
         let this_type = match operation {
@@ -1863,8 +1839,8 @@ impl TypePropagator<'_> {
             expression_clone,
             from_ptr,
             to_ptr,
-            &mut self.errors,
-            &mut self.type_sets,
+            self.errors,
+            self.type_sets,
         );
 
         self.node_types.insert(*id, to_ptr);
@@ -1930,13 +1906,13 @@ impl TypePropagator<'_> {
         let allowed_types_preserved_right = allowed_gen();
 
         let is_left_ok = allowed_types_left.iter().any(|expected_type| {
-            RuntimeTypeKind::merge_types(left_type, *expected_type, &mut self.type_sets)
+            RuntimeTypeKind::merge_types(left_type, *expected_type, self.type_sets)
         });
         let is_right_ok = allowed_types_right.iter().any(|expected_type| {
-            RuntimeTypeKind::merge_types(right_type, *expected_type, &mut self.type_sets)
+            RuntimeTypeKind::merge_types(right_type, *expected_type, self.type_sets)
         });
 
-        if !RuntimeTypeKind::merge_types(left_type, right_type, &mut self.type_sets)
+        if !RuntimeTypeKind::merge_types(left_type, right_type, self.type_sets)
             || !is_left_ok
             || !is_right_ok
         {
@@ -1946,9 +1922,9 @@ impl TypePropagator<'_> {
                     value_range: left.get_source_range(),
                     expected_types: allowed_types_preserved_left
                         .iter()
-                        .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
+                        .map(|ptr| PrefetchedType::fetch(*ptr, self.type_sets))
                         .collect(),
-                    actual_type: PrefetchedType::fetch(left_type, &self.type_sets),
+                    actual_type: PrefetchedType::fetch(left_type, self.type_sets),
                 });
             }
             if !is_right_ok {
@@ -1957,9 +1933,9 @@ impl TypePropagator<'_> {
                     value_range: right.get_source_range(),
                     expected_types: allowed_types_preserved_right
                         .iter()
-                        .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
+                        .map(|ptr| PrefetchedType::fetch(*ptr, self.type_sets))
                         .collect(),
-                    actual_type: PrefetchedType::fetch(right_type, &self.type_sets),
+                    actual_type: PrefetchedType::fetch(right_type, self.type_sets),
                 });
             }
             if is_left_ok && is_right_ok && left_type != right_type {
@@ -1968,16 +1944,16 @@ impl TypePropagator<'_> {
                         operation: *operation,
                         right_expected_types: allowed_types_preserved_right
                             .iter()
-                            .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
+                            .map(|ptr| PrefetchedType::fetch(*ptr, self.type_sets))
                             .collect(),
-                        right_actual_type: PrefetchedType::fetch(right_type, &self.type_sets),
+                        right_actual_type: PrefetchedType::fetch(right_type, self.type_sets),
                     },
                     value_range: expression_clone.get_source_range(),
                     expected_types: allowed_types_preserved_left
                         .iter()
-                        .map(|ptr| PrefetchedType::fetch(*ptr, &self.type_sets))
+                        .map(|ptr| PrefetchedType::fetch(*ptr, self.type_sets))
                         .collect(),
-                    actual_type: PrefetchedType::fetch(left_type, &self.type_sets),
+                    actual_type: PrefetchedType::fetch(left_type, self.type_sets),
                 });
             }
 
@@ -2024,14 +2000,14 @@ impl TypePropagator<'_> {
         let left_type = self.typecheck_lvalue(lvalue);
         let right_type = self.typecheck_expression(right);
 
-        if !RuntimeTypeKind::merge_types(left_type, right_type, &mut self.type_sets) {
+        if !RuntimeTypeKind::merge_types(left_type, right_type, self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::LValueAssignment {
                     lvalue: lvalue.get_source_range(),
                 },
                 value_range: right.get_source_range(),
-                expected_types: vec![PrefetchedType::fetch(left_type, &self.type_sets)],
-                actual_type: PrefetchedType::fetch(right_type, &self.type_sets),
+                expected_types: vec![PrefetchedType::fetch(left_type, self.type_sets)],
+                actual_type: PrefetchedType::fetch(right_type, self.type_sets),
             });
         }
 
@@ -2082,7 +2058,7 @@ impl TypePropagator<'_> {
         else {
             self.errors.push(ErrorKind::ArrayIndexNonArray {
                 value: array.get_source_range(),
-                wrong_type: PrefetchedType::fetch(array_type, &self.type_sets),
+                wrong_type: PrefetchedType::fetch(array_type, self.type_sets),
             });
             let err_type = self.type_sets.insert_set(RuntimeType {
                 kind: RuntimeTypeKind::Error,
@@ -2100,14 +2076,14 @@ impl TypePropagator<'_> {
             definition_range: None,
         });
 
-        if !RuntimeTypeKind::merge_types(index_type, expected_type, &mut self.type_sets) {
+        if !RuntimeTypeKind::merge_types(index_type, expected_type, self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
                 kind: TypeMismatchKind::ArrayIndex {
                     array: array.get_source_range(),
                 },
                 value_range: index.get_source_range(),
-                expected_types: vec![PrefetchedType::fetch(expected_type, &self.type_sets)],
-                actual_type: PrefetchedType::fetch(index_type, &self.type_sets),
+                expected_types: vec![PrefetchedType::fetch(expected_type, self.type_sets)],
+                actual_type: PrefetchedType::fetch(index_type, self.type_sets),
             });
         }
 
@@ -2135,7 +2111,7 @@ impl TypePropagator<'_> {
             if !matches!(self.type_sets.get(value_type).kind, RuntimeTypeKind::Error) {
                 self.errors.push(ErrorKind::StructAccessNonStruct {
                     value: value.get_source_range(),
-                    wrong_type: PrefetchedType::fetch(value_type, &self.type_sets),
+                    wrong_type: PrefetchedType::fetch(value_type, self.type_sets),
                     member: UnresolvedSymbol::from_token(member_name.clone(), member_name_token),
                 });
             }
@@ -2153,7 +2129,7 @@ impl TypePropagator<'_> {
             *member_type
         } else {
             self.errors.push(ErrorKind::NonexistentStructMember {
-                struct_type: PrefetchedType::fetch(value_type, &self.type_sets),
+                struct_type: PrefetchedType::fetch(value_type, self.type_sets),
                 value: value.get_source_range(),
                 member: UnresolvedSymbol::from_token(member_name.clone(), member_name_token),
             });
@@ -2254,7 +2230,7 @@ impl TypePropagator<'_> {
         if matches!(self.type_sets.get(subtype_t).kind, RuntimeTypeKind::Unit) {
             self.errors.push(ErrorKind::ArrayOfUnit {
                 type_range: array_type_range.clone(),
-                element_type: PrefetchedType::fetch(subtype_t, &self.type_sets),
+                element_type: PrefetchedType::fetch(subtype_t, self.type_sets),
             });
         }
 
@@ -2268,7 +2244,7 @@ impl TypePropagator<'_> {
                 // TODO: once we have consteval, relax this restriction
                 self.errors.push(ErrorKind::NonLiteralArrayLength {
                     type_range: array_type_range.clone(),
-                    element_type: PrefetchedType::fetch(subtype_t, &self.type_sets),
+                    element_type: PrefetchedType::fetch(subtype_t, self.type_sets),
                     length_range: expr.get_source_range(),
                 });
                 None
@@ -2321,7 +2297,7 @@ impl TypePropagator<'_> {
             if matches!(self.type_sets.get(subtype).kind, RuntimeTypeKind::Unit) {
                 self.errors.push(ErrorKind::StructOfUnit {
                     member: SymbolDefinition::from_token(name.clone(), name_token),
-                    type_: PrefetchedType::fetch(subtype, &self.type_sets),
+                    type_: PrefetchedType::fetch(subtype, self.type_sets),
                     type_range: type_.get_source_range(),
                 });
             }
@@ -2372,8 +2348,7 @@ impl TypePropagator<'_> {
             definition_range: Some(name_token.range.clone()),
         });
 
-        let _ =
-            RuntimeTypeKind::merge_types(properly_ranged_type, *aliased_type, &mut self.type_sets);
+        let _ = RuntimeTypeKind::merge_types(properly_ranged_type, *aliased_type, self.type_sets);
 
         self.node_types.insert(*id, properly_ranged_type);
         *aliased_type

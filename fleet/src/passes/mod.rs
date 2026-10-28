@@ -5,6 +5,7 @@ pub mod find_containing_node;
 pub mod find_node_by_id;
 pub mod fix_non_block_statements;
 pub mod fix_trailing_comma;
+pub mod global_state;
 pub mod lint_variable_names;
 pub mod lvalue_reducer;
 pub mod partial_visitor;

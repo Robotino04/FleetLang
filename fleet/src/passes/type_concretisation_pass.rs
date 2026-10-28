@@ -1,18 +1,15 @@
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    collections::HashMap,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
     ast::{HasSourceRange, Program},
     error_reporting::{ErrorKind, Errors, PrefetchedType},
     passes::{
         find_node_by_id::find_node_by_id,
+        global_state::{FetchError, Fetched, GlobalState},
         pass_manager::{
             ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData, ConcreteVariableData,
-            FunctionData, GlobalState, Pass, PassError, PassFactory, PassResult, ScopeData,
-            TypeData, TypeSets, VariableData,
+            FunctionData, Pass, PassError, PassFactory, PassResult, ScopeData, TypeData, TypeSets,
+            VariableData,
         },
         runtime_type::{ConcreteRuntimeType, RuntimeType, RuntimeTypeKind},
         scope_analysis::{
@@ -24,22 +21,22 @@ use crate::{
     tokenizer::{NamedSourceRange, SourceRange},
 };
 pub struct TypeConcretisationPass<'state> {
-    errors: RefMut<'state, Errors>,
-    //source: Ref<'state, InputSource>,
-    program: RefMut<'state, Program>,
+    errors: &'state mut Errors,
+    //source: &'state InputSource,
+    program: &'state mut Program,
 
-    referenced_variable: Ref<'state, VariableData>,
-    referenced_function: Ref<'state, FunctionData>,
-    contained_scope: Ref<'state, ScopeData>,
-    type_sets: Ref<'state, TypeSets>,
-    type_data: Ref<'state, TypeData>,
+    referenced_variable: &'state VariableData,
+    referenced_function: &'state FunctionData,
+    contained_scope: &'state ScopeData,
+    type_sets: &'state TypeSets,
+    type_data: &'state TypeData,
 
     visited_types: HashMap<UnionFindSetPtr<RuntimeType>, Option<ConcreteRuntimeType>>,
 
-    concrete_referenced_variable: RefMut<'state, ConcreteVariableData>,
-    concrete_referenced_function: RefMut<'state, ConcreteFunctionData>,
-    concrete_contained_scope: RefMut<'state, ConcreteScopeData>,
-    concrete_type_data: RefMut<'state, ConcreteTypeData>,
+    concrete_referenced_variable: &'state mut ConcreteVariableData,
+    concrete_referenced_function: &'state mut ConcreteFunctionData,
+    concrete_contained_scope: &'state mut ConcreteScopeData,
+    concrete_type_data: &'state mut ConcreteTypeData,
 
     concrete_variable_by_id: HashMap<VariableID, Rc<RefCell<ConcreteVariable>>>,
     concrete_scope_by_id: HashMap<ScopeID, Rc<RefCell<ConcreteVariableScope>>>,
@@ -52,39 +49,36 @@ impl PassFactory for TypeConcretisationPass<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String> {
-        let errors = state.check_named()?;
-        let program = state.check_named()?;
-        //let source = state.check_named()?;
-
-        let referenced_variable = state.check_named()?;
-        let referenced_function = state.check_named()?;
-        let contained_scope = state.check_named()?;
-        let type_sets = state.check_named()?;
-        let type_data = state.check_named()?;
-
-        let concrete_referenced_variable = state.insert_default();
-        let concrete_referenced_function = state.insert_default();
-        let concrete_contained_scope = state.insert_default();
-        let concrete_type_data = state.insert_default();
+    ) -> Result<Self::Output<'state>, FetchError> {
+        let Fetched {
+            read: (referenced_variable, referenced_function, contained_scope, type_sets, type_data),
+            write: (errors, program),
+            empty:
+                (
+                    concrete_referenced_variable,
+                    concrete_referenced_function,
+                    concrete_contained_scope,
+                    concrete_type_data,
+                ),
+        } = state.fetch()?;
 
         Ok(Self::Output {
-            errors: errors.get_mut(state),
+            errors,
             //source: source.get(state),
-            program: program.get_mut(state),
+            program,
 
-            referenced_variable: referenced_variable.get(state),
-            referenced_function: referenced_function.get(state),
-            contained_scope: contained_scope.get(state),
-            type_sets: type_sets.get(state),
-            type_data: type_data.get(state),
+            referenced_variable,
+            referenced_function,
+            contained_scope,
+            type_sets,
+            type_data,
 
             visited_types: Default::default(),
 
-            concrete_referenced_variable: concrete_referenced_variable.get_mut(state),
-            concrete_referenced_function: concrete_referenced_function.get_mut(state),
-            concrete_contained_scope: concrete_contained_scope.get_mut(state),
-            concrete_type_data: concrete_type_data.get_mut(state),
+            concrete_referenced_variable: concrete_referenced_variable.insert_default(),
+            concrete_referenced_function: concrete_referenced_function.insert_default(),
+            concrete_contained_scope: concrete_contained_scope.insert_default(),
+            concrete_type_data: concrete_type_data.insert_default(),
 
             concrete_variable_by_id: Default::default(),
             concrete_scope_by_id: Default::default(),
@@ -175,7 +169,7 @@ impl TypeConcretisationPass<'_> {
                 | RuntimeTypeKind::Number { .. } => {
                     self.errors.push(ErrorKind::IncompleteTypeInference {
                         range: type_.definition_range.clone().unwrap_or(parent_range),
-                        best_guess: Some(PrefetchedType::fetch(type_ptr, &self.type_sets)),
+                        best_guess: Some(PrefetchedType::fetch(type_ptr, self.type_sets)),
                     });
                     return None;
                 }
@@ -266,7 +260,7 @@ impl TypeConcretisationPass<'_> {
 impl Pass for TypeConcretisationPass<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let mut failure = false;
-        for (id, var) in self.referenced_variable.clone().iter() {
+        for (id, var) in self.referenced_variable.iter() {
             let Some(var) = self.concretisize_variable(var) else {
                 failure = true;
                 continue;
@@ -274,7 +268,7 @@ impl Pass for TypeConcretisationPass<'_> {
 
             self.concrete_referenced_variable.insert(*id, var);
         }
-        for (id, type_) in self.type_data.clone().iter() {
+        for (id, type_) in self.type_data.iter() {
             let parent_range = find_node_by_id(&mut *self.program, *id)
                 .map(|node| node.get_source_range())
                 .unwrap_or_else(|| {
@@ -288,7 +282,7 @@ impl Pass for TypeConcretisationPass<'_> {
 
             self.concrete_type_data.insert(*id, type_);
         }
-        for (id, func) in self.referenced_function.clone().iter() {
+        for (id, func) in self.referenced_function.iter() {
             let Some(func) = self.concretisize_function(func) else {
                 failure = true;
                 continue;
@@ -297,7 +291,7 @@ impl Pass for TypeConcretisationPass<'_> {
             self.concrete_referenced_function
                 .insert(*id, Rc::new(RefCell::new(func)));
         }
-        for (id, scope) in self.contained_scope.clone().iter() {
+        for (id, scope) in self.contained_scope.iter() {
             let Some(scope) = self.concretisize_scope(scope.clone()) else {
                 failure = true;
                 continue;

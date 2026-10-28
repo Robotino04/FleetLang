@@ -1,5 +1,3 @@
-use std::cell::RefMut;
-
 use itertools::Itertools;
 
 use crate::{
@@ -18,13 +16,16 @@ use crate::{
     define_dispatch_methods,
     document_model::DocumentElement,
     escape::{QuoteType, escape},
-    passes::pass_manager::{GlobalState, Pass, PassFactory, PassResult},
+    passes::{
+        global_state::{Empty, FetchError, Fetched, GlobalState},
+        pass_manager::{Pass, PassFactory, PassResult},
+    },
     tokenizer::{Keyword, Token, TokenType, Trivia, TriviaKind},
 };
 
 pub struct AstToDocumentModelConverter<'state> {
-    program: Option<RefMut<'state, Program>>,
-    output_de: Option<RefMut<'state, DocumentElement>>,
+    program: Option<&'state mut Program>,
+    output_de: Empty<'state, DocumentElement>,
 
     /// Stores if newlines in the trivia are currently allowed at the start
     is_first_in_statement: bool,
@@ -37,26 +38,28 @@ impl PassFactory for AstToDocumentModelConverter<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String>
+    ) -> Result<Self::Output<'state>, FetchError>
     where
         Self: Sized,
     {
-        let program = state.check_named()?;
-
-        let output_de = state.insert(DocumentElement::empty());
+        let Fetched {
+            read: (),
+            write: (program,),
+            empty: (output_de,),
+        } = state.fetch()?;
 
         Ok(Self::Output {
-            program: Some(program.get_mut(state)),
-            output_de: Some(output_de.get_mut(state)),
+            program: Some(program),
+            output_de,
             is_first_in_statement: false,
         })
     }
 }
 impl Pass for AstToDocumentModelConverter<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
-        let mut program = self.program.take().unwrap();
-        let mut output_de = self.output_de.take().unwrap();
-        *output_de = self.convert_program(&mut program);
+        let program = self.program.take().unwrap();
+        let output = self.convert_program(program);
+        self.output_de.insert(output);
 
         Ok(())
     }

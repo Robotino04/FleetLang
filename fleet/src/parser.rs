@@ -1,5 +1,3 @@
-use std::cell::{Ref, RefMut};
-
 use either::Either;
 use itertools::Itertools;
 use log::{error, warn};
@@ -21,7 +19,8 @@ use crate::{
     },
     error_reporting::{ErrorKind, Errors},
     passes::{
-        pass_manager::{GlobalState, InputSource, Pass, PassFactory, PassResult},
+        global_state::{FetchError, Fetched, GlobalState},
+        pass_manager::{InputSource, Pass, PassFactory, PassResult},
         runtime_type::{RuntimeType, RuntimeTypeKind},
         scope_analysis::{FunctionID, ScopeID, VariableID},
     },
@@ -76,11 +75,11 @@ impl Default for IdGenerator {
 
 #[derive(Debug)]
 pub struct Parser<'state> {
-    errors: RefMut<'state, Errors>,
-    tokens: Ref<'state, Vec<Token>>,
+    errors: &'state mut Errors,
+    tokens: &'state Vec<Token>,
 
-    id_generator: RefMut<'state, IdGenerator>,
-    program: RefMut<'state, Program>,
+    id_generator: &'state mut IdGenerator,
+    program: &'state mut Program,
 
     index: usize,
 }
@@ -92,37 +91,37 @@ impl PassFactory for Parser<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> ::core::result::Result<Self::Output<'state>, String>
+    ) -> ::core::result::Result<Self::Output<'state>, FetchError>
     where
         Self: Sized,
     {
-        let tokens = state.check_named::<Vec<Token>>()?;
-        let errors = state.check_named()?;
+        let Fetched {
+            read: (tokens, input),
+            write: (errors,),
+            empty: (program, id_generator),
+        } = state.fetch()?;
 
-        let mut id_generator = IdGenerator::default();
-        let file_name = state.get_named::<InputSource>()?.file_name.clone();
-        let program = state.insert(Program {
+        let id_generator = id_generator.insert_default::<IdGenerator>();
+        let input: &InputSource = input;
+
+        let program = program.insert(Program {
             top_level_statements: vec![],
             id: id_generator.next_node_id(),
-            file_name,
+            file_name: input.file_name.clone(),
         });
-        let id_generator = state.insert(id_generator);
-
-        let tokens = tokens.get(state);
-        let index = tokens
-            .iter()
-            .find_position(|token| !matches!(token.type_, TokenType::UnknownCharacters(_)))
-            .map(|(index, _)| index)
-            .unwrap_or(tokens.len()); // all unknown characters means we treat this like an empty vec
 
         Ok(Self::Output {
-            errors: errors.get_mut(state),
+            errors,
             tokens,
 
-            program: program.get_mut(state),
-            id_generator: id_generator.get_mut(state),
+            program,
+            id_generator,
 
-            index,
+            index: tokens
+                .iter()
+                .find_position(|token| !matches!(token.type_, TokenType::UnknownCharacters(_)))
+                .map(|(index, _)| index)
+                .unwrap_or(tokens.len()), // all unknown characters means we treat this like an empty vec,
         })
     }
 }
@@ -252,9 +251,9 @@ impl<'state> Parser<'state> {
     {
         let mut tmp_errors = vec![];
         let tmp_index = self.index;
-        std::mem::swap(&mut tmp_errors, &mut self.errors);
+        std::mem::swap(&mut tmp_errors, self.errors);
         let result = callback(self);
-        std::mem::swap(&mut tmp_errors, &mut self.errors);
+        std::mem::swap(&mut tmp_errors, self.errors);
 
         match result {
             Some(ok) => {

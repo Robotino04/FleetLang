@@ -1,4 +1,4 @@
-use std::{cell::RefMut, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 use itertools::Itertools;
 
@@ -8,16 +8,17 @@ use crate::{
     },
     error_reporting::{ErrorKind, Errors, Lint, SymbolDefinition},
     passes::{
+        global_state::{FetchError, Fetched, GlobalState},
         partial_visitor::AstWalker,
         pass_manager::{Pass, PassFactory, PassResult},
     },
 };
 
-use super::{partial_visitor::PartialAstVisitor, pass_manager::GlobalState};
+use super::partial_visitor::PartialAstVisitor;
 
 pub struct LintVariableNaming<'state> {
-    errors: RefMut<'state, Errors>,
-    program: Option<RefMut<'state, Program>>,
+    errors: &'state mut Errors,
+    program: Option<&'state mut Program>,
 }
 
 impl PassFactory for LintVariableNaming<'_> {
@@ -27,13 +28,19 @@ impl PassFactory for LintVariableNaming<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String>
+    ) -> Result<Self::Output<'state>, FetchError>
     where
         Self: Sized,
     {
+        let Fetched {
+            read: (),
+            write: (errors, program),
+            empty: (),
+        } = state.fetch()?;
+
         Ok(Self::Output {
-            errors: state.get_mut_named::<Errors>()?,
-            program: Some(state.get_mut_named::<Program>()?),
+            errors,
+            program: Some(program),
         })
     }
 }

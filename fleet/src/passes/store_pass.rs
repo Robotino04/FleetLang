@@ -5,9 +5,12 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::passes::pass_manager::{CheckedEntry, EmptyEntry, Pass, PassFactory};
+use crate::passes::{
+    global_state::{Empty, FetchError, Fetched, GlobalState},
+    pass_manager::{Pass, PassFactory},
+};
 
-use super::pass_manager::{GlobalState, PassResult};
+use super::pass_manager::PassResult;
 
 /// Copies the data in `From` to `To`
 ///
@@ -25,9 +28,8 @@ where
     To: DerefMut<Target: Sized> + ::core::convert::From<<To as Deref>::Target>,
     From: Borrow<<To as Deref>::Target>,
 {
-    from: CheckedEntry<From>,
-    to: EmptyEntry<To>,
-    state: &'state mut GlobalState,
+    from: &'state From,
+    to: Empty<'state, To>,
 }
 
 impl<From, To> PassFactory for StorePass<From, To>
@@ -41,7 +43,7 @@ where
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String>
+    ) -> Result<Self::Output<'state>, FetchError>
     where
         Self: Sized,
     {
@@ -51,10 +53,13 @@ where
             "Cannot store a value into itself",
         );
 
-        let from = state.check_named::<From>()?;
-        let to = state.check_empty_named::<To>()?;
+        let Fetched {
+            read: (from,),
+            write: (),
+            empty: (to,),
+        } = state.fetch()?;
 
-        Ok(Self::Output { from, to, state })
+        Ok(Self::Output { from, to })
     }
 }
 
@@ -64,8 +69,7 @@ where
     From: Borrow<<To as Deref>::Target> + 'static,
 {
     fn run(self: Box<Self>) -> PassResult {
-        let from = self.from.get(self.state).deref().borrow().clone();
-        self.to.set(self.state, from.into());
+        self.to.insert(self.from.borrow().clone().into());
 
         Ok(())
     }

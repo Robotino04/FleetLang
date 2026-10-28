@@ -1,19 +1,20 @@
-use std::{cell::RefMut, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 use crate::{
     ast::{FunctionDefinition, Program},
     error_reporting::{ErrorKind, Errors, SymbolDefinition},
     passes::{
+        global_state::{FetchError, GlobalState},
         partial_visitor::AstWalker,
         pass_manager::{Pass, PassFactory, PassResult},
     },
 };
 
-use super::{partial_visitor::PartialAstVisitor, pass_manager::GlobalState};
+use super::{global_state::Fetched, partial_visitor::PartialAstVisitor};
 
 pub struct ErrMissingTypeInParam<'state> {
-    errors: RefMut<'state, Errors>,
-    program: Option<RefMut<'state, Program>>,
+    errors: &'state mut Errors,
+    program: Option<&'state mut Program>,
 }
 
 impl PassFactory for ErrMissingTypeInParam<'_> {
@@ -23,13 +24,19 @@ impl PassFactory for ErrMissingTypeInParam<'_> {
     fn try_new<'state>(
         state: &'state mut GlobalState,
         _params: Self::Params,
-    ) -> Result<Self::Output<'state>, String>
+    ) -> Result<Self::Output<'state>, FetchError>
     where
         Self: Sized,
     {
+        let Fetched {
+            read: (),
+            write: (errors, program),
+            empty: (),
+        } = state.fetch()?;
+
         Ok(Self::Output {
-            errors: state.get_mut_named::<Errors>()?,
-            program: Some(state.get_mut_named::<Program>()?),
+            errors,
+            program: Some(program),
         })
     }
 }

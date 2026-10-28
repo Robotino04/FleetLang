@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::{fs::read_to_string, process::exit};
@@ -117,7 +118,7 @@ fn main() {
     let source = src.to_string();
     let file_name: FileName = cli.input_file.to_string_lossy().to_string().into();
 
-    let documents = vec![(file_name.clone(), source.clone())]
+    let documents: HashMap<_, _> = vec![(file_name.clone(), source.clone())]
         .into_iter()
         .collect();
 
@@ -255,13 +256,13 @@ fn main() {
     pm.insert::<AstToDocumentModelConverter>();
     pm.insert::<SwapPass<Program, FixedProgram>>();
 
-    let errors = pm.state.insert_default::<Errors>();
-    pm.state.insert(InputSource { source, file_name });
-    let _target_machine = pm.state.insert(target_machine);
+    pm.state.insert_default::<Errors>().unwrap();
+    pm.state.insert(InputSource { source, file_name }).unwrap();
+    pm.state.insert(target_machine).unwrap();
 
     match pm.run() {
         Err(err @ (PassError::CompilerError { .. } | PassError::PassManagerStall { .. })) => {
-            let mut errors = errors.get(&pm.state).clone();
+            let errors = pm.state.get_mut::<Errors>().unwrap();
             eprintln!(
                 "{}",
                 errors.format_all_errors_and_message(
@@ -274,7 +275,7 @@ fn main() {
             exit(1);
         }
         Err(PassError::InvalidInput { .. }) => {
-            let mut errors = errors.get(&pm.state).clone();
+            let errors = pm.state.get_mut::<Errors>().unwrap();
             eprintln!(
                 "{}",
                 errors.format_all_errors_and_message("Program has errors", &documents, true),
@@ -284,7 +285,7 @@ fn main() {
         Ok(()) => (),
     };
 
-    let mut errors = errors.get(&pm.state).clone();
+    let errors = pm.state.get_mut::<Errors>().unwrap();
     if errors
         .iter()
         .any(|err| err.severity() == ErrorSeverity::Error)
