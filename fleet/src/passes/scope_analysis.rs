@@ -15,11 +15,11 @@ use crate::{
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, HasSourceRange,
-        IdkType, IfStatement, LiteralExpression, NodeID, OnStatement, OnStatementIterator,
-        PerNodeData, Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, StructAccessExpression, StructAccessLValue,
-        StructExpression, StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor,
-        TopLevelStatement, TypeAlias, UnaryExpression, UnitType, VariableAccessExpression,
+        IdkType, IfStatement, LiteralExpression, NodeID, OnStatement, OnStatementIterator, Program,
+        ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
+        StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
+        StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor, TopLevelStatement,
+        TypeAlias, UnaryExpression, UnitType, VariableAccessExpression,
         VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
         WhileLoopStatement,
     },
@@ -492,7 +492,7 @@ pub enum EvaluationTime {
     Any,
 }
 
-NewtypeDeref!(pub ComptimeDeps, PerNodeData<(EvaluationTime, Vec<NodeID>)>);
+NewtypeDeref!(pub ComptimeDeps, HashMap<NodeID, (EvaluationTime, Vec<NodeID>)>);
 
 impl ComptimeDeps {
     pub fn get_or_init(&mut self, key: NodeID) -> &mut (EvaluationTime, Vec<NodeID>) {

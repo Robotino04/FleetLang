@@ -1,11 +1,12 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, ops::ControlFlow, rc::Rc};
 
 use crate::{
-    ast::{HasSourceRange, Program},
+    ast::{Expression, HasSourceRange, LValue, Program, SimpleBinding, Type},
     error_reporting::{ErrorKind, Errors, PrefetchedType},
+    node_data::{CanStoreData, HasData, PerNodeData},
     passes::{
-        find_node_by_id::find_node_by_id,
-        global_state::{FetchError, Fetched, GlobalState},
+        global_state::{Empty, FetchError, Fetched, GlobalState},
+        partial_visitor::{AstWalker, PartialAstVisitor},
         pass_manager::{
             ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData, ConcreteVariableData,
             FunctionData, Pass, PassError, PassFactory, PassResult, ScopeData, TypeData, TypeSets,
@@ -18,12 +19,12 @@ use crate::{
         },
         union_find_set::UnionFindSetPtr,
     },
-    tokenizer::{NamedSourceRange, SourceRange},
+    tokenizer::NamedSourceRange,
 };
 pub struct TypeConcretisationPass<'state> {
     errors: &'state mut Errors,
     //source: &'state InputSource,
-    program: &'state mut Program,
+    program: Option<&'state mut Program>,
 
     referenced_variable: &'state VariableData,
     referenced_function: &'state FunctionData,
@@ -36,10 +37,13 @@ pub struct TypeConcretisationPass<'state> {
     concrete_referenced_variable: &'state mut ConcreteVariableData,
     concrete_referenced_function: &'state mut ConcreteFunctionData,
     concrete_contained_scope: &'state mut ConcreteScopeData,
-    concrete_type_data: &'state mut ConcreteTypeData,
+    concrete_type_data: PerNodeData<ConcreteTypeData>,
+    concrete_type_data_entry: Empty<'state, ConcreteTypeData>,
 
     concrete_variable_by_id: HashMap<VariableID, Rc<RefCell<ConcreteVariable>>>,
     concrete_scope_by_id: HashMap<ScopeID, Rc<RefCell<ConcreteVariableScope>>>,
+
+    failure: bool,
 }
 
 impl PassFactory for TypeConcretisationPass<'_> {
@@ -58,14 +62,13 @@ impl PassFactory for TypeConcretisationPass<'_> {
                     concrete_referenced_variable,
                     concrete_referenced_function,
                     concrete_contained_scope,
-                    concrete_type_data,
+                    concrete_type_data_entry,
                 ),
         } = state.fetch()?;
 
         Ok(Self::Output {
             errors,
-            //source: source.get(state),
-            program,
+            program: Some(program),
 
             referenced_variable,
             referenced_function,
@@ -78,10 +81,13 @@ impl PassFactory for TypeConcretisationPass<'_> {
             concrete_referenced_variable: concrete_referenced_variable.insert_default(),
             concrete_referenced_function: concrete_referenced_function.insert_default(),
             concrete_contained_scope: concrete_contained_scope.insert_default(),
-            concrete_type_data: concrete_type_data.insert_default(),
+            concrete_type_data: Default::default(),
+            concrete_type_data_entry,
 
             concrete_variable_by_id: Default::default(),
             concrete_scope_by_id: Default::default(),
+
+            failure: false,
         })
     }
 }
@@ -255,36 +261,39 @@ impl TypeConcretisationPass<'_> {
 
         // TODO: actually cache scope
     }
+
+    fn concretisize_node<H>(&mut self, node: &mut H)
+    where
+        H: HasData<TypeData, Data = UnionFindSetPtr<RuntimeType>>
+            + CanStoreData<ConcreteTypeData, Data = ConcreteRuntimeType>
+            + HasSourceRange,
+    {
+        match self.concretisize_type(*self.type_data.get(node), node.get_source_range()) {
+            Some(type_) => {
+                self.concrete_type_data.insert(node, type_);
+            }
+            None => {
+                self.failure = true;
+            }
+        }
+    }
 }
 
 impl Pass for TypeConcretisationPass<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
-        let mut failure = false;
+        let program = self.program.take().unwrap();
+        let _ = self.visit_program(program);
         for (id, var) in self.referenced_variable.iter() {
             let Some(var) = self.concretisize_variable(var) else {
-                failure = true;
+                self.failure = true;
                 continue;
             };
 
             self.concrete_referenced_variable.insert(*id, var);
         }
-        for (id, type_) in self.type_data.iter() {
-            let parent_range = find_node_by_id(&mut *self.program, *id)
-                .map(|node| node.get_source_range())
-                .unwrap_or_else(|| {
-                    SourceRange::empty_start().named(self.program.file_name.clone())
-                });
-
-            let Some(type_) = self.concretisize_type(*type_, parent_range) else {
-                failure = true;
-                continue;
-            };
-
-            self.concrete_type_data.insert(*id, type_);
-        }
         for (id, func) in self.referenced_function.iter() {
             let Some(func) = self.concretisize_function(func) else {
-                failure = true;
+                self.failure = true;
                 continue;
             };
 
@@ -293,19 +302,56 @@ impl Pass for TypeConcretisationPass<'_> {
         }
         for (id, scope) in self.contained_scope.iter() {
             let Some(scope) = self.concretisize_scope(scope.clone()) else {
-                failure = true;
+                self.failure = true;
                 continue;
             };
 
             self.concrete_contained_scope.insert(*id, scope);
         }
-        if failure {
+        if self.failure {
             return Err(PassError::InvalidInput {
                 producing_pass: Self::name(),
                 source: "Not all types could be concretisized".into(),
             });
         }
 
+        self.concrete_type_data_entry.insert(
+            self.concrete_type_data
+                .finish(program)
+                .map_err(|err| PassError::CompilerError {
+                    producing_pass: Self::name(),
+                    source: err.into(),
+                })?
+                .into(),
+        );
+
         Ok(())
+    }
+}
+
+impl PartialAstVisitor for TypeConcretisationPass<'_> {
+    type Break<'a> = ();
+
+    fn visit_type<'a>(&mut self, ty: &'a mut Type) -> ControlFlow<Self::Break<'a>> {
+        self.concretisize_node(ty);
+        self.walk_type(ty)
+    }
+
+    fn visit_expression<'a>(&mut self, expr: &'a mut Expression) -> ControlFlow<Self::Break<'a>> {
+        self.concretisize_node(expr);
+        self.walk_expression(expr)
+    }
+
+    fn visit_simple_binding<'a>(
+        &mut self,
+        binding: &'a mut SimpleBinding,
+    ) -> ControlFlow<Self::Break<'a>> {
+        self.concretisize_node(binding);
+        self.walk_simple_binding(binding)
+    }
+
+    fn visit_lvalue<'a>(&mut self, lvalue: &'a mut LValue) -> ControlFlow<Self::Break<'a>> {
+        self.concretisize_node(lvalue);
+        self.walk_lvalue(lvalue)
     }
 }

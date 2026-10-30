@@ -773,6 +773,9 @@ pub enum TypeMismatchKind {
     ArrayIndex {
         array: NamedSourceRange,
     },
+    ArrayTypeSize {
+        array: NamedSourceRange,
+    },
     BinaryOperationLeft(BinaryOperation),
     BinaryOperationRight(BinaryOperation),
     BinaryOperation {
@@ -1624,6 +1627,13 @@ impl ErrorKind {
                         "type mismatch".to_string(),
                         format!(
                             "Indexing into an array is done using {expected_types_str}, not {actual_type}."
+                        ),
+                    ),
+                    TypeMismatchKind::ArrayTypeSize { array: _ } => (
+                        vec![],
+                        "type mismatch".to_string(),
+                        format!(
+                            "The size of an array is specified using {expected_types_str}, not {actual_type}."
                         ),
                     ),
                     TypeMismatchKind::BinaryOperationLeft(binary_operation) => (

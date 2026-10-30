@@ -14,7 +14,8 @@ use log::{info, warn};
 use thiserror::Error;
 
 use crate::{
-    ast::PerNodeData,
+    ast::NodeID,
+    node_data::{FinalPerNodeData, NodeDataSpecGroups},
     passes::{
         global_state::{FetchError, GlobalState},
         runtime_type::{ConcreteRuntimeType, RuntimeType},
@@ -85,18 +86,45 @@ macro_rules! NewtypeDeref {
 pub use NewtypeDeref;
 pub use NewtypeDerefNoDefault;
 
-NewtypeDeref!(pub VariableData, PerNodeData<Rc<RefCell<Variable>>>);
-NewtypeDeref!(pub FunctionData, PerNodeData<Rc<RefCell<Function>>>);
-NewtypeDeref!(pub TypeData, PerNodeData<UnionFindSetPtr<RuntimeType>>);
+impl NodeDataSpecGroups for TypeData {
+    type Program = ();
+    type TopLevelStatement = ();
+    type FunctionBody = ();
+    type SimpleBinding = UnionFindSetPtr<RuntimeType>;
+    type Statement = ();
+    type ExecutorHost = ();
+    type Executor = ();
+    type Expression = UnionFindSetPtr<RuntimeType>;
+    type LValue = UnionFindSetPtr<RuntimeType>;
+    type Type = UnionFindSetPtr<RuntimeType>;
+}
+
+// TODO: distribute these to their generating pass
+NewtypeDeref!(pub VariableData, HashMap<NodeID, Rc<RefCell<Variable>>>);
+NewtypeDeref!(pub FunctionData, HashMap<NodeID, Rc<RefCell<Function>>>);
+NewtypeDerefNoDefault!(pub TypeData, FinalPerNodeData<TypeData>);
 NewtypeDeref!(pub TypeSets, UnionFindSet<RuntimeType>);
-NewtypeDeref!(pub ScopeData, PerNodeData<Rc<RefCell<VariableScope>>>);
+NewtypeDeref!(pub ScopeData, HashMap<NodeID, Rc<RefCell<VariableScope>>>);
 
-NewtypeDeref!(pub ConcreteVariableData, PerNodeData<Rc<RefCell<ConcreteVariable>>>);
-NewtypeDeref!(pub ConcreteFunctionData, PerNodeData<Rc<RefCell<ConcreteFunction>>>);
-NewtypeDeref!(pub ConcreteTypeData, PerNodeData<ConcreteRuntimeType>);
-NewtypeDeref!(pub ConcreteScopeData, PerNodeData<Rc<RefCell<ConcreteVariableScope>>>);
+impl NodeDataSpecGroups for ConcreteTypeData {
+    type Program = ();
+    type TopLevelStatement = ();
+    type FunctionBody = ();
+    type SimpleBinding = ConcreteRuntimeType;
+    type Statement = ();
+    type ExecutorHost = ();
+    type Executor = ();
+    type Expression = ConcreteRuntimeType;
+    type LValue = ConcreteRuntimeType;
+    type Type = ConcreteRuntimeType;
+}
 
-NewtypeDeref!(pub StatData, PerNodeData<NodeStats>);
+NewtypeDeref!(pub ConcreteVariableData, HashMap<NodeID, Rc<RefCell<ConcreteVariable>>>);
+NewtypeDeref!(pub ConcreteFunctionData, HashMap<NodeID, Rc<RefCell<ConcreteFunction>>>);
+NewtypeDerefNoDefault!(pub ConcreteTypeData, FinalPerNodeData<ConcreteTypeData>);
+NewtypeDeref!(pub ConcreteScopeData, HashMap<NodeID, Rc<RefCell<ConcreteVariableScope>>>);
+
+NewtypeDeref!(pub StatData, HashMap<NodeID, NodeStats>);
 NewtypeDeref!(pub StructAliasMap, HashMap<String, (usize, String)>, Clone);
 NewtypeDeref!(pub PrecompiledGlslFunctions, (HashMap<FunctionID, (String, String)>, StructAliasMap, u64), Clone);
 NewtypeDeref!(pub CCodeOutput, String);

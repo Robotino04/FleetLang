@@ -1,10 +1,7 @@
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    ops::{Deref, DerefMut},
-};
+use std::fmt::Debug;
 
 use crate::{
+    node_data::{CanStoreData, HasData, NodeDataEnum, NodeDataSpec},
     passes::runtime_type::RuntimeType,
     tokenizer::{FileName, NamedSourceRange, SourceRange, Token},
 };
@@ -288,18 +285,14 @@ impl<'a> HasID for AstNodeRefMut<'a> {
 
 macro_rules! impl_enum_node {
     {
-        $(
-            #[$($attr:tt)*]
-        )*
+        $(#[$attr:meta])*
         $visib:vis enum $Self:ident {
             $(
-                $variant:ident($Subtype:ty),
+                $variant:ident($Subtype:ident),
             )*
         }
     } => {
-        $(
-            #[$($attr)*]
-        )*
+        $(#[$attr])*
         $visib enum $Self {
             $(
                 $variant($Subtype),
@@ -332,6 +325,51 @@ macro_rules! impl_enum_node {
             }
         }
 
+        impl<T: NodeDataSpec, A> HasData<T> for $Self
+        where
+            $(
+                $Subtype: HasData<T, Data = A>,
+            )*
+        {
+            type Data = A;
+
+            fn extract_data_enum(
+                data: &NodeDataEnum<T>,
+            ) -> Option<&Self::Data> {
+                match data {
+                    $(
+                        NodeDataEnum:: $Subtype (_) => $Subtype::extract_data_enum(data),
+                    )*
+                    _ => None,
+                }
+            }
+            fn extract_data_enum_mut(
+                data: &mut NodeDataEnum<T>,
+            ) -> Option<&mut Self::Data> {
+                match data {
+                    $(
+                        NodeDataEnum:: $Subtype (_) => $Subtype::extract_data_enum_mut(data),
+                    )*
+                    _ => None,
+                }
+            }
+        }
+
+        impl<T: NodeDataSpec, A> CanStoreData<T> for $Self
+        where
+            $(
+                $Subtype: CanStoreData<T, Data = A>,
+            )*
+        {
+            fn build_data_enum(&self, data: Self::Data) -> NodeDataEnum<T> {
+                match self {
+                    $(
+                        Self:: $variant (node) => node.build_data_enum(data),
+                    )*
+                }
+            }
+        }
+
         impl HasSourceRange for $Self {
             fn get_source_range(&self) -> NamedSourceRange {
                 match self {
@@ -346,12 +384,8 @@ macro_rules! impl_enum_node {
     };
 }
 macro_rules! impl_struct_node {
-    { $Self:tt, $unwrap_name:ident} => {
-        impl HasID for $Self {
-            fn get_id(&self) -> NodeID {
-                self.id
-            }
-        }
+    { $Self:tt } => {
+        impl_enum_variant!($Self);
 
         generate_ast_requirements!($Self);
     }
@@ -362,6 +396,39 @@ macro_rules! impl_enum_variant {
         impl HasID for $Self {
             fn get_id(&self) -> NodeID {
                 self.id
+            }
+        }
+
+        impl<T: NodeDataSpec> HasData<T> for $Self {
+            paste::paste! {
+                type Data = T::$Self;
+            }
+
+            fn extract_data_enum(
+                data: &NodeDataEnum<T>,
+            ) -> Option<&Self::Data> {
+                if let NodeDataEnum::$Self(data) = data {
+                    Some(data)
+                }
+                else {
+                    None
+                }
+            }
+            fn extract_data_enum_mut(
+                data: &mut NodeDataEnum<T>,
+            ) -> Option<&mut Self::Data> {
+                if let NodeDataEnum::$Self(data) = data {
+                    Some(data)
+                }
+                else {
+                    None
+                }
+            }
+        }
+
+        impl<T: NodeDataSpec> CanStoreData<T> for $Self {
+            fn build_data_enum(&self, data: Self::Data) -> NodeDataEnum<T> {
+                NodeDataEnum::$Self(data)
             }
         }
     }
@@ -670,7 +737,7 @@ pub struct Program {
 
     pub file_name: FileName,
 }
-impl_struct_node!(Program, unwrap_program);
+impl_struct_node!(Program);
 
 impl HasSourceRange for Program {
     fn get_source_range(&self) -> NamedSourceRange {
@@ -770,7 +837,7 @@ pub struct SimpleBinding {
     pub type_: Option<(Token, Type)>,
     pub id: NodeID,
 }
-impl_struct_node!(SimpleBinding, unwrap_simple_binding);
+impl_struct_node!(SimpleBinding);
 
 impl HasSourceRange for SimpleBinding {
     fn get_source_range(&self) -> NamedSourceRange {
@@ -1948,32 +2015,5 @@ impl LValue {
             LValue::StructAccess(..) => Associativity::Left,
             LValue::Grouping(..) => Associativity::Both,
         }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PerNodeData<T> {
-    map: HashMap<NodeID, T>,
-}
-
-impl<T> Default for PerNodeData<T> {
-    fn default() -> Self {
-        Self {
-            map: HashMap::new(),
-        }
-    }
-}
-
-impl<T> Deref for PerNodeData<T> {
-    type Target = HashMap<NodeID, T>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.map
-    }
-}
-
-impl<T> DerefMut for PerNodeData<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.map
     }
 }

@@ -35,10 +35,9 @@ use crate::{
         GroupingLValue, HasID, HasSourceRange, IdkType, IfStatement, LiteralExpression,
         LiteralKind, OnStatement, Program, ReturnStatement, SimpleBinding, SimpleType,
         SkipStatement, StatementFunctionBody, StructAccessExpression, StructAccessLValue,
-        StructExpression, StructMemberValue, StructType, TopLevelStatement, TypeAlias,
-        UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
-        VariableAssignmentExpression, VariableDefinitionStatement, VariableLValue,
-        WhileLoopStatement,
+        StructExpression, StructMemberValue, TopLevelStatement, TypeAlias, UnaryExpression,
+        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
+        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
     },
     define_dispatch_methods,
     error_reporting::{
@@ -46,6 +45,7 @@ use crate::{
     },
     escape::{QuoteType, unescape},
     generate_glsl::GLSLCodeGenerator,
+    node_data::HasData,
     passes::{
         global_state::{FetchError, Fetched, GlobalState},
         pass_manager::{
@@ -373,10 +373,11 @@ impl<'a> IrGenerator<'_> {
         })
     }
 
-    fn llvm_type_of_node<Node: HasSourceRange + HasID>(&mut self, node: &Node) -> AnyTypeEnum<'a> {
-        let infered_type = self.type_data.get(&node.get_id()).unwrap_or_else(|| {
-            pass_precondition!("type data should exist before calling ir_generator")
-        });
+    fn llvm_type_of_node<Node>(&mut self, node: &Node) -> AnyTypeEnum<'a>
+    where
+        Node: HasSourceRange + HasData<ConcreteTypeData, Data = ConcreteRuntimeType>,
+    {
+        let infered_type = self.type_data.get(node);
 
         self.runtime_type_to_llvm(infered_type)
     }
@@ -1597,13 +1598,9 @@ impl<'state> IrGenerator<'state> {
         let LiteralExpression {
             value,
             token: _,
-            id,
+            id: _,
         } = &*literal;
-        let rt_type_ptr = self
-            .type_data
-            .get(id)
-            .expect("type data should exist before running ir_generator")
-            .clone();
+        let rt_type_ptr = self.type_data.get(literal).clone();
 
         Ok(match value {
             LiteralKind::Number(value) => match self.llvm_type_of_node(literal) {
@@ -1777,6 +1774,8 @@ impl<'state> IrGenerator<'state> {
         &mut self,
         expr: &mut FunctionCallExpression,
     ) -> Result<RuntimeValueIR<'state>> {
+        let return_type = self.type_data.get(expr).clone();
+
         let FunctionCallExpression {
             name,
             name_token: _,
@@ -1815,12 +1814,6 @@ impl<'state> IrGenerator<'state> {
             .clone()
             .0;
 
-        let return_type = self
-            .type_data
-            .get(id)
-            .expect("type data must exist before calling ir_generator")
-            .clone();
-
         let mut retvalue = self
             .builder
             .build_call(ir_function, &args[..], name)?
@@ -1842,6 +1835,8 @@ impl<'state> IrGenerator<'state> {
         &mut self,
         expr: &mut CompilerExpression,
     ) -> Result<RuntimeValueIR<'state>> {
+        let expected_type = self.type_data.get(expr).clone();
+
         let CompilerExpression {
             at_token: _,
             name,
@@ -1849,7 +1844,7 @@ impl<'state> IrGenerator<'state> {
             open_paren_token: _,
             arguments,
             close_paren_token: _,
-            id,
+            id: _,
         } = expr;
 
         let mut args = vec![];
@@ -1860,11 +1855,6 @@ impl<'state> IrGenerator<'state> {
 
         match name.as_str() {
             "zero" => {
-                let expected_type = self
-                    .type_data
-                    .get(id)
-                    .expect("type data must exist before calling ir_generator")
-                    .clone();
                 let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
 
                 Ok(match expected_type {
@@ -1918,11 +1908,6 @@ impl<'state> IrGenerator<'state> {
                 })
             }
             "sqrt" => {
-                let expected_type = self
-                    .type_data
-                    .get(id)
-                    .expect("type data must exist before calling ir_generator")
-                    .clone();
                 let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
 
                 Ok(match args.first().unwrap().1 {
@@ -1958,11 +1943,6 @@ impl<'state> IrGenerator<'state> {
                 })
             }
             "sin" => {
-                let expected_type = self
-                    .type_data
-                    .get(id)
-                    .expect("type data must exist before calling ir_generator")
-                    .clone();
                 let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
 
                 Ok(match args.first().unwrap().1 {
@@ -1998,11 +1978,6 @@ impl<'state> IrGenerator<'state> {
                 })
             }
             "cos" => {
-                let expected_type = self
-                    .type_data
-                    .get(id)
-                    .expect("type data must exist before calling ir_generator")
-                    .clone();
                 let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
 
                 Ok(match args.first().unwrap().1 {
@@ -2038,16 +2013,7 @@ impl<'state> IrGenerator<'state> {
                 })
             }
             "length" => {
-                let array_type = self
-                    .type_data
-                    .get(&args.first().unwrap().0.get_id())
-                    .expect("type data must exist before calling ir_generator")
-                    .clone();
-                let expected_type = self
-                    .type_data
-                    .get(id)
-                    .expect("type data must exist before calling ir_generator")
-                    .clone();
+                let array_type = self.type_data.get(args.first().unwrap().0).clone();
 
                 let length = match array_type {
                     ConcreteRuntimeType::ArrayOf { subtype: _, size } => size,
@@ -2103,7 +2069,7 @@ impl<'state> IrGenerator<'state> {
             id: _,
         } = expr;
         let array_ptr = self.generate_expression(array)?.unwrap_array();
-        let array_type = self.type_data.get(&array.get_id()).unwrap().clone();
+        let array_type = self.type_data.get(&**array).clone();
         let index_ir = self.generate_expression(index)?.unwrap_unsigned_int();
 
         let array_type_ir = self.runtime_type_to_llvm(&array_type);
@@ -2152,7 +2118,7 @@ impl<'state> IrGenerator<'state> {
             id: _,
         } = expr;
         let value_ptr = self.generate_expression(value)?.unwrap_struct();
-        let value_type = self.type_data.get(&value.get_id()).unwrap().clone();
+        let value_type = self.type_data.get(&**value).clone();
 
         let value_type_ir = self.runtime_type_to_llvm(&value_type);
 
@@ -2316,25 +2282,17 @@ impl<'state> IrGenerator<'state> {
         &mut self,
         expr: &mut CastExpression,
     ) -> Result<RuntimeValueIR<'state>> {
+        let target_type = self.type_data.get(expr).clone();
+
         let CastExpression {
             operand,
             as_token: _,
             type_,
-            id,
+            id: _,
         } = expr;
 
         let value = self.generate_expression(&mut *operand)?;
-        let value_type = self
-            .type_data
-            .get(&operand.get_id())
-            .expect("type data should exist before calling ir_generator")
-            .clone();
-
-        let target_type = self
-            .type_data
-            .get(id)
-            .expect("type data should exist before calling ir_generator")
-            .clone();
+        let value_type = self.type_data.get(&**operand).clone();
 
         match (&value_type, &target_type) {
             (a, b) if a == b => Ok(value),
@@ -3087,7 +3045,7 @@ impl<'state> IrGenerator<'state> {
             id: _,
         } = lvalue;
         let value_ptr = self.generate_lvalue(value)?;
-        let value_type = self.type_data.get(&value.get_id()).unwrap().clone();
+        let value_type = self.type_data.get(&**value).clone();
 
         let value_type_ir = self.runtime_type_to_llvm(&value_type);
 
@@ -3129,31 +3087,11 @@ impl<'state> IrGenerator<'state> {
     }
 
     fn generate_simple_type(&mut self, type_: &mut SimpleType) -> Result<ConcreteRuntimeType> {
-        let SimpleType {
-            token: _,
-            type_: _,
-            id,
-        } = type_;
-        Ok(self
-            .type_data
-            .get(id)
-            .expect("type data should exist before calling ir_generator")
-            .clone())
+        Ok(self.type_data.get(type_).clone())
     }
 
-    fn generate_unit_type(
-        &mut self,
-        UnitType {
-            open_paren_token: _,
-            close_paren_token: _,
-            id,
-        }: &mut UnitType,
-    ) -> Result<ConcreteRuntimeType> {
-        let infered_type = self
-            .type_data
-            .get(id)
-            .expect("type data should exist before calling ir_generator")
-            .clone();
+    fn generate_unit_type(&mut self, ty: &mut UnitType) -> Result<ConcreteRuntimeType> {
+        let infered_type = self.type_data.get(ty).clone();
 
         assert_eq!(
             ConcreteRuntimeType::Unit,
@@ -3164,60 +3102,22 @@ impl<'state> IrGenerator<'state> {
     }
 
     fn generate_idk_type(&mut self, type_: &mut IdkType) -> Result<ConcreteRuntimeType> {
-        let IdkType { token: _, id } = type_;
-        Ok(self
-            .type_data
-            .get(id)
-            .expect("type data should exist before calling ir_generator")
-            .clone())
+        Ok(self.type_data.get(type_).clone())
     }
 
     fn generate_array_type(&mut self, array_type: &mut ArrayType) -> Result<ConcreteRuntimeType> {
-        let ArrayType {
-            subtype: _,
-            open_bracket_token: _,
-            size: _,
-            close_bracket_token: _,
-            id,
-        } = array_type;
-
-        Ok(self
-            .type_data
-            .get(id)
-            .expect("type data should exist before calling ir_generator")
-            .clone())
+        Ok(self.type_data.get(array_type).clone())
     }
 
     fn generate_struct_type(
         &mut self,
         struct_type: &mut crate::ast::StructType,
     ) -> Result<ConcreteRuntimeType> {
-        let StructType {
-            struct_token: _,
-            open_brace_token: _,
-            members: _,
-            close_brace_token: _,
-            id,
-        } = struct_type;
-
-        Ok(self
-            .type_data
-            .get(id)
-            .expect("type data should exist before calling ir_generator")
-            .clone())
+        Ok(self.type_data.get(struct_type).clone())
     }
 
     fn generate_alias_type(&mut self, alias_type: &mut AliasType) -> Result<ConcreteRuntimeType> {
-        let AliasType {
-            name: _,
-            name_token: _,
-            id,
-        } = alias_type;
-        Ok(self
-            .type_data
-            .get(id)
-            .expect("type data should exist before calling ir_generator")
-            .clone())
+        Ok(self.type_data.get(alias_type).clone())
     }
 }
 

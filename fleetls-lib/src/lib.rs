@@ -5,18 +5,19 @@ use fleet::{
         CompilerExpression, Executor, ExecutorHost, Expression, ExpressionStatement,
         ExternFunctionBody, ForLoopStatement, FunctionBody, FunctionCallExpression,
         FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, IdkType,
-        IfStatement, LValue, LiteralExpression, LiteralKind, NodeID, OnStatement, Program,
-        ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, Statement,
-        StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
-        StructType, ThreadExecutor, TopLevelStatement, Type, TypeAlias, UnaryExpression,
-        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        IfStatement, LValue, LiteralExpression, LiteralKind, OnStatement, Program, ReturnStatement,
+        SelfExecutorHost, SimpleBinding, SimpleType, Statement, StatementFunctionBody,
+        StructAccessExpression, StructAccessLValue, StructExpression, StructType, ThreadExecutor,
+        TopLevelStatement, Type, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     error_reporting::{ErrorSeverity, Errors, HighlightTag},
     escape::{QuoteType, escape},
     infra::{
         self, insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
     },
+    node_data::HasData,
     passes::{
         find_containing_node::find_containing_node,
         global_state::Fetched,
@@ -24,7 +25,9 @@ use fleet::{
             FunctionData, InputSource, PassError, PassManager, ScopeData, StatData, TypeData,
             TypeSets, VariableData,
         },
+        runtime_type::RuntimeType,
         scope_analysis::ComptimeDeps,
+        union_find_set::UnionFindSetPtr,
     },
     tokenizer::{FileName, NamedSourceRange, SourceLocation, SourceRange, Token},
 };
@@ -132,7 +135,11 @@ pub fn source_range_to_lsp_range(range: impl Into<SourceRange>) -> Range {
 }
 
 impl Backend {
-    fn get_type_as_hover(&self, id: NodeID, analysis_data: Option<AnalysisData>) -> String {
+    fn get_type_as_hover(
+        &self,
+        node: &impl HasData<TypeData, Data = UnionFindSetPtr<RuntimeType>>,
+        analysis_data: Option<AnalysisData>,
+    ) -> String {
         let Some(AnalysisData {
             type_data,
             type_sets,
@@ -144,9 +151,7 @@ impl Backend {
         else {
             return "/* No type data available */".to_string();
         };
-        let Some(type_) = type_data.get(&id) else {
-            return "/* Node type missing */".to_string();
-        };
+        let type_ = type_data.get(node);
         type_sets.get(*type_).kind.stringify(type_sets)
     }
     fn generate_node_hover<'a>(
@@ -328,8 +333,13 @@ impl Backend {
 
                 Statement::Block(BlockStatement { .. }) => ("".to_string(), "block".to_string()),
 
-                Statement::Return(ReturnStatement { id, .. }) => (
-                    format!("return {}", self.get_type_as_hover(*id, analysis_data)),
+                Statement::Return(ReturnStatement { value, .. }) => (
+                    match value {
+                        None => "return ()".into(),
+                        Some(value) => {
+                            format!("return {}", self.get_type_as_hover(&**value, analysis_data))
+                        }
+                    },
                     "`return` statement".to_string(),
                 ),
 
@@ -367,12 +377,12 @@ impl Backend {
                 }) => {
                     let condition_type = condition
                         .as_ref()
-                        .map(|cond| self.get_type_as_hover(cond.get_id(), analysis_data))
+                        .map(|cond| self.get_type_as_hover(&**cond, analysis_data))
                         .unwrap_or("".to_string());
 
                     let incrementer_type = incrementer
                         .as_ref()
-                        .map(|cond| self.get_type_as_hover(cond.get_id(), analysis_data))
+                        .map(|cond| self.get_type_as_hover(&**cond, analysis_data))
                         .unwrap_or("".to_string());
 
                     (
@@ -438,15 +448,17 @@ impl Backend {
             },
 
             AstNodeRef::Expression(node) => match node {
-                Expression::Unary(UnaryExpression {
-                    operator_token: _,
-                    operation,
-                    operand,
-                    id,
-                }) => (
+                Expression::Unary(
+                    node @ UnaryExpression {
+                        operator_token: _,
+                        operation,
+                        operand,
+                        id: _,
+                    },
+                ) => (
                     {
-                        let inner_type = self.get_type_as_hover(operand.get_id(), analysis_data);
-                        let outer_type = self.get_type_as_hover(*id, analysis_data);
+                        let inner_type = self.get_type_as_hover(&**operand, analysis_data);
+                        let outer_type = self.get_type_as_hover(node, analysis_data);
 
                         match operation {
                             UnaryOperation::BitwiseNot => {
@@ -463,23 +475,27 @@ impl Backend {
                     "unary expression".to_string(),
                 ),
 
-                Expression::Cast(CastExpression {
-                    operand,
-                    as_token: _,
-                    type_: _,
-                    id,
-                }) => {
-                    let from_type = self.get_type_as_hover(operand.get_id(), analysis_data);
-                    let to_type = self.get_type_as_hover(*id, analysis_data);
+                Expression::Cast(
+                    node @ CastExpression {
+                        operand,
+                        as_token: _,
+                        type_: _,
+                        id: _,
+                    },
+                ) => {
+                    let from_type = self.get_type_as_hover(&**operand, analysis_data);
+                    let to_type = self.get_type_as_hover(node, analysis_data);
 
                     (format!("{from_type} as {to_type}"), "type cast".to_string())
                 }
 
-                Expression::Literal(LiteralExpression {
-                    value,
-                    token: _,
-                    id,
-                }) => (
+                Expression::Literal(
+                    node @ LiteralExpression {
+                        value,
+                        token: _,
+                        id: _,
+                    },
+                ) => (
                     match value {
                         LiteralKind::Number(value) => value.to_string(),
                         LiteralKind::Char(value) => {
@@ -488,40 +504,46 @@ impl Backend {
                         LiteralKind::Float(value) => value.to_string(),
                         LiteralKind::Bool(value) => value.to_string(),
                     },
-                    format!("literal ({})", self.get_type_as_hover(*id, analysis_data)),
+                    format!("literal ({})", self.get_type_as_hover(node, analysis_data)),
                 ),
 
-                Expression::Array(ArrayExpression {
-                    open_bracket_token: _,
-                    elements: _,
-                    close_bracket_token: _,
-                    id,
-                }) => (
-                    self.get_type_as_hover(*id, analysis_data).to_string(),
+                Expression::Array(
+                    node @ ArrayExpression {
+                        open_bracket_token: _,
+                        elements: _,
+                        close_bracket_token: _,
+                        id: _,
+                    },
+                ) => (
+                    self.get_type_as_hover(node, analysis_data).to_string(),
                     "array literal".to_string(),
                 ),
 
-                Expression::Struct(StructExpression {
-                    type_: _,
-                    open_brace_token: _,
-                    members: _,
-                    close_brace_token: _,
-                    id,
-                }) => (
-                    self.get_type_as_hover(*id, analysis_data).to_string(),
+                Expression::Struct(
+                    node @ StructExpression {
+                        type_: _,
+                        open_brace_token: _,
+                        members: _,
+                        close_brace_token: _,
+                        id: _,
+                    },
+                ) => (
+                    self.get_type_as_hover(node, analysis_data).to_string(),
                     "struct literal".to_string(),
                 ),
 
-                Expression::Binary(BinaryExpression {
-                    left,
-                    operator_token: _,
-                    operation,
-                    right,
-                    id,
-                }) => {
-                    let left_type = self.get_type_as_hover(left.get_id(), analysis_data);
-                    let right_type = self.get_type_as_hover(right.get_id(), analysis_data);
-                    let result_type = self.get_type_as_hover(*id, analysis_data);
+                Expression::Binary(
+                    node @ BinaryExpression {
+                        left,
+                        operator_token: _,
+                        operation,
+                        right,
+                        id: _,
+                    },
+                ) => {
+                    let left_type = self.get_type_as_hover(&**left, analysis_data);
+                    let right_type = self.get_type_as_hover(&**right, analysis_data);
+                    let result_type = self.get_type_as_hover(node, analysis_data);
 
                     let (name, op) = match operation {
                         BinaryOperation::Add => ("addition", "+"),
@@ -693,43 +715,49 @@ impl Backend {
                     )
                 }
 
-                Expression::ArrayIndex(ArrayIndexExpression {
-                    array,
-                    open_bracket_token: _,
-                    index,
-                    close_bracket_token: _,
-                    id,
-                }) => (
+                Expression::ArrayIndex(
+                    node @ ArrayIndexExpression {
+                        array,
+                        open_bracket_token: _,
+                        index,
+                        close_bracket_token: _,
+                        id: _,
+                    },
+                ) => (
                     format!(
                         "({})[{}] => {}",
-                        self.get_type_as_hover(array.get_id(), analysis_data),
-                        self.get_type_as_hover(index.get_id(), analysis_data),
-                        self.get_type_as_hover(*id, analysis_data)
+                        self.get_type_as_hover(&**array, analysis_data),
+                        self.get_type_as_hover(&**index, analysis_data),
+                        self.get_type_as_hover(node, analysis_data)
                     ),
                     "array index".to_string(),
                 ),
 
-                Expression::StructAccess(StructAccessExpression {
-                    value,
-                    dot_token: _,
-                    member_name,
-                    member_name_token: _,
-                    id,
-                }) => (
+                Expression::StructAccess(
+                    node @ StructAccessExpression {
+                        value,
+                        dot_token: _,
+                        member_name,
+                        member_name_token: _,
+                        id: _,
+                    },
+                ) => (
                     format!(
                         "{}.{member_name} => {}",
-                        self.get_type_as_hover(value.get_id(), analysis_data),
-                        self.get_type_as_hover(*id, analysis_data)
+                        self.get_type_as_hover(&**value, analysis_data),
+                        self.get_type_as_hover(node, analysis_data)
                     ),
                     "struct access".to_string(),
                 ),
 
-                Expression::VariableAccess(VariableAccessExpression {
-                    name,
-                    name_token: _,
-                    id,
-                }) => {
-                    let type_ = self.get_type_as_hover(*id, analysis_data);
+                Expression::VariableAccess(
+                    node @ VariableAccessExpression {
+                        name,
+                        name_token: _,
+                        id: _,
+                    },
+                ) => {
+                    let type_ = self.get_type_as_hover(node, analysis_data);
                     // TODO: once we have consteval, display the value here
 
                     (
@@ -751,13 +779,15 @@ impl Backend {
             },
 
             AstNodeRef::LValue(node) => match node {
-                LValue::Variable(VariableLValue {
-                    name,
-                    name_token: _,
-                    id,
-                }) => {
+                LValue::Variable(
+                    node @ VariableLValue {
+                        name,
+                        name_token: _,
+                        id: _,
+                    },
+                ) => {
                     // TODO: once we have consteval, display the value here
-                    let type_ = self.get_type_as_hover(*id, analysis_data);
+                    let type_ = self.get_type_as_hover(node, analysis_data);
 
                     (
                         format!("let {name}: {type_} = ..."),
@@ -775,23 +805,25 @@ impl Backend {
                     // TODO: once we have consteval, display the value here
                     format!(
                         "let {}[{}] = ...",
-                        self.get_type_as_hover(array.get_id(), analysis_data),
-                        self.get_type_as_hover(index.get_id(), analysis_data)
+                        self.get_type_as_hover(&**array, analysis_data),
+                        self.get_type_as_hover(&**index, analysis_data)
                     ),
                     "array index lvalue".to_string(),
                 ),
 
-                LValue::StructAccess(StructAccessLValue {
-                    value,
-                    dot_token: _,
-                    member_name,
-                    member_name_token: _,
-                    id,
-                }) => (
+                LValue::StructAccess(
+                    node @ StructAccessLValue {
+                        value,
+                        dot_token: _,
+                        member_name,
+                        member_name_token: _,
+                        id: _,
+                    },
+                ) => (
                     format!(
                         "{}.{member_name} => {}",
-                        self.get_type_as_hover(value.get_id(), analysis_data),
-                        self.get_type_as_hover(*id, analysis_data)
+                        self.get_type_as_hover(&**value, analysis_data),
+                        self.get_type_as_hover(node, analysis_data)
                     ),
                     "struct access lvalue".to_string(),
                 ),
@@ -828,42 +860,48 @@ impl Backend {
                     id: _,
                 }) => ("()".to_string(), "type".to_string()),
 
-                Type::Idk(IdkType { token: _, id }) => {
-                    let type_ = self.get_type_as_hover(*id, analysis_data);
+                Type::Idk(node @ IdkType { token: _, id: _ }) => {
+                    let type_ = self.get_type_as_hover(node, analysis_data);
 
                     (type_.to_string(), "idk type".to_string())
                 }
 
-                Type::Array(ArrayType {
-                    subtype: _,
-                    open_bracket_token: _,
-                    size: _,
-                    close_bracket_token: _,
-                    id,
-                }) => {
-                    let type_ = self.get_type_as_hover(*id, analysis_data);
+                Type::Array(
+                    node @ ArrayType {
+                        subtype: _,
+                        open_bracket_token: _,
+                        size: _,
+                        close_bracket_token: _,
+                        id: _,
+                    },
+                ) => {
+                    let type_ = self.get_type_as_hover(node, analysis_data);
 
                     (type_.to_string(), "array type".to_string())
                 }
 
-                Type::Struct(StructType {
-                    struct_token: _,
-                    open_brace_token: _,
-                    members: _,
-                    close_brace_token: _,
-                    id,
-                }) => {
-                    let type_ = self.get_type_as_hover(*id, analysis_data);
+                Type::Struct(
+                    node @ StructType {
+                        struct_token: _,
+                        open_brace_token: _,
+                        members: _,
+                        close_brace_token: _,
+                        id: _,
+                    },
+                ) => {
+                    let type_ = self.get_type_as_hover(node, analysis_data);
 
                     (type_.to_string(), "struct type".to_string())
                 }
 
-                Type::Alias(AliasType {
-                    name: _,
-                    name_token: _,
-                    id,
-                }) => {
-                    let type_ = self.get_type_as_hover(*id, analysis_data);
+                Type::Alias(
+                    node @ AliasType {
+                        name: _,
+                        name_token: _,
+                        id: _,
+                    },
+                ) => {
+                    let type_ = self.get_type_as_hover(node, analysis_data);
 
                     (type_.to_string(), "alias type".to_string())
                 }
@@ -1021,8 +1059,8 @@ impl Backend {
             ),
             // TODO: AstNode::StructAccessExpression(struct_access_expression) => todo!(),
             // TODO: AstNode::StructAccessLValue(struct_access_lvalue) => todo!(),
-            AstNode::Type(Type::Alias(AliasType { id, .. })) => {
-                let ptr = pm.state.get::<TypeData>()?.get(id)?;
+            AstNode::Type(Type::Alias(node @ AliasType { .. })) => {
+                let ptr = pm.state.get::<TypeData>()?.get(node);
 
                 Some(
                     pm.state

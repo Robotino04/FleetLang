@@ -22,11 +22,12 @@ use crate::{
         InternalError, Lint, MissingParameter, NotDefinedKind, ParameterCountDifference,
         PrefetchedType, SymbolDefinition, TypeMismatchKind, UnresolvedSymbol,
     },
+    node_data::PerNodeData,
     parser::IdGenerator,
     passes::{
-        global_state::{FetchError, Fetched, GlobalState},
+        global_state::{Empty, FetchError, Fetched, GlobalState},
         pass_manager::{
-            FunctionData, Pass, PassFactory, PassResult, ScopeData, TypeData, TypeSets,
+            FunctionData, Pass, PassError, PassFactory, PassResult, ScopeData, TypeData, TypeSets,
             VariableData,
         },
         runtime_type::{RuntimeType, RuntimeTypeKind, StructHash},
@@ -42,7 +43,8 @@ pub struct TypePropagator<'state> {
     id_generator: &'state mut IdGenerator,
 
     type_sets: &'state mut TypeSets,
-    node_types: &'state mut TypeData,
+    node_types: PerNodeData<TypeData>,
+    node_types_entry: Empty<'state, TypeData>,
     referenced_variable: &'state VariableData,
     referenced_function: &'state FunctionData,
     containing_scope: &'state ScopeData,
@@ -64,7 +66,7 @@ impl PassFactory for TypePropagator<'_> {
         let Fetched {
             read: (referenced_variable, referenced_function, containing_scope),
             write: (errors, program, id_generator),
-            empty: (type_sets, node_types),
+            empty: (type_sets, node_types_entry),
         } = state.fetch()?;
 
         Ok(Self::Output {
@@ -73,7 +75,8 @@ impl PassFactory for TypePropagator<'_> {
             id_generator,
 
             type_sets: type_sets.insert_default(),
-            node_types: node_types.insert_default(),
+            node_types_entry,
+            node_types: Default::default(),
             referenced_variable,
             referenced_function,
             containing_scope,
@@ -89,6 +92,16 @@ impl Pass for TypePropagator<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let program = self.program.take().unwrap();
         self.typecheck_program(program);
+
+        self.node_types_entry.insert(
+            self.node_types
+                .finish(program)
+                .map_err(|err| PassError::CompilerError {
+                    producing_pass: Self::name(),
+                    source: err.into(),
+                })?
+                .into(),
+        );
 
         Ok(())
     }
@@ -229,7 +242,7 @@ impl TypePropagator<'_> {
         }
     }
 
-    fn typecheck_program(mut self, program: &mut Program) {
+    fn typecheck_program(&mut self, program: &mut Program) {
         for tls in &mut program.top_level_statements {
             self.register_top_level_statements(tls);
         }
@@ -363,7 +376,7 @@ impl TypePropagator<'_> {
 
         self.referenced_variable.get(id).unwrap().borrow_mut().type_ = Some(defined_type_ptr);
 
-        self.node_types.insert(*id, defined_type_ptr);
+        self.node_types.insert(simple_binding, defined_type_ptr);
 
         defined_type_ptr
     }
@@ -512,7 +525,7 @@ impl TypePropagator<'_> {
             return_token,
             value,
             semicolon_token: _,
-            id,
+            id: _,
         } = stmt;
 
         let this_type_ptr = value
@@ -547,7 +560,7 @@ impl TypePropagator<'_> {
             });
         }
 
-        self.node_types.insert(*id, this_type_ptr);
+        // TODO: once we have a proper bottom type, use here
     }
 
     fn typecheck_variable_definition_statement(
@@ -800,7 +813,7 @@ impl TypePropagator<'_> {
         let LiteralExpression {
             value,
             token: _,
-            id,
+            id: _,
         } = expression;
         let type_ = self.type_sets.insert_set(RuntimeType {
             kind: match value {
@@ -817,7 +830,7 @@ impl TypePropagator<'_> {
             },
             definition_range: None,
         });
-        self.node_types.insert(*id, type_);
+        self.node_types.insert(expression, type_);
 
         type_
     }
@@ -827,7 +840,7 @@ impl TypePropagator<'_> {
             open_bracket_token: _,
             elements,
             close_bracket_token: _,
-            id,
+            id: _,
         } = expression;
 
         let element_type_ptr = self.type_sets.insert_set(RuntimeType {
@@ -859,7 +872,7 @@ impl TypePropagator<'_> {
             },
             definition_range: None,
         });
-        self.node_types.insert(*id, type_);
+        self.node_types.insert(expression, type_);
         type_
     }
 
@@ -870,7 +883,7 @@ impl TypePropagator<'_> {
             open_brace_token,
             members,
             close_brace_token,
-            id,
+            id: _,
         } = expression;
 
         let defined_type_ptr = self.typecheck_type(type_);
@@ -973,7 +986,7 @@ impl TypePropagator<'_> {
             });
         }
 
-        self.node_types.insert(*id, constructed_type_ptr);
+        self.node_types.insert(expression, constructed_type_ptr);
         constructed_type_ptr
     }
 
@@ -1000,10 +1013,12 @@ impl TypePropagator<'_> {
                 self.typecheck_expression(arg);
             }
 
-            return self.type_sets.insert_set(RuntimeType {
+            let type_ = self.type_sets.insert_set(RuntimeType {
                 kind: RuntimeTypeKind::Error,
                 definition_range: None,
             });
+            self.node_types.insert(expression, type_);
+            return type_;
         };
 
         let mut extra_parameters = Vec::new();
@@ -1125,7 +1140,7 @@ impl TypePropagator<'_> {
             .type_sets
             .detach(ref_function.borrow().return_type.unwrap());
 
-        self.node_types.insert(*id, detached_return_type);
+        self.node_types.insert(expression, detached_return_type);
 
         detached_return_type
     }
@@ -1141,7 +1156,7 @@ impl TypePropagator<'_> {
             open_paren_token: _,
             arguments: _,
             close_paren_token: _,
-            id,
+            id: _,
         } = expression;
         let (parameter_types, return_type): (
             Vec<(UnionFindSetPtr<RuntimeType>, String)>,
@@ -1299,21 +1314,23 @@ impl TypePropagator<'_> {
             }
         }
 
-        self.node_types.insert(*id, return_type);
+        self.node_types.insert(expression, return_type);
 
         return_type
     }
 
     fn typecheck_array_index_expression(
         &mut self,
-        ArrayIndexExpression {
+        expression: &mut ArrayIndexExpression,
+    ) -> UnifiableType {
+        let ArrayIndexExpression {
             array,
             open_bracket_token: _,
             index,
             close_bracket_token: _,
-            id,
-        }: &mut ArrayIndexExpression,
-    ) -> UnifiableType {
+            id: _,
+        } = expression;
+
         let array_type = self.typecheck_expression(array);
         let index_type = self.typecheck_expression(index);
 
@@ -1327,7 +1344,7 @@ impl TypePropagator<'_> {
                 kind: RuntimeTypeKind::Error,
                 definition_range: None,
             });
-            self.node_types.insert(*id, err_type);
+            self.node_types.insert(expression, err_type);
             return err_type;
         };
 
@@ -1350,20 +1367,22 @@ impl TypePropagator<'_> {
             });
         }
 
-        self.node_types.insert(*id, subtype);
+        self.node_types.insert(expression, subtype);
         subtype
     }
 
     fn typecheck_struct_access_expression(
         &mut self,
-        StructAccessExpression {
+        expression: &mut StructAccessExpression,
+    ) -> UnifiableType {
+        let StructAccessExpression {
             value,
             dot_token: _,
             member_name,
             member_name_token,
-            id,
-        }: &mut StructAccessExpression,
-    ) -> UnifiableType {
+            id: _,
+        } = expression;
+
         let value_type = self.typecheck_expression(value);
 
         let RuntimeTypeKind::Struct {
@@ -1382,7 +1401,7 @@ impl TypePropagator<'_> {
                 kind: RuntimeTypeKind::Error,
                 definition_range: None,
             });
-            self.node_types.insert(*id, err_type);
+            self.node_types.insert(expression, err_type);
             return err_type;
         };
 
@@ -1403,21 +1422,23 @@ impl TypePropagator<'_> {
             })
         };
 
-        self.node_types.insert(*id, type_);
+        self.node_types.insert(expression, type_);
         type_
     }
 
     fn typecheck_grouping_expression(
         &mut self,
-        GroupingExpression {
+        expression: &mut GroupingExpression,
+    ) -> UnifiableType {
+        let GroupingExpression {
             open_paren_token: _,
             subexpression,
             close_paren_token: _,
-            id,
-        }: &mut GroupingExpression,
-    ) -> UnifiableType {
+            id: _,
+        } = expression;
+
         let type_ = self.typecheck_expression(subexpression);
-        self.node_types.insert(*id, type_);
+        self.node_types.insert(expression, type_);
         type_
     }
 
@@ -1431,10 +1452,13 @@ impl TypePropagator<'_> {
             id,
         } = expression;
         let Some(ref_variable) = self.referenced_variable.get(id) else {
-            return self.type_sets.insert_set(RuntimeType {
+            let type_ = self.type_sets.insert_set(RuntimeType {
                 kind: RuntimeTypeKind::Unknown,
                 definition_range: None,
             });
+
+            self.node_types.insert(expression, type_);
+            return type_;
         };
         if self.require_constant && !ref_variable.borrow().is_constant {
             self.errors.push(ErrorKind::ConstantVariableRequired {
@@ -1447,7 +1471,7 @@ impl TypePropagator<'_> {
         }
 
         let type_ = ref_variable.borrow().type_.unwrap();
-        self.node_types.insert(*id, type_);
+        self.node_types.insert(expression, type_);
         type_
     }
     fn typecheck_unary_expression(&mut self, expression: &mut UnaryExpression) -> UnifiableType {
@@ -1455,7 +1479,7 @@ impl TypePropagator<'_> {
             operator_token: _,
             operation,
             operand,
-            id,
+            id: _,
         } = expression;
 
         let type_ = self.typecheck_expression(operand);
@@ -1514,7 +1538,7 @@ impl TypePropagator<'_> {
             UnaryOperation::Negate => type_,
         };
 
-        self.node_types.insert(*id, this_type);
+        self.node_types.insert(expression, this_type);
         this_type
     }
 
@@ -1524,7 +1548,7 @@ impl TypePropagator<'_> {
             operand,
             as_token: _,
             type_,
-            id,
+            id: _,
         } = expression;
 
         let from_ptr = self.typecheck_expression(operand);
@@ -1843,7 +1867,7 @@ impl TypePropagator<'_> {
             self.type_sets,
         );
 
-        self.node_types.insert(*id, to_ptr);
+        self.node_types.insert(expression, to_ptr);
         to_ptr
     }
 
@@ -1854,7 +1878,7 @@ impl TypePropagator<'_> {
             operator_token: _,
             operation,
             right,
-            id,
+            id: _,
         } = expression;
         let left_type = self.typecheck_expression(left);
         let right_type = self.typecheck_expression(right);
@@ -1961,7 +1985,7 @@ impl TypePropagator<'_> {
                 kind: RuntimeTypeKind::Error,
                 definition_range: None,
             });
-            self.node_types.insert(*id, this_type);
+            self.node_types.insert(expression, this_type);
             this_type
         } else {
             let this_type = match operation {
@@ -1982,7 +2006,7 @@ impl TypePropagator<'_> {
                     definition_range: None,
                 }),
             };
-            self.node_types.insert(*id, this_type);
+            self.node_types.insert(expression, this_type);
             this_type
         }
     }
@@ -1995,7 +2019,7 @@ impl TypePropagator<'_> {
             lvalue,
             equal_token: _,
             right,
-            id,
+            id: _,
         } = expression;
         let left_type = self.typecheck_lvalue(lvalue);
         let right_type = self.typecheck_expression(right);
@@ -2011,7 +2035,7 @@ impl TypePropagator<'_> {
             });
         }
 
-        self.node_types.insert(*id, left_type);
+        self.node_types.insert(expression, left_type);
         left_type
     }
 
@@ -2022,10 +2046,13 @@ impl TypePropagator<'_> {
             id,
         } = lvalue;
         let Some(ref_variable) = self.referenced_variable.get(id) else {
-            return self.type_sets.insert_set(RuntimeType {
+            let type_ = self.type_sets.insert_set(RuntimeType {
                 kind: RuntimeTypeKind::Unknown,
                 definition_range: None,
             });
+
+            self.node_types.insert(lvalue, type_);
+            return type_;
         };
         if ref_variable.borrow().is_constant {
             self.errors.push(ErrorKind::ConstantVariableAsLValue {
@@ -2038,7 +2065,7 @@ impl TypePropagator<'_> {
         }
 
         let type_ = ref_variable.borrow().type_.unwrap();
-        self.node_types.insert(*id, type_);
+        self.node_types.insert(lvalue, type_);
         type_
     }
 
@@ -2048,7 +2075,7 @@ impl TypePropagator<'_> {
             open_bracket_token: _,
             index,
             close_bracket_token: _,
-            id,
+            id: _,
         } = lvalue;
 
         let array_type = self.typecheck_lvalue(array);
@@ -2064,7 +2091,7 @@ impl TypePropagator<'_> {
                 kind: RuntimeTypeKind::Error,
                 definition_range: None,
             });
-            self.node_types.insert(*id, err_type);
+            self.node_types.insert(lvalue, err_type);
             return err_type;
         };
 
@@ -2087,20 +2114,19 @@ impl TypePropagator<'_> {
             });
         }
 
-        self.node_types.insert(*id, subtype);
+        self.node_types.insert(lvalue, subtype);
         subtype
     }
 
-    fn typecheck_struct_access_lvalue(
-        &mut self,
-        StructAccessLValue {
+    fn typecheck_struct_access_lvalue(&mut self, lvalue: &mut StructAccessLValue) -> UnifiableType {
+        let StructAccessLValue {
             value,
             dot_token: _,
             member_name,
             member_name_token,
-            id,
-        }: &mut StructAccessLValue,
-    ) -> UnifiableType {
+            id: _,
+        } = lvalue;
+
         let value_type = self.typecheck_lvalue(value);
 
         let RuntimeTypeKind::Struct {
@@ -2119,7 +2145,7 @@ impl TypePropagator<'_> {
                 kind: RuntimeTypeKind::Error,
                 definition_range: None,
             });
-            self.node_types.insert(*id, err_type);
+            self.node_types.insert(lvalue, err_type);
             return err_type;
         };
 
@@ -2140,7 +2166,7 @@ impl TypePropagator<'_> {
             })
         };
 
-        self.node_types.insert(*id, type_);
+        self.node_types.insert(lvalue, type_);
         type_
     }
 
@@ -2150,44 +2176,43 @@ impl TypePropagator<'_> {
             open_paren_token: _,
             sublvalue,
             close_paren_token: _,
-            id,
+            id: _,
         } = lvalue;
 
         let subtype = self.typecheck_lvalue(sublvalue);
 
-        self.node_types.insert(*id, subtype);
+        self.node_types.insert(lvalue, subtype);
         subtype
     }
 
-    fn typecheck_simple_type(
-        &mut self,
-        SimpleType {
-            token: _,
-            type_,
-            id,
-        }: &mut SimpleType,
-    ) -> UnifiableType {
+    fn typecheck_simple_type(&mut self, ty: &mut SimpleType) -> UnifiableType {
         // make sure function registration gets the same type as the full eval
-        if let Some(type_) = self.node_types.get(id) {
+        if let Some(type_) = self.node_types.get(ty) {
             return *type_;
         }
+
+        let SimpleType {
+            token: _,
+            type_,
+            id: _,
+        } = ty;
+
         let t = self.type_sets.insert_set(type_.clone());
-        self.node_types.insert(*id, t);
+        self.node_types.insert(ty, t);
         t
     }
 
-    fn typecheck_unit_type(
-        &mut self,
-        UnitType {
-            open_paren_token,
-            close_paren_token,
-            id,
-        }: &mut UnitType,
-    ) -> UnifiableType {
+    fn typecheck_unit_type(&mut self, ty: &mut UnitType) -> UnifiableType {
         // make sure function registration gets the same type as the full eval
-        if let Some(type_) = self.node_types.get(id) {
+        if let Some(type_) = self.node_types.get(ty) {
             return *type_;
         }
+
+        let UnitType {
+            open_paren_token,
+            close_paren_token,
+            id: _,
+        } = ty;
         let t = self.type_sets.insert_set(RuntimeType {
             kind: RuntimeTypeKind::Unit,
             definition_range: Some(
@@ -2197,40 +2222,65 @@ impl TypePropagator<'_> {
                     .extend_with(close_paren_token.range.clone()),
             ),
         });
-        self.node_types.insert(*id, t);
+        self.node_types.insert(ty, t);
         t
     }
 
-    fn typecheck_idk_type(&mut self, IdkType { token, id }: &mut IdkType) -> UnifiableType {
-        if let Some(type_) = self.node_types.get(id) {
+    fn typecheck_idk_type(&mut self, ty: &mut IdkType) -> UnifiableType {
+        if let Some(type_) = self.node_types.get(ty) {
             return *type_;
         }
+
+        let IdkType { token, id: _ } = ty;
+
         let t = self.type_sets.insert_set(RuntimeType {
             kind: RuntimeTypeKind::Unknown,
             definition_range: Some(token.range.clone()),
         });
-        self.node_types.insert(*id, t);
+        self.node_types.insert(ty, t);
         t
     }
 
     fn typecheck_array_type(&mut self, array_type: &mut ArrayType) -> UnifiableType {
         let array_type_range = array_type.get_source_range();
+        if let Some(type_) = self.node_types.get(array_type) {
+            return *type_;
+        }
         let ArrayType {
             subtype,
             open_bracket_token,
             size,
             close_bracket_token,
-            id,
+            id: _,
         } = array_type;
-        if let Some(type_) = self.node_types.get(id) {
-            return *type_;
-        }
         let subtype_t = self.typecheck_type(subtype);
 
         if matches!(self.type_sets.get(subtype_t).kind, RuntimeTypeKind::Unit) {
             self.errors.push(ErrorKind::ArrayOfUnit {
                 type_range: array_type_range.clone(),
                 element_type: PrefetchedType::fetch(subtype_t, self.type_sets),
+            });
+        }
+
+        let expected_size_type = self.type_sets.insert_set(RuntimeType {
+            kind: RuntimeTypeKind::Number {
+                signed: Some(false),
+                integer: Some(true),
+            },
+            definition_range: None,
+        });
+
+        if let Some(size) = size
+            && let size_t = self.typecheck_expression(&mut *size)
+            && !RuntimeTypeKind::merge_types(size_t, expected_size_type, self.type_sets)
+        {
+            self.errors.push(ErrorKind::TypeMismatch {
+                kind: TypeMismatchKind::ArrayTypeSize {
+                    array: array_type_range.clone(),
+                },
+                value_range: size.get_source_range(),
+                expected_types: vec![PrefetchedType::fetch(expected_size_type, self.type_sets)],
+                actual_type: PrefetchedType::fetch(size_t, self.type_sets),
             });
         }
 
@@ -2264,23 +2314,23 @@ impl TypePropagator<'_> {
                     .extend_with(close_bracket_token.range.clone()),
             ),
         });
-        self.node_types.insert(*id, t);
+        self.node_types.insert(array_type, t);
         t
     }
 
-    fn typecheck_struct_type(
-        &mut self,
-        StructType {
+    fn typecheck_struct_type(&mut self, ty: &mut StructType) -> UnifiableType {
+        if let Some(type_) = self.node_types.get(ty) {
+            return *type_;
+        }
+
+        let StructType {
             struct_token,
             open_brace_token,
             members,
             close_brace_token,
-            id,
-        }: &mut StructType,
-    ) -> UnifiableType {
-        if let Some(type_) = self.node_types.get(id) {
-            return *type_;
-        }
+            id: _,
+        } = ty;
+
         let mut rt_members = vec![];
         for (
             StructMemberDefinition {
@@ -2318,7 +2368,7 @@ impl TypePropagator<'_> {
             ),
         });
 
-        self.node_types.insert(*id, struct_t);
+        self.node_types.insert(ty, struct_t);
 
         struct_t
     }
@@ -2327,7 +2377,7 @@ impl TypePropagator<'_> {
         let AliasType {
             name,
             name_token,
-            id,
+            id: _,
         } = alias_type;
 
         let Some((_definition_range, aliased_type)) = self.type_aliases.get(name) else {
@@ -2340,9 +2390,11 @@ impl TypePropagator<'_> {
                 kind: RuntimeTypeKind::Error,
                 definition_range: Some(name_token.range.clone()),
             });
-            self.node_types.insert(*id, type_);
+
+            self.node_types.insert(alias_type, type_);
             return type_;
         };
+
         let properly_ranged_type = self.type_sets.insert_set(RuntimeType {
             kind: RuntimeTypeKind::Unknown,
             definition_range: Some(name_token.range.clone()),
@@ -2350,7 +2402,7 @@ impl TypePropagator<'_> {
 
         let _ = RuntimeTypeKind::merge_types(properly_ranged_type, *aliased_type, self.type_sets);
 
-        self.node_types.insert(*id, properly_ranged_type);
+        self.node_types.insert(alias_type, properly_ranged_type);
         *aliased_type
     }
 }

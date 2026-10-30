@@ -245,15 +245,7 @@ impl<'state> GLSLCodeGenerator<'state> {
                         .id,
                 )
             })
-            .map(|binding| {
-                (
-                    type_data
-                        .get(&binding.id)
-                        .expect("type data must exist before calling c_generator")
-                        .clone(),
-                    binding,
-                )
-            })
+            .map(|binding| (type_data.get(&binding).clone(), binding))
             .collect_vec();
 
         OnStatementBindings {
@@ -308,11 +300,7 @@ impl<'state> GLSLCodeGenerator<'state> {
             .iter_mut()
             .enumerate()
             .map(|(n, it)| {
-                let type_ = self.runtime_type_to_glsl(
-                    self.type_data
-                        .get(&it.binding.id)
-                        .expect("type data must exist before calling glsl_generator"),
-                );
+                let type_ = self.runtime_type_to_glsl(self.type_data.get(&it.binding));
                 format!(
                     "{} = {}(((gl_GlobalInvocationID.x) {}) {});",
                     self.generate_simple_binding(&mut it.binding),
@@ -680,19 +668,15 @@ impl GLSLCodeGenerator<'_> {
         Err("Tried using external function from gpu".into())
     }
 
-    fn generate_simple_binding(
-        &mut self,
-        SimpleBinding {
+    fn generate_simple_binding(&mut self, binding: &mut SimpleBinding) -> String {
+        let inferred_type = self.type_data.get(binding);
+
+        let SimpleBinding {
             name_token: _,
             name: _,
             type_: _,
             id,
-        }: &mut SimpleBinding,
-    ) -> String {
-        let inferred_type = self
-            .type_data
-            .get(id)
-            .expect("Bindings should have types before calling glsl_generator");
+        } = binding;
 
         let (type_, after_id) = self.runtime_type_to_glsl(inferred_type);
 
@@ -1018,19 +1002,15 @@ impl GLSLCodeGenerator<'_> {
         }
     }
 
-    fn generate_array_expression(
-        &mut self,
-        ArrayExpression {
+    fn generate_array_expression(&mut self, expr: &mut ArrayExpression) -> PreStatementValue {
+        let inferred_type = self.type_data.get(expr);
+
+        let ArrayExpression {
             open_bracket_token: _,
             elements,
             close_bracket_token: _,
-            id,
-        }: &mut ArrayExpression,
-    ) -> PreStatementValue {
-        let inferred_type = self
-            .type_data
-            .get(id)
-            .expect("Array expressions should have types before calling glsl_generator");
+            id: _,
+        } = expr;
 
         let (type_, after_id) = self.runtime_type_to_glsl(inferred_type);
 
@@ -1105,20 +1085,16 @@ impl GLSLCodeGenerator<'_> {
         }
     }
 
-    fn generate_struct_expression(
-        &mut self,
-        StructExpression {
+    fn generate_struct_expression(&mut self, expr: &mut StructExpression) -> PreStatementValue {
+        let inferred_type = self.type_data.get(expr);
+
+        let StructExpression {
             type_: _,
             open_brace_token: _,
             members,
             close_brace_token: _,
-            id,
-        }: &mut StructExpression,
-    ) -> PreStatementValue {
-        let inferred_type = self
-            .type_data
-            .get(id)
-            .expect("Struct expressions should have types before calling c_generator");
+            id: _,
+        } = expr;
 
         let (type_, after_id) = self.runtime_type_to_glsl(inferred_type);
 
@@ -1203,17 +1179,8 @@ impl GLSLCodeGenerator<'_> {
     }
 
     fn generate_compiler_expression(&mut self, expr: &mut CompilerExpression) -> PreStatementValue {
-        let CompilerExpression {
-            at_token: _,
-            name,
-            name_token,
-            open_paren_token: _,
-            arguments,
-            close_paren_token: _,
-            id,
-        } = expr;
-
-        let (_pre_statements, args): (Vec<_>, Vec<_>) = arguments
+        let (_pre_statements, args): (Vec<_>, Vec<_>) = expr
+            .arguments
             .iter_mut()
             .map(|(arg, _comma)| self.generate_expression(arg))
             .map(
@@ -1224,13 +1191,20 @@ impl GLSLCodeGenerator<'_> {
             )
             .unzip();
 
+        let expected_type = self.type_data.get(expr);
+
+        let CompilerExpression {
+            at_token: _,
+            name,
+            name_token,
+            open_paren_token: _,
+            arguments,
+            close_paren_token: _,
+            id: _,
+        } = expr;
+
         match name.as_str() {
             "zero" => {
-                let expected_type = self
-                    .type_data
-                    .get(id)
-                    .expect("type data must exist before calling glsl_generator");
-
                 fn zero_value(
                     concrete_type: &ConcreteRuntimeType,
                     this: &GLSLCodeGenerator<'_>,
@@ -1322,87 +1296,63 @@ impl GLSLCodeGenerator<'_> {
 
                 out
             }
-            "sqrt" => {
-                let expected_type = self
-                    .type_data
-                    .get(id)
-                    .expect("type data must exist before calling glsl_generator");
+            "sqrt" => match expected_type {
+                ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64 => PreStatementValue {
+                    pre_statements: "".to_string(),
+                    out_value: format!("(sqrt({}))", args.first().unwrap()),
+                },
+                _ => {
+                    self.errors.push(ErrorKind::InvalidIntrinsicType {
+                        backend: Backend::Glsl,
+                        intrinsic: Intrinsic::Sqrt,
+                        intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                        type_: expected_type.clone().into(),
+                    });
 
-                match expected_type {
-                    ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64 => PreStatementValue {
+                    PreStatementValue {
                         pre_statements: "".to_string(),
-                        out_value: format!("(sqrt({}))", args.first().unwrap()),
-                    },
-                    _ => {
-                        self.errors.push(ErrorKind::InvalidIntrinsicType {
-                            backend: Backend::Glsl,
-                            intrinsic: Intrinsic::Sqrt,
-                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone().into(),
-                        });
-
-                        PreStatementValue {
-                            pre_statements: "".to_string(),
-                            out_value: "\n#error unimplemented type for @sqrt\n".to_string(),
-                        }
+                        out_value: "\n#error unimplemented type for @sqrt\n".to_string(),
                     }
                 }
-            }
-            "sin" => {
-                let expected_type = self
-                    .type_data
-                    .get(id)
-                    .expect("type data must exist before calling glsl_generator");
-
-                match expected_type {
-                    ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64 => PreStatementValue {
+            },
+            "sin" => match expected_type {
+                ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64 => PreStatementValue {
+                    pre_statements: "".to_string(),
+                    out_value: format!("(sin({}))", args.first().unwrap()),
+                },
+                _ => {
+                    self.errors.push(ErrorKind::InvalidIntrinsicType {
+                        backend: Backend::Glsl,
+                        intrinsic: Intrinsic::Sin,
+                        intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                        type_: expected_type.clone().into(),
+                    });
+                    PreStatementValue {
                         pre_statements: "".to_string(),
-                        out_value: format!("(sin({}))", args.first().unwrap()),
-                    },
-                    _ => {
-                        self.errors.push(ErrorKind::InvalidIntrinsicType {
-                            backend: Backend::Glsl,
-                            intrinsic: Intrinsic::Sin,
-                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone().into(),
-                        });
-                        PreStatementValue {
-                            pre_statements: "".to_string(),
-                            out_value: "\n#error unimplemented type for @sin\n".to_string(),
-                        }
+                        out_value: "\n#error unimplemented type for @sin\n".to_string(),
                     }
                 }
-            }
-            "cos" => {
-                let expected_type = self
-                    .type_data
-                    .get(id)
-                    .expect("type data must exist before calling glsl_generator");
-
-                match expected_type {
-                    ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64 => PreStatementValue {
+            },
+            "cos" => match expected_type {
+                ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64 => PreStatementValue {
+                    pre_statements: "".to_string(),
+                    out_value: format!("(cos({}))", args.first().unwrap()),
+                },
+                _ => {
+                    self.errors.push(ErrorKind::InvalidIntrinsicType {
+                        backend: Backend::Glsl,
+                        intrinsic: Intrinsic::Cos,
+                        intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                        type_: expected_type.clone().into(),
+                    });
+                    PreStatementValue {
                         pre_statements: "".to_string(),
-                        out_value: format!("(cos({}))", args.first().unwrap()),
-                    },
-                    _ => {
-                        self.errors.push(ErrorKind::InvalidIntrinsicType {
-                            backend: Backend::Glsl,
-                            intrinsic: Intrinsic::Cos,
-                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone().into(),
-                        });
-                        PreStatementValue {
-                            pre_statements: "".to_string(),
-                            out_value: "\n#error unimplemented type for @cos\n".to_string(),
-                        }
+                        out_value: "\n#error unimplemented type for @cos\n".to_string(),
                     }
                 }
-            }
+            },
             "length" => {
-                let array_type = self
-                    .type_data
-                    .get(&arguments[0].0.get_id())
-                    .expect("type data must exist before calling glsl_generator");
+                let array_type = self.type_data.get(&arguments[0].0);
 
                 match array_type {
                     ConcreteRuntimeType::ArrayOf { subtype: _, size } => PreStatementValue {
@@ -1542,20 +1492,15 @@ impl GLSLCodeGenerator<'_> {
         }
     }
 
-    fn generate_cast_expression(
-        &mut self,
-        CastExpression {
+    fn generate_cast_expression(&mut self, expr: &mut CastExpression) -> PreStatementValue {
+        let (type_, after_id) = self.runtime_type_to_glsl(self.type_data.get(expr));
+
+        let CastExpression {
             operand,
             as_token: _,
             type_: _,
-            id,
-        }: &mut CastExpression,
-    ) -> PreStatementValue {
-        let (type_, after_id) = self.runtime_type_to_glsl(
-            self.type_data
-                .get(id)
-                .expect("types should be inferred before calling glsl_generator"),
-        );
+            id: _,
+        } = expr;
 
         let PreStatementValue {
             pre_statements,
@@ -1596,12 +1541,7 @@ impl GLSLCodeGenerator<'_> {
                 Bo::Multiply => format!("(({left_out_value}) * ({right_out_value}))"),
                 Bo::Divide => format!("(({left_out_value}) / ({right_out_value}))"),
                 Bo::Modulo => {
-                    if self
-                        .type_data
-                        .get(&left.get_id())
-                        .expect("type data must exist before calling glsl_generator")
-                        .is_float()
-                    {
+                    if self.type_data.get(&**left).is_float() {
                         format!("(mod(({left_out_value}), ({right_out_value})))")
                     } else {
                         format!("(({left_out_value}) % ({right_out_value}))")
@@ -1726,62 +1666,23 @@ impl GLSLCodeGenerator<'_> {
         }
     }
 
-    fn generate_simple_type(
-        &mut self,
-        SimpleType {
-            token: _,
-            type_: _,
-            id,
-        }: &mut SimpleType,
-    ) -> String {
-        let (type_, after_id) = self.runtime_type_to_glsl(
-            self.type_data
-                .get(id)
-                .expect("type data should exist before calling glsl_generator"),
-        );
+    fn generate_simple_type(&mut self, ty: &mut SimpleType) -> String {
+        let (type_, after_id) = self.runtime_type_to_glsl(self.type_data.get(ty));
         type_ + &after_id
     }
 
-    fn generate_unit_type(
-        &mut self,
-        UnitType {
-            open_paren_token: _,
-            close_paren_token: _,
-            id,
-        }: &mut UnitType,
-    ) -> String {
-        let (type_, after_id) = self.runtime_type_to_glsl(
-            self.type_data
-                .get(id)
-                .expect("type data should exist before calling glsl_generator"),
-        );
+    fn generate_unit_type(&mut self, ty: &mut UnitType) -> String {
+        let (type_, after_id) = self.runtime_type_to_glsl(self.type_data.get(ty));
         type_ + &after_id
     }
 
-    fn generate_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) -> String {
-        let (type_, after_id) = self.runtime_type_to_glsl(
-            self.type_data
-                .get(id)
-                .expect("type data should exist before calling glsl_generator"),
-        );
+    fn generate_idk_type(&mut self, ty: &mut IdkType) -> String {
+        let (type_, after_id) = self.runtime_type_to_glsl(self.type_data.get(ty));
         type_ + &after_id
     }
 
-    fn generate_array_type(
-        &mut self,
-        ArrayType {
-            subtype: _,
-            open_bracket_token: _,
-            size: _,
-            close_bracket_token: _,
-            id,
-        }: &mut ArrayType,
-    ) -> String {
-        let (type_, after_id) = self.runtime_type_to_glsl(
-            self.type_data
-                .get(id)
-                .expect("type data should exist before calling glsl_generator"),
-        );
+    fn generate_array_type(&mut self, ty: &mut ArrayType) -> String {
+        let (type_, after_id) = self.runtime_type_to_glsl(self.type_data.get(ty));
         type_ + &after_id
     }
 
@@ -1811,10 +1712,7 @@ impl GLSLCodeGenerator<'_> {
                         _comma,
                     )| {
                         self.generate_type(type_);
-                        let inferred_type = self
-                            .type_data
-                            .get(&type_.get_id())
-                            .expect("Bindings should have types before calling c_generator");
+                        let inferred_type = self.type_data.get(type_);
 
                         let (type_, after_id) = self.runtime_type_to_glsl(inferred_type);
                         format!("{type_} {name}{after_id}")
@@ -1824,19 +1722,8 @@ impl GLSLCodeGenerator<'_> {
         )
     }
 
-    fn generate_alias_type(
-        &mut self,
-        AliasType {
-            name: _,
-            name_token: _,
-            id,
-        }: &mut AliasType,
-    ) -> String {
-        let (type_, after_id) = self.runtime_type_to_glsl(
-            self.type_data
-                .get(id)
-                .expect("type data should exist before calling glsl_generator"),
-        );
+    fn generate_alias_type(&mut self, ty: &mut AliasType) -> String {
+        let (type_, after_id) = self.runtime_type_to_glsl(self.type_data.get(ty));
         type_ + &after_id
     }
 }

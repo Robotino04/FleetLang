@@ -3,8 +3,8 @@ use std::{mem::swap, ops::ControlFlow};
 use crate::{
     ast::{
         ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, BinaryExpression, CastExpression,
-        CompilerExpression, Expression, FunctionCallExpression, GroupingLValue, HasID,
-        HasSourceRange, LValue, LiteralExpression, OnStatement, OnStatementIterator, Program,
+        CompilerExpression, Expression, FunctionCallExpression, GroupingLValue, HasSourceRange,
+        LValue, LiteralExpression, OnStatement, OnStatementIterator, Program,
         StructAccessExpression, StructAccessLValue, StructExpression, StructMemberValue, Type,
         UnaryExpression, VariableAccessExpression, VariableAssignmentExpression, VariableLValue,
     },
@@ -136,7 +136,7 @@ impl LValueReducer<'_> {
     fn is_literal_expression_equal(&self, a: &LiteralExpression, b: &Expression) -> Option<bool> {
         Some(match b {
             Expression::Literal(b) => {
-                a.value == b.value && self.type_data.get(&a.id)? == self.type_data.get(&b.id)?
+                a.value == b.value && self.type_data.get(a) == self.type_data.get(b)
             }
             Expression::Grouping(b) => self.is_literal_expression_equal(a, &b.subexpression)?,
             _ => false,
@@ -299,7 +299,7 @@ impl LValueReducer<'_> {
     }
 
     fn is_type_equal(&self, a: &Type, b: &Type) -> Option<bool> {
-        Some(self.type_data.get(&a.get_id())? == self.type_data.get(&b.get_id())?)
+        Some(self.type_data.get(a) == self.type_data.get(b))
     }
 }
 

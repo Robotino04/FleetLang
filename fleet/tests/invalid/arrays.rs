@@ -138,7 +138,22 @@ fn float_index() {
         },
     );
 }
-
+#[test]
+fn float_size() {
+    assert_compile_error(
+        indoc! {r##"
+            let main = () -> i32 {
+                let a: i32[2.7] = [1, 2, 3];
+                return a[0];
+            }
+        "##},
+        SourceLocation {
+            index: 38,
+            line: 2,
+            column: 15,
+        },
+    );
+}
 #[test]
 fn signed_index() {
     assert_compile_error(
