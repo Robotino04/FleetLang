@@ -922,7 +922,10 @@ impl Backend {
                         {}
                         ```
 
-                        ---- Debug Stats ----
+                        ---
+
+                        ## Debug Stats
+
                         ```rust
                         evaluation_time: {}
                         evaluation_deps: {}
@@ -930,12 +933,14 @@ impl Backend {
                         {}
                         ```
 
-                        ---- Current Scope ----
+                        ## Current Scope
+
                         ```rust
                         {}
                         ```
 
-                        ---- Token ----
+                        ## Token
+
                         ```rust
                         {:#?}
                         ```
