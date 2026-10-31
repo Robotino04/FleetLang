@@ -42,7 +42,7 @@ impl PassFactory for ErrMissingTypeInParam<'_> {
 }
 impl Pass for ErrMissingTypeInParam<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
-        let program = &mut self.program.take().unwrap();
+        let program = self.program.take().unwrap();
 
         let _ = self.visit_program(program);
 

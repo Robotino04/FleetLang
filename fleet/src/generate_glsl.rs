@@ -195,7 +195,7 @@ impl<'state> GLSLCodeGenerator<'state> {
         scope_data: &ConcreteScopeData,
         type_data: &ConcreteTypeData,
         bindings: Vec<VariableLValue>,
-        iterators: Vec<Rc<RefCell<ConcreteVariable>>>,
+        iterators: &[Rc<RefCell<ConcreteVariable>>],
         main_body: &Statement,
     ) -> OnStatementBindings {
         let iterator_ids = iterators
@@ -306,7 +306,7 @@ impl<'state> GLSLCodeGenerator<'state> {
                     self.generate_simple_binding(&mut it.binding),
                     type_.0 + &type_.1,
                     if n == 0 {
-                        "".to_string()
+                        String::new()
                     } else {
                         format!(
                             "/ ({})",
@@ -317,7 +317,7 @@ impl<'state> GLSLCodeGenerator<'state> {
                         )
                     },
                     if n == num_iterators - 1 {
-                        "".to_string()
+                        String::new()
                     } else {
                         format!("% {iterator_sizes_str}[{n}]")
                     }
@@ -468,18 +468,18 @@ impl<'state> GLSLCodeGenerator<'state> {
 
     fn runtime_type_to_glsl(&self, type_: &ConcreteRuntimeType) -> (String, String) {
         match type_ {
-            ConcreteRuntimeType::I8 => ("int8_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::I16 => ("int16_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::I32 => ("int32_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::I64 => ("int64_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::U8 => ("uint8_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::U16 => ("uint16_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::U32 => ("uint32_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::U64 => ("uint64_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::F32 => ("float".to_string(), "".to_string()),
-            ConcreteRuntimeType::F64 => ("double".to_string(), "".to_string()),
-            ConcreteRuntimeType::Boolean => ("bool".to_string(), "".to_string()),
-            ConcreteRuntimeType::Unit => ("void".to_string(), "".to_string()),
+            ConcreteRuntimeType::I8 => ("int8_t".to_string(), String::new()),
+            ConcreteRuntimeType::I16 => ("int16_t".to_string(), String::new()),
+            ConcreteRuntimeType::I32 => ("int32_t".to_string(), String::new()),
+            ConcreteRuntimeType::I64 => ("int64_t".to_string(), String::new()),
+            ConcreteRuntimeType::U8 => ("uint8_t".to_string(), String::new()),
+            ConcreteRuntimeType::U16 => ("uint16_t".to_string(), String::new()),
+            ConcreteRuntimeType::U32 => ("uint32_t".to_string(), String::new()),
+            ConcreteRuntimeType::U64 => ("uint64_t".to_string(), String::new()),
+            ConcreteRuntimeType::F32 => ("float".to_string(), String::new()),
+            ConcreteRuntimeType::F64 => ("double".to_string(), String::new()),
+            ConcreteRuntimeType::Boolean => ("bool".to_string(), String::new()),
+            ConcreteRuntimeType::Unit => ("void".to_string(), String::new()),
             ConcreteRuntimeType::ArrayOf { subtype, size } => {
                 let (type_, after_id) = self.runtime_type_to_glsl(subtype);
                 (type_, format!("[{size}]{after_id}"))
@@ -497,7 +497,7 @@ impl<'state> GLSLCodeGenerator<'state> {
                         })
                         .join("\n"),
                 ),
-                "".to_string(),
+                String::new(),
             ),
         }
     }
@@ -550,6 +550,7 @@ pub struct PreStatementValue {
     pub out_value: String,
 }
 
+#[allow(clippy::unnecessary_wraps)]
 impl GLSLCodeGenerator<'_> {
     define_dispatch_methods! {
         generate {
@@ -992,7 +993,7 @@ impl GLSLCodeGenerator<'_> {
         }: &mut LiteralExpression,
     ) -> PreStatementValue {
         PreStatementValue {
-            pre_statements: "".to_string(),
+            pre_statements: String::new(),
             out_value: match value {
                 LiteralKind::Number(value) => value.to_string(),
                 LiteralKind::Char(value) => (*value as u8).to_string(),
@@ -1224,11 +1225,11 @@ impl GLSLCodeGenerator<'_> {
                         | ConcreteRuntimeType::U64
                         | ConcreteRuntimeType::F32
                         | ConcreteRuntimeType::F64 => PreStatementValue {
-                            pre_statements: "".to_string(),
+                            pre_statements: String::new(),
                             out_value: format!("({type_}{after_id}(0))"),
                         },
                         ConcreteRuntimeType::Boolean => PreStatementValue {
-                            pre_statements: "".to_string(),
+                            pre_statements: String::new(),
                             out_value: "false".to_string(),
                         },
                         ConcreteRuntimeType::Unit => {
@@ -1242,7 +1243,7 @@ impl GLSLCodeGenerator<'_> {
                                 type_: concrete_type.clone().into(),
                             });
                             PreStatementValue {
-                                pre_statements: "".to_string(),
+                                pre_statements: String::new(),
                                 out_value: "\n#error unimplemented type for @zero\n".to_string(),
                             }
                         }
@@ -1289,7 +1290,7 @@ impl GLSLCodeGenerator<'_> {
                     }
                 }
 
-                let mut errors = Default::default();
+                let mut errors = Errors::default();
 
                 let out = zero_value(expected_type, self, &mut errors, name, name_token);
                 self.errors.append(&mut errors);
@@ -1298,7 +1299,7 @@ impl GLSLCodeGenerator<'_> {
             }
             "sqrt" => match expected_type {
                 ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64 => PreStatementValue {
-                    pre_statements: "".to_string(),
+                    pre_statements: String::new(),
                     out_value: format!("(sqrt({}))", args.first().unwrap()),
                 },
                 _ => {
@@ -1310,14 +1311,14 @@ impl GLSLCodeGenerator<'_> {
                     });
 
                     PreStatementValue {
-                        pre_statements: "".to_string(),
+                        pre_statements: String::new(),
                         out_value: "\n#error unimplemented type for @sqrt\n".to_string(),
                     }
                 }
             },
             "sin" => match expected_type {
                 ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64 => PreStatementValue {
-                    pre_statements: "".to_string(),
+                    pre_statements: String::new(),
                     out_value: format!("(sin({}))", args.first().unwrap()),
                 },
                 _ => {
@@ -1328,14 +1329,14 @@ impl GLSLCodeGenerator<'_> {
                         type_: expected_type.clone().into(),
                     });
                     PreStatementValue {
-                        pre_statements: "".to_string(),
+                        pre_statements: String::new(),
                         out_value: "\n#error unimplemented type for @sin\n".to_string(),
                     }
                 }
             },
             "cos" => match expected_type {
                 ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64 => PreStatementValue {
-                    pre_statements: "".to_string(),
+                    pre_statements: String::new(),
                     out_value: format!("(cos({}))", args.first().unwrap()),
                 },
                 _ => {
@@ -1346,7 +1347,7 @@ impl GLSLCodeGenerator<'_> {
                         type_: expected_type.clone().into(),
                     });
                     PreStatementValue {
-                        pre_statements: "".to_string(),
+                        pre_statements: String::new(),
                         out_value: "\n#error unimplemented type for @cos\n".to_string(),
                     }
                 }
@@ -1356,11 +1357,11 @@ impl GLSLCodeGenerator<'_> {
 
                 match array_type {
                     ConcreteRuntimeType::ArrayOf { subtype: _, size } => PreStatementValue {
-                        pre_statements: "".to_string(),
+                        pre_statements: String::new(),
                         out_value: format!("{size}"),
                     },
                     _ => PreStatementValue {
-                        pre_statements: "".to_string(),
+                        pre_statements: String::new(),
                         out_value: "\n#error non-array type for @length\n".to_string(),
                     },
                 }
@@ -1372,7 +1373,7 @@ impl GLSLCodeGenerator<'_> {
                 });
 
                 PreStatementValue {
-                    pre_statements: "".to_string(),
+                    pre_statements: String::new(),
                     out_value: "\n#error unimplemented compiler function\n".to_string(),
                 }
             }
@@ -1460,7 +1461,7 @@ impl GLSLCodeGenerator<'_> {
             .clone();
 
         PreStatementValue {
-            pre_statements: "".to_string(),
+            pre_statements: String::new(),
             out_value: self.mangle_variable(&ref_var.borrow()),
         }
     }
@@ -1595,7 +1596,7 @@ impl GLSLCodeGenerator<'_> {
         let ref_var = self.variable_data.get(id).unwrap();
 
         PreStatementValue {
-            pre_statements: "".to_string(),
+            pre_statements: String::new(),
             out_value: self.mangle_variable(&ref_var.borrow()),
         }
     }
@@ -1621,7 +1622,7 @@ impl GLSLCodeGenerator<'_> {
         } = self.generate_lvalue(array);
         PreStatementValue {
             pre_statements: lpre_statements + &rpre_statements,
-            out_value: format!("(({out_lvalue})[{out_rvalue}])",),
+            out_value: format!("(({out_lvalue})[{out_rvalue}])"),
         }
     }
 

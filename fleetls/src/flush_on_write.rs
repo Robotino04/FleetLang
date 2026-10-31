@@ -60,16 +60,13 @@ where
 
         loop {
             match this.state {
-                State::Idle => {
-                    match Pin::new(&mut this.writer).poll_write(cx, buf) {
-                        Poll::Ready(Ok(0)) => return Poll::Ready(Ok(0)),
-                        Poll::Ready(Ok(n)) => {
-                            this.state = State::Flushing(n);
-                            continue;
-                        }
-                        other => return other,
-                    };
-                }
+                State::Idle => match Pin::new(&mut this.writer).poll_write(cx, buf) {
+                    Poll::Ready(Ok(0)) => return Poll::Ready(Ok(0)),
+                    Poll::Ready(Ok(n)) => {
+                        this.state = State::Flushing(n);
+                    }
+                    other => return other,
+                },
                 State::Flushing(n) => match Pin::new(&mut this.writer).poll_flush(cx) {
                     Poll::Ready(Ok(())) => {
                         this.state = State::Idle;

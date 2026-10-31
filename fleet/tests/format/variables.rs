@@ -5,17 +5,17 @@ use crate::common::assert_formatting_and_same_behaviour;
 #[test]
 fn expand() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a:i32=0;
                 return a;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 return a;
-            }"##
+            }"
         },
         "main",
     );
@@ -24,18 +24,18 @@ fn expand() {
 #[test]
 fn collapse() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let    a :
                 i32  =  0;
                 return a;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 return a;
-            }"##
+            }"
         },
         "main",
     );
@@ -44,23 +44,23 @@ fn collapse() {
 #[test]
 fn remove_parens_multi_assign() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 let b: i32 = 0;
                 let c: i32 = 0;
                 (a = (b = (c = 3)));
                 return a + b + c;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 let b: i32 = 0;
                 let c: i32 = 0;
                 a = b = c = 3;
                 return a + b + c;
-            }"##
+            }"
         },
         "main",
     );
@@ -69,17 +69,17 @@ fn remove_parens_multi_assign() {
 #[test]
 fn remove_parens_initializer() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = ((5 / 2) + 9);
                 return a;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 5 / 2 + 9;
                 return a;
-            }"##
+            }"
         },
         "main",
     );
@@ -88,19 +88,19 @@ fn remove_parens_initializer() {
 #[test]
 fn remove_parens_assignment() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 a = ((5 / 2) + 9);
                 return a;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 a = 5 / 2 + 9;
                 return a;
-            }"##
+            }"
         },
         "main",
     );
@@ -109,17 +109,17 @@ fn remove_parens_assignment() {
 #[test]
 fn keep_params_assign_expr() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 return (a = 2) + 3;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 return (a = 2) + 3;
-            }"##
+            }"
         },
         "main",
     );
@@ -128,19 +128,19 @@ fn keep_params_assign_expr() {
 #[test]
 fn remove_parens_multiple_definition() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = (2 + 2 * 2);
                 let b: i32 = (2 + 2 * 2);
                 return a;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 2 + 2 * 2;
                 let b: i32 = 2 + 2 * 2;
                 return a;
-            }"##
+            }"
         },
         "main",
     );
@@ -149,19 +149,19 @@ fn remove_parens_multiple_definition() {
 #[test]
 fn remove_parens_multiple_assignments() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = (2 + 2 * 2);
                 let b: i32 = (2 + 2 * 2);
                 return a;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 2 + 2 * 2;
                 let b: i32 = 2 + 2 * 2;
                 return a;
-            }"##
+            }"
         },
         "main",
     );
@@ -169,23 +169,23 @@ fn remove_parens_multiple_assignments() {
 #[test]
 fn preserve_spacing() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 2 + 2 * 2;
 
                 let b: i32 = 2 + 2 * 2;
 
                 return a;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 2 + 2 * 2;
 
                 let b: i32 = 2 + 2 * 2;
 
                 return a;
-            }"##
+            }"
         },
         "main",
     );

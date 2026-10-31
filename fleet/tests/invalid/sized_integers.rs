@@ -6,12 +6,12 @@ use crate::common::assert_compile_error;
 #[test]
 fn return_wrong_size() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i16 = 2;
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 54,
             line: 3,
@@ -23,13 +23,13 @@ fn return_wrong_size() {
 #[test]
 fn initialize_wrong_size() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i16 {
                 let a: i8 = 2;
                 let b: i16 = a;
                 return b;
             }
-        "##},
+        "},
         SourceLocation {
             index: 59,
             line: 3,
@@ -41,14 +41,14 @@ fn initialize_wrong_size() {
 #[test]
 fn assign_wrong_size() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i16 {
                 let a: i64 = 2;
                 let b: i16 = 6;
                 b = a;
                 return b;
             }
-        "##},
+        "},
         SourceLocation {
             index: 71,
             line: 4,
@@ -60,14 +60,14 @@ fn assign_wrong_size() {
 #[test]
 fn arg_wrong_size() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let foo = (a: i8) -> () {}
             let main = () -> i64 {
                 let a: i64 = 2;
                 foo(a);
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 78,
             line: 4,
@@ -79,7 +79,7 @@ fn arg_wrong_size() {
 #[test]
 fn call_wrong_size() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let foo = (a: i8) -> i8 {
                 return a;
             }
@@ -87,7 +87,7 @@ fn call_wrong_size() {
                 let a: i8 = 2;
                 return foo(a);
             }
-        "##},
+        "},
         SourceLocation {
             index: 95,
             line: 6,

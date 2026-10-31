@@ -16,3 +16,6 @@ log = "0.4.34"
 llvm_backend = ["fleet/llvm_backend"]
 gpu_backend = ["fleet/gpu_backend"]
 default = ["llvm_backend", "gpu_backend"]
+
+[lints]
+workspace = true

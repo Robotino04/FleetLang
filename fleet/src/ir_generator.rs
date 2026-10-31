@@ -329,11 +329,11 @@ impl<'a> IrGenerator<'_> {
         type_: AnyTypeEnum<'c>,
         param_types: &[BasicMetadataTypeEnum<'c>],
         is_var_args: bool,
-    ) -> Result<FunctionType<'c>> {
+    ) -> FunctionType<'c> {
         match type_.into_basic_type() {
-            Ok(type_) => Ok(type_.fn_type(param_types, is_var_args)),
+            Ok(type_) => type_.fn_type(param_types, is_var_args),
             Err(Either::Left(_func)) => panic!("Tried to make a function returning function"),
-            Err(Either::Right(void)) => Ok(void.fn_type(param_types, is_var_args)),
+            Err(Either::Right(void)) => void.fn_type(param_types, is_var_args),
         }
     }
 
@@ -341,8 +341,8 @@ impl<'a> IrGenerator<'_> {
         &mut self,
         value: Option<BasicValueEnum<'a>>,
         expected_type: &ConcreteRuntimeType,
-    ) -> Result<RuntimeValueIR<'a>> {
-        Ok(match expected_type {
+    ) -> RuntimeValueIR<'a> {
+        match expected_type {
             ConcreteRuntimeType::I8
             | ConcreteRuntimeType::I16
             | ConcreteRuntimeType::I32
@@ -370,7 +370,7 @@ impl<'a> IrGenerator<'_> {
             ConcreteRuntimeType::Struct { .. } => {
                 RuntimeValueIR::Struct(value.unwrap().into_pointer_value())
             }
-        })
+        }
     }
 
     fn llvm_type_of_node<Node>(&mut self, node: &Node) -> AnyTypeEnum<'a>
@@ -512,7 +512,7 @@ impl<'a> IrGenerator<'_> {
 
         let ir_function = self.module.add_function(
             &name,
-            self.make_into_function_type(return_type_ir, params.as_slice(), false)?,
+            self.make_into_function_type(return_type_ir, params.as_slice(), false),
             Some(Linkage::External),
         );
         let ref_function = self
@@ -529,6 +529,7 @@ impl<'a> IrGenerator<'_> {
     }
 }
 
+#[allow(clippy::unnecessary_wraps)]
 impl<'state> IrGenerator<'state> {
     define_dispatch_methods! {
         generate {
@@ -784,7 +785,7 @@ impl<'state> IrGenerator<'state> {
                         Err(Either::Right(_unit_type)) => {
                             self.builder.build_return(None)?;
                         }
-                    };
+                    }
                 }
             }
         } else if matches!(return_type_ir, AnyTypeEnum::VoidType(_)) {
@@ -812,7 +813,7 @@ impl<'state> IrGenerator<'state> {
                 }
             }
             FunctionBody::Statement(_) => {}
-        };
+        }
 
         if !ir_function.verify(false) {
             self.errors.push(ErrorKind::InternalError(
@@ -989,7 +990,7 @@ impl<'state> IrGenerator<'state> {
             self.scope_data,
             self.type_data,
             bindings,
-            iterators
+            &iterators
                 .iter()
                 .map(|it| {
                     Ok(self
@@ -1176,7 +1177,7 @@ impl<'state> IrGenerator<'state> {
                 &shaderc_output
                     .as_binary()
                     .iter()
-                    .map(|x| self.context.i32_type().const_int(*x as u64, false))
+                    .map(|x| self.context.i32_type().const_int((*x).into(), false))
                     .collect_vec(),
             );
             let global_shader_code =
@@ -1214,7 +1215,7 @@ impl<'state> IrGenerator<'state> {
                     buffers_ir_ptr.into(),
                     self.context
                         .i64_type()
-                        .const_int(buffers_ir.get_type().len() as u64, false)
+                        .const_int(buffers_ir.get_type().len().into(), false)
                         .into(),
                 ],
                 "fl_runtime_bind_buffers",
@@ -1297,7 +1298,7 @@ impl<'state> IrGenerator<'state> {
                 self.builder.build_return(Some(&value))?;
             } else {
                 self.builder.build_return(ir_value.as_basic_value())?;
-            };
+            }
         } else {
             self.builder.build_return(None)?;
         }
@@ -1333,10 +1334,10 @@ impl<'state> IrGenerator<'state> {
                 size,
             )?;
             return Ok(());
-        } else {
-            self.builder
-                .build_store(ptr, eval_value.as_basic_value_no_unit())?;
         }
+
+        self.builder
+            .build_store(ptr, eval_value.as_basic_value_no_unit())?;
 
         Ok(())
     }
@@ -1604,7 +1605,9 @@ impl<'state> IrGenerator<'state> {
 
         Ok(match value {
             LiteralKind::Number(value) => match self.llvm_type_of_node(literal) {
-                AnyTypeEnum::FloatType(type_) => {
+                AnyTypeEnum::FloatType(type_) =>
+                {
+                    #[expect(clippy::cast_precision_loss)]
                     RuntimeValueIR::Float(type_.const_float(*value as f64))
                 }
 
@@ -1641,6 +1644,7 @@ impl<'state> IrGenerator<'state> {
                     .const_float(*value),
             ),
             LiteralKind::Bool(value) => RuntimeValueIR::Bool(
+                #[expect(clippy::bool_to_int_with_if)]
                 self.context
                     .bool_type()
                     .const_int(if *value { 1 } else { 0 }, false),
@@ -1797,7 +1801,7 @@ impl<'state> IrGenerator<'state> {
                 args.push(value.into());
             } else {
                 args.push(ir_value.as_basic_value_enum().unwrap().into());
-            };
+            }
         }
 
         let ir_function = self
@@ -1828,7 +1832,7 @@ impl<'state> IrGenerator<'state> {
             retvalue = Some(ptr.into());
         }
 
-        self.package_llvm_in_runtime_value(retvalue, &return_type)
+        Ok(self.package_llvm_in_runtime_value(retvalue, &return_type))
     }
 
     fn generate_compiler_expression(
@@ -1910,116 +1914,101 @@ impl<'state> IrGenerator<'state> {
             "sqrt" => {
                 let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
 
-                Ok(match args.first().unwrap().1 {
-                    RuntimeValueIR::Float(value) => {
-                        let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.sqrt").unwrap();
-                        let intrinsic = intrinsic
-                            .get_declaration(
-                                self.module,
-                                &[expected_type_ir.into_basic_type().unwrap()],
-                            )
-                            .unwrap();
-                        RuntimeValueIR::Float(
-                            self.builder
-                                .build_direct_call(intrinsic, &[value.into()], "intrinsic_sqrt")?
-                                .try_as_basic_value()
-                                .unwrap_left()
-                                .into_float_value(),
-                        )
-                    }
-                    _ => {
-                        self.errors.push(ErrorKind::InvalidIntrinsicType {
-                            backend: Backend::Llvm,
-                            intrinsic: Intrinsic::Sqrt,
-                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone().into(),
-                        });
+                let RuntimeValueIR::Float(value) = args.first().unwrap().1 else {
+                    self.errors.push(ErrorKind::InvalidIntrinsicType {
+                        backend: Backend::Llvm,
+                        intrinsic: Intrinsic::Sqrt,
+                        intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                        type_: expected_type.clone().into(),
+                    });
 
-                        return Err(format!(
-                            "@sqrt compiler function has unknown or error type: {expected_type}"
-                        )
-                        .into());
-                    }
-                })
+                    return Err(format!(
+                        "@sqrt compiler function has unknown or error type: {expected_type}"
+                    )
+                    .into());
+                };
+
+                let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.sqrt").unwrap();
+                let intrinsic = intrinsic
+                    .get_declaration(self.module, &[expected_type_ir.into_basic_type().unwrap()])
+                    .unwrap();
+                Ok(RuntimeValueIR::Float(
+                    self.builder
+                        .build_direct_call(intrinsic, &[value.into()], "intrinsic_sqrt")?
+                        .try_as_basic_value()
+                        .unwrap_left()
+                        .into_float_value(),
+                ))
             }
             "sin" => {
                 let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
 
-                Ok(match args.first().unwrap().1 {
-                    RuntimeValueIR::Float(value) => {
-                        let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.sin").unwrap();
-                        let intrinsic = intrinsic
-                            .get_declaration(
-                                self.module,
-                                &[expected_type_ir.into_basic_type().unwrap()],
-                            )
-                            .unwrap();
-                        RuntimeValueIR::Float(
-                            self.builder
-                                .build_direct_call(intrinsic, &[value.into()], "intrinsic_sin")?
-                                .try_as_basic_value()
-                                .unwrap_left()
-                                .into_float_value(),
-                        )
-                    }
-                    _ => {
-                        self.errors.push(ErrorKind::InvalidIntrinsicType {
-                            backend: Backend::Llvm,
-                            intrinsic: Intrinsic::Sin,
-                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone().into(),
-                        });
+                let RuntimeValueIR::Float(value) = args.first().unwrap().1 else {
+                    self.errors.push(ErrorKind::InvalidIntrinsicType {
+                        backend: Backend::Llvm,
+                        intrinsic: Intrinsic::Sin,
+                        intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                        type_: expected_type.clone().into(),
+                    });
 
-                        return Err(format!(
-                            "@sin compiler function has unknown or error type: {expected_type}"
-                        )
-                        .into());
-                    }
-                })
+                    return Err(format!(
+                        "@sin compiler function has unknown or error type: {expected_type}"
+                    )
+                    .into());
+                };
+
+                let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.sin").unwrap();
+                let intrinsic = intrinsic
+                    .get_declaration(self.module, &[expected_type_ir.into_basic_type().unwrap()])
+                    .unwrap();
+                Ok(RuntimeValueIR::Float(
+                    self.builder
+                        .build_direct_call(intrinsic, &[value.into()], "intrinsic_sin")?
+                        .try_as_basic_value()
+                        .unwrap_left()
+                        .into_float_value(),
+                ))
             }
             "cos" => {
                 let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
 
-                Ok(match args.first().unwrap().1 {
-                    RuntimeValueIR::Float(value) => {
-                        let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.cos").unwrap();
-                        let intrinsic = intrinsic
-                            .get_declaration(
-                                self.module,
-                                &[expected_type_ir.into_basic_type().unwrap()],
-                            )
-                            .unwrap();
-                        RuntimeValueIR::Float(
-                            self.builder
-                                .build_direct_call(intrinsic, &[value.into()], "intrinsic_cos")?
-                                .try_as_basic_value()
-                                .unwrap_left()
-                                .into_float_value(),
-                        )
-                    }
-                    _ => {
-                        self.errors.push(ErrorKind::InvalidIntrinsicType {
-                            backend: Backend::Llvm,
-                            intrinsic: Intrinsic::Cos,
-                            intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
-                            type_: expected_type.clone().into(),
-                        });
+                let RuntimeValueIR::Float(value) = args.first().unwrap().1 else {
+                    self.errors.push(ErrorKind::InvalidIntrinsicType {
+                        backend: Backend::Llvm,
+                        intrinsic: Intrinsic::Cos,
+                        intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                        type_: expected_type.clone().into(),
+                    });
 
-                        return Err(format!(
-                            "@cos compiler function has unknown or error type: {expected_type}"
-                        )
-                        .into());
-                    }
-                })
+                    return Err(format!(
+                        "@cos compiler function has unknown or error type: {expected_type}"
+                    )
+                    .into());
+                };
+
+                let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.cos").unwrap();
+                let intrinsic = intrinsic
+                    .get_declaration(self.module, &[expected_type_ir.into_basic_type().unwrap()])
+                    .unwrap();
+                Ok(RuntimeValueIR::Float(
+                    self.builder
+                        .build_direct_call(intrinsic, &[value.into()], "intrinsic_cos")?
+                        .try_as_basic_value()
+                        .unwrap_left()
+                        .into_float_value(),
+                ))
             }
             "length" => {
                 let array_type = self.type_data.get(args.first().unwrap().0).clone();
 
-                let length = match array_type {
-                    ConcreteRuntimeType::ArrayOf { subtype: _, size } => size,
-                    _ => pass_precondition!(
+                let ConcreteRuntimeType::ArrayOf {
+                    subtype: _,
+                    size: length,
+                } = array_type
+                else {
+                    pass_precondition!(
                         "@length called with non-array typed value of type {array_type}"
-                    ),
+                    )
                 };
 
                 let ir_type = self.runtime_type_to_llvm(&expected_type);
@@ -2103,7 +2092,7 @@ impl<'state> IrGenerator<'state> {
             )?
         };
 
-        self.package_llvm_in_runtime_value(Some(result), &result_type)
+        Ok(self.package_llvm_in_runtime_value(Some(result), &result_type))
     }
 
     fn generate_struct_access_expression(
@@ -2159,7 +2148,7 @@ impl<'state> IrGenerator<'state> {
             )?
         };
 
-        self.package_llvm_in_runtime_value(Some(result), member_type)
+        Ok(self.package_llvm_in_runtime_value(Some(result), member_type))
     }
 
     fn generate_grouping_expression(
@@ -2217,7 +2206,7 @@ impl<'state> IrGenerator<'state> {
             )?)
         };
 
-        self.package_llvm_in_runtime_value(result, &result_type)
+        Ok(self.package_llvm_in_runtime_value(result, &result_type))
     }
 
     fn generate_unary_expression(

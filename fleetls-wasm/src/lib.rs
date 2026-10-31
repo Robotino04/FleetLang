@@ -132,10 +132,10 @@ pub fn compile_to_c(source: String) -> Result<CompileOutput, String> {
 
     Ok(CompileOutput {
         ccode,
-        warnings: if !(errors.is_empty()) {
-            errors.format_all_errors_and_message("There are warnings", &documents, true)
-        } else {
+        warnings: if errors.is_empty() {
             String::new()
+        } else {
+            errors.format_all_errors_and_message("There are warnings", &documents, true)
         },
     })
 }

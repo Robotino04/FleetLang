@@ -142,20 +142,27 @@ impl Pass for SaveArtifactPass<'_> {
                 })?,
             #[cfg(feature = "llvm_backend")]
             ArtifactType::LlvmIr => {
-                std::fs::write(&self.filename, self.module.unwrap().to_string()).map_err(|err| {
+                std::fs::write(&self.filename, self.module.unwrap().to_string()).map_err(
+                    |err| PassError::CompilerError {
+                        producing_pass: Self::name(),
+                        source: err.into(),
+                    },
+                )?;
+            }
+            ArtifactType::CCode => {
+                std::fs::write(&self.filename, self.ccode.unwrap().to_string()).map_err(|err| {
                     PassError::CompilerError {
                         producing_pass: Self::name(),
                         source: err.into(),
                     }
-                })?
+                })?;
             }
-            ArtifactType::CCode => std::fs::write(&self.filename, self.ccode.unwrap().to_string())
-                .map_err(|err| PassError::CompilerError {
-                    producing_pass: Self::name(),
-                    source: err.into(),
-                })?,
         }
-        info!("Wrote {:?} to {:?}", self.artifact_type, self.filename);
+        info!(
+            "Wrote {:?} to {}",
+            self.artifact_type,
+            self.filename.display()
+        );
 
         Ok(())
     }

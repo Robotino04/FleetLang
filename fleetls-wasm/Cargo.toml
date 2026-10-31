@@ -28,3 +28,6 @@ features = [
     "ReadableStream",
     "WritableStream",
 ]
+
+[lints]
+workspace = true

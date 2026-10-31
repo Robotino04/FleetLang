@@ -70,6 +70,7 @@ where
     From: BorrowMut<<To as Deref>::Target>,
 {
     fn run(self: Box<Self>) -> PassResult {
+        #[expect(clippy::explicit_deref_methods)]
         let to = self.to.deref_mut();
         let from = self.from.borrow_mut();
         std::mem::swap(to, from);

@@ -6,11 +6,11 @@ use crate::common::assert_parser_or_tokenizer_error;
 #[test]
 fn missing_left_block_delimiter() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 5; */
             }
-        "##},
+        "},
         SourceLocation {
             index: 37,
             line: 2,
@@ -22,11 +22,11 @@ fn missing_left_block_delimiter() {
 #[test]
 fn missing_right_block_delimiter() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 /* return 5;
             }
-        "##},
+        "},
         SourceLocation {
             index: 27,
             line: 2,
@@ -38,11 +38,11 @@ fn missing_right_block_delimiter() {
 #[test]
 fn spaced_right_block_delimiter() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 /* return 5; * /
             }
-        "##},
+        "},
         SourceLocation {
             index: 27,
             line: 2,
@@ -54,11 +54,11 @@ fn spaced_right_block_delimiter() {
 #[test]
 fn spaced_left_block_delimiter() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 / * return 5; */
             }
-        "##},
+        "},
         SourceLocation {
             index: 27,
             line: 2,
@@ -70,11 +70,11 @@ fn spaced_left_block_delimiter() {
 #[test]
 fn spaced_line_delimiter() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 / / return 5;
             }
-        "##},
+        "},
         SourceLocation {
             index: 27,
             line: 2,

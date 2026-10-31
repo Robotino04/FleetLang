@@ -48,18 +48,18 @@ impl<'inputs> ExtractSemanticTokensPass<'inputs> {
         }
     }
 
-    fn build_semantic_token(
+    fn build_semantic_token<'a>(
         &mut self,
         token: &Token,
-        token_type: SemanticTokenType,
-        token_modifiers: Vec<SemanticTokenModifier>,
+        #[expect(clippy::needless_pass_by_value)] token_type: SemanticTokenType,
+        token_modifiers: impl IntoIterator<Item = &'a SemanticTokenModifier>,
     ) {
         self.build_comment_tokens_from_trivia(&token.leading_trivia);
         self.semantic_tokens.push(SemanticToken {
             delta_line: token_delta_line(self.previous_token_start, token.range.range.start),
             delta_start: token_delta_start(self.previous_token_start, token.range.range.start),
             length: token.range.num_chars() as u32,
-            token_type: self.find_token_type_index(token_type),
+            token_type: self.find_token_type_index(&token_type),
             token_modifiers_bitset: self.build_token_modifier_bitset(token_modifiers),
         });
         self.previous_token_start = token.range.range.start;
@@ -74,19 +74,19 @@ impl<'inputs> ExtractSemanticTokensPass<'inputs> {
         {
             if let TriviaKind::LineComment(content) | TriviaKind::BlockComment(content) = kind {
                 let mut mod_start = *start;
-                for line in content.split("\n") {
+                for line in content.split('\n') {
                     let mut length = line.chars().count();
                     if mod_start.line == end.line {
-                        length += 2 // the comment end
+                        length += 2; // the comment end
                     }
                     if mod_start.line == start.line {
-                        length += 2 // the comment start
+                        length += 2; // the comment start
                     }
                     self.semantic_tokens.push(SemanticToken {
                         delta_line: token_delta_line(self.previous_token_start, mod_start),
                         delta_start: token_delta_start(self.previous_token_start, mod_start),
                         length: length as u32,
-                        token_type: self.find_token_type_index(SemanticTokenType::COMMENT),
+                        token_type: self.find_token_type_index(&SemanticTokenType::COMMENT),
                         token_modifiers_bitset: 0,
                     });
                     self.previous_token_start = mod_start;
@@ -103,15 +103,18 @@ impl<'inputs> ExtractSemanticTokensPass<'inputs> {
         self.build_comment_tokens_from_trivia(&token.trailing_trivia);
     }
 
-    fn find_token_type_index(&self, token_type: SemanticTokenType) -> u32 {
+    fn find_token_type_index(&self, token_type: &SemanticTokenType) -> u32 {
         self.semantic_token_types
             .iter()
-            .position(|t| t.as_str() == token_type.as_str())
+            .position(|t| t == token_type)
             .unwrap_or(0) as u32
     }
-    fn build_token_modifier_bitset(&self, token_modifiers: Vec<SemanticTokenModifier>) -> u32 {
+    fn build_token_modifier_bitset<'a>(
+        &self,
+        token_modifiers: impl IntoIterator<Item = &'a SemanticTokenModifier>,
+    ) -> u32 {
         token_modifiers
-            .iter()
+            .into_iter()
             .map(|modifier| {
                 1u32 << (self
                     .semantic_token_modifiers
@@ -223,11 +226,11 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut FunctionDefinition,
     ) {
-        self.build_semantic_token(let_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(let_token, SemanticTokenType::KEYWORD, []);
         self.build_semantic_token(
             name_token,
             SemanticTokenType::FUNCTION,
-            vec![
+            &[
                 SemanticTokenModifier::DEFINITION,
                 SemanticTokenModifier::DECLARATION,
             ],
@@ -261,11 +264,11 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut TypeAlias,
     ) {
-        self.build_semantic_token(let_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(let_token, SemanticTokenType::KEYWORD, &[]);
         self.build_semantic_token(
             name_token,
             SemanticTokenType::TYPE,
-            vec![
+            &[
                 SemanticTokenModifier::DEFINITION,
                 SemanticTokenModifier::DECLARATION,
             ],
@@ -293,12 +296,12 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut ExternFunctionBody,
     ) {
-        self.build_semantic_token(at_token, SemanticTokenType::OPERATOR, vec![]);
-        self.build_semantic_token(extern_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(at_token, SemanticTokenType::OPERATOR, &[]);
+        self.build_semantic_token(extern_token, SemanticTokenType::KEYWORD, &[]);
         self.build_semantic_token(
             symbol_token,
             SemanticTokenType::STRING,
-            vec![SemanticTokenModifier::READONLY],
+            &[SemanticTokenModifier::READONLY],
         );
         self.build_comment_tokens_only(semicolon_token);
     }
@@ -307,7 +310,7 @@ impl ExtractSemanticTokensPass<'_> {
         self.build_semantic_token(
             &simple_binding.name_token,
             SemanticTokenType::VARIABLE,
-            vec![SemanticTokenModifier::DEFINITION],
+            &[SemanticTokenModifier::DEFINITION],
         );
         if let Some((colon_token, type_)) = &mut simple_binding.type_ {
             self.build_comment_tokens_only(colon_token);
@@ -340,7 +343,7 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut OnStatement,
     ) {
-        self.build_semantic_token(on_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(on_token, SemanticTokenType::KEYWORD, &[]);
         self.visit_executor(executor);
 
         for OnStatementIterator {
@@ -378,11 +381,7 @@ impl ExtractSemanticTokensPass<'_> {
     }
 
     fn visit_return_statement(&mut self, return_stmt: &mut ReturnStatement) {
-        self.build_semantic_token(
-            &return_stmt.return_token,
-            SemanticTokenType::KEYWORD,
-            vec![],
-        );
+        self.build_semantic_token(&return_stmt.return_token, SemanticTokenType::KEYWORD, &[]);
         if let Some(value) = &mut return_stmt.value {
             self.visit_expression(value);
         }
@@ -393,28 +392,24 @@ impl ExtractSemanticTokensPass<'_> {
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
     ) {
-        self.build_semantic_token(&vardef_stmt.let_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(&vardef_stmt.let_token, SemanticTokenType::KEYWORD, &[]);
         self.visit_simple_binding(&mut vardef_stmt.binding);
-        self.build_semantic_token(
-            &vardef_stmt.equals_token,
-            SemanticTokenType::OPERATOR,
-            vec![],
-        );
+        self.build_semantic_token(&vardef_stmt.equals_token, SemanticTokenType::OPERATOR, &[]);
         self.visit_expression(&mut vardef_stmt.value);
         self.build_comment_tokens_only(&vardef_stmt.semicolon_token);
     }
 
     fn visit_if_statement(&mut self, if_stmt: &mut IfStatement) {
-        self.build_semantic_token(&if_stmt.if_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(&if_stmt.if_token, SemanticTokenType::KEYWORD, &[]);
         self.visit_expression(&mut if_stmt.condition);
         self.visit_statement(&mut if_stmt.if_body);
         for (token, condition, body) in &mut if_stmt.elifs {
-            self.build_semantic_token(token, SemanticTokenType::KEYWORD, vec![]);
+            self.build_semantic_token(token, SemanticTokenType::KEYWORD, &[]);
             self.visit_expression(condition);
             self.visit_statement(body);
         }
         if let Some((token, body)) = &mut if_stmt.else_ {
-            self.build_semantic_token(token, SemanticTokenType::KEYWORD, vec![]);
+            self.build_semantic_token(token, SemanticTokenType::KEYWORD, &[]);
             self.visit_statement(body);
         }
     }
@@ -428,7 +423,7 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut WhileLoopStatement,
     ) {
-        self.build_semantic_token(while_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(while_token, SemanticTokenType::KEYWORD, &[]);
         self.visit_expression(condition);
         self.visit_statement(body);
     }
@@ -447,7 +442,7 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut ForLoopStatement,
     ) {
-        self.build_semantic_token(for_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(for_token, SemanticTokenType::KEYWORD, &[]);
         self.build_comment_tokens_only(open_paren_token);
         self.visit_statement(initializer);
         if let Some(cond) = condition {
@@ -469,7 +464,7 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut BreakStatement,
     ) {
-        self.build_semantic_token(break_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(break_token, SemanticTokenType::KEYWORD, &[]);
         self.build_comment_tokens_only(semicolon_token);
     }
 
@@ -481,7 +476,7 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut SkipStatement,
     ) {
-        self.build_semantic_token(skip_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(skip_token, SemanticTokenType::KEYWORD, &[]);
         self.build_comment_tokens_only(semicolon_token);
     }
 
@@ -503,7 +498,7 @@ impl ExtractSemanticTokensPass<'_> {
     ) {
         self.visit_executor_host(host);
         self.build_comment_tokens_only(dot_token);
-        self.build_semantic_token(thread_token, SemanticTokenType::VARIABLE, vec![]);
+        self.build_semantic_token(thread_token, SemanticTokenType::VARIABLE, &[]);
         self.build_comment_tokens_only(open_bracket_token);
         self.visit_expression(index);
         self.build_comment_tokens_only(close_bracket_token);
@@ -523,7 +518,7 @@ impl ExtractSemanticTokensPass<'_> {
     ) {
         self.visit_executor_host(host);
         self.build_comment_tokens_only(dot_token);
-        self.build_semantic_token(gpus_token, SemanticTokenType::VARIABLE, vec![]);
+        self.build_semantic_token(gpus_token, SemanticTokenType::VARIABLE, &[]);
         self.build_comment_tokens_only(open_bracket_token_1);
         self.visit_expression(gpu_index);
         self.build_comment_tokens_only(close_bracket_token_1);
@@ -545,7 +540,7 @@ impl ExtractSemanticTokensPass<'_> {
                 LiteralKind::Float(_) => SemanticTokenType::NUMBER,
                 LiteralKind::Bool(_) => SemanticTokenType::KEYWORD,
             },
-            vec![],
+            &[],
         );
     }
 
@@ -590,7 +585,7 @@ impl ExtractSemanticTokensPass<'_> {
             comma,
         ) in members
         {
-            self.build_semantic_token(name_token, SemanticTokenType::PROPERTY, vec![]);
+            self.build_semantic_token(name_token, SemanticTokenType::PROPERTY, &[]);
             self.build_comment_tokens_only(colon_token);
             self.visit_expression(value);
             if let Some(comma) = comma {
@@ -611,7 +606,7 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut FunctionCallExpression,
     ) {
-        self.build_semantic_token(name_token, SemanticTokenType::FUNCTION, vec![]);
+        self.build_semantic_token(name_token, SemanticTokenType::FUNCTION, &[]);
         self.build_comment_tokens_only(open_paren_token);
         for (arg, comma) in arguments {
             self.visit_expression(arg);
@@ -634,11 +629,11 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut CompilerExpression,
     ) {
-        self.build_semantic_token(at_token, SemanticTokenType::OPERATOR, vec![]);
+        self.build_semantic_token(at_token, SemanticTokenType::OPERATOR, &[]);
         self.build_semantic_token(
             name_token,
             SemanticTokenType::FUNCTION,
-            vec![SemanticTokenModifier::DEFAULT_LIBRARY],
+            &[SemanticTokenModifier::DEFAULT_LIBRARY],
         );
         self.build_comment_tokens_only(open_paren_token);
         for (arg, comma) in arguments {
@@ -678,7 +673,7 @@ impl ExtractSemanticTokensPass<'_> {
     ) {
         self.visit_expression(value);
         self.build_comment_tokens_only(dot_token);
-        self.build_semantic_token(member_name_token, SemanticTokenType::PROPERTY, vec![]);
+        self.build_semantic_token(member_name_token, SemanticTokenType::PROPERTY, &[]);
     }
 
     fn visit_grouping_expression(
@@ -703,7 +698,7 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut VariableAccessExpression,
     ) {
-        self.build_semantic_token(name_token, SemanticTokenType::VARIABLE, vec![]);
+        self.build_semantic_token(name_token, SemanticTokenType::VARIABLE, &[]);
     }
 
     fn visit_unary_expression(
@@ -715,7 +710,7 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut UnaryExpression,
     ) {
-        self.build_semantic_token(operator_token, SemanticTokenType::OPERATOR, vec![]);
+        self.build_semantic_token(operator_token, SemanticTokenType::OPERATOR, &[]);
         self.visit_expression(operand);
     }
 
@@ -729,7 +724,7 @@ impl ExtractSemanticTokensPass<'_> {
         }: &mut CastExpression,
     ) {
         self.visit_expression(operand);
-        self.build_semantic_token(as_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(as_token, SemanticTokenType::KEYWORD, &[]);
         self.visit_type(type_);
     }
 
@@ -744,7 +739,7 @@ impl ExtractSemanticTokensPass<'_> {
         }: &mut BinaryExpression,
     ) {
         self.visit_expression(left);
-        self.build_semantic_token(operator_token, SemanticTokenType::OPERATOR, vec![]);
+        self.build_semantic_token(operator_token, SemanticTokenType::OPERATOR, &[]);
         self.visit_expression(right);
     }
 
@@ -758,7 +753,7 @@ impl ExtractSemanticTokensPass<'_> {
         }: &mut VariableAssignmentExpression,
     ) {
         self.visit_lvalue(lvalue);
-        self.build_semantic_token(equal_token, SemanticTokenType::OPERATOR, vec![]);
+        self.build_semantic_token(equal_token, SemanticTokenType::OPERATOR, &[]);
         self.visit_expression(right);
     }
 
@@ -773,7 +768,7 @@ impl ExtractSemanticTokensPass<'_> {
         self.build_semantic_token(
             name_token,
             SemanticTokenType::VARIABLE,
-            vec![SemanticTokenModifier::MODIFICATION],
+            &[SemanticTokenModifier::MODIFICATION],
         );
     }
 
@@ -808,7 +803,7 @@ impl ExtractSemanticTokensPass<'_> {
         self.build_semantic_token(
             member_name_token,
             SemanticTokenType::PROPERTY,
-            vec![SemanticTokenModifier::MODIFICATION],
+            &[SemanticTokenModifier::MODIFICATION],
         );
     }
 
@@ -834,7 +829,7 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut SimpleType,
     ) {
-        self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
+        self.build_semantic_token(token, SemanticTokenType::TYPE, &[]);
     }
 
     fn visit_unit_type(
@@ -850,7 +845,7 @@ impl ExtractSemanticTokensPass<'_> {
     }
 
     fn visit_idk_type(&mut self, IdkType { token, id: _ }: &mut IdkType) {
-        self.build_semantic_token(token, SemanticTokenType::TYPE, vec![]);
+        self.build_semantic_token(token, SemanticTokenType::TYPE, &[]);
     }
 
     fn visit_array_type(
@@ -881,7 +876,7 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut StructType,
     ) {
-        self.build_semantic_token(struct_token, SemanticTokenType::KEYWORD, vec![]);
+        self.build_semantic_token(struct_token, SemanticTokenType::KEYWORD, &[]);
         self.build_comment_tokens_only(open_brace_token);
         for (
             StructMemberDefinition {
@@ -896,7 +891,7 @@ impl ExtractSemanticTokensPass<'_> {
             self.build_semantic_token(
                 name_token,
                 SemanticTokenType::PROPERTY,
-                vec![SemanticTokenModifier::DEFINITION],
+                &[SemanticTokenModifier::DEFINITION],
             );
             self.build_comment_tokens_only(colon_token);
             self.visit_type(type_);
@@ -915,6 +910,6 @@ impl ExtractSemanticTokensPass<'_> {
             id: _,
         }: &mut AliasType,
     ) {
-        self.build_semantic_token(name_token, SemanticTokenType::TYPE, vec![]);
+        self.build_semantic_token(name_token, SemanticTokenType::TYPE, &[]);
     }
 }

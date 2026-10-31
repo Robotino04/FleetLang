@@ -5,7 +5,7 @@ use crate::common::assert_formatting_and_same_behaviour;
 #[test]
 fn collapse_while() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 while     false    
                 {
@@ -13,16 +13,16 @@ fn collapse_while() {
                 }
 
                 return 2;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 while false {
                     1;
                 }
 
                 return 2;
-            }"##
+            }"
         },
         "main",
     );
@@ -31,19 +31,19 @@ fn collapse_while() {
 #[test]
 fn expand_while() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 while false{1;}
                 return 2;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 while false {
                     1;
                 }
                 return 2;
-            }"##
+            }"
         },
         "main",
     );
@@ -52,7 +52,7 @@ fn expand_while() {
 #[test]
 fn collapse_for() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for
                 (   let    i :
@@ -66,15 +66,15 @@ fn collapse_for() {
                     5   ;
                 }
                 return 2;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; i = i + 1) {
                     5;
                 }
                 return 2;
-            }"##
+            }"
         },
         "main",
     );
@@ -83,19 +83,19 @@ fn collapse_for() {
 #[test]
 fn expand_for() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for(let i:i32=0;i<10;i=i+1){5;}
                 return 2;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; i = i + 1) {
                     5;
                 }
                 return 2;
-            }"##
+            }"
         },
         "main",
     );
@@ -104,21 +104,21 @@ fn expand_for() {
 #[test]
 fn collapse_skip() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; i = i + 1) {
                     skip  ;
                 }
                 return 2;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; i = i + 1) {
                     skip;
                 }
                 return 2;
-            }"##
+            }"
         },
         "main",
     );
@@ -127,21 +127,21 @@ fn collapse_skip() {
 #[test]
 fn collapse_break() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; i = i + 1) {
                     break  ;
                 }
                 return 2;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; i = i + 1) {
                     break;
                 }
                 return 2;
-            }"##
+            }"
         },
         "main",
     );
@@ -150,21 +150,21 @@ fn collapse_break() {
 #[test]
 fn for_remove_parens_condition() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; ((( ( i ) ) < ( 10 ))); i = i + 1) {
                     break;
                 }
                 return 2;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; i = i + 1) {
                     break;
                 }
                 return 2;
-            }"##
+            }"
         },
         "main",
     );
@@ -173,21 +173,21 @@ fn for_remove_parens_condition() {
 #[test]
 fn for_remove_parens_incrementer() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; ( i = (( ( i ) ) + ( 1 )) )) {
                     break;
                 }
                 return 2;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; i = i + 1) {
                     break;
                 }
                 return 2;
-            }"##
+            }"
         },
         "main",
     );
@@ -196,7 +196,7 @@ fn for_remove_parens_incrementer() {
 #[test]
 fn preserve_spacing_skip() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; i = i + 1) {
                     skip;
@@ -204,9 +204,9 @@ fn preserve_spacing_skip() {
                     // preserve pls
                 }
                 return 2;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; i = i + 1) {
                     skip;
@@ -214,7 +214,7 @@ fn preserve_spacing_skip() {
                     // preserve pls
                 }
                 return 2;
-            }"##
+            }"
         },
         "main",
     );
@@ -223,7 +223,7 @@ fn preserve_spacing_skip() {
 #[test]
 fn preserve_spacing_break() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; i = i + 1) {
                     break;
@@ -231,9 +231,9 @@ fn preserve_spacing_break() {
                     // preserve pls
                 }
                 return 2;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; i = i + 1) {
                     break;
@@ -241,7 +241,7 @@ fn preserve_spacing_break() {
                     // preserve pls
                 }
                 return 2;
-            }"##
+            }"
         },
         "main",
     );

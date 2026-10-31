@@ -5,12 +5,12 @@ use crate::common::assert_compile_and_return_value;
 #[test]
 fn block_comment() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 /*return 5;*/
                 return 2;
             }
-        "##},
+        "},
         "main",
         2,
     );
@@ -19,12 +19,12 @@ fn block_comment() {
 #[test]
 fn line_comment() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 // return 5;
                 return 3;
             }
-        "##},
+        "},
         "main",
         3,
     );
@@ -33,7 +33,7 @@ fn line_comment() {
 #[test]
 fn big_block_comment() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             /*
             let main = () -> i32 {
                 return 7;
@@ -43,7 +43,7 @@ fn big_block_comment() {
             let main = () -> i32 {
                 return -13;
             }
-        "##},
+        "},
         "main",
         -13,
     );

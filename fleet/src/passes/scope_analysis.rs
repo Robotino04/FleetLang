@@ -107,12 +107,12 @@ impl VariableScope {
     fn new(id: ScopeID) -> Self {
         Self {
             id,
-            parent_references: Default::default(),
-            variable_map: Default::default(),
-            is_write_guard: Default::default(),
-            parent: Default::default(),
-            is_read_guard: Default::default(),
-            copy_from_parent: Default::default(),
+            parent_references: HashMap::default(),
+            variable_map: HashMap::default(),
+            is_write_guard: false,
+            parent: None,
+            is_read_guard: false,
+            copy_from_parent: false,
         }
     }
 
@@ -601,7 +601,7 @@ impl<'a> ScopeAnalyzer<'a> {
     fn register_top_level_statement(&mut self, tls: &mut TopLevelStatement) {
         match tls {
             TopLevelStatement::FunctionDefinition(function_definition) => {
-                self.register_function(function_definition)
+                self.register_function(function_definition);
             }
             TopLevelStatement::TypeAlias(_type_alias) => {
                 // Type aliases are handled by type propagation.

@@ -18,6 +18,7 @@ use crate::{
     tokenizer::Token,
 };
 
+#[allow(clippy::semicolon_if_nothing_returned)]
 pub trait AstWalker: PartialAstVisitor {
     fn walk_program<'a>(&mut self, program: &'a mut Program) -> ControlFlow<Self::Break<'a>> {
         self.visit_pre(program.into())?;

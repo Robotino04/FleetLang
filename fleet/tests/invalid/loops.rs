@@ -6,11 +6,11 @@ use crate::common::{assert_compile_error, assert_parser_or_tokenizer_error};
 #[test]
 fn break_outside_loop() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 break;
             }
-        "##},
+        "},
         SourceLocation {
             index: 27,
             line: 2,
@@ -22,7 +22,7 @@ fn break_outside_loop() {
 #[test]
 fn for_wrong_condition() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 for (a = 0; nonexistent < 3; a = a + 1) {
@@ -30,7 +30,7 @@ fn for_wrong_condition() {
                 }
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 59,
             line: 3,
@@ -42,7 +42,7 @@ fn for_wrong_condition() {
 #[test]
 fn for_wrong_increment() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 for (a = 0; a < 3; a = nonexistent + 1) {
@@ -50,7 +50,7 @@ fn for_wrong_increment() {
                 }
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 70,
             line: 3,
@@ -62,14 +62,14 @@ fn for_wrong_increment() {
 #[test]
 fn out_of_scope_while() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 while 1 {
                     let a: i32 = 2;
                 }
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 78,
             line: 5,
@@ -81,13 +81,13 @@ fn out_of_scope_while() {
 #[test]
 fn paren_mismatch() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 2; ; )) {
                     let a: i32 = 0;
                 }
             }
-        "##},
+        "},
         SourceLocation {
             index: 51,
             line: 2,
@@ -99,11 +99,11 @@ fn paren_mismatch() {
 #[test]
 fn skip_not_in_loop() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 skip;
             }
-        "##},
+        "},
         SourceLocation {
             index: 27,
             line: 2,
@@ -115,13 +115,13 @@ fn skip_not_in_loop() {
 #[test]
 fn statement_in_condition() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 while let a: i32 = 0 {
                     2;
                 }
             }
-        "##},
+        "},
         SourceLocation {
             index: 33,
             line: 2,
@@ -133,14 +133,14 @@ fn statement_in_condition() {
 #[test]
 fn too_few_for_clauses() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 2; i < 3) {
                     3;
                 }
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 53,
             line: 2,
@@ -152,14 +152,14 @@ fn too_few_for_clauses() {
 #[test]
 fn too_many_for_clauses() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 2; i < 3; i = i + 1; i > 4) {
                     3;
                 }
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 64,
             line: 2,
@@ -171,12 +171,12 @@ fn too_many_for_clauses() {
 #[test]
 fn i32_as_while_condition() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 while 3 {}
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 33,
             line: 2,
@@ -188,12 +188,12 @@ fn i32_as_while_condition() {
 #[test]
 fn i32_as_for_condition() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 2; i; i = i + 1) {}
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 48,
             line: 2,

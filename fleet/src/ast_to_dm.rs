@@ -147,7 +147,7 @@ impl AstToDocumentModelConverter<'_> {
                     }
                     TriviaKind::BlockComment(contents) => {
                         let min_space = contents
-                            .split("\n")
+                            .split('\n')
                             .skip(1)
                             .map(|line| {
                                 if line.trim() == "" {
@@ -161,10 +161,10 @@ impl AstToDocumentModelConverter<'_> {
                             .min()
                             .unwrap_or(0);
 
-                        let index_of_last_line = contents.split("\n").count() - 1;
+                        let index_of_last_line = contents.split('\n').count() - 1;
 
                         // can't use .lines() because that removes the last newline
-                        let lines = contents.split("\n").enumerate().map(|(i, mut line)| {
+                        let lines = contents.split('\n').enumerate().map(|(i, mut line)| {
                             if i != index_of_last_line {
                                 line = line.trim_end();
                             }
@@ -290,7 +290,7 @@ impl AstToDocumentModelConverter<'_> {
     }
 
     fn token_to_element(&mut self, token: &Token) -> DocumentElement {
-        self.token_to_element_config(token, Default::default())
+        self.token_to_element_config(token, TokenToElementConfig::default())
     }
     fn token_to_element_config(
         &mut self,

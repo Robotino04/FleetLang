@@ -6,11 +6,11 @@ use crate::common::{assert_compile_and_return_value, assert_compile_and_warning}
 #[test]
 fn missing_return_type() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> {
                 return 0;
             }
-        "##},
+        "},
         "main",
         0i32,
     );
@@ -19,14 +19,14 @@ fn missing_return_type() {
 #[test]
 fn missing_return_type_unit() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let nothing = () -> {}
 
             let main = () -> i32 {
                 nothing();
                 return 2;
             }
-        "##},
+        "},
         "main",
         2i32,
     );
@@ -35,14 +35,14 @@ fn missing_return_type_unit() {
 #[test]
 fn missing_return_type_chained() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let foo = (a: i16) -> {
                 return a;
             }
             let main = () -> {
                 return foo(5);
             }
-        "##},
+        "},
         "main",
         5i16,
     );
@@ -51,12 +51,12 @@ fn missing_return_type_chained() {
 #[test]
 fn missing_variable_type() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> {
                 let a = 2 < 9;
                 return a;
             }
-        "##},
+        "},
         "main",
         true,
     );
@@ -65,12 +65,12 @@ fn missing_variable_type() {
 #[test]
 fn missing_variable_type_int() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a = 123;
                 return a;
             }
-        "##},
+        "},
         "main",
         123i32,
     );
@@ -79,7 +79,7 @@ fn missing_variable_type_int() {
 #[test]
 fn chained_untyped_assignment() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a = 123;
                 let b = a;
@@ -87,7 +87,7 @@ fn chained_untyped_assignment() {
                 let d = c;
                 return d;
             }
-        "##},
+        "},
         "main",
         123i32,
     );
@@ -96,11 +96,11 @@ fn chained_untyped_assignment() {
 #[test]
 fn as_idk_casts() {
     assert_compile_and_warning(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 2 as idk;
             }
-        "##},
+        "},
         SourceLocation {
             index: 34,
             line: 2,
@@ -112,11 +112,11 @@ fn as_idk_casts() {
 #[test]
 fn as_bool_dont_truncate() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 2 as bool as i32;
             }
-        "##},
+        "},
         "main",
         1,
     );
@@ -125,14 +125,14 @@ fn as_bool_dont_truncate() {
 #[test]
 fn adhoc_struct() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i64 {
                 return idk {
                     b: 2,
                     a: false,
                 }.b;
             }
-        "##},
+        "},
         "main",
         2i64,
     );
@@ -140,7 +140,7 @@ fn adhoc_struct() {
 #[test]
 fn different_adhoc_struct() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a = idk {
                     b: 2,
@@ -154,7 +154,7 @@ fn different_adhoc_struct() {
 
                 return a.b;
             }
-        "##},
+        "},
         "main",
         5,
     );

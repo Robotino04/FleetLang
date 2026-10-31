@@ -5,7 +5,7 @@ use crate::common::assert_formatting_and_same_behaviour;
 #[test]
 fn comma_before_comment() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let s: struct {
                     a: i32 // Hello! My name is `a`.
@@ -14,9 +14,9 @@ fn comma_before_comment() {
                 };
 
                 return s.a;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let s: struct {
                     a: i32, // Hello! My name is `a`.
@@ -25,7 +25,7 @@ fn comma_before_comment() {
                 };
 
                 return s.a;
-            }"##
+            }"
         },
         "main",
     );
@@ -34,7 +34,7 @@ fn comma_before_comment() {
 #[test]
 fn collapse_struct() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let 
                 s
@@ -62,9 +62,9 @@ fn collapse_struct() {
                 ;
 
                 return s.a;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let s = struct {
                     a: i32,
@@ -75,7 +75,7 @@ fn collapse_struct() {
                 };
 
                 return s.a;
-            }"##
+            }"
         },
         "main",
     );
@@ -84,14 +84,14 @@ fn collapse_struct() {
 #[test]
 fn expand_struct() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let s=struct{a:i32,b:f32}{a:33,b:3.1415};
 
                 return s.a;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let s = struct {
                     a: i32,
@@ -102,7 +102,7 @@ fn expand_struct() {
                 };
 
                 return s.a;
-            }"##
+            }"
         },
         "main",
     );
@@ -111,7 +111,7 @@ fn expand_struct() {
 #[test]
 fn keep_parentheses_around_if_condition() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let A = struct {
                 a: bool,
             };
@@ -122,9 +122,9 @@ fn keep_parentheses_around_if_condition() {
                 }
 
                 return 9123;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let A = struct {
                 a: bool,
             };
@@ -137,7 +137,7 @@ fn keep_parentheses_around_if_condition() {
                 }
 
                 return 9123;
-            }"##
+            }"
         },
         "main",
     );
@@ -146,7 +146,7 @@ fn keep_parentheses_around_if_condition() {
 #[test]
 fn keep_parentheses_around_if_condition_cast() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let x = idk {
                     a: true,
@@ -157,9 +157,9 @@ fn keep_parentheses_around_if_condition_cast() {
                 }
 
                 return 9123;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let x = idk {
                     a: true,
@@ -172,7 +172,7 @@ fn keep_parentheses_around_if_condition_cast() {
                 }
 
                 return 9123;
-            }"##
+            }"
         },
         "main",
     );

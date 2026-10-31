@@ -5,12 +5,12 @@ use crate::common::{assert_compile_and_output_subprocess, assert_compile_and_ret
 #[test]
 fn assign() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 2;
                 return a;
             }
-        "##},
+        "},
         "main",
         2,
     );
@@ -19,13 +19,13 @@ fn assign() {
 #[test]
 fn assign_val() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 2;
                 let b: i32 = a = 0;
                 return b;
             }
-        "##},
+        "},
         "main",
         0,
     );
@@ -34,7 +34,7 @@ fn assign_val() {
 #[test]
 fn big_stack() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let _0: i32 = -22;
                 _0 = 15;
@@ -238,7 +238,7 @@ fn big_stack() {
                 _99 = 15;
                 return _0 + _99;
             }
-        "##},
+        "},
         "main",
         30,
     );
@@ -247,7 +247,7 @@ fn big_stack() {
 #[test]
 fn big_stack_used() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 1;
                 let b: i32 = 2;
@@ -278,7 +278,7 @@ fn big_stack_used() {
                 // mod 120 so it fits in linux' exit code limit + some extra to be safe
                 return (a + b + c + d + e + f + g + h + i + j + k + l + m + n + o + p + q + r + s + t + u + v + w + x + y + z) % 120;
             }
-        "##},
+        "},
         "main",
         111,
     );
@@ -287,14 +287,14 @@ fn big_stack_used() {
 #[test]
 fn exp_return_value() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 let b: i32 = 0;
                 a = b = 4;
                 return a - b;
             }
-        "##},
+        "},
         "main",
         0,
     );
@@ -303,13 +303,13 @@ fn exp_return_value() {
 #[test]
 fn multiple_vars() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 1;
                 let b: i32 = 2;
                 return a + b;
             }
-        "##},
+        "},
         "main",
         3,
     );
@@ -318,12 +318,12 @@ fn multiple_vars() {
 #[test]
 fn refer() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 2;
                 return a;
             }
-        "##},
+        "},
         "main",
         2,
     );
@@ -332,13 +332,13 @@ fn refer() {
 #[test]
 fn unused_variable() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 1;
                 let _unused: i32 = 0;
                 return a;
             }
-        "##},
+        "},
         "main",
         1,
     );
@@ -347,13 +347,13 @@ fn unused_variable() {
 #[test]
 fn assign_precedence1() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 (a = 2) + 3;
                 return a;
             }
-        "##},
+        "},
         "main",
         2,
     );
@@ -362,13 +362,13 @@ fn assign_precedence1() {
 #[test]
 fn assign_precedence2() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 a = 2 + 3;
                 return a;
             }
-        "##},
+        "},
         "main",
         5,
     );
@@ -377,7 +377,7 @@ fn assign_precedence2() {
 #[test]
 fn per_function_variable_scopes() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main2 = () -> i32 {
                 let a: i32 = 3;
                 return a;
@@ -386,7 +386,7 @@ fn per_function_variable_scopes() {
                 let a: i32 = 2;
                 return a;
             }
-        "##},
+        "},
         "main",
         2,
     );
@@ -395,7 +395,7 @@ fn per_function_variable_scopes() {
 #[test]
 fn shadowing() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let j: i32 = 3;
                 {
@@ -403,7 +403,7 @@ fn shadowing() {
                 }
                 return j;
             }
-        "##},
+        "},
         "main",
         3,
     );
@@ -417,7 +417,7 @@ fn shadowing() {
 #[test]
 fn shadowing_ub() {
     assert_compile_and_output_subprocess(
-        indoc! {r##"
+        indoc! {r#"
             let putchar_impl = (c: i32) -> i32 @extern "putchar";
             let putchar = (c: u8) -> () {
                 putchar_impl(c as i32);
@@ -435,7 +435,7 @@ fn shadowing_ub() {
 
                 return 0;
             }
-        "##},
+        "#},
         0,
         "1122334455\n",
         "",

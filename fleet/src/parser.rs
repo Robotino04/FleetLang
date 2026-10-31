@@ -31,33 +31,33 @@ type Result<T> = ::core::option::Option<T>;
 
 #[derive(Debug, Clone)]
 pub struct IdGenerator {
-    node_id_counter: NodeID,
-    variable_id_counter: VariableID,
-    function_id_counter: FunctionID,
-    scope_id_counter: ScopeID,
+    nodes: NodeID,
+    variables: VariableID,
+    functions: FunctionID,
+    scopes: ScopeID,
 }
 
 impl IdGenerator {
     pub fn next_node_id(&mut self) -> NodeID {
-        let current_id = self.node_id_counter;
-        self.node_id_counter.0 += 1;
+        let current_id = self.nodes;
+        self.nodes.0 += 1;
         current_id
     }
     pub fn next_variable_id(&mut self) -> VariableID {
-        let current_id = self.variable_id_counter;
-        self.variable_id_counter.0 += 1;
+        let current_id = self.variables;
+        self.variables.0 += 1;
         current_id
     }
 
     pub fn next_function_id(&mut self) -> FunctionID {
-        let current_id = self.function_id_counter;
-        self.function_id_counter.0 += 1;
+        let current_id = self.functions;
+        self.functions.0 += 1;
         current_id
     }
 
     pub fn next_scope_id(&mut self) -> ScopeID {
-        let current_id = self.scope_id_counter;
-        self.scope_id_counter.0 += 1;
+        let current_id = self.scopes;
+        self.scopes.0 += 1;
         current_id
     }
 }
@@ -65,10 +65,10 @@ impl IdGenerator {
 impl Default for IdGenerator {
     fn default() -> Self {
         Self {
-            node_id_counter: NodeID(0),
-            variable_id_counter: VariableID(0),
-            function_id_counter: FunctionID(0),
-            scope_id_counter: ScopeID(0),
+            nodes: NodeID(0),
+            variables: VariableID(0),
+            functions: FunctionID(0),
+            scopes: ScopeID(0),
         }
     }
 }
@@ -255,18 +255,15 @@ impl<'state> Parser<'state> {
         let result = callback(self);
         std::mem::swap(&mut tmp_errors, self.errors);
 
-        match result {
-            Some(ok) => {
-                // don't silently drop errors
-                self.errors.append(&mut tmp_errors);
+        if let Some(ok) = result {
+            // don't silently drop errors
+            self.errors.append(&mut tmp_errors);
 
-                Ok(ok)
-            }
-            None => {
-                self.index = tmp_index;
+            Ok(ok)
+        } else {
+            self.index = tmp_index;
 
-                Err(tmp_errors)
-            }
+            Err(tmp_errors)
         }
     }
 
@@ -300,14 +297,12 @@ impl<'state> Parser<'state> {
 
         while self.current_token_type() != Some(TokenType::CloseParen) {
             let binding = self.parse_simple_binding()?;
-            match self.current_token_type() {
-                Some(TokenType::Comma) => {
-                    parameters.push((binding, Some(expect!(self, TokenType::Comma)?)))
-                }
-                _ => {
-                    parameters.push((binding, None));
-                    break;
-                }
+
+            if let Some(TokenType::Comma) = self.current_token_type() {
+                parameters.push((binding, Some(expect!(self, TokenType::Comma)?)));
+            } else {
+                parameters.push((binding, None));
+                break;
             }
         }
 
@@ -414,14 +409,12 @@ impl<'state> Parser<'state> {
 
                 while self.current_token_type() != Some(TokenType::CloseParen) {
                     let binding = self.parse_lvalue(true)?;
-                    match self.current_token_type() {
-                        Some(TokenType::Comma) => {
-                            bindings.push((binding, Some(expect!(self, TokenType::Comma)?)))
-                        }
-                        _ => {
-                            bindings.push((binding, None));
-                            break;
-                        }
+
+                    if let Some(TokenType::Comma) = self.current_token_type() {
+                        bindings.push((binding, Some(expect!(self, TokenType::Comma)?)));
+                    } else {
+                        bindings.push((binding, None));
+                        break;
                     }
                 }
 
@@ -633,14 +626,11 @@ impl<'state> Parser<'state> {
                 while self.current_token_type() != Some(TokenType::CloseBracket) {
                     let element = self.parse_expression(true)?;
 
-                    match self.current_token_type() {
-                        Some(TokenType::Comma) => {
-                            elements.push((element, Some(expect!(self, TokenType::Comma)?)))
-                        }
-                        _ => {
-                            elements.push((element, None));
-                            break;
-                        }
+                    if let Some(TokenType::Comma) = self.current_token_type() {
+                        elements.push((element, Some(expect!(self, TokenType::Comma)?)));
+                    } else {
+                        elements.push((element, None));
+                        break;
                     }
                 }
                 let close_bracket_token = expect!(self, TokenType::CloseBracket)?;
@@ -661,14 +651,11 @@ impl<'state> Parser<'state> {
                 while self.current_token_type() != Some(TokenType::CloseParen) {
                     let arg = self.parse_expression(true)?;
 
-                    match self.current_token_type() {
-                        Some(TokenType::Comma) => {
-                            arguments.push((arg, Some(expect!(self, TokenType::Comma)?)))
-                        }
-                        _ => {
-                            arguments.push((arg, None));
-                            break;
-                        }
+                    if let Some(TokenType::Comma) = self.current_token_type() {
+                        arguments.push((arg, Some(expect!(self, TokenType::Comma)?)));
+                    } else {
+                        arguments.push((arg, None));
+                        break;
                     }
                 }
                 let close_paren_token = expect!(self, TokenType::CloseParen)?;
@@ -692,14 +679,11 @@ impl<'state> Parser<'state> {
                         while self.current_token_type() != Some(TokenType::CloseParen) {
                             let arg = self.parse_expression(true)?;
 
-                            match self.current_token_type() {
-                                Some(TokenType::Comma) => {
-                                    arguments.push((arg, Some(expect!(self, TokenType::Comma)?)))
-                                }
-                                _ => {
-                                    arguments.push((arg, None));
-                                    break;
-                                }
+                            if let Some(TokenType::Comma) = self.current_token_type() {
+                                arguments.push((arg, Some(expect!(self, TokenType::Comma)?)));
+                            } else {
+                                arguments.push((arg, None));
+                                break;
                             }
                         }
                         let close_paren_token = expect!(self, TokenType::CloseParen)?;
@@ -745,14 +729,11 @@ impl<'state> Parser<'state> {
                     value,
                 };
 
-                match this.current_token_type() {
-                    Some(TokenType::Comma) => {
-                        members.push((member, Some(expect!(this, TokenType::Comma)?)))
-                    }
-                    _ => {
-                        members.push((member, None));
-                        break;
-                    }
+                if let Some(TokenType::Comma) = this.current_token_type() {
+                    members.push((member, Some(expect!(this, TokenType::Comma)?)));
+                } else {
+                    members.push((member, None));
+                    break;
                 }
             }
             let close_brace_token = expect!(this, TokenType::CloseBrace)?;
@@ -1376,14 +1357,11 @@ impl<'state> Parser<'state> {
                         type_,
                     };
 
-                    match self.current_token_type() {
-                        Some(TokenType::Comma) => {
-                            members.push((member, Some(expect!(self, TokenType::Comma)?)))
-                        }
-                        _ => {
-                            members.push((member, None));
-                            break;
-                        }
+                    if let Some(TokenType::Comma) = self.current_token_type() {
+                        members.push((member, Some(expect!(self, TokenType::Comma)?)));
+                    } else {
+                        members.push((member, None));
+                        break;
                     }
                 }
                 let close_brace_token = expect!(self, TokenType::CloseBrace)?;

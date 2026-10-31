@@ -35,7 +35,10 @@ use crate::{
 };
 
 pub trait MergeableStat {
+    #[must_use]
     fn serial(self, other: Self) -> Self;
+
+    #[must_use]
     fn parallel(self, other: Self) -> Self;
 }
 
@@ -81,6 +84,7 @@ impl YesNoMaybe {
 
 impl From<bool> for YesNoMaybe {
     fn from(value: bool) -> Self {
+        #[expect(clippy::match_bool)]
         match value {
             true => Self::Yes,
             false => Self::No,
@@ -283,12 +287,12 @@ impl StatTracker<'_> {
             }
             if prev_stats == **self.stats {
                 break;
-            } else {
-                prev_stats = self.stats.clone();
-                // don't duplicate errors when running multiple times
-                *self.errors = err_backup;
-                info!("Stats aren't stable yet.")
             }
+
+            prev_stats = self.stats.clone();
+            // don't duplicate errors when running multiple times
+            *self.errors = err_backup;
+            info!("Stats aren't stable yet.");
         }
 
         if let Some(main_function) = program
@@ -633,7 +637,7 @@ impl StatTracker<'_> {
 
         if if_stats.terminates_function == YesNoMaybe::No {
             // if non of the branches return, this if-statement takes all the blame
-            if_stats = if_stats.serial(NodeStats::default_with_range(vec![bounds]))
+            if_stats = if_stats.serial(NodeStats::default_with_range(vec![bounds]));
         }
 
         self.stats.insert(*id, if_stats.clone());
@@ -1137,7 +1141,7 @@ impl StatTracker<'_> {
     ) -> NodeStats {
         let mut stat = self.analyze_type(subtype);
         if let Some(size) = size {
-            stat = stat.serial(self.analyze_expression(size))
+            stat = stat.serial(self.analyze_expression(size));
         }
         self.stats.insert(*id, stat.clone());
         stat

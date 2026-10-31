@@ -8,11 +8,11 @@ use crate::common::{
 #[test]
 fn missing_main() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let foo = () -> i32 {
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 0,
             line: 1,
@@ -24,11 +24,11 @@ fn missing_main() {
 #[test]
 fn missing_let() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             main = () -> i32 {
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 0,
             line: 1,
@@ -40,11 +40,11 @@ fn missing_let() {
 #[test]
 fn missing_name() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let = () -> i32 {
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 4,
             line: 1,
@@ -56,11 +56,11 @@ fn missing_name() {
 #[test]
 fn missing_equal() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main () -> i32 {
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 9,
             line: 1,
@@ -72,11 +72,11 @@ fn missing_equal() {
 #[test]
 fn missing_open_paren() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = ) -> i32 {
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 11,
             line: 1,
@@ -88,11 +88,11 @@ fn missing_open_paren() {
 #[test]
 fn missing_close_paren() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = ( -> i32 {
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 13,
             line: 1,
@@ -104,11 +104,11 @@ fn missing_close_paren() {
 #[test]
 fn missing_right_arrow() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () i32 {
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 14,
             line: 1,
@@ -121,11 +121,11 @@ fn missing_right_arrow() {
 fn missing_open_brace() {
     // Parsing fails at the closing brace because a statement is also a valid function body
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 35,
             line: 3,
@@ -137,10 +137,10 @@ fn missing_open_brace() {
 #[test]
 fn missing_close_brace() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 0;
-        "##},
+        "},
         SourceLocation {
             index: 35,
             line: 2,
@@ -152,9 +152,9 @@ fn missing_close_brace() {
 #[test]
 fn unknown_characters_1() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let §§§
-        "##},
+        "},
         SourceLocation {
             index: 4,
             line: 1,
@@ -166,10 +166,10 @@ fn unknown_characters_1() {
 #[test]
 fn unknown_characters_2() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let §§§
             `
-        "##},
+        "},
         SourceLocation {
             index: 8,
             line: 2,
@@ -181,9 +181,9 @@ fn unknown_characters_2() {
 #[test]
 fn missing_return() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {}
-        "##},
+        "},
         SourceLocation {
             index: 21,
             line: 1,
@@ -195,11 +195,11 @@ fn missing_return() {
 #[test]
 fn undefined_function() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return nonexistent();
             }
-        "##},
+        "},
         SourceLocation {
             index: 34,
             line: 2,
@@ -211,10 +211,10 @@ fn undefined_function() {
 #[test]
 fn non_block_as_body() {
     assert_compile_error_no_formatting(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32
                 return 0;
-        "##},
+        "},
         SourceLocation {
             index: 25,
             line: 2,
@@ -226,14 +226,14 @@ fn non_block_as_body() {
 #[test]
 fn too_few_arguments() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let foo = (a: i32) -> i32 {
                 return a + 3;
             }
             let main = () -> i32 {
                 return foo();
             }
-        "##},
+        "},
         SourceLocation {
             index: 82,
             line: 5,
@@ -245,7 +245,7 @@ fn too_few_arguments() {
 #[test]
 fn c_like_declaration() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let foo = (a: i32) -> i32;
 
             let main = () -> i32 {
@@ -254,7 +254,7 @@ fn c_like_declaration() {
             let foo = (a: i32) -> i32 {
                 return 4;
             }
-        "##},
+        "},
         SourceLocation {
             index: 25,
             line: 1,
@@ -266,7 +266,7 @@ fn c_like_declaration() {
 #[test]
 fn redefine_function() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let foo = () -> i32 {
                 return 3;
             }
@@ -276,7 +276,7 @@ fn redefine_function() {
             let foo = () -> i32 {
                 return 4;
             }
-        "##},
+        "},
         SourceLocation {
             index: 85,
             line: 7,
@@ -288,14 +288,14 @@ fn redefine_function() {
 #[test]
 fn too_many_arguments() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let foo = (a: i32) -> i32 {
                 return a + 1;
             }
             let main = () -> i32 {
                 return foo(1, 2);
             }
-        "##},
+        "},
         SourceLocation {
             index: 82,
             line: 5,
@@ -307,14 +307,14 @@ fn too_many_arguments() {
 #[test]
 fn unit_function_in_expression() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let foo = () -> () {
                 return;
             }
             let main = () -> i32 {
                 return foo() + 2;
             }
-        "##},
+        "},
         SourceLocation {
             index: 69,
             line: 5,
@@ -326,11 +326,11 @@ fn unit_function_in_expression() {
 #[test]
 fn return_bool_instead_of_i32() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return true;
             }
-        "##},
+        "},
         SourceLocation {
             index: 34,
             line: 2,
@@ -342,11 +342,11 @@ fn return_bool_instead_of_i32() {
 #[test]
 fn return_i32_instead_of_bool() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> bool {
                 return 1234;
             }
-        "##},
+        "},
         SourceLocation {
             index: 35,
             line: 2,

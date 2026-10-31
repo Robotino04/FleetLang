@@ -36,6 +36,7 @@ use itertools::Itertools;
 use log::info;
 use std::{
     collections::HashMap,
+    fmt::Write,
     rc::Rc,
     str::FromStr,
     sync::{
@@ -160,7 +161,7 @@ impl Backend {
         analysis_data: Option<AnalysisData>,
     ) -> (String, String) {
         match node.into() {
-            AstNodeRef::Program(_) => ("".to_string(), "program".to_string()),
+            AstNodeRef::Program(_) => (String::new(), "program".to_string()),
 
             AstNodeRef::TopLevelStatement(node) => match node {
                 TopLevelStatement::FunctionDefinition(FunctionDefinition {
@@ -313,14 +314,15 @@ impl Backend {
                     format!(
                         "on {}{} ({})",
                         self.generate_node_hover(&**executor, analysis_data).0,
-                        iterators
-                            .iter()
-                            .map(|it| format!(
+                        iterators.iter().fold(String::new(), |mut out, it| {
+                            let _ = write!(
+                                out,
                                 "[{} = {}]",
                                 self.generate_node_hover(&it.binding, analysis_data).0,
                                 self.generate_node_hover(&*it.max_value, analysis_data).0,
-                            ))
-                            .collect::<String>(),
+                            );
+                            out
+                        }),
                         bindings
                             .iter()
                             .map(|(binding, _comma)| {
@@ -331,7 +333,7 @@ impl Backend {
                     "`on` statement".to_string(),
                 ),
 
-                Statement::Block(BlockStatement { .. }) => ("".to_string(), "block".to_string()),
+                Statement::Block(BlockStatement { .. }) => (String::new(), "block".to_string()),
 
                 Statement::Return(ReturnStatement { value, .. }) => (
                     match value {
@@ -358,10 +360,10 @@ impl Backend {
                     "variable definition".to_string(),
                 ),
 
-                Statement::If(IfStatement { .. }) => ("".to_string(), "`if` statement".to_string()),
+                Statement::If(IfStatement { .. }) => (String::new(), "`if` statement".to_string()),
 
                 Statement::WhileLoop(WhileLoopStatement { .. }) => {
-                    ("".to_string(), "`while` loop".to_string())
+                    (String::new(), "`while` loop".to_string())
                 }
 
                 Statement::ForLoop(ForLoopStatement {
@@ -378,12 +380,12 @@ impl Backend {
                     let condition_type = condition
                         .as_ref()
                         .map(|cond| self.get_type_as_hover(&**cond, analysis_data))
-                        .unwrap_or("".to_string());
+                        .unwrap_or(String::new());
 
                     let incrementer_type = incrementer
                         .as_ref()
                         .map(|cond| self.get_type_as_hover(&**cond, analysis_data))
-                        .unwrap_or("".to_string());
+                        .unwrap_or(String::new());
 
                     (
                         format!(
@@ -397,12 +399,10 @@ impl Backend {
                 }
 
                 Statement::Break(_break_statement) => {
-                    ("".to_string(), "`break` statement".to_string())
+                    (String::new(), "`break` statement".to_string())
                 }
 
-                Statement::Skip(_skip_statement) => {
-                    ("".to_string(), "`skip` statement".to_string())
-                }
+                Statement::Skip(_skip_statement) => (String::new(), "`skip` statement".to_string()),
             },
 
             AstNodeRef::ExecutorHost(node) => match node {
@@ -515,7 +515,7 @@ impl Backend {
                         id: _,
                     },
                 ) => (
-                    self.get_type_as_hover(node, analysis_data).to_string(),
+                    self.get_type_as_hover(node, analysis_data),
                     "array literal".to_string(),
                 ),
 
@@ -528,7 +528,7 @@ impl Backend {
                         id: _,
                     },
                 ) => (
-                    self.get_type_as_hover(node, analysis_data).to_string(),
+                    self.get_type_as_hover(node, analysis_data),
                     "struct literal".to_string(),
                 ),
 
@@ -863,7 +863,7 @@ impl Backend {
                 Type::Idk(node @ IdkType { token: _, id: _ }) => {
                     let type_ = self.get_type_as_hover(node, analysis_data);
 
-                    (type_.to_string(), "idk type".to_string())
+                    (type_, "idk type".to_string())
                 }
 
                 Type::Array(
@@ -877,7 +877,7 @@ impl Backend {
                 ) => {
                     let type_ = self.get_type_as_hover(node, analysis_data);
 
-                    (type_.to_string(), "array type".to_string())
+                    (type_, "array type".to_string())
                 }
 
                 Type::Struct(
@@ -891,7 +891,7 @@ impl Backend {
                 ) => {
                     let type_ = self.get_type_as_hover(node, analysis_data);
 
-                    (type_.to_string(), "struct type".to_string())
+                    (type_, "struct type".to_string())
                 }
 
                 Type::Alias(
@@ -903,7 +903,7 @@ impl Backend {
                 ) => {
                     let type_ = self.get_type_as_hover(node, analysis_data);
 
-                    (type_.to_string(), "alias type".to_string())
+                    (type_, "alias type".to_string())
                 }
             },
         }
@@ -917,7 +917,7 @@ impl Backend {
         hovered_token: Option<&Token>,
     ) -> String {
         format!(
-            indoc! {r##"
+            indoc! {r"
                         ```rust
                         {}
                         ```
@@ -944,7 +944,7 @@ impl Backend {
                         ```rust
                         {:#?}
                         ```
-                    "##},
+                    "},
             node_hierarchy
                 .last()
                 .map(|node| self.generate_node_hover(node, analysis_data))
@@ -988,7 +988,7 @@ impl Backend {
         Some(self.documents.read().ok()?.get(&text_document.uri)?.clone())
     }
 
-    async fn get_definition_location(
+    fn get_definition_location(
         &self,
         text_document: &TextDocumentIdentifier,
         position: Position,
@@ -997,8 +997,7 @@ impl Backend {
             return Err(tower_lsp_server::jsonrpc::Error {
                 code: tower_lsp_server::jsonrpc::ErrorCode::InvalidParams,
                 message: format!(
-                    "The requested document {:?} doesn't exist on the server.",
-                    text_document
+                    "The requested document {text_document:?} doesn't exist on the server."
                 )
                 .into(),
                 data: None,
@@ -1012,7 +1011,7 @@ impl Backend {
         pm.state.insert_default::<Errors>().unwrap();
         pm.state
             .insert(InputSource {
-                source: src.to_string(),
+                source: src,
                 file_name: FileName(Rc::new(text_document.uri.as_str().to_string())),
             })
             .unwrap();
@@ -1023,7 +1022,7 @@ impl Backend {
                 message: format!("Compilation failed: {err}").into(),
                 data: None,
             });
-        };
+        }
 
         let Some((node_hierarchy, _hovered_token)) = find_containing_node(
             pm.state.get_mut::<Program>().unwrap(),
@@ -1209,7 +1208,7 @@ impl LanguageServer for Backend {
                 message: format!("Compilation failed: {err}").into(),
                 data: None,
             });
-        };
+        }
 
         let errors = &pm.state.get::<Errors>().unwrap().0;
 
@@ -1355,12 +1354,10 @@ impl LanguageServer for Backend {
         info!("{}", "-".repeat(80));
         info!("{params:#?}");
 
-        let Some(pos) = self
-            .get_definition_location(
-                &params.text_document_position_params.text_document,
-                params.text_document_position_params.position,
-            )
-            .await?
+        let Some(pos) = self.get_definition_location(
+            &params.text_document_position_params.text_document,
+            params.text_document_position_params.position,
+        )?
         else {
             return Ok(None);
         };
@@ -1383,12 +1380,10 @@ impl LanguageServer for Backend {
         info!("{}", "-".repeat(80));
         info!("{params:#?}");
 
-        let Some(pos) = self
-            .get_definition_location(
-                &params.text_document_position_params.text_document,
-                params.text_document_position_params.position,
-            )
-            .await?
+        let Some(pos) = self.get_definition_location(
+            &params.text_document_position_params.text_document,
+            params.text_document_position_params.position,
+        )?
         else {
             return Ok(None);
         };
@@ -1429,7 +1424,7 @@ impl LanguageServer for Backend {
         pm.state.insert_default::<Errors>().unwrap();
         pm.state
             .insert(InputSource {
-                source: src.to_string(),
+                source: src,
                 file_name: params
                     .text_document_position_params
                     .text_document
@@ -1446,7 +1441,7 @@ impl LanguageServer for Backend {
                 message: format!("Compilation failed: {err}").into(),
                 data: None,
             });
-        };
+        }
 
         let cpos = params.text_document_position_params.position;
 
@@ -1549,7 +1544,7 @@ impl LanguageServer for Backend {
         pm.state.insert_default::<Errors>().unwrap();
         pm.state
             .insert(InputSource {
-                source: src.to_string(),
+                source: src,
                 file_name: params.text_document.uri.path().to_string().into(),
             })
             .unwrap();
@@ -1560,7 +1555,7 @@ impl LanguageServer for Backend {
                 message: format!("Compilation failed: {err}").into(),
                 data: None,
             });
-        };
+        }
 
         let semantic_tokens =
             ExtractSemanticTokensPass::new(&SEMANTIC_TOKEN_TYPES, &SEMANTIC_TOKEN_MODIFIERS)
@@ -1596,7 +1591,7 @@ impl LanguageServer for Backend {
 
         // even invalid input shouldn't be formatted
         let new_text = match infra::format(InputSource {
-            source: src.to_string(),
+            source: src,
             file_name: params.text_document.uri.path().to_string().into(),
         }) {
             Err(err) => {
@@ -1660,7 +1655,7 @@ impl LanguageServer for Backend {
         pm.state.insert_default::<Errors>().unwrap();
         pm.state
             .insert(InputSource {
-                source: src.to_string(),
+                source: src,
                 file_name: params
                     .text_document_position_params
                     .text_document
@@ -1677,7 +1672,7 @@ impl LanguageServer for Backend {
                 message: format!("Compilation failed: {err}").into(),
                 data: None,
             });
-        };
+        }
 
         let cpos = params.text_document_position_params.position;
         let cpos_sl = SourceLocation {

@@ -20,6 +20,7 @@ use crate::{
         pass_manager::{Pass, PassFactory, PassResult},
     },
 };
+use std::fmt::Write;
 
 NewtypeDeref!(pub AstJsonOutput, String);
 
@@ -90,7 +91,7 @@ impl AstJsonDumpPass<'_> {
             children.push(self.dump_top_level_statement(tls));
         }
         let children_str = children.join(",\n");
-        format!("[\"Program\",\n{}\n]", children_str)
+        format!("[\"Program\",\n{children_str}\n]")
     }
 
     fn dump_function_definition(
@@ -125,8 +126,7 @@ impl AstJsonDumpPass<'_> {
         };
         let body_str = self.dump_function_body(body);
         format!(
-            "[\"Function `{}`\",\n{}, [\"Return Type\"{}], [\"Body\", {}]\n]",
-            name, params_str, ret_type_str, body_str
+            "[\"Function `{name}`\",\n{params_str}, [\"Return Type\"{ret_type_str}], [\"Body\", {body_str}]\n]",
         )
     }
 
@@ -149,8 +149,7 @@ impl AstJsonDumpPass<'_> {
         &mut self,
         StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
     ) -> String {
-        let stmt_str = self.dump_statement(statement);
-        stmt_str.to_string()
+        self.dump_statement(statement)
     }
 
     fn dump_extern_function_body(
@@ -164,7 +163,7 @@ impl AstJsonDumpPass<'_> {
             id: _,
         }: &mut ExternFunctionBody,
     ) -> String {
-        format!("\"Extern `{}`\"", symbol)
+        format!("\"Extern `{symbol}`\"")
     }
 
     fn dump_simple_binding(
@@ -178,7 +177,7 @@ impl AstJsonDumpPass<'_> {
     ) -> String {
         match type_ {
             Some((_, t)) => format!("[\"Binding `{}`\", {}]", name, self.dump_type(t)),
-            None => format!("\"Binding `{}`\"", name),
+            None => format!("\"Binding `{name}`\""),
         }
     }
 
@@ -191,7 +190,7 @@ impl AstJsonDumpPass<'_> {
         }: &mut ExpressionStatement,
     ) -> String {
         let expr_str = self.dump_expression(expression);
-        format!("[\"ExpressionStatement\",\n{}\n]", expr_str)
+        format!("[\"ExpressionStatement\",\n{expr_str}\n]")
     }
 
     fn dump_on_statement(
@@ -213,7 +212,7 @@ impl AstJsonDumpPass<'_> {
             .map(|it| {
                 let bind_str = self.dump_simple_binding(&mut it.binding);
                 let max_str = self.dump_expression(&mut it.max_value);
-                format!("[\"Iterator {} = {}\"]", bind_str, max_str)
+                format!("[\"Iterator {bind_str} = {max_str}\"]")
             })
             .collect::<Vec<_>>()
             .join(", ");
@@ -223,10 +222,8 @@ impl AstJsonDumpPass<'_> {
             .collect::<Vec<_>>()
             .join(", ");
         let body_str = self.dump_statement(body);
-        format!(
-            "[\"OnStatement\",\n{},\n{},\n{},\n{}\n]",
-            exec_str, iter_str, binds_str, body_str
-        )
+
+        format!("[\"OnStatement\",\n{exec_str},\n{iter_str},\n{binds_str},\n{body_str}\n]")
     }
 
     fn dump_block_statement(
@@ -246,7 +243,7 @@ impl AstJsonDumpPass<'_> {
         if stmts_str.is_empty() {
             "[\"Block\"]".to_string()
         } else {
-            format!("[\"Block\",\n{}\n]", stmts_str)
+            format!("[\"Block\",\n{stmts_str}\n]")
         }
     }
 
@@ -263,7 +260,7 @@ impl AstJsonDumpPass<'_> {
             Some(expr) => self.dump_expression(expr),
             None => String::from("\"None\""),
         };
-        format!("[\"Return\",\n{}\n]", val_str)
+        format!("[\"Return\",\n{val_str}\n]")
     }
 
     fn dump_variable_definition_statement(
@@ -279,7 +276,7 @@ impl AstJsonDumpPass<'_> {
     ) -> String {
         let bind_str = self.dump_simple_binding(binding);
         let val_str = self.dump_expression(value);
-        format!("[\"VariableDefinition\",\n{},\n{}\n]", bind_str, val_str)
+        format!("[\"VariableDefinition\",\n{bind_str},\n{val_str}\n]")
     }
 
     fn dump_if_statement(
@@ -295,22 +292,22 @@ impl AstJsonDumpPass<'_> {
     ) -> String {
         let cond_str = self.dump_expression(condition);
         let if_body_str = self.dump_statement(if_body);
-        let elifs_str = elifs
-            .iter_mut()
-            .map(|(_, cond, body)| {
+        let elifs_str = {
+            let mut out = String::new();
+
+            for (_, cond, body) in elifs {
                 let c = self.dump_expression(cond);
                 let b = self.dump_statement(body);
-                format!(",[\"Elif\",\n{},\n{}\n]", c, b)
-            })
-            .collect::<String>();
+                let _ = write!(out, ",[\"Elif\",\n{c},\n{b}\n]");
+            }
+
+            out
+        };
         let else_str = match else_ {
             Some((_, body)) => format!(",[\"Else\",\n{}\n]", self.dump_statement(body)),
             None => String::new(),
         };
-        format!(
-            "[\"If\"\n,[\"Condition\",{}]\n,{}\n{}\n{}\n]",
-            cond_str, if_body_str, elifs_str, else_str
-        )
+        format!("[\"If\"\n,[\"Condition\",{cond_str}]\n,{if_body_str}\n{elifs_str}\n{else_str}\n]")
     }
 
     fn dump_while_loop_statement(
@@ -324,7 +321,7 @@ impl AstJsonDumpPass<'_> {
     ) -> String {
         let cond_str = self.dump_expression(condition);
         let body_str = self.dump_statement(body);
-        format!("[\"While\",\n{},\n{}\n]", cond_str, body_str)
+        format!("[\"While\",\n{cond_str},\n{body_str}\n]")
     }
 
     fn dump_for_loop_statement(
@@ -351,10 +348,7 @@ impl AstJsonDumpPass<'_> {
             None => String::from("\"None\""),
         };
         let body_str = self.dump_statement(body);
-        format!(
-            "[\"For\",\n{},\n{},\n{},\n{}\n]",
-            init_str, cond_str, inc_str, body_str
-        )
+        format!("[\"For\",\n{init_str},\n{cond_str},\n{inc_str},\n{body_str}\n]")
     }
 
     fn dump_break_statement(
@@ -400,7 +394,7 @@ impl AstJsonDumpPass<'_> {
     ) -> String {
         let host_str = self.dump_executor_host(host);
         let idx_str = self.dump_expression(index);
-        format!("[\"ThreadExecutor\",\n{},\n{}\n]", host_str, idx_str)
+        format!("[\"ThreadExecutor\",\n{host_str},\n{idx_str}\n]")
     }
 
     fn dump_gpu_executor(
@@ -417,7 +411,7 @@ impl AstJsonDumpPass<'_> {
     ) -> String {
         let host_str = self.dump_executor_host(host);
         let idx_str = self.dump_expression(gpu_index);
-        format!("[\"GPUExecutor\",\n{},\n{}\n]", host_str, idx_str)
+        format!("[\"GPUExecutor\",\n{host_str},\n{idx_str}\n]")
     }
 
     fn dump_literal_expression(
@@ -429,12 +423,12 @@ impl AstJsonDumpPass<'_> {
         }: &mut LiteralExpression,
     ) -> String {
         match value {
-            LiteralKind::Number(n) => format!("\"Number ${}$\"", n),
+            LiteralKind::Number(n) => format!("\"Number ${n}$\""),
             LiteralKind::Char(c) => {
                 format!("\"Char `'{}'`\"", escape(c.to_string(), QuoteType::Single))
             }
-            LiteralKind::Float(f) => format!("\"Float ${}$\"", f),
-            LiteralKind::Bool(b) => format!("\"Bool {}\"", b),
+            LiteralKind::Float(f) => format!("\"Float ${f}$\""),
+            LiteralKind::Bool(b) => format!("\"Bool {b}\""),
         }
     }
 
@@ -452,7 +446,7 @@ impl AstJsonDumpPass<'_> {
             .map(|(el, _comma)| self.dump_expression(el))
             .collect::<Vec<_>>()
             .join(", ");
-        format!("[\"Array\",\n{}\n]", elems_str)
+        format!("[\"Array\",\n{elems_str}\n]")
     }
 
     fn dump_struct_expression(
@@ -503,7 +497,7 @@ impl AstJsonDumpPass<'_> {
             .map(|(expr, _)| self.dump_expression(expr))
             .collect::<Vec<_>>()
             .join(", ");
-        format!("[\"Call `{}`\",\n{}\n]", name, args_str)
+        format!("[\"Call `{name}`\",\n{args_str}\n]")
     }
 
     fn dump_compiler_expression(
@@ -523,7 +517,7 @@ impl AstJsonDumpPass<'_> {
             .map(|(arg, _comma)| self.dump_expression(arg))
             .collect::<Vec<_>>()
             .join(", ");
-        format!("[\"CompilerCall `{}`\",\n{}\n]", name, args_str)
+        format!("[\"CompilerCall `{name}`\",\n{args_str}\n]")
     }
 
     fn dump_array_index_expression(
@@ -538,7 +532,7 @@ impl AstJsonDumpPass<'_> {
     ) -> String {
         let arr_str = self.dump_expression(array);
         let idx_str = self.dump_expression(index);
-        format!("[\"ArrayIndex\",\n{},\n{}\n]", arr_str, idx_str)
+        format!("[\"ArrayIndex\",\n{arr_str},\n{idx_str}\n]")
     }
 
     fn dump_struct_access_expression(
@@ -552,7 +546,7 @@ impl AstJsonDumpPass<'_> {
         }: &mut StructAccessExpression,
     ) -> String {
         let value_str = self.dump_expression(value);
-        format!("[\"StructAccess\",\n{},\n\"{member_name}\"\n]", value_str)
+        format!("[\"StructAccess\",\n{value_str},\n\"{member_name}\"\n]")
     }
 
     fn dump_grouping_expression(
@@ -565,7 +559,7 @@ impl AstJsonDumpPass<'_> {
         }: &mut GroupingExpression,
     ) -> String {
         let sub_str = self.dump_expression(subexpression);
-        format!("[\"Grouping\",\n{}\n]", sub_str)
+        format!("[\"Grouping\",\n{sub_str}\n]")
     }
 
     fn dump_variable_access_expression(
@@ -576,7 +570,7 @@ impl AstJsonDumpPass<'_> {
             id: _,
         }: &mut VariableAccessExpression,
     ) -> String {
-        format!("\"Var `{}`\"", name)
+        format!("\"Var `{name}`\"")
     }
 
     fn dump_unary_expression(
@@ -594,7 +588,7 @@ impl AstJsonDumpPass<'_> {
             UnaryOperation::Negate => "-",
         };
         let operand_str = self.dump_expression(operand);
-        format!("[\"Unary {}\",\n{}\n]", op_str, operand_str)
+        format!("[\"Unary {op_str}\",\n{operand_str}\n]")
     }
 
     fn dump_cast_expression(
@@ -608,7 +602,7 @@ impl AstJsonDumpPass<'_> {
     ) -> String {
         let op_str = self.dump_expression(operand);
         let type_str = self.dump_type(type_);
-        format!("[\"Cast\",\n{},\n{}\n]", op_str, type_str)
+        format!("[\"Cast\",\n{op_str},\n{type_str}\n]")
     }
 
     fn dump_binary_expression(
@@ -638,7 +632,7 @@ impl AstJsonDumpPass<'_> {
         };
         let left_str = self.dump_expression(left);
         let right_str = self.dump_expression(right);
-        format!("[\"`{}`\",\n{},\n{}\n]", op_str, left_str, right_str)
+        format!("[\"`{op_str}`\",\n{left_str},\n{right_str}\n]")
     }
 
     fn dump_variable_assignment_expression(
@@ -652,7 +646,7 @@ impl AstJsonDumpPass<'_> {
     ) -> String {
         let lv_str = self.dump_lvalue(lvalue);
         let right_str = self.dump_expression(right);
-        format!("[\"Assign\",\n{},\n{}\n]", lv_str, right_str)
+        format!("[\"Assign\",\n{lv_str},\n{right_str}\n]")
     }
 
     fn dump_variable_lvalue(
@@ -663,7 +657,7 @@ impl AstJsonDumpPass<'_> {
             id: _,
         }: &mut VariableLValue,
     ) -> String {
-        format!("\"LValue `{}`\"", name)
+        format!("\"LValue `{name}`\"")
     }
 
     fn dump_array_index_lvalue(
@@ -678,7 +672,7 @@ impl AstJsonDumpPass<'_> {
     ) -> String {
         let arr_str = self.dump_lvalue(array);
         let idx_str = self.dump_expression(index);
-        format!("[\"ArrayIndexLValue\",\n{},\n{}\n]", arr_str, idx_str)
+        format!("[\"ArrayIndexLValue\",\n{arr_str},\n{idx_str}\n]")
     }
 
     fn dump_struct_access_lvalue(
@@ -692,10 +686,7 @@ impl AstJsonDumpPass<'_> {
         }: &mut StructAccessLValue,
     ) -> String {
         let value_str = self.dump_lvalue(value);
-        format!(
-            "[\"StructAccessLValue\",\n{},\n\"{member_name}\"\n]",
-            value_str
-        )
+        format!("[\"StructAccessLValue\",\n{value_str},\n\"{member_name}\"\n]")
     }
 
     fn dump_grouping_lvalue(
@@ -708,7 +699,7 @@ impl AstJsonDumpPass<'_> {
         }: &mut GroupingLValue,
     ) -> String {
         let sub_str = self.dump_lvalue(sublvalue);
-        format!("[\"GroupingLValue\",\n{}\n]", sub_str)
+        format!("[\"GroupingLValue\",\n{sub_str}\n]")
     }
 
     fn dump_simple_type(
@@ -752,7 +743,7 @@ impl AstJsonDumpPass<'_> {
             Some(expr) => self.dump_expression(expr),
             None => String::from("\"None\""),
         };
-        format!("[\"ArrayType\",\n{},\n{}]", subtype_str, size_str)
+        format!("[\"ArrayType\",\n{subtype_str},\n{size_str}]")
     }
 
     fn dump_struct_type(

@@ -111,7 +111,7 @@ impl<'a> TypePropagator<'a> {
     fn register_top_level_statements(&mut self, tls: &mut TopLevelStatement) {
         match tls {
             TopLevelStatement::FunctionDefinition(function_definition) => {
-                self.register_function(function_definition)
+                self.register_function(function_definition);
             }
             TopLevelStatement::TypeAlias(type_alias) => self.register_type_alias(type_alias),
         }
@@ -553,7 +553,7 @@ impl TypePropagator<'_> {
                 },
                 value_range: value
                     .as_ref()
-                    .map(|value| value.get_source_range())
+                    .map(HasSourceRange::get_source_range)
                     .unwrap_or_else(|| return_token.range.clone()),
                 expected_types: vec![PrefetchedType::fetch(expected_type_ptr, self.type_sets)],
                 actual_type: PrefetchedType::fetch(this_type_ptr, self.type_sets),
@@ -768,7 +768,7 @@ impl TypePropagator<'_> {
                 expected_types: vec![PrefetchedType::fetch(expected_type, self.type_sets)],
                 actual_type: PrefetchedType::fetch(index_type, self.type_sets),
             });
-        };
+        }
     }
 
     fn typecheck_gpu_executor(
@@ -803,7 +803,7 @@ impl TypePropagator<'_> {
                 expected_types: vec![PrefetchedType::fetch(expected_type, self.type_sets)],
                 actual_type: PrefetchedType::fetch(index_type, self.type_sets),
             });
-        };
+        }
     }
 
     fn typecheck_literal_expression(
@@ -1561,7 +1561,7 @@ impl TypePropagator<'_> {
             Impossible,
         }
         fn perform_cast(
-            expression_clone: CastExpression,
+            expression_range: NamedSourceRange,
             from_ptr: UnionFindSetPtr<RuntimeType>,
             to_ptr: UnionFindSetPtr<RuntimeType>,
             self_errors: &mut Vec<ErrorKind>,
@@ -1586,7 +1586,7 @@ impl TypePropagator<'_> {
                 | (T::Unknown, T::Unknown)
                 | (T::Unit, T::Unit) => {
                     self_errors.push(ErrorKind::Lint(Lint::SelfCast {
-                        expression: expression_clone.get_source_range(),
+                        expression: expression_range,
                         type_: PrefetchedType::fetch(from_ptr, types),
                     }));
                     CastResult::Redundant
@@ -1653,7 +1653,7 @@ impl TypePropagator<'_> {
                         reason: ImpossibleCastReason::InvolvesUnit {
                             direction: CastDirection::To,
                         },
-                        expression: expression_clone.get_source_range(),
+                        expression: expression_range,
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
                     });
@@ -1664,7 +1664,7 @@ impl TypePropagator<'_> {
                         reason: ImpossibleCastReason::InvolvesUnit {
                             direction: CastDirection::From,
                         },
-                        expression: expression_clone.get_source_range(),
+                        expression: expression_range,
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
                     });
@@ -1686,7 +1686,7 @@ impl TypePropagator<'_> {
                     } else {
                         self_errors.push(ErrorKind::ImpossibleCast {
                             reason: ImpossibleCastReason::ArrayElementsIncompatible,
-                            expression: expression_clone.get_source_range(),
+                            expression: expression_range,
                             from: PrefetchedType::fetch(from_ptr, types),
                             to: PrefetchedType::fetch(to_ptr, types),
                         });
@@ -1709,7 +1709,7 @@ impl TypePropagator<'_> {
                             from_size: *from_size,
                             to_size: *to_size,
                         },
-                        expression: expression_clone.get_source_range(),
+                        expression: expression_range,
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
                     });
@@ -1726,7 +1726,7 @@ impl TypePropagator<'_> {
                         reason: ImpossibleCastReason::ArrayAndNonArray {
                             direction: CastDirection::To,
                         },
-                        expression: expression_clone.get_source_range(),
+                        expression: expression_range,
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
                     });
@@ -1743,7 +1743,7 @@ impl TypePropagator<'_> {
                         reason: ImpossibleCastReason::ArrayAndNonArray {
                             direction: CastDirection::From,
                         },
-                        expression: expression_clone.get_source_range(),
+                        expression: expression_range,
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
                     });
@@ -1788,7 +1788,7 @@ impl TypePropagator<'_> {
                             (false, true) => {
                                 self_errors.push(ErrorKind::ImpossibleCast {
                                     reason: ImpossibleCastReason::DifferentStructOrigin,
-                                    expression: expression_clone.get_source_range(),
+                                    expression: expression_range,
                                     from: PrefetchedType::fetch(from_ptr, types),
                                     to: PrefetchedType::fetch(to_ptr, types),
                                 });
@@ -1796,7 +1796,7 @@ impl TypePropagator<'_> {
                             (false, false) => {
                                 self_errors.push(ErrorKind::ImpossibleCast {
                                     reason: ImpossibleCastReason::StructMembersDiffer,
-                                    expression: expression_clone.get_source_range(),
+                                    expression: expression_range,
                                     from: PrefetchedType::fetch(from_ptr, types),
                                     to: PrefetchedType::fetch(to_ptr, types),
                                 });
@@ -1819,7 +1819,7 @@ impl TypePropagator<'_> {
                         reason: ImpossibleCastReason::StructAndNonStruct {
                             direction: CastDirection::From,
                         },
-                        expression: expression_clone.get_source_range(),
+                        expression: expression_range,
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
                     });
@@ -1837,7 +1837,7 @@ impl TypePropagator<'_> {
                         reason: ImpossibleCastReason::StructAndNonStruct {
                             direction: CastDirection::To,
                         },
-                        expression: expression_clone.get_source_range(),
+                        expression: expression_range,
                         from: PrefetchedType::fetch(from_ptr, types),
                         to: PrefetchedType::fetch(to_ptr, types),
                     });
@@ -1846,7 +1846,7 @@ impl TypePropagator<'_> {
                 }
                 (_, T::Unknown) => {
                     self_errors.push(ErrorKind::Lint(Lint::ToIdkCast {
-                        expression: expression_clone.get_source_range(),
+                        expression: expression_range,
                         from_type: PrefetchedType::fetch(from_ptr, types),
                         to_type: PrefetchedType::fetch(to_ptr, types),
                     }));
@@ -1860,7 +1860,7 @@ impl TypePropagator<'_> {
             }
         }
         perform_cast(
-            expression_clone,
+            expression_clone.get_source_range(),
             from_ptr,
             to_ptr,
             self.errors,

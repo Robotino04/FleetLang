@@ -7,7 +7,7 @@ pub enum QuoteType {
 }
 
 pub fn unescape(str: impl AsRef<str>, quote: QuoteType) -> Result<String, Vec<usize>> {
-    let mut result = "".to_string();
+    let mut result = String::new();
     let chars = (str.as_ref().to_string() + "\0").chars().collect_vec();
     let mut pairs = chars.windows(2).enumerate();
 

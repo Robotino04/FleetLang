@@ -6,7 +6,7 @@ use crate::common::assert_compile_error;
 #[test]
 fn missing_lvalue() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a = [1, 2, 3];
                 let b = [0, 0, 0];
@@ -15,7 +15,7 @@ fn missing_lvalue() {
                 }
                 return b[0] + b[1] + b[2];
             }
-        "##},
+        "},
         SourceLocation {
             index: 109,
             line: 5,
@@ -27,7 +27,7 @@ fn missing_lvalue() {
 #[test]
 fn nonexistent_lvalue() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a = [1, 2, 3];
                 let b = [0, 0, 0];
@@ -36,7 +36,7 @@ fn nonexistent_lvalue() {
                 }
                 return b[0] + b[1] + b[2];
             }
-        "##},
+        "},
         SourceLocation {
             index: 97,
             line: 4,
@@ -48,7 +48,7 @@ fn nonexistent_lvalue() {
 #[test]
 fn unbound_index() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a = [1, 2, 3];
                 let b = [0, 0, 0];
@@ -57,7 +57,7 @@ fn unbound_index() {
                 }
                 return b[0] + b[1] + b[2];
             }
-        "##},
+        "},
         SourceLocation {
             index: 113,
             line: 5,
@@ -69,7 +69,7 @@ fn unbound_index() {
 #[test]
 fn fixed_index() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a = [1, 2, 3];
                 let b = [0, 0, 0];
@@ -78,7 +78,7 @@ fn fixed_index() {
                 }
                 return b[0] + b[1] + b[2];
             }
-        "##},
+        "},
         SourceLocation {
             index: 113,
             line: 5,
@@ -90,7 +90,7 @@ fn fixed_index() {
 #[test]
 fn same_name_index() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a = [1, 2, 3];
                 let b = [0, 0, 0];
@@ -103,7 +103,7 @@ fn same_name_index() {
                 }
                 return b[0] + b[1] + b[2];
             }
-        "##},
+        "},
         SourceLocation {
             index: 173,
             line: 8,
@@ -115,12 +115,12 @@ fn same_name_index() {
 #[test]
 fn no_iterators() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 on self.gpus[0] () {}
                 return 42;
             }
-        "##},
+        "},
         SourceLocation {
             index: 27,
             line: 2,
@@ -132,12 +132,12 @@ fn no_iterators() {
 #[test]
 fn recursive_iterator_definition() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 on self.gpus[0][i: i32 = i] () {}
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 52,
             line: 2,
@@ -150,12 +150,12 @@ fn recursive_iterator_definition() {
 fn triangular_iterator() {
     // NOTE: this restriction will get lifted in the future
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 on self.gpus[0][i: i32 = 5][j: i32 = i] () {}
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 64,
             line: 2,

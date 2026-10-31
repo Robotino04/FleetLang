@@ -120,8 +120,8 @@ impl LValueReducer<'_> {
             Expression::Literal(a) => self.is_literal_expression_equal(a, b),
             Expression::Array(a) => self.is_array_expression_equal(a, b),
             Expression::Struct(a) => self.is_struct_expression_equal(a, b),
-            Expression::FunctionCall(a) => self.is_function_call_expression_equal(a, b),
-            Expression::CompilerExpression(a) => self.is_compiler_expression_equal(a, b),
+            Expression::FunctionCall(a) => Some(self.is_function_call_expression_equal(a, b)),
+            Expression::CompilerExpression(a) => Some(self.is_compiler_expression_equal(a, b)),
             Expression::ArrayIndex(a) => self.is_array_index_expression_equal(a, b),
             Expression::StructAccess(a) => self.is_struct_access_expression_equal(a, b),
             Expression::Grouping(a) => self.is_expression_equal(&a.subexpression, b),
@@ -192,16 +192,12 @@ impl LValueReducer<'_> {
         &self,
         _a: &FunctionCallExpression,
         _b: &Expression,
-    ) -> Option<bool> {
+    ) -> bool {
         // TODO: handle pure functions
-        Some(false)
+        false
     }
-    fn is_compiler_expression_equal(
-        &self,
-        _a: &CompilerExpression,
-        _b: &Expression,
-    ) -> Option<bool> {
-        Some(false)
+    fn is_compiler_expression_equal(&self, _a: &CompilerExpression, _b: &Expression) -> bool {
+        false
     }
     fn is_array_index_expression_equal(
         &self,
@@ -275,7 +271,7 @@ impl LValueReducer<'_> {
         Some(match b {
             Expression::Cast(b) => {
                 self.is_expression_equal(&a.operand, &b.operand)?
-                    && self.is_type_equal(&a.type_, &b.type_)?
+                    && self.is_type_equal(&a.type_, &b.type_)
             }
             Expression::Grouping(b) => self.is_cast_expression_equal(a, &b.subexpression)?,
             _ => false,
@@ -298,8 +294,8 @@ impl LValueReducer<'_> {
         })
     }
 
-    fn is_type_equal(&self, a: &Type, b: &Type) -> Option<bool> {
-        Some(self.type_data.get(a) == self.type_data.get(b))
+    fn is_type_equal(&self, a: &Type, b: &Type) -> bool {
+        self.type_data.get(a) == self.type_data.get(b)
     }
 }
 
@@ -313,15 +309,11 @@ impl PartialAstVisitor for LValueReducer<'_> {
             return ControlFlow::Continue(());
         };
 
-        let is_defined_here = self
-            .scope_data
-            .get(&a.id)
-            .map(|scope| {
-                ConcreteVariableScopeReader::from_scope(scope.clone())
-                    .get_write_noref(&a.name)
-                    .is_some()
-            })
-            .unwrap_or(false);
+        let is_defined_here = self.scope_data.get(&a.id).is_some_and(|scope| {
+            ConcreteVariableScopeReader::from_scope(scope.clone())
+                .get_write_noref(&a.name)
+                .is_some()
+        });
         if !valid_lvalues
             .iter()
             .any(|b| self.is_variable_lvalue_equal(a, b).unwrap_or(false))
@@ -332,7 +324,7 @@ impl PartialAstVisitor for LValueReducer<'_> {
                     value_range: a.get_source_range(),
                 });
             }
-            self.previous_lvalue_valid = false
+            self.previous_lvalue_valid = false;
         } else {
             self.previous_lvalue_valid = true;
         }

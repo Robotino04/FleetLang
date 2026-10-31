@@ -173,7 +173,7 @@ impl SourceLocation {
         SourceLocation {
             index: src.as_ref().len() - 1,
             line: src.as_ref().chars().filter(|c| *c == '\n').count() + 1,
-            column: src.as_ref().split("\n").last().unwrap_or("").len() + 1,
+            column: src.as_ref().split('\n').next_back().unwrap_or("").len() + 1,
         }
     }
 
@@ -187,6 +187,7 @@ impl SourceLocation {
         let other = other.into();
         self.until(other.loc).named(other.name)
     }
+    #[must_use]
     pub fn prev_inline(self) -> SourceLocation {
         SourceLocation {
             index: self.index - 1,
@@ -194,6 +195,7 @@ impl SourceLocation {
             column: self.column.saturating_sub(1),
         }
     }
+    #[must_use]
     pub fn offset(
         mut self,
         mut offset: usize,
@@ -251,9 +253,11 @@ impl NamedSourceLocation {
     pub fn until(self, other: impl Into<SourceLocation>) -> NamedSourceRange {
         self.loc.until(other).named(self.name)
     }
+    #[must_use]
     pub fn prev_inline(self) -> NamedSourceLocation {
         self.loc.prev_inline().named(self.name)
     }
+    #[must_use]
     pub fn offset(
         self,
         offset: usize,
@@ -284,7 +288,8 @@ impl SourceRange {
         self.start <= other && other < self.end
     }
 
-    /// Constructs the smallest [SourceRange] that includes both `self` and `other`
+    #[must_use]
+    /// Constructs the smallest [`SourceRange`] that includes both `self` and `other`
     pub fn extend_with(self, other: impl Into<SourceRange>) -> Self {
         let other = other.into();
         Self {
@@ -293,6 +298,7 @@ impl SourceRange {
         }
     }
 
+    #[must_use]
     pub fn maybe_extend(self, other: Option<impl Into<SourceRange>>) -> Self {
         match other {
             Some(other) => self.extend_with(other),
@@ -338,11 +344,13 @@ impl NamedSourceRange {
         self.range.contains(other)
     }
 
-    /// Constructs the smallest [NamedSourceRange] that includes both `self` and `other`
+    #[must_use]
+    /// Constructs the smallest [`NamedSourceRange`] that includes both `self` and `other`
     pub fn extend_with(self, other: impl Into<SourceRange>) -> Self {
         self.range.extend_with(other).named(self.name)
     }
 
+    #[must_use]
     pub fn maybe_extend(self, other: Option<impl Into<SourceRange>>) -> Self {
         match other {
             Some(other) => self.extend_with(other),
@@ -402,7 +410,7 @@ impl PassFactory for Tokenizer<'_> {
 
             current_location: SourceLocation::start(),
 
-            unk_char_accumulator: "".to_string(),
+            unk_char_accumulator: String::new(),
             unk_char_range: SourceRange::empty_start().named(source.file_name.clone()),
 
             trivia_accumulator: vec![],
@@ -755,7 +763,7 @@ impl<'errors> Tokenizer<'errors> {
 
                             "true" => TokenType::Keyword(Keyword::True),
                             "false" => TokenType::Keyword(Keyword::False),
-                            _ => TokenType::Identifier(lexeme.to_string()),
+                            _ => TokenType::Identifier(lexeme.clone()),
                         },
 
                         leading_trivia: self.trivia_accumulator.clone(),
@@ -803,7 +811,7 @@ impl<'errors> Tokenizer<'errors> {
                                         range: start_location
                                             .until(self.current_location)
                                             .named(self.file_name.clone()),
-                                        lexeme: lexeme.to_string(),
+                                        lexeme: lexeme.clone(),
                                     });
 
                                     0.0
@@ -817,7 +825,7 @@ impl<'errors> Tokenizer<'errors> {
                                         range: start_location
                                             .until(self.current_location)
                                             .named(self.file_name.clone()),
-                                        lexeme: lexeme.to_string(),
+                                        lexeme: lexeme.clone(),
                                     });
                                     0
                                 }),
@@ -994,7 +1002,7 @@ impl<'errors> Tokenizer<'errors> {
             {
                 self.errors.push(ErrorKind::InvalidCharacters {
                     range: range.clone(),
-                    characters: chars.to_string(),
+                    characters: chars.clone(),
                 });
             }
         }

@@ -5,11 +5,11 @@ use crate::common::{assert_compile_and_output_subprocess, assert_compile_and_ret
 #[test]
 fn main_returning_unit() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> () {
                 return;
             }
-        "##},
+        "},
         "main",
         (),
     );
@@ -17,11 +17,11 @@ fn main_returning_unit() {
 #[test]
 fn main_returning_0() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 0;
             }
-        "##},
+        "},
         "main",
         0,
     );
@@ -30,11 +30,11 @@ fn main_returning_0() {
 #[test]
 fn main_returning_5() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 5;
             }
-        "##},
+        "},
         "main",
         5,
     );
@@ -43,14 +43,14 @@ fn main_returning_5() {
 #[test]
 fn two_functions() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 5;
             }
             let main2 = () -> i32 {
                 return 1;
             }
-        "##},
+        "},
         "main",
         5,
     );
@@ -59,14 +59,14 @@ fn two_functions() {
 #[test]
 fn two_functions_reverse() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main2 = () -> i32 {
                 return 5;
             }
             let main = () -> i32 {
                 return 1;
             }
-        "##},
+        "},
         "main",
         1,
     );
@@ -75,14 +75,14 @@ fn two_functions_reverse() {
 #[test]
 fn define_after() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return foo(3);
             }
             let foo = (a: i32) -> i32 {
                 return a + 1;
             }
-        "##},
+        "},
         "main",
         4,
     );
@@ -91,14 +91,14 @@ fn define_after() {
 #[test]
 fn define_before() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let foo = (a: i32) -> i32 {
                 return a + 1;
             }
             let main = () -> i32 {
                 return foo(4);
             }
-        "##},
+        "},
         "main",
         5,
     );
@@ -107,7 +107,7 @@ fn define_before() {
 #[test]
 fn expression_args() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let add = (a: i32, b: i32) -> i32 {
                 return a + b;
             }
@@ -115,7 +115,7 @@ fn expression_args() {
                 let sum: i32 = add(1 + 2, 4);
                 return sum + sum;
             }
-        "##},
+        "},
         "main",
         14,
     );
@@ -124,7 +124,7 @@ fn expression_args() {
 #[test]
 fn fib() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let fib = (n: i32) -> i32 {
                 if n == 0 || n == 1 {
                     return n;
@@ -137,7 +137,7 @@ fn fib() {
                 let n: i32 = 5;
                 return fib(n);
             }
-        "##},
+        "},
         "main",
         5,
     );
@@ -146,7 +146,7 @@ fn fib() {
 #[test]
 fn fun_in_expr() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let sum = (a: i32, b: i32) -> i32 {
                 return a + b;
             }
@@ -155,7 +155,7 @@ fn fun_in_expr() {
                 let b: i32 = 2 * sum(3, 4) + sum(1, 2);
                 return b - a;
             }
-        "##},
+        "},
         "main",
         16,
     );
@@ -164,7 +164,7 @@ fn fun_in_expr() {
 #[test]
 fn hello_world() {
     assert_compile_and_output_subprocess(
-        indoc! {r##"
+        indoc! {r#"
             let putchar = (char: i32) -> i32 @extern "putchar";
             let main = () -> i32 {
                 putchar(72); // 'H'
@@ -183,7 +183,7 @@ fn hello_world() {
                 putchar(10); // '\n'
                 return 0;
             }
-        "##},
+        "#},
         0,
         "Hello, World!\n",
         "",
@@ -193,14 +193,14 @@ fn hello_world() {
 #[test]
 fn multi_arg() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let sub_3 = (x: i32, y: i32, z: i32) -> i32 {
                 return x - y - z;
             }
             let main = () -> i32 {
                 return sub_3(10, 4, 2);
             }
-        "##},
+        "},
         "main",
         4,
     );
@@ -209,7 +209,7 @@ fn multi_arg() {
 #[test]
 fn mutual_recursion() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return foo(5);
             }
@@ -225,7 +225,7 @@ fn mutual_recursion() {
                 }
                 return b + bar(b / 2);
             }
-        "##},
+        "},
         "main",
         12,
     );
@@ -234,14 +234,14 @@ fn mutual_recursion() {
 #[test]
 fn no_arg() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let three = () -> i32 {
                 return 3;
             }
             let main = () -> i32 {
                 return three();
             }
-        "##},
+        "},
         "main",
         3,
     );
@@ -250,14 +250,14 @@ fn no_arg() {
 #[test]
 fn precedence() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let three = () -> i32 {
                 return 3;
             }
             let main = () -> bool {
                 return !three();
             }
-        "##},
+        "},
         "main",
         false,
     );
@@ -266,14 +266,14 @@ fn precedence() {
 #[test]
 fn single_arg() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let twice = (x: i32) -> i32 {
                 return 2 * x;
             }
             let main = () -> i32 {
                 return twice(3);
             }
-        "##},
+        "},
         "main",
         6,
     );
@@ -282,7 +282,7 @@ fn single_arg() {
 #[test]
 fn stack_pointer_alignment_direction() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let fill_stack = () -> () {
                 let _0: i8 = -22;
                 _0 = 15;
@@ -493,7 +493,7 @@ fn stack_pointer_alignment_direction() {
                 fill_stack();
                 return name_buffer_length - name as i32 - name_length;
             }
-        "##},
+        "},
         "main",
         50,
     );
@@ -502,7 +502,7 @@ fn stack_pointer_alignment_direction() {
 #[test]
 fn stack_variable_after_return() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let recurse = (depth: i32) -> () {
                 if depth == 0 {
                     return;
@@ -514,7 +514,7 @@ fn stack_variable_after_return() {
                 recurse(500);
                 return 0;
             }
-        "##},
+        "},
         "main",
         0,
     );
@@ -523,7 +523,7 @@ fn stack_variable_after_return() {
 #[test]
 fn variable_as_arg() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let foo = (x: i32) -> i32 {
                 return x + 1;
             }
@@ -531,7 +531,7 @@ fn variable_as_arg() {
                 let a: i32 = 1;
                 return foo(a);
             }
-        "##},
+        "},
         "main",
         2,
     );
@@ -540,7 +540,7 @@ fn variable_as_arg() {
 #[test]
 fn shadow_parameter() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let foo = (x: i32) -> i32 {
                 let x: i32 = 3;
                 return x;
@@ -548,7 +548,7 @@ fn shadow_parameter() {
             let main = () -> i32 {
                 return foo(4);
             }
-        "##},
+        "},
         "main",
         3,
     );
@@ -557,13 +557,13 @@ fn shadow_parameter() {
 #[test]
 fn unit_no_return() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let foo = () -> () {}
             let main = () -> i32 {
                 foo();
                 return 3;
             }
-        "##},
+        "},
         "main",
         3,
     );
@@ -572,7 +572,7 @@ fn unit_no_return() {
 #[test]
 fn unit_return() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let foo = () -> () {
                 return;
             }
@@ -580,7 +580,7 @@ fn unit_return() {
                 foo();
                 return 3;
             }
-        "##},
+        "},
         "main",
         3,
     );
@@ -589,13 +589,13 @@ fn unit_return() {
 #[test]
 fn extern_function() {
     assert_compile_and_output_subprocess(
-        indoc! {r##"
+        indoc! {r#"
             let putchar = (char: i32) -> i32 @extern "putchar";
             let main = () -> i32 {
                 putchar(10);
                 return 0;
             }
-        "##},
+        "#},
         0,
         "\n",
         "",
@@ -605,13 +605,13 @@ fn extern_function() {
 #[test]
 fn extern_function_renamed() {
     assert_compile_and_output_subprocess(
-        indoc! {r##"
+        indoc! {r#"
             let not_putchar = (char: i32) -> i32 @extern "putchar";
             let main = () -> i32 {
                 not_putchar(10);
                 return 0;
             }
-        "##},
+        "#},
         0,
         "\n",
         "",
@@ -621,7 +621,7 @@ fn extern_function_renamed() {
 #[test]
 fn two_parameters_with_same_name() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let foo = (a: i32) -> i32 {
                 return a;
             }
@@ -631,7 +631,7 @@ fn two_parameters_with_same_name() {
             let main = () -> i32 {
                 return foo(1) + bar(2);
             }
-        "##},
+        "},
         "main",
         3,
     );
@@ -642,7 +642,7 @@ fn explicit_return_no_unreachable_warning() {
     // This makes sure that calling functions whose body terminates explicitly don't trigger an
     // unreachable code warning when called
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let foo = () -> () {
                 return;
             }
@@ -650,7 +650,7 @@ fn explicit_return_no_unreachable_warning() {
                 foo();
                 return 2;
             }
-        "##},
+        "},
         "main",
         2,
     );

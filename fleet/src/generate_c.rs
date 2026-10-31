@@ -85,7 +85,7 @@ impl PassFactory for CCodeGenerator<'_> {
             scope_data,
             glsl_functions,
 
-            struct_aliases: Default::default(),
+            struct_aliases: RefCell::new(StructAliasMap::default()),
             temporary_counter: RefCell::new(0),
         })
     }
@@ -127,23 +127,23 @@ impl CCodeGenerator<'_> {
 
     fn runtime_type_to_c(&self, type_: &ConcreteRuntimeType) -> (String, String) {
         match type_ {
-            ConcreteRuntimeType::I8 => ("int8_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::I16 => ("int16_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::I32 => ("int32_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::I64 => ("int64_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::U8 => ("uint8_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::U16 => ("uint16_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::U32 => ("uint32_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::U64 => ("uint64_t".to_string(), "".to_string()),
-            ConcreteRuntimeType::F32 => ("float".to_string(), "".to_string()),
-            ConcreteRuntimeType::F64 => ("double".to_string(), "".to_string()),
-            ConcreteRuntimeType::Boolean => ("bool".to_string(), "".to_string()),
-            ConcreteRuntimeType::Unit => ("void".to_string(), "".to_string()),
+            ConcreteRuntimeType::I8 => ("int8_t".to_string(), String::new()),
+            ConcreteRuntimeType::I16 => ("int16_t".to_string(), String::new()),
+            ConcreteRuntimeType::I32 => ("int32_t".to_string(), String::new()),
+            ConcreteRuntimeType::I64 => ("int64_t".to_string(), String::new()),
+            ConcreteRuntimeType::U8 => ("uint8_t".to_string(), String::new()),
+            ConcreteRuntimeType::U16 => ("uint16_t".to_string(), String::new()),
+            ConcreteRuntimeType::U32 => ("uint32_t".to_string(), String::new()),
+            ConcreteRuntimeType::U64 => ("uint64_t".to_string(), String::new()),
+            ConcreteRuntimeType::F32 => ("float".to_string(), String::new()),
+            ConcreteRuntimeType::F64 => ("double".to_string(), String::new()),
+            ConcreteRuntimeType::Boolean => ("bool".to_string(), String::new()),
+            ConcreteRuntimeType::Unit => ("void".to_string(), String::new()),
             ConcreteRuntimeType::ArrayOf { subtype, size } => {
                 let (type_, after_id) = self.runtime_type_to_c(subtype);
                 let type_result = format!("{type_} value[{size}]{after_id};");
 
-                (self.as_struct_type(type_result), "".to_string())
+                (self.as_struct_type(type_result), String::new())
             }
             ConcreteRuntimeType::Struct {
                 members,
@@ -158,7 +158,7 @@ impl CCodeGenerator<'_> {
                         })
                         .join("\n"),
                 ),
-                "".to_string(),
+                String::new(),
             ),
         }
     }
@@ -297,7 +297,7 @@ impl CCodeGenerator<'_> {
         };
 
         formatdoc!(
-            r##"
+            r"
             #include <stdio.h>
             #include <stdlib.h>
             #include <stdint.h>
@@ -329,7 +329,7 @@ impl CCodeGenerator<'_> {
                 deinitialize_fleet();
                 return retvalue;
             }}
-            "##,
+            ",
         )
     }
 
@@ -361,7 +361,7 @@ impl CCodeGenerator<'_> {
 
     fn generate_type_alias(&mut self, _type_alias: &mut TypeAlias) -> String {
         // type aliases get completely compiled out and aren't relevant after type propagation
-        "".to_string()
+        String::new()
     }
 
     fn generate_statement_function_body(
@@ -484,7 +484,7 @@ impl CCodeGenerator<'_> {
             self.scope_data,
             self.type_data,
             bindings,
-            iterators
+            &iterators
                 .iter()
                 .map(|it| {
                     self.variable_data
@@ -802,7 +802,7 @@ impl CCodeGenerator<'_> {
                     self.generate_statement(&mut *body)
                 )
             })
-            .unwrap_or("".to_string())
+            .unwrap_or(String::new())
     }
 
     fn generate_while_loop_statement(
@@ -924,10 +924,11 @@ impl CCodeGenerator<'_> {
         } = expr;
 
         PreStatementValue {
-            pre_statements: "".to_string(),
+            pre_statements: String::new(),
             out_value: match value {
                 LiteralKind::Number(value) => {
                     if type_.is_float() {
+                        #[expect(clippy::cast_precision_loss)]
                         format_float(*value as f64)
                     } else {
                         value.to_string()
@@ -1006,7 +1007,7 @@ impl CCodeGenerator<'_> {
                         out_value,
                     } = self.generate_expression(value);
 
-                    (pre_statements, format!(".{name} = {},", out_value))
+                    (pre_statements, format!(".{name} = {out_value},"))
                 },
             )
             .unzip();
@@ -1079,12 +1080,12 @@ impl CCodeGenerator<'_> {
 
                 if expected_type.is_numeric() {
                     PreStatementValue {
-                        pre_statements: "".to_string(),
+                        pre_statements: String::new(),
                         out_value: format!("(({type_}{after_id})(0))"),
                     }
                 } else if expected_type.is_boolean() {
                     PreStatementValue {
-                        pre_statements: "".to_string(),
+                        pre_statements: String::new(),
                         out_value: "false".to_string(),
                     }
                 } else if let ConcreteRuntimeType::ArrayOf { .. }
@@ -1109,18 +1110,18 @@ impl CCodeGenerator<'_> {
                         type_: expected_type.clone().into(),
                     });
                     PreStatementValue {
-                        pre_statements: "".to_string(),
+                        pre_statements: String::new(),
                         out_value: "\n#error unimplemented type for @zero\n".to_string(),
                     }
                 }
             }
             "sqrt" => match expected_type {
                 ConcreteRuntimeType::F32 => PreStatementValue {
-                    pre_statements: "".to_string(),
+                    pre_statements: String::new(),
                     out_value: format!("(sqrtf({}))", args.first().unwrap()),
                 },
                 ConcreteRuntimeType::F64 => PreStatementValue {
-                    pre_statements: "".to_string(),
+                    pre_statements: String::new(),
                     out_value: format!("(sqrt({}))", args.first().unwrap()),
                 },
                 _ => {
@@ -1131,18 +1132,18 @@ impl CCodeGenerator<'_> {
                         type_: expected_type.clone().into(),
                     });
                     PreStatementValue {
-                        pre_statements: "".to_string(),
+                        pre_statements: String::new(),
                         out_value: "\n#error unimplemented type for @sqrt\n".to_string(),
                     }
                 }
             },
             "sin" => match expected_type {
                 ConcreteRuntimeType::F32 => PreStatementValue {
-                    pre_statements: "".to_string(),
+                    pre_statements: String::new(),
                     out_value: format!("(sinf({}))", args.first().unwrap()),
                 },
                 ConcreteRuntimeType::F64 => PreStatementValue {
-                    pre_statements: "".to_string(),
+                    pre_statements: String::new(),
                     out_value: format!("(sin({}))", args.first().unwrap()),
                 },
                 _ => {
@@ -1153,18 +1154,18 @@ impl CCodeGenerator<'_> {
                         type_: expected_type.clone().into(),
                     });
                     PreStatementValue {
-                        pre_statements: "".to_string(),
+                        pre_statements: String::new(),
                         out_value: "\n#error unimplemented type for @sin\n".to_string(),
                     }
                 }
             },
             "cos" => match expected_type {
                 ConcreteRuntimeType::F32 => PreStatementValue {
-                    pre_statements: "".to_string(),
+                    pre_statements: String::new(),
                     out_value: format!("(cosf({}))", args.first().unwrap()),
                 },
                 ConcreteRuntimeType::F64 => PreStatementValue {
-                    pre_statements: "".to_string(),
+                    pre_statements: String::new(),
                     out_value: format!("(cos({}))", args.first().unwrap()),
                 },
                 _ => {
@@ -1175,7 +1176,7 @@ impl CCodeGenerator<'_> {
                         type_: expected_type.clone().into(),
                     });
                     PreStatementValue {
-                        pre_statements: "".to_string(),
+                        pre_statements: String::new(),
                         out_value: "\n#error unimplemented type for @cos\n".to_string(),
                     }
                 }
@@ -1185,11 +1186,11 @@ impl CCodeGenerator<'_> {
 
                 match array_type {
                     ConcreteRuntimeType::ArrayOf { subtype: _, size } => PreStatementValue {
-                        pre_statements: "".to_string(),
+                        pre_statements: String::new(),
                         out_value: format!("{size}"),
                     },
                     _ => PreStatementValue {
-                        pre_statements: "".to_string(),
+                        pre_statements: String::new(),
                         out_value: "\n#error non-array type for @length\n".to_string(),
                     },
                 }
@@ -1205,7 +1206,7 @@ impl CCodeGenerator<'_> {
                 });
 
                 PreStatementValue {
-                    pre_statements: "".to_string(),
+                    pre_statements: String::new(),
                     out_value: "\n#error unimplemented compiler function\n".to_string(),
                 }
             }
@@ -1289,7 +1290,7 @@ impl CCodeGenerator<'_> {
         let ref_var = self.variable_data.get(id).unwrap();
 
         PreStatementValue {
-            pre_statements: "".to_string(),
+            pre_statements: String::new(),
             out_value: self.mangle_variable(&ref_var.borrow()),
         }
     }
@@ -1433,7 +1434,7 @@ impl CCodeGenerator<'_> {
 
         PreStatementValue {
             pre_statements: lpre_statements + &rpre_statements,
-            out_value: format!("(({out_lvalue}) = ({out_rvalue}))",),
+            out_value: format!("(({out_lvalue}) = ({out_rvalue}))"),
         }
     }
 
@@ -1448,7 +1449,7 @@ impl CCodeGenerator<'_> {
         let ref_var = self.variable_data.get(id).unwrap();
 
         PreStatementValue {
-            pre_statements: "".to_string(),
+            pre_statements: String::new(),
             out_value: self.mangle_variable(&ref_var.borrow()),
         }
     }
@@ -1474,7 +1475,7 @@ impl CCodeGenerator<'_> {
         } = self.generate_lvalue(array);
         PreStatementValue {
             pre_statements: lpre_statements + &rpre_statements,
-            out_value: format!("((({out_lvalue}).value)[{out_rvalue}])",),
+            out_value: format!("((({out_lvalue}).value)[{out_rvalue}])"),
         }
     }
 

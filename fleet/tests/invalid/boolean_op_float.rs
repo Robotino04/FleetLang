@@ -6,11 +6,11 @@ use crate::common::assert_compile_error;
 #[test]
 fn or_float_as_left() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> bool {
                 return 3.0 || true;
             }
-        "##},
+        "},
         SourceLocation {
             index: 35,
             line: 2,
@@ -22,11 +22,11 @@ fn or_float_as_left() {
 #[test]
 fn or_float_as_right() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> bool {
                 return false || 8.0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 44,
             line: 2,
@@ -38,11 +38,11 @@ fn or_float_as_right() {
 #[test]
 fn and_float_as_left() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> bool {
                 return 3.0 && true;
             }
-        "##},
+        "},
         SourceLocation {
             index: 35,
             line: 2,
@@ -54,11 +54,11 @@ fn and_float_as_left() {
 #[test]
 fn and_float_as_right() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> bool {
                 return false && 8.0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 44,
             line: 2,

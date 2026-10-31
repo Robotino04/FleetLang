@@ -6,12 +6,12 @@ use crate::common::{assert_compile_error, assert_parser_or_tokenizer_error};
 #[test]
 fn no_initialize() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32;
                 return 0;
             }
-        "##},
+        "},
         SourceLocation {
             index: 37,
             line: 2,
@@ -23,12 +23,12 @@ fn no_initialize() {
 #[test]
 fn unknown_type() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32asd = 0;
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 34,
             line: 2,
@@ -40,12 +40,12 @@ fn unknown_type() {
 #[test]
 fn space_in_name() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a b: i32 = 0;
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 33,
             line: 2,
@@ -57,13 +57,13 @@ fn space_in_name() {
 #[test]
 fn bad_lvalue1() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 a + 3 = 4;
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 53,
             line: 3,
@@ -75,13 +75,13 @@ fn bad_lvalue1() {
 #[test]
 fn bad_lvalue2() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 !a = 4;
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 50,
             line: 3,
@@ -93,13 +93,13 @@ fn bad_lvalue2() {
 #[test]
 fn missing_semicolon() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 2
                 a = a + 4;
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 46,
             line: 3,
@@ -111,13 +111,13 @@ fn missing_semicolon() {
 #[test]
 fn missing_colon() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a i32 = 2;
                 a = a + 4;
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 33,
             line: 2,
@@ -129,13 +129,13 @@ fn missing_colon() {
 #[test]
 fn redefine() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 1;
                 let a: i32 = 2;
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 51,
             line: 3,
@@ -147,11 +147,11 @@ fn redefine() {
 #[test]
 fn undefined() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 34,
             line: 2,
@@ -163,13 +163,13 @@ fn undefined() {
 #[test]
 fn defined_late() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 a = 1 + 2;
                 let a: i32 = 0;
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 27,
             line: 2,
@@ -181,7 +181,7 @@ fn defined_late() {
 #[test]
 fn unit_variable() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let unit_value = () -> () {
                 return;
             }
@@ -189,7 +189,7 @@ fn unit_variable() {
                 let a: () = unit_value();
                 return 5;
             }
-        "##},
+        "},
         SourceLocation {
             index: 73,
             line: 5,
@@ -201,12 +201,12 @@ fn unit_variable() {
 #[test]
 fn i32_assigned_to_bool() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> bool {
                 let a: bool = 4;
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 42,
             line: 2,
@@ -218,12 +218,12 @@ fn i32_assigned_to_bool() {
 #[test]
 fn bool_assigned_to_i32() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = true;
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 40,
             line: 2,

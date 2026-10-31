@@ -229,13 +229,11 @@ impl TypeConcretisationPass<'_> {
     }
     fn concretisize_scope(
         &mut self,
-        scope: Rc<RefCell<VariableScope>>,
+        scope: &VariableScope,
     ) -> Option<Rc<RefCell<ConcreteVariableScope>>> {
-        if let Some(scope) = self.concrete_scope_by_id.get(&scope.borrow().id) {
+        if let Some(scope) = self.concrete_scope_by_id.get(&scope.id) {
             return Some(scope.clone());
         }
-
-        let scope = scope.borrow();
 
         Some(Rc::new(RefCell::new(ConcreteVariableScope {
             id: scope.id,
@@ -253,7 +251,7 @@ impl TypeConcretisationPass<'_> {
             is_read_guard: scope.is_read_guard,
             is_write_guard: scope.is_write_guard,
             parent: if let Some(parent) = scope.parent.clone() {
-                Some(self.concretisize_scope(parent)?)
+                Some(self.concretisize_scope(&parent.borrow())?)
             } else {
                 None
             },
@@ -301,7 +299,7 @@ impl Pass for TypeConcretisationPass<'_> {
                 .insert(*id, Rc::new(RefCell::new(func)));
         }
         for (id, scope) in self.contained_scope.iter() {
-            let Some(scope) = self.concretisize_scope(scope.clone()) else {
+            let Some(scope) = self.concretisize_scope(&scope.borrow()) else {
                 self.failure = true;
                 continue;
             };

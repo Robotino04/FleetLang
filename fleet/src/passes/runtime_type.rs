@@ -499,7 +499,6 @@ impl RuntimeTypeKind {
             }
 
             use RuntimeTypeKind as T;
-
             match (a, b) {
                 (_, T::Error) => R::Merged(a_full),
                 (T::Error, _) => R::Merged(b_full),
@@ -767,7 +766,7 @@ impl Display for ConcreteRuntimeType {
             } => {
                 write!(f, "struct (hash: {source_hash:x?}) {{ ")?;
                 for (name, type_) in members {
-                    write!(f, "{name}: {type_},",)?;
+                    write!(f, "{name}: {type_},")?;
                 }
                 write!(f, " }}")
             }

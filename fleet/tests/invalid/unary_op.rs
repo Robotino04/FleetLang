@@ -6,11 +6,11 @@ use crate::common::{assert_compile_error, assert_parser_or_tokenizer_error};
 #[test]
 fn missing_operand() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return !;
             }
-        "##},
+        "},
         SourceLocation {
             index: 35,
             line: 2,
@@ -21,11 +21,11 @@ fn missing_operand() {
 #[test]
 fn missing_semicolon() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return !5
             }
-        "##},
+        "},
         SourceLocation {
             index: 37,
             line: 3,
@@ -37,11 +37,11 @@ fn missing_semicolon() {
 #[test]
 fn mixed_missing_operand() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return !~;
             }
-        "##},
+        "},
         SourceLocation {
             index: 36,
             line: 2,
@@ -52,11 +52,11 @@ fn mixed_missing_operand() {
 #[test]
 fn minus_after_operand() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 4-;
             }
-        "##},
+        "},
         SourceLocation {
             index: 36,
             line: 2,
@@ -68,11 +68,11 @@ fn minus_after_operand() {
 #[test]
 fn binary_not_bool() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> bool {
                 return ~true;
             }
-        "##},
+        "},
         SourceLocation {
             index: 36,
             line: 2,
@@ -84,11 +84,11 @@ fn binary_not_bool() {
 #[test]
 fn minus_bool() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> bool {
                 return -false;
             }
-        "##},
+        "},
         SourceLocation {
             index: 36,
             line: 2,

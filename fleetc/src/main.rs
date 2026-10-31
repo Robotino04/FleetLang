@@ -109,13 +109,13 @@ fn main() {
 
     let src = read_to_string(&cli.input_file).unwrap_or_else(|_| {
         eprintln!(
-            "Input file {:?} doesn't exist or isn't readable",
-            cli.input_file
+            "Input file {} doesn't exist or isn't readable",
+            cli.input_file.display()
         );
         exit(1);
     });
 
-    let source = src.to_string();
+    let source = src.clone();
     let file_name: FileName = cli.input_file.to_string_lossy().to_string().into();
 
     let documents: HashMap<_, _> = vec![(file_name.clone(), source.clone())]
@@ -283,7 +283,7 @@ fn main() {
             exit(1);
         }
         Ok(()) => (),
-    };
+    }
 
     let errors = pm.state.get_mut::<Errors>().unwrap();
     if errors

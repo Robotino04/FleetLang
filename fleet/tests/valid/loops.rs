@@ -5,7 +5,7 @@ use crate::common::assert_compile_and_return_value;
 #[test]
 fn break_for() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let sum: i32 = 0;
                 for (let i: i32 = 0; i < 10; i = i + 1) {
@@ -16,7 +16,7 @@ fn break_for() {
                 }
                 return sum;
             }
-        "##},
+        "},
         "main",
         15,
     );
@@ -25,7 +25,7 @@ fn break_for() {
 #[test]
 fn for_counter_allocation() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let function = (param: i32) -> i32 {
                 let some_var: i32 = 10;
                 // this hung in R#, because i was not being allocated and always read some_var, which never reached 0.
@@ -36,7 +36,7 @@ fn for_counter_allocation() {
                 let tmp: i32 = function(123);
                 return tmp;
             }
-        "##},
+        "},
         "main",
         10,
     );
@@ -45,7 +45,7 @@ fn for_counter_allocation() {
 #[test]
 fn for_() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 for (let i: i32 = 0; i < 3; i = i + 1) {
@@ -53,7 +53,7 @@ fn for_() {
                 }
                 return a;
             }
-        "##},
+        "},
         "main",
         3,
     );
@@ -62,7 +62,7 @@ fn for_() {
 #[test]
 fn for_stack_cleanup() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 for (let i: i32 = 0; i < 10; i = i + 1) {
                     let var: i32 = 2;
@@ -70,7 +70,7 @@ fn for_stack_cleanup() {
                 }
                 return 0;
             }
-        "##},
+        "},
         "main",
         0,
     );
@@ -79,7 +79,7 @@ fn for_stack_cleanup() {
 #[test]
 fn for_nested_scope() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let i: i32 = 0;
                 let j: i32 = 0;
@@ -90,7 +90,7 @@ fn for_nested_scope() {
                 let k: i32 = 3;
                 return j + k;
             }
-        "##},
+        "},
         "main",
         3,
     );
@@ -99,7 +99,7 @@ fn for_nested_scope() {
 #[test]
 fn for_variable_shadowing() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let i: i32 = 0;
                 let j: i32 = 0;
@@ -111,7 +111,7 @@ fn for_variable_shadowing() {
                 }
                 return j + i;
             }
-        "##},
+        "},
         "main",
         65,
     );
@@ -120,7 +120,7 @@ fn for_variable_shadowing() {
 #[test]
 fn nested_break() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let ans: i32 = 0;
                 for (let i: i32 = 0; i < 5; i = i + 1) {
@@ -135,7 +135,7 @@ fn nested_break() {
                 }
                 return ans;
             }
-        "##},
+        "},
         "main",
         40,
     );
@@ -144,7 +144,7 @@ fn nested_break() {
 #[test]
 fn nested_while() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 1;
                 while a / 3 < 20 {
@@ -156,7 +156,7 @@ fn nested_while() {
                 }
                 return a;
             }
-        "##},
+        "},
         "main",
         65,
     );
@@ -165,13 +165,13 @@ fn nested_while() {
 #[test]
 fn return_in_while() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 while true {
                     return 2;
                 }
             }
-        "##},
+        "},
         "main",
         2,
     );
@@ -180,7 +180,7 @@ fn return_in_while() {
 #[test]
 fn skip() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let sum: i32 = 0;
                 for (let i: i32 = 0; i < 10; i = i + 1) {
@@ -191,7 +191,7 @@ fn skip() {
                 }
                 return sum;
             }
-        "##},
+        "},
         "main",
         1,
     );
@@ -200,7 +200,7 @@ fn skip() {
 #[test]
 fn skip_empty_post() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let sum: i32 = 0;
                 for (let i: i32 = 0; i < 10;) {
@@ -212,7 +212,7 @@ fn skip_empty_post() {
                 }
                 return sum;
             }
-        "##},
+        "},
         "main",
         1,
     );
@@ -221,7 +221,7 @@ fn skip_empty_post() {
 #[test]
 fn while_multi_statement() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 let b: i32 = 0;
@@ -231,7 +231,7 @@ fn while_multi_statement() {
                 }
                 return a;
             }
-        "##},
+        "},
         "main",
         6,
     );
@@ -240,7 +240,7 @@ fn while_multi_statement() {
 #[test]
 fn for_no_condition() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 // this previously broke the llvm backend because it generated an int instead of
                 // bool for the missing condition
@@ -249,7 +249,7 @@ fn for_no_condition() {
                 }
                 return 2;
             }
-        "##},
+        "},
         "main",
         2,
     );
@@ -259,7 +259,7 @@ fn for_no_condition() {
 #[ignore = "LLVM doesn't like unreachable blocks. This can't easily be resolved without waiting for FIL"]
 fn code_after_skip() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r#"
             let putchar = (char: i32) -> i32 @extern "putchar";
 
             let main = () -> i32 {
@@ -273,7 +273,7 @@ fn code_after_skip() {
 
                 return i;
             }
-        "##},
+        "#},
         "main",
         1,
     );

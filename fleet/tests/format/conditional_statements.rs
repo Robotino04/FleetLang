@@ -5,19 +5,19 @@ use crate::common::assert_formatting_and_same_behaviour;
 #[test]
 fn expand_if() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false{return 0;}
                 return 1;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false {
                     return 0;
                 }
                 return 1;
-            }"##
+            }"
         },
         "main",
     );
@@ -26,12 +26,12 @@ fn expand_if() {
 #[test]
 fn expand_if_else() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false{return 0;}else{return 2;}
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false {
                     return 0;
@@ -39,7 +39,7 @@ fn expand_if_else() {
                 else {
                     return 2;
                 }
-            }"##
+            }"
         },
         "main",
     );
@@ -48,12 +48,12 @@ fn expand_if_else() {
 #[test]
 fn expand_if_elif_else() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false{return 0;}elif true{return 3;}else{return 2;}
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false {
                     return 0;
@@ -64,7 +64,7 @@ fn expand_if_elif_else() {
                 else {
                     return 2;
                 }
-            }"##
+            }"
         },
         "main",
     );
@@ -73,12 +73,12 @@ fn expand_if_elif_else() {
 #[test]
 fn expand_if_elif_elif_else() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false{return 0;}elif true{return 3;}elif true{return 4;}else{return 2;}
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false {
                     return 0;
@@ -92,7 +92,7 @@ fn expand_if_elif_elif_else() {
                 else {
                     return 2;
                 }
-            }"##
+            }"
         },
         "main",
     );
@@ -101,7 +101,7 @@ fn expand_if_elif_elif_else() {
 #[test]
 fn collapse_if() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if   false   {
 
@@ -110,15 +110,15 @@ fn collapse_if() {
 
                 }
                 return 1;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false {
                     return 0;
                 }
                 return 1;
-            }"##
+            }"
         },
         "main",
     );
@@ -127,7 +127,7 @@ fn collapse_if() {
 #[test]
 fn collapse_if_else() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if 
 
@@ -137,9 +137,9 @@ fn collapse_if_else() {
 
                 else{
                 return 2;  }
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false {
                     return 0;
@@ -147,7 +147,7 @@ fn collapse_if_else() {
                 else {
                     return 2;
                 }
-            }"##
+            }"
         },
         "main",
     );
@@ -156,7 +156,7 @@ fn collapse_if_else() {
 #[test]
 fn collapse_if_elif_else() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false
 
@@ -167,9 +167,9 @@ fn collapse_if_elif_else() {
                 }
                 else     {return 2;
                 }
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false {
                     return 0;
@@ -180,7 +180,7 @@ fn collapse_if_elif_else() {
                 else {
                     return 2;
                 }
-            }"##
+            }"
         },
         "main",
     );
@@ -189,7 +189,7 @@ fn collapse_if_elif_else() {
 #[test]
 fn collapse_if_elif_elif_else() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false
 
@@ -204,9 +204,9 @@ fn collapse_if_elif_elif_else() {
 
                 else     {return 2;
                 }
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false {
                     return 0;
@@ -220,7 +220,7 @@ fn collapse_if_elif_elif_else() {
                 else {
                     return 2;
                 }
-            }"##
+            }"
         },
         "main",
     );
@@ -229,21 +229,21 @@ fn collapse_if_elif_elif_else() {
 #[test]
 fn remove_parens_if() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if (((1+1))*2) != 0 {
                     return 0;
                 }
                 return 2;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if (1 + 1) * 2 != 0 {
                     return 0;
                 }
                 return 2;
-            }"##
+            }"
         },
         "main",
     );
@@ -252,7 +252,7 @@ fn remove_parens_if() {
 #[test]
 fn remove_parens_elif() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false {
                     return 3;
@@ -261,9 +261,9 @@ fn remove_parens_elif() {
                     return 0;
                 }
                 return 2;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false {
                     return 3;
@@ -272,7 +272,7 @@ fn remove_parens_elif() {
                     return 0;
                 }
                 return 2;
-            }"##
+            }"
         },
         "main",
     );

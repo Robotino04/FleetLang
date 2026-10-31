@@ -46,7 +46,7 @@ impl PassFactory for LintVariableNaming<'_> {
 }
 impl Pass for LintVariableNaming<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
-        let program = &mut self.program.take().unwrap();
+        let program = self.program.take().unwrap();
 
         let _ = self.visit_program(program);
 
@@ -64,7 +64,7 @@ impl LintVariableNaming<'_> {
             && !name.ends_with('_')
     }
     pub fn is_camel_case(name: &str) -> bool {
-        Self::words_to_camel_case(Self::split_words(name)) == name
+        Self::words_to_camel_case(&Self::split_words(name)) == name
     }
     fn split_word_part(name: &str) -> Vec<String> {
         let mut words = Vec::new();
@@ -140,27 +140,31 @@ impl LintVariableNaming<'_> {
             .collect_vec()
     }
 
-    pub fn words_to_snake_case(words: Vec<String>) -> String {
+    pub fn words_to_snake_case(words: &[String]) -> String {
         words.join("_")
     }
-    pub fn words_to_camel_case(words: Vec<String>) -> String {
+    pub fn words_to_camel_case(words: &[String]) -> String {
         // approximately follows Googles style guide:
         // https://google.github.io/styleguide/javaguide.html#s5.3-camel-case
-        words
-            .into_iter()
-            .map(|x| {
-                let chars = x.chars().collect_vec();
-                let [first, rest @ ..] = chars.as_slice() else {
-                    // empty or only one char
-                    return x.to_uppercase();
-                };
+
+        let mut out = String::new();
+
+        for x in words {
+            let chars = x.chars().collect_vec();
+            if let [first, rest @ ..] = chars.as_slice() {
                 if first.is_numeric() {
-                    x
+                    out.push_str(x);
                 } else {
-                    first.to_uppercase().to_string() + &rest.iter().join("")
+                    out.extend(first.to_uppercase());
+                    out.extend(rest);
                 }
-            })
-            .join("")
+            } else {
+                // empty or only one char
+                out.push_str(&x.to_uppercase());
+            }
+        }
+
+        out
     }
 }
 
@@ -173,7 +177,7 @@ impl PartialAstVisitor for LintVariableNaming<'_> {
             self.errors
                 .push(ErrorKind::Lint(Lint::FunctionNameNotSnakeCase {
                     function: SymbolDefinition::from_token(fdef.name.clone(), &fdef.name_token),
-                    suggestion: Self::words_to_snake_case(Self::split_words(&fdef.name)),
+                    suggestion: Self::words_to_snake_case(&Self::split_words(&fdef.name)),
                 }));
         }
 
@@ -188,7 +192,7 @@ impl PartialAstVisitor for LintVariableNaming<'_> {
                         binding.name.clone(),
                         &binding.name_token,
                     ),
-                    suggestion: Self::words_to_snake_case(Self::split_words(&binding.name)),
+                    suggestion: Self::words_to_snake_case(&Self::split_words(&binding.name)),
                 }));
         }
 
@@ -199,7 +203,7 @@ impl PartialAstVisitor for LintVariableNaming<'_> {
             self.errors
                 .push(ErrorKind::Lint(Lint::TypeNameNotCamelCase {
                     type_: SymbolDefinition::from_token(alias.name.clone(), &alias.name_token),
-                    suggestion: Self::words_to_camel_case(Self::split_words(&alias.name)),
+                    suggestion: Self::words_to_camel_case(&Self::split_words(&alias.name)),
                 }));
         }
 
@@ -221,7 +225,7 @@ impl PartialAstVisitor for LintVariableNaming<'_> {
                 self.errors
                     .push(ErrorKind::Lint(Lint::StructMemberNotSnakeCase {
                         member: SymbolDefinition::from_token(name.clone(), name_token),
-                        suggestion: Self::words_to_snake_case(Self::split_words(name)),
+                        suggestion: Self::words_to_snake_case(&Self::split_words(name)),
                     }));
             }
         }
@@ -314,16 +318,16 @@ mod test {
     #[test]
     fn test_words_to_snake_case() {
         assert_eq!(
-            LintVariableNaming::words_to_snake_case(vec!["hello".into(), "world".into()]),
+            LintVariableNaming::words_to_snake_case(&["hello".into(), "world".into()]),
             "hello_world"
         );
         assert_eq!(
-            LintVariableNaming::words_to_snake_case(vec!["rust".into(), "is".into(), "fun".into()]),
+            LintVariableNaming::words_to_snake_case(&["rust".into(), "is".into(), "fun".into()]),
             "rust_is_fun"
         );
-        assert_eq!(LintVariableNaming::words_to_snake_case(vec![]), "");
+        assert_eq!(LintVariableNaming::words_to_snake_case(&[]), "");
         assert_eq!(
-            LintVariableNaming::words_to_snake_case(vec!["single".into()]),
+            LintVariableNaming::words_to_snake_case(&["single".into()]),
             "single"
         );
     }
@@ -331,24 +335,24 @@ mod test {
     #[test]
     fn test_words_to_camel_case() {
         assert_eq!(
-            LintVariableNaming::words_to_camel_case(vec!["hello".into(), "world".into()]),
+            LintVariableNaming::words_to_camel_case(&["hello".into(), "world".into()]),
             "HelloWorld"
         );
         assert_eq!(
-            LintVariableNaming::words_to_camel_case(vec!["rust".into(), "is".into(), "fun".into()]),
+            LintVariableNaming::words_to_camel_case(&["rust".into(), "is".into(), "fun".into()]),
             "RustIsFun"
         );
-        assert_eq!(LintVariableNaming::words_to_camel_case(vec![]), "");
+        assert_eq!(LintVariableNaming::words_to_camel_case(&[]), "");
         assert_eq!(
-            LintVariableNaming::words_to_camel_case(vec!["1number".into(), "word".into()]),
+            LintVariableNaming::words_to_camel_case(&["1number".into(), "word".into()]),
             "1numberWord"
         );
         assert_eq!(
-            LintVariableNaming::words_to_camel_case(vec!["word".into(), "2number".into()]),
+            LintVariableNaming::words_to_camel_case(&["word".into(), "2number".into()]),
             "Word2number"
         );
         assert_eq!(
-            LintVariableNaming::words_to_camel_case(vec!["a".into(), "b".into()]),
+            LintVariableNaming::words_to_camel_case(&["a".into(), "b".into()]),
             "AB"
         );
     }

@@ -24,3 +24,6 @@ tempfile = "3.27.0"
 llvm_backend = ["dep:inkwell"]
 gpu_backend = ["dep:shaderc"]
 default = ["llvm_backend", "gpu_backend"]
+
+[lints]
+workspace = true

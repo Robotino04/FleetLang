@@ -1,4 +1,6 @@
-use std::thread::Builder;
+#![allow(clippy::cast_precision_loss)]
+
+use std::{fmt::Write, thread::Builder};
 
 use crate::common::assert_compile_and_output_subprocess;
 
@@ -31,18 +33,18 @@ fn generate_mandelbrot_ppm(width: usize, height: usize) -> String {
     // Generate PPM (P3 format) string output
     let mut output = String::new();
     output.push_str("P3\n");
-    output.push_str(&format!("{width} {height}\n"));
+    let _ = writeln!(output, "{width} {height}");
     output.push_str("255\n");
 
-    for row in image.iter() {
-        for &value in row.iter() {
+    for row in &image {
+        for &value in row {
             // make image binary to avoid float-rounding issues in test
             let intensity = if ((value * 255.0) as i32).clamp(0, 255) != 0 {
                 255
             } else {
                 0
             };
-            output.push_str(&format!("{intensity} {intensity} {intensity} "));
+            let _ = write!(output, "{intensity} {intensity} {intensity} ");
         }
         output.push('\n');
     }

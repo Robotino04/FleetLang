@@ -8,12 +8,12 @@ use crate::common::{
 #[test]
 fn non_block_as_body() {
     assert_compile_error_no_formatting(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if true let a: i32 = 4;
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 35,
             line: 2,
@@ -26,7 +26,7 @@ fn non_block_as_body() {
 #[test]
 fn if_expression() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let flag: bool = false;
                 let a: i32 = if flag {
@@ -37,7 +37,7 @@ fn if_expression() {
                 }
                 return a;
             }
-        "##},
+        "},
         SourceLocation {
             index: 68,
             line: 3,
@@ -49,7 +49,7 @@ fn if_expression() {
 #[test]
 fn double_else() {
     assert_parser_or_tokenizer_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 if true {
@@ -62,7 +62,7 @@ fn double_else() {
                     return 3;
                 }
             }
-        "##},
+        "},
         SourceLocation {
             index: 120,
             line: 9,
@@ -74,13 +74,13 @@ fn double_else() {
 #[test]
 fn not_all_paths_return_if() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
         let main = () -> i32 {
             if false {
                 return 1;
             }
         }
-    "##},
+    "},
         SourceLocation {
             index: 60,
             line: 4,
@@ -92,7 +92,7 @@ fn not_all_paths_return_if() {
 #[test]
 fn not_all_paths_return_elif() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
         let main = () -> i32 {
             if false {
                 return 1;
@@ -101,7 +101,7 @@ fn not_all_paths_return_elif() {
                 return 3;
             }
         }
-    "##},
+    "},
         SourceLocation {
             index: 100,
             line: 7,

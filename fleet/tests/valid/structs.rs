@@ -5,7 +5,7 @@ use crate::common::assert_compile_and_return_value;
 #[test]
 fn struct_as_parameter() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let modify_x = (a: struct {
                 x: i32,
                 y: i32,
@@ -23,7 +23,7 @@ fn struct_as_parameter() {
 
                 return s.x;
             }
-        "##},
+        "},
         "main",
         2,
     );
@@ -31,7 +31,7 @@ fn struct_as_parameter() {
 #[test]
 fn struct_as_returnvalue() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let gen_struct = () -> struct {
                 x: u8,
                 y: f64,
@@ -47,7 +47,7 @@ fn struct_as_returnvalue() {
 
                 return a.x as i32;
             }
-        "##},
+        "},
         "main",
         8,
     );
@@ -55,7 +55,7 @@ fn struct_as_returnvalue() {
 #[test]
 fn nested_struct() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let s = struct {
                     a: struct {
@@ -79,7 +79,7 @@ fn nested_struct() {
 
                 return s.a.a1 as i32 + s.a.a2 as i32 + s.b.b1 as i32 + s.b.b2;
             }
-        "##},
+        "},
         "main",
         -12,
     );
@@ -87,7 +87,7 @@ fn nested_struct() {
 #[test]
 fn array_in_struct() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let s = struct {
                     a: i32[5],
@@ -97,7 +97,7 @@ fn array_in_struct() {
 
                 return s.a[3];
             }
-        "##},
+        "},
         "main",
         12,
     );
@@ -105,7 +105,7 @@ fn array_in_struct() {
 #[test]
 fn array_in_struct_in_array() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let s: struct {
                     a: i32[5],
@@ -117,7 +117,7 @@ fn array_in_struct_in_array() {
 
                 return s[1].a[3];
             }
-        "##},
+        "},
         "main",
         11,
     );
@@ -126,7 +126,7 @@ fn array_in_struct_in_array() {
 #[test]
 fn literal_in_if() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a = true;
                 if a {
@@ -134,7 +134,7 @@ fn literal_in_if() {
                 }
                 return 2;
             }
-        "##},
+        "},
         "main",
         8,
     );
@@ -142,7 +142,7 @@ fn literal_in_if() {
 #[test]
 fn cast_struct_to_itself() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let x = idk {
                     a: true,
@@ -156,7 +156,7 @@ fn cast_struct_to_itself() {
 
                 return 9123;
             }
-        "##},
+        "},
         "main",
         2,
     );

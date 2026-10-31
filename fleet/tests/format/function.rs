@@ -5,14 +5,14 @@ use crate::common::{assert_formatting, assert_formatting_and_same_behaviour};
 #[test]
 fn expand() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main=()->i32{return 0;}
-            "##
+            "
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 0;
-            }"##
+            }"
         },
         "main",
     );
@@ -21,7 +21,7 @@ fn expand() {
 #[test]
 fn collapse() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let     main
 
             = 
@@ -34,12 +34,12 @@ fn collapse() {
                     0
             ;
             }
-            "##
+            "
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 0;
-            }"##
+            }"
         },
         "main",
     );
@@ -48,17 +48,17 @@ fn collapse() {
 #[test]
 fn expand_2() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main=()->i32{return 0;}let b=()->i32{return 0;}
-            "##
+            "
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 0;
             }
             let b = () -> i32 {
                 return 0;
-            }"##
+            }"
         },
         "main",
     );
@@ -67,7 +67,7 @@ fn expand_2() {
 #[test]
 fn collapse_2() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let         main=
             ()
               ->
@@ -82,16 +82,16 @@ fn collapse_2() {
             (    )
             ->  i32 {
             return 0
-            ;}  "##
+            ;}  "
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 0;
             }
 
             let b = () -> i32 {
                 return 0;
-            }"##
+            }"
         },
         "main",
     );
@@ -100,18 +100,18 @@ fn collapse_2() {
 #[test]
 fn expand_multiple_statements() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 4 + 5;4 + 5;4 + 5;return 0;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 4 + 5;
                 4 + 5;
                 4 + 5;
                 return 0;
-            }"##
+            }"
         },
         "main",
     );
@@ -120,23 +120,23 @@ fn expand_multiple_statements() {
 #[test]
 fn preserve_newlines_without_comments() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 4 + 5;
                 4 + 5;
 
                 4 + 5;
                 return 0;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 4 + 5;
                 4 + 5;
 
                 4 + 5;
                 return 0;
-            }"##
+            }"
         },
         "main",
     );
@@ -145,19 +145,19 @@ fn preserve_newlines_without_comments() {
 #[test]
 fn remove_parens_multiple_statements() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 (1 * 2);
                 (1 + 1);
                 return 0;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 1 * 2;
                 1 + 1;
                 return 0;
-            }"##
+            }"
         },
         "main",
     );
@@ -166,21 +166,21 @@ fn remove_parens_multiple_statements() {
 #[test]
 fn remove_parens_multiple_returns() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return (1 * 2);
             }
             let main2 = () -> i32 {
                 return (1 + 1);
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 1 * 2;
             }
             let main2 = () -> i32 {
                 return 1 + 1;
-            }"##
+            }"
         },
         "main",
     );
@@ -189,21 +189,21 @@ fn remove_parens_multiple_returns() {
 #[test]
 fn expand_parameters() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return foo(2, 3);
             }
             let foo = (a:i32,b:i32) -> i32 {
                 return 0;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return foo(2, 3);
             }
             let foo = (a: i32, b: i32) -> i32 {
                 return 0;
-            }"##
+            }"
         },
         "main",
     );
@@ -212,22 +212,22 @@ fn expand_parameters() {
 #[test]
 fn collapse_parameters() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return foo(2, 3);
             }
             let foo = (a  :   i32  ,  b
             :  i32 ) -> i32 {
                 return 0;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return foo(2, 3);
             }
             let foo = (a: i32, b: i32) -> i32 {
                 return 0;
-            }"##
+            }"
         },
         "main",
     );
@@ -236,21 +236,21 @@ fn collapse_parameters() {
 #[test]
 fn expand_arguments() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return foo(2,3);
             }
             let foo = (a:i32, b:i32) -> i32 {
                 return 0;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return foo(2, 3);
             }
             let foo = (a: i32, b: i32) -> i32 {
                 return 0;
-            }"##
+            }"
         },
         "main",
     );
@@ -259,22 +259,22 @@ fn expand_arguments() {
 #[test]
 fn collapse_arguments() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return foo
                 (   2  , 3   );
             }
             let foo = (a:i32, b:i32) -> i32 {
                 return 0;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return foo(2, 3);
             }
             let foo = (a: i32, b: i32) -> i32 {
                 return 0;
-            }"##
+            }"
         },
         "main",
     );
@@ -283,21 +283,21 @@ fn collapse_arguments() {
 #[test]
 fn remove_parens_arguments() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return foo(((2)), ((3 + 2) * 4) * 2);
             }
             let foo = (a:i32, b:i32) -> i32 {
                 return 0;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return foo(2, (3 + 2) * 4 * 2);
             }
             let foo = (a: i32, b: i32) -> i32 {
                 return 0;
-            }"##
+            }"
         },
         "main",
     );
@@ -306,21 +306,21 @@ fn remove_parens_arguments() {
 #[test]
 fn remove_trailing_comma() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return foo(foo(1, 2 /* a */,/* b */), 4 /* c */,/* d */);
             }
             let foo = (a: i32, b: i32) -> i32 {
                 return a + b;
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return foo(foo(1, 2 /* a */ /* b */), 4 /* c */ /* d */);
             }
             let foo = (a: i32, b: i32) -> i32 {
                 return a + b;
-            }"##
+            }"
         },
         "main",
     );
@@ -329,19 +329,19 @@ fn remove_trailing_comma() {
 #[test]
 fn expand_extern() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r#"
             let putchar = (char: i32) -> i32@extern"putchar";
             let main = () -> i32 {
                 putchar(10);
                 return 0;
-            }"##
+            }"#
         },
-        indoc! {r##"
+        indoc! {r#"
             let putchar = (char: i32) -> i32 @extern "putchar";
             let main = () -> i32 {
                 putchar(10);
                 return 0;
-            }"##
+            }"#
         },
         "main",
     );
@@ -350,20 +350,20 @@ fn expand_extern() {
 #[test]
 fn collapse_extern() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r#"
             let putchar = (char: i32) -> i32   @
             extern  "putchar"  ;
             let main = () -> i32 {
                 putchar(10);
                 return 0;
-            }"##
+            }"#
         },
-        indoc! {r##"
+        indoc! {r#"
             let putchar = (char: i32) -> i32 @extern "putchar";
             let main = () -> i32 {
                 putchar(10);
                 return 0;
-            }"##
+            }"#
         },
         "main",
     );
@@ -373,7 +373,7 @@ fn collapse_extern() {
 #[test]
 fn accept_invalid() {
     assert_formatting(
-        indoc! {r##"
+        indoc! {r"
             let 
             main    =   (
 
@@ -381,12 +381,12 @@ fn accept_invalid() {
 
                 -> i32 {
             return nonexistent();
-             }"##
+             }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return nonexistent();
-            }"##
+            }"
         },
     );
 }
@@ -394,19 +394,19 @@ fn accept_invalid() {
 #[test]
 fn preserve_spacing_return() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 0;
 
                 // preserve pls
-            }"##
+            }"
         },
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 return 0;
 
                 // preserve pls
-            }"##
+            }"
         },
         "main",
     );
@@ -415,21 +415,21 @@ fn preserve_spacing_return() {
 #[test]
 fn preserve_spacing_extern() {
     assert_formatting_and_same_behaviour::<i32>(
-        indoc! {r##"
+        indoc! {r#"
             let putchar = (char: i32) -> i32 @extern "putchar";
 
             let main = () -> i32 {
                 putchar(10);
                 return 0;
-            }"##
+            }"#
         },
-        indoc! {r##"
+        indoc! {r#"
             let putchar = (char: i32) -> i32 @extern "putchar";
 
             let main = () -> i32 {
                 putchar(10);
                 return 0;
-            }"##
+            }"#
         },
         "main",
     );

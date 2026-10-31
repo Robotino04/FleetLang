@@ -1,4 +1,7 @@
-use std::{collections::HashMap, fmt::Display};
+use std::{
+    collections::HashMap,
+    fmt::{Display, Write},
+};
 
 use itertools::Itertools;
 
@@ -39,9 +42,9 @@ impl Errors {
                 .range
                 .start
         });
-        self.sort_by_key(|err| err.severity());
+        self.sort_by_key(ErrorKind::severity);
 
-        if let Some(worst_severity) = self.iter().map(|err| err.severity()).max() {
+        if let Some(worst_severity) = self.iter().map(ErrorKind::severity).max() {
             for error in &self.0 {
                 // double newline
                 out += &error.render().to_string(ansi, documents);
@@ -52,7 +55,7 @@ impl Errors {
             } else {
                 String::new()
             };
-            out += &format!("\n{ansi_color}{msg}{ansi_reset}");
+            let _ = write!(out, "\n{ansi_color}{msg}{ansi_reset}");
         }
 
         out
@@ -617,10 +620,11 @@ impl RenderedError {
                     );
                     if nr == range.end().line() {
                         let length = max_column - min_column;
-                        out += &format!(
+                        let _ = write!(
+                            out,
                             "\n{structure_color}{empty:<max_line_number_length$}│{ansi_reset} \
-                        {empty:<min_column$}{color}{empty:^<length$} {message}{ansi_reset}",
-                            empty = "",
+                            {empty:<min_column$}{color}{empty:^<length$} {message}{ansi_reset}",
+                            empty = ""
                         );
                     }
 
@@ -1489,7 +1493,7 @@ impl ErrorKind {
             } => RenderedError {
                 highlight_groups: vec![error(
                     type_range,
-                    format!("{element_type} array not allowed",),
+                    format!("{element_type} array not allowed"),
                 )],
                 main_message: format!("Arrays cannot have elements of type {element_type} yet."),
                 severity: ErrorSeverity::Error,
@@ -1546,7 +1550,7 @@ impl ErrorKind {
                     TypeMismatchKind::FunctionReturn { function } => (
                         expected_types
                             .iter()
-                            .flat_map(|type_| {
+                            .filter_map(|type_| {
                                 Some(note(
                                     type_.definition_range.as_ref()?,
                                     "return type defined here",

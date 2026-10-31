@@ -8,7 +8,7 @@ use crate::common::{
 #[test]
 fn if_else() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 if a != 0 {
@@ -18,7 +18,7 @@ fn if_else() {
                     return 2;
                 }
             }
-        "##},
+        "},
         "main",
         2,
     );
@@ -27,7 +27,7 @@ fn if_else() {
 #[test]
 fn nested_1() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 1;
                 let b: i32 = 0;
@@ -39,7 +39,7 @@ fn nested_1() {
                 }
                 return b;
             }
-        "##},
+        "},
         "main",
         1,
     );
@@ -48,7 +48,7 @@ fn nested_1() {
 #[test]
 fn nested_2() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 let b: i32 = 1;
@@ -60,7 +60,7 @@ fn nested_2() {
                 }
                 return b;
             }
-        "##},
+        "},
         "main",
         2,
     );
@@ -69,7 +69,7 @@ fn nested_2() {
 #[test]
 fn nested_3() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 if true {
@@ -82,7 +82,7 @@ fn nested_3() {
                 }
                 return a;
             }
-        "##},
+        "},
         "main",
         3,
     );
@@ -91,7 +91,7 @@ fn nested_3() {
 #[test]
 fn nested_4() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 if true {
@@ -104,7 +104,7 @@ fn nested_4() {
                 }
                 return a;
             }
-        "##},
+        "},
         "main",
         4,
     );
@@ -113,7 +113,7 @@ fn nested_4() {
 #[test]
 fn nested_5() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 if false {
@@ -129,7 +129,7 @@ fn nested_5() {
                 }
                 return a;
             }
-        "##},
+        "},
         "main",
         1,
     );
@@ -138,7 +138,7 @@ fn nested_5() {
 #[test]
 fn if_not_taken() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 let b: i32 = 2;
@@ -147,7 +147,7 @@ fn if_not_taken() {
                 }
                 return b;
             }
-        "##},
+        "},
         "main",
         2,
     );
@@ -156,7 +156,7 @@ fn if_not_taken() {
 #[test]
 fn if_taken() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 1;
                 let b: i32 = 0;
@@ -165,7 +165,7 @@ fn if_taken() {
                 }
                 return b;
             }
-        "##},
+        "},
         "main",
         1,
     );
@@ -174,7 +174,7 @@ fn if_taken() {
 #[test]
 fn multiple_if() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 let b: i32 = 0;
@@ -192,7 +192,7 @@ fn multiple_if() {
                 }
                 return a + b;
             }
-        "##},
+        "},
         "main",
         8,
     );
@@ -201,7 +201,7 @@ fn multiple_if() {
 #[test]
 fn empty_elif_with_else() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 if a != 0 {
@@ -213,7 +213,7 @@ fn empty_elif_with_else() {
                 }
                 return a;
             }
-        "##},
+        "},
         "main",
         0,
     );
@@ -222,7 +222,7 @@ fn empty_elif_with_else() {
 #[test]
 fn empty_elif_without_else() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 if a != 0 {
@@ -231,7 +231,7 @@ fn empty_elif_without_else() {
                 elif true {}
                 return a;
             }
-        "##},
+        "},
         "main",
         0,
     );
@@ -240,7 +240,7 @@ fn empty_elif_without_else() {
 #[test]
 fn elif_all_paths_terminate() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false {
                     return 0;
@@ -252,7 +252,7 @@ fn elif_all_paths_terminate() {
                     return 2;
                 }
             }
-        "##},
+        "},
         "main",
         3,
     );
@@ -261,7 +261,7 @@ fn elif_all_paths_terminate() {
 #[test]
 fn multi_elif_all_paths_terminate() {
     assert_compile_and_return_value(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false {
                     return 0;
@@ -276,7 +276,7 @@ fn multi_elif_all_paths_terminate() {
                     return 2;
                 }
             }
-        "##},
+        "},
         "main",
         7,
     );
@@ -285,7 +285,7 @@ fn multi_elif_all_paths_terminate() {
 #[test]
 fn unreachable_after_if() {
     assert_compile_and_warning(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let a: i32 = 0;
                 if true {
@@ -296,7 +296,7 @@ fn unreachable_after_if() {
                 }
                 return 2;
             }
-        "##},
+        "},
         SourceLocation {
             index: 120,
             line: 9,
@@ -308,7 +308,7 @@ fn unreachable_after_if() {
 #[test]
 fn i32_as_if_condition() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if 8 {
                     return 1;
@@ -317,7 +317,7 @@ fn i32_as_if_condition() {
                     return 3;
                 }
             }
-        "##},
+        "},
         SourceLocation {
             index: 30,
             line: 2,
@@ -329,7 +329,7 @@ fn i32_as_if_condition() {
 #[test]
 fn i32_as_elif_condition() {
     assert_compile_error(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 if false {
                     return 1;
@@ -341,7 +341,7 @@ fn i32_as_elif_condition() {
                     return 3;
                 }
             }
-        "##},
+        "},
         SourceLocation {
             index: 71,
             line: 5,

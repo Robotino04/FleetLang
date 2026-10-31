@@ -288,7 +288,7 @@ where
 pub fn assert_compile_and_return_value_unformatted<ReturnType>(
     src: &str,
     function_name: &str,
-    expected_return_value: ReturnType,
+    #[expect(clippy::needless_pass_by_value)] expected_return_value: ReturnType,
 ) where
     ReturnType: Debug + PartialEq + 'static,
 {
@@ -369,13 +369,11 @@ fn compile_or_panic(src: &str) -> PassManager {
     insert_c_passes(&mut pm);
     pm.insert::<IrGenerator>();
 
-    match pm.run() {
-        Ok(_) => (),
-        err @ Err(_) => {
+    pm.run()
+        .inspect_err(|_| {
             eprintln!("Errors: {:#?}", pm.state.get::<Errors>());
-            err.unwrap();
-        }
-    }
+        })
+        .unwrap();
 
     let errors = pm.state.get::<Errors>().unwrap();
 
@@ -434,9 +432,7 @@ unsafe fn execute_function<ReturnType>(
     fn load_library(name: &str) {
         let cname = CString::new(name).unwrap();
         let handle = unsafe { dlopen(cname.as_ptr(), RTLD_NOW | RTLD_GLOBAL) };
-        if handle.is_null() {
-            panic!("Failed to dlopen {:?}", name);
-        }
+        assert!(!handle.is_null(), "Failed to dlopen {name:?}");
     }
 
     if needs_runtime {
@@ -560,7 +556,7 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
         clang_cmd.arg("-lvulkan");
     }
 
-    println!("{:?}", clang_cmd);
+    println!("{clang_cmd:?}");
     let clang_out = clang_cmd.output().unwrap();
 
     print!(
@@ -650,7 +646,7 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
         clang_link.arg("-lvulkan");
     }
 
-    println!("{:?}", clang_compile);
+    println!("{clang_compile:?}");
     let clang_compile_out = clang_compile.output().unwrap();
     print!(
         "Clang stdout:\n{}",
@@ -662,7 +658,7 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     );
     assert!(clang_compile_out.status.success());
 
-    println!("{:?}", clang_link);
+    println!("{clang_link:?}");
     let clang_link_out = clang_link.output().unwrap();
     print!(
         "Clang stdout:\n{}",
@@ -677,7 +673,7 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     binary_file.to_str().unwrap().to_string()
 }
 
-fn clean_stderr(stderr: String) -> String {
+fn clean_stderr(stderr: &str) -> String {
     // HACK: filter out lines from mesa that look like this
     //     pci id for fd 9: 10de:2684, driver (null)
     // TODO: remove this whenever mesa doesn't complain anymore
@@ -706,19 +702,17 @@ fn run_and_check_output<ReturnType>(
     .unwrap();
 
     let child_pipe_path = dir.path().join("child_pipe");
-
-    if unsafe {
-        mkfifo(
+    unsafe {
+        let err = mkfifo(
             CString::new(child_pipe_path.to_str().unwrap())
                 .unwrap()
                 .as_c_str()
                 .as_ptr(),
             0o666,
-        )
-    } != 0
-    {
-        panic!("Failed to create named pipe");
-    };
+        );
+
+        assert!(err == 0, "Failed to create named pipe");
+    }
 
     println!("Starting testee");
     let mut cmd = Command::new(binary);
@@ -728,7 +722,7 @@ fn run_and_check_output<ReturnType>(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    println!("{:?}", cmd);
+    println!("{cmd:?}");
     let cmd = cmd.spawn().unwrap();
 
     println!("opening file");
@@ -769,7 +763,7 @@ fn run_and_check_output<ReturnType>(
         "stdout doesn't match (left should be right)"
     );
     assert_eq!(
-        clean_stderr(String::from_utf8(output.stderr).unwrap()),
+        clean_stderr(&String::from_utf8(output.stderr).unwrap()),
         expected_stderr.as_ref(),
         "stderr doesn't match (left should be right)"
     );
@@ -777,7 +771,7 @@ fn run_and_check_output<ReturnType>(
 
 pub fn assert_compile_and_output_subprocess<ReturnType>(
     src: &str,
-    expected_exit_code: ReturnType,
+    #[expect(clippy::needless_pass_by_value)] expected_exit_code: ReturnType,
     expected_stdout: impl AsRef<str> + Clone,
     expected_stderr: impl AsRef<str> + Clone,
 ) where

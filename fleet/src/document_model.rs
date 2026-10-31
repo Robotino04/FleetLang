@@ -1,4 +1,5 @@
 use indent::indent_all_by;
+use itertools::Itertools;
 use log::info;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,13 +53,9 @@ impl DocumentElement {
         spacing: DocumentElement,
         elements: Vec<DocumentElement>,
     ) -> DocumentElement {
-        let mut res = vec![];
-        for el in elements {
-            res.push(el);
-            res.push(spacing.clone());
-        }
-        res.pop();
-        DocumentElement::Concatenation(res)
+        DocumentElement::Concatenation(
+            Itertools::intersperse(elements.into_iter(), spacing).collect_vec(),
+        )
     }
 
     pub fn empty() -> DocumentElement {
@@ -190,10 +187,10 @@ fn flatten_document_elements_once(element: DocumentElement) -> (DocumentElement,
 
                             did_change = true;
                             continue;
-                        } else {
-                            res.push(el);
-                            continue;
                         }
+
+                        res.push(el);
+                        continue;
                     }
                     DE::ForcedSpace => {
                         if let Some(
@@ -236,10 +233,10 @@ fn flatten_document_elements_once(element: DocumentElement) -> (DocumentElement,
 
                             did_change = true;
                             continue;
-                        } else {
-                            res.push(el);
-                            continue;
                         }
+
+                        res.push(el);
+                        continue;
                     }
                     _ => (),
                 }
@@ -355,10 +352,10 @@ pub fn stringify_document_impl(element: DocumentElement) -> String {
             "\n".repeat(count.max(min).min(max))
         }
         DocumentElement::Text(text) => text.clone(),
-        DocumentElement::SpaceEater => "".to_string(),
-        DocumentElement::ReverseSpaceEater => "".to_string(),
-        DocumentElement::LineBreakEater => "".to_string(),
-        DocumentElement::ReverseLineBreakEater => "".to_string(),
+        DocumentElement::SpaceEater => String::new(),
+        DocumentElement::ReverseSpaceEater => String::new(),
+        DocumentElement::LineBreakEater => String::new(),
+        DocumentElement::ReverseLineBreakEater => String::new(),
     }
 }
 

@@ -6,12 +6,12 @@ use crate::common::assert_compile_and_warning;
 #[test]
 fn variable_not_snake_case() {
     assert_compile_and_warning(
-        indoc! {r##"
+        indoc! {r"
             let main = () -> i32 {
                 let OneVeryCoolVariable = 0;
                 return OneVeryCoolVariable;
             }
-        "##},
+        "},
         SourceLocation {
             index: 31,
             line: 2,
@@ -23,7 +23,7 @@ fn variable_not_snake_case() {
 #[test]
 fn function_not_snake_case() {
     assert_compile_and_warning(
-        indoc! {r##"
+        indoc! {r"
             let Foo = () -> i32 {
                 return 2;
             }
@@ -31,7 +31,7 @@ fn function_not_snake_case() {
             let main = () -> i32 {
                 return Foo();
             }
-        "##},
+        "},
         SourceLocation {
             index: 4,
             line: 1,
@@ -43,7 +43,7 @@ fn function_not_snake_case() {
 #[test]
 fn type_not_camel_case() {
     assert_compile_and_warning(
-        indoc! {r##"
+        indoc! {r"
             let foo = struct {
                 bar: i32
             };
@@ -55,7 +55,7 @@ fn type_not_camel_case() {
 
                 return my_foo.bar;
             }
-        "##},
+        "},
         SourceLocation {
             index: 4,
             line: 1,
@@ -67,7 +67,7 @@ fn type_not_camel_case() {
 #[test]
 fn struct_member_not_snake_case() {
     assert_compile_and_warning(
-        indoc! {r##"
+        indoc! {r"
             let Foo = struct {
                 Bar: i32
             };
@@ -79,7 +79,7 @@ fn struct_member_not_snake_case() {
 
                 return my_foo.Bar;
             }
-        "##},
+        "},
         SourceLocation {
             index: 23,
             line: 2,
