@@ -2032,7 +2032,6 @@ impl<'state> IrGenerator<'state> {
                     ),
                 })
             }
-            "comptime" => Ok(args.first().unwrap().1),
             _ => {
                 self.errors.push(ErrorKind::IntrinsicNotImplemented {
                     backend: Backend::Glsl,

@@ -26,7 +26,6 @@ use fleet::{
             TypeSets, VariableData,
         },
         runtime_type::RuntimeType,
-        scope_analysis::ComptimeDeps,
         union_find_set::UnionFindSetPtr,
     },
     tokenizer::{FileName, NamedSourceRange, SourceLocation, SourceRange, Token},
@@ -117,7 +116,6 @@ struct AnalysisData<'a> {
     function_data: &'a FunctionData,
     variable_data: &'a VariableData,
     scope_data: &'a ScopeData,
-    comptime_deps: &'a ComptimeDeps,
 }
 
 pub fn source_loc_to_position(loc: impl Into<SourceLocation>) -> Position {
@@ -147,7 +145,6 @@ impl Backend {
             function_data: _,
             variable_data: _,
             scope_data: _,
-            comptime_deps: _,
         }) = analysis_data
         else {
             return "/* No type data available */".to_string();
@@ -196,7 +193,6 @@ impl Backend {
                                     function_data,
                                     variable_data: _,
                                     scope_data: _,
-                                    comptime_deps: _,
                                 }) = analysis_data
                                 else {
                                     return "/* No type data available */".to_string();
@@ -270,7 +266,6 @@ impl Backend {
                                 function_data: _,
                                 variable_data,
                                 scope_data: _,
-                                comptime_deps: _,
                             }) = analysis_data
                             else {
                                 return "/* No type data available */".to_string();
@@ -595,7 +590,6 @@ impl Backend {
                             function_data,
                             variable_data: _,
                             scope_data: _,
-                            comptime_deps: _,
                         }) = analysis_data
                         else {
                             return (
@@ -663,7 +657,6 @@ impl Backend {
                             function_data,
                             variable_data: _,
                             scope_data: _,
-                            comptime_deps: _,
                         }) = analysis_data
                         else {
                             return (
@@ -927,9 +920,6 @@ impl Backend {
                         ## Debug Stats
 
                         ```rust
-                        evaluation_time: {}
-                        evaluation_deps: {}
-
                         {}
                         ```
 
@@ -951,20 +941,6 @@ impl Backend {
                 .map_or("No AST Node".to_string(), |(info, debug)| format!(
                     "{info} // {debug}"
                 )),
-            analysis_data
-                .as_ref()
-                .and_then(|analysis| analysis.comptime_deps.get(&node_hierarchy.last()?.get_id()))
-                .map_or(
-                    "No evaluation time data available".to_string(),
-                    |(eval_time, _deps)| format!("{eval_time:?}")
-                ),
-            analysis_data
-                .as_ref()
-                .and_then(|analysis| analysis.comptime_deps.get(&node_hierarchy.last()?.get_id()))
-                .map_or(
-                    "No evaluation time data available".to_string(),
-                    |(_eval_time, deps)| format!("{deps:#?}")
-                ),
             stats
                 .as_ref()
                 .and_then(|stat| stat.get(&node_hierarchy.last()?.get_id()).cloned())
@@ -1461,15 +1437,7 @@ impl LanguageServer for Backend {
                 .map(|x| {
                     let Fetched {
                         read:
-                            (
-                                type_data,
-                                type_sets,
-                                function_data,
-                                variable_data,
-                                scope_data,
-                                comptime_deps,
-                                stats,
-                            ),
+                            (type_data, type_sets, function_data, variable_data, scope_data, stats),
                         write: (),
                         empty: (),
                     } = x;
@@ -1481,7 +1449,6 @@ impl LanguageServer for Backend {
                             function_data,
                             variable_data,
                             scope_data,
-                            comptime_deps,
                         },
                         stats,
                     )
@@ -1689,15 +1656,7 @@ impl LanguageServer for Backend {
                 .fetch()
                 .map(|x| {
                     let Fetched {
-                        read:
-                            (
-                                type_data,
-                                type_sets,
-                                function_data,
-                                variable_data,
-                                scope_data,
-                                comptime_deps,
-                            ),
+                        read: (type_data, type_sets, function_data, variable_data, scope_data),
                         write: (),
                         empty: (),
                     } = x;
@@ -1707,7 +1666,6 @@ impl LanguageServer for Backend {
                         function_data,
                         variable_data,
                         scope_data,
-                        comptime_deps,
                     }
                 })
                 .ok();

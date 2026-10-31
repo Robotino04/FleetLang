@@ -1220,13 +1220,6 @@ impl TypePropagator<'_> {
                 });
                 (vec![(in_type, "value".to_string())], out_type)
             }
-            "comptime" => {
-                let type_ = self.type_sets.insert_set(RuntimeType {
-                    kind: RuntimeTypeKind::Unknown,
-                    definition_range: None,
-                });
-                (vec![(type_, "value".to_string())], type_)
-            }
             _ => {
                 self.errors.push(ErrorKind::IntrinsicUnknown {
                     intrinsic: UnresolvedSymbol::from_token(name.clone(), name_token),
