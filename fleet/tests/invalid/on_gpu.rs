@@ -134,7 +134,7 @@ fn recursive_iterator_definition() {
     assert_compile_error(
         indoc! {r"
             let main = () -> i32 {
-                on self.gpus[0][i: i32 = i] () {}
+                on self.gpus[0][i: u32 = i] () {}
                 return 0;
             }
         "},
@@ -152,7 +152,7 @@ fn triangular_iterator() {
     assert_compile_error(
         indoc! {r"
             let main = () -> i32 {
-                on self.gpus[0][i: i32 = 5][j: i32 = i] () {}
+                on self.gpus[0][i: u32 = 5][j: u32 = i] () {}
                 return 0;
             }
         "},
