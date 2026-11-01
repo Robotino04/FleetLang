@@ -204,22 +204,16 @@ impl<'state> GLSLCodeGenerator<'state> {
             .collect::<HashSet<_>>();
 
         let r_buffer_definitions = scope_data
-            .get(&main_body.get_id())
-            .expect("scope data should exist before calling generate_glsl")
+            .get(main_body)
             .borrow()
             .vars_and_refs()
             .iter()
             .filter(|(_name, variable)| !iterator_ids.contains(&variable.borrow().id))
             .filter(|(_name, variable)| {
                 // remove any rw bindings
-                !bindings.iter().any(|el| {
-                    variable_data
-                        .get(&el.id)
-                        .expect("variable data should exist before calling generate_glsl")
-                        .borrow()
-                        .id
-                        == variable.borrow().id
-                })
+                !bindings
+                    .iter()
+                    .any(|el| variable_data.get(el).borrow().id == variable.borrow().id)
             })
             .map(|(_name, variable)| (variable.borrow().type_.clone(), variable.clone()))
             .collect_vec();
@@ -227,24 +221,8 @@ impl<'state> GLSLCodeGenerator<'state> {
         let mut rw_uniqueness_set = HashSet::new();
         let rw_buffer_definitions = bindings
             .into_iter()
-            .filter(|variable| {
-                rw_uniqueness_set.insert(
-                    variable_data
-                        .get(&variable.id)
-                        .expect("variable data should exist before calling generate_glsl")
-                        .borrow()
-                        .id,
-                )
-            })
-            .filter(|variable| {
-                !iterator_ids.contains(
-                    &variable_data
-                        .get(&variable.id)
-                        .expect("variable data should exist before calling generate_glsl")
-                        .borrow()
-                        .id,
-                )
-            })
+            .filter(|variable| rw_uniqueness_set.insert(variable_data.get(variable).borrow().id))
+            .filter(|variable| !iterator_ids.contains(&variable_data.get(variable).borrow().id))
             .map(|binding| (type_data.get(&binding).clone(), binding))
             .collect_vec();
 
@@ -331,7 +309,7 @@ impl<'state> GLSLCodeGenerator<'state> {
             .rw
             .iter()
             .map(|(type_, binding)| {
-                let ref_var = self.variable_data.get(&binding.id).unwrap();
+                let ref_var = self.variable_data.get(binding);
 
                 let res = self.generate_buffer_definition(
                     &self.mangle_variable(&ref_var.borrow()),
@@ -671,17 +649,16 @@ impl GLSLCodeGenerator<'_> {
 
     fn generate_simple_binding(&mut self, binding: &mut SimpleBinding) -> String {
         let inferred_type = self.type_data.get(binding);
+        let ref_var = self.variable_data.get(binding);
 
         let SimpleBinding {
             name_token: _,
             name: _,
             type_: _,
-            id,
+            id: _,
         } = binding;
 
         let (type_, after_id) = self.runtime_type_to_glsl(inferred_type);
-
-        let ref_var = self.variable_data.get(id).unwrap();
 
         format!(
             "{} {}{}",
@@ -768,11 +745,7 @@ impl GLSLCodeGenerator<'_> {
             id: _,
         }: &mut VariableDefinitionStatement,
     ) -> Result<String> {
-        let ref_var = self
-            .variable_data
-            .get(&binding.get_id())
-            .expect("var data must exist before calling glsl_generator")
-            .clone();
+        let ref_var = self.variable_data.get(&**binding).clone();
 
         let type_ = &ref_var.borrow().type_;
 
@@ -1448,17 +1421,15 @@ impl GLSLCodeGenerator<'_> {
 
     fn generate_variable_access_expression(
         &mut self,
-        VariableAccessExpression {
+        expr: &mut VariableAccessExpression,
+    ) -> PreStatementValue {
+        let ref_var = self.variable_data.get(expr);
+
+        let VariableAccessExpression {
             name: _,
             name_token: _,
-            id,
-        }: &mut VariableAccessExpression,
-    ) -> PreStatementValue {
-        let ref_var = self
-            .variable_data
-            .get(id)
-            .expect("var data must exist before calling glsl_generator")
-            .clone();
+            id: _,
+        } = expr;
 
         PreStatementValue {
             pre_statements: String::new(),
@@ -1585,15 +1556,14 @@ impl GLSLCodeGenerator<'_> {
         }
     }
 
-    fn generate_variable_lvalue(
-        &mut self,
-        VariableLValue {
+    fn generate_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> PreStatementValue {
+        let ref_var = self.variable_data.get(lvalue);
+
+        let VariableLValue {
             name: _,
             name_token: _,
-            id,
-        }: &mut VariableLValue,
-    ) -> PreStatementValue {
-        let ref_var = self.variable_data.get(id).unwrap();
+            id: _,
+        } = lvalue;
 
         PreStatementValue {
             pre_statements: String::new(),

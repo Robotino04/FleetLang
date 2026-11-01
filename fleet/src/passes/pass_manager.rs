@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use crate::{
     ast::NodeID,
-    node_data::{FinalPerNodeData, NodeDataSpecGroups},
+    node_data::{FinalPerNodeData, NodeDataSpec, NodeDataSpecGroups},
     passes::{
         global_state::{FetchError, GlobalState},
         runtime_type::{ConcreteRuntimeType, RuntimeType},
@@ -98,13 +98,35 @@ impl NodeDataSpecGroups for TypeData {
     type LValue = UnionFindSetPtr<RuntimeType>;
     type Type = UnionFindSetPtr<RuntimeType>;
 }
+NewtypeDerefNoDefault!(pub TypeData, FinalPerNodeData<TypeData>);
+
+impl NodeDataSpec for VariableData {
+    // TODO: will become incorrect once we have more complex patterns
+    type VariableDefinitionStatement = Rc<RefCell<Variable>>;
+
+    type SimpleBinding = Rc<RefCell<Variable>>;
+    type VariableAccessExpression = Rc<RefCell<Variable>>;
+    type VariableLValue = Rc<RefCell<Variable>>;
+}
+NewtypeDerefNoDefault!(pub VariableData, FinalPerNodeData<VariableData>);
+
+impl NodeDataSpecGroups for ScopeData {
+    type Program = Rc<RefCell<VariableScope>>;
+    type TopLevelStatement = Rc<RefCell<VariableScope>>;
+    type FunctionBody = Rc<RefCell<VariableScope>>;
+    type SimpleBinding = Rc<RefCell<VariableScope>>;
+    type Statement = Rc<RefCell<VariableScope>>;
+    type ExecutorHost = Rc<RefCell<VariableScope>>;
+    type Executor = Rc<RefCell<VariableScope>>;
+    type Expression = Rc<RefCell<VariableScope>>;
+    type LValue = Rc<RefCell<VariableScope>>;
+    type Type = Rc<RefCell<VariableScope>>;
+}
+NewtypeDerefNoDefault!(pub ScopeData, FinalPerNodeData<ScopeData>);
 
 // TODO: distribute these to their generating pass
-NewtypeDeref!(pub VariableData, HashMap<NodeID, Rc<RefCell<Variable>>>);
 NewtypeDeref!(pub FunctionData, HashMap<NodeID, Rc<RefCell<Function>>>);
-NewtypeDerefNoDefault!(pub TypeData, FinalPerNodeData<TypeData>);
 NewtypeDeref!(pub TypeSets, UnionFindSet<RuntimeType>);
-NewtypeDeref!(pub ScopeData, HashMap<NodeID, Rc<RefCell<VariableScope>>>);
 
 impl NodeDataSpecGroups for ConcreteTypeData {
     type Program = ();
@@ -118,11 +140,33 @@ impl NodeDataSpecGroups for ConcreteTypeData {
     type LValue = ConcreteRuntimeType;
     type Type = ConcreteRuntimeType;
 }
-
-NewtypeDeref!(pub ConcreteVariableData, HashMap<NodeID, Rc<RefCell<ConcreteVariable>>>);
-NewtypeDeref!(pub ConcreteFunctionData, HashMap<NodeID, Rc<RefCell<ConcreteFunction>>>);
 NewtypeDerefNoDefault!(pub ConcreteTypeData, FinalPerNodeData<ConcreteTypeData>);
-NewtypeDeref!(pub ConcreteScopeData, HashMap<NodeID, Rc<RefCell<ConcreteVariableScope>>>);
+
+impl NodeDataSpec for ConcreteVariableData {
+    // TODO: will become incorrect once we have more complex patterns
+    type VariableDefinitionStatement = Rc<RefCell<ConcreteVariable>>;
+
+    type SimpleBinding = Rc<RefCell<ConcreteVariable>>;
+    type VariableAccessExpression = Rc<RefCell<ConcreteVariable>>;
+    type VariableLValue = Rc<RefCell<ConcreteVariable>>;
+}
+NewtypeDerefNoDefault!(pub ConcreteVariableData, FinalPerNodeData<ConcreteVariableData>);
+
+impl NodeDataSpecGroups for ConcreteScopeData {
+    type Program = Rc<RefCell<ConcreteVariableScope>>;
+    type TopLevelStatement = Rc<RefCell<ConcreteVariableScope>>;
+    type FunctionBody = Rc<RefCell<ConcreteVariableScope>>;
+    type SimpleBinding = Rc<RefCell<ConcreteVariableScope>>;
+    type Statement = Rc<RefCell<ConcreteVariableScope>>;
+    type ExecutorHost = Rc<RefCell<ConcreteVariableScope>>;
+    type Executor = Rc<RefCell<ConcreteVariableScope>>;
+    type Expression = Rc<RefCell<ConcreteVariableScope>>;
+    type LValue = Rc<RefCell<ConcreteVariableScope>>;
+    type Type = Rc<RefCell<ConcreteVariableScope>>;
+}
+NewtypeDerefNoDefault!(pub ConcreteScopeData, FinalPerNodeData<ConcreteScopeData>);
+
+NewtypeDeref!(pub ConcreteFunctionData, HashMap<NodeID, Rc<RefCell<ConcreteFunction>>>);
 
 NewtypeDeref!(pub StatData, HashMap<NodeID, NodeStats>);
 NewtypeDeref!(pub StructAliasMap, HashMap<String, (usize, String)>, Clone);

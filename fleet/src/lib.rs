@@ -1,3 +1,5 @@
+#![feature(associated_type_defaults)]
+
 pub mod ast;
 pub mod ast_to_dm;
 pub mod document_model;

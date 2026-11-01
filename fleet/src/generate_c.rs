@@ -405,17 +405,16 @@ impl CCodeGenerator<'_> {
 
     fn generate_simple_binding(&mut self, binding: &mut SimpleBinding) -> String {
         let inferred_type = self.type_data.get(binding);
+        let ref_var = self.variable_data.get(binding);
 
         let SimpleBinding {
             name_token: _,
             name: _,
             type_: _,
-            id,
+            id: _,
         } = binding;
 
         let (type_, after_id) = self.runtime_type_to_c(inferred_type);
-
-        let ref_var = self.variable_data.get(id).unwrap();
 
         format!(
             "{} {}{}",
@@ -486,12 +485,7 @@ impl CCodeGenerator<'_> {
             bindings,
             &iterators
                 .iter()
-                .map(|it| {
-                    self.variable_data
-                        .get(&it.binding.id)
-                        .expect("Variable data should exist before calling c_generator")
-                        .clone()
-                })
+                .map(|it| self.variable_data.get(&it.binding).clone())
                 .collect_vec(),
             body,
         );
@@ -1283,13 +1277,15 @@ impl CCodeGenerator<'_> {
 
     fn generate_variable_access_expression(
         &mut self,
-        VariableAccessExpression {
+        expr: &mut VariableAccessExpression,
+    ) -> PreStatementValue {
+        let ref_var = self.variable_data.get(expr);
+
+        let VariableAccessExpression {
             name: _,
             name_token: _,
-            id,
-        }: &mut VariableAccessExpression,
-    ) -> PreStatementValue {
-        let ref_var = self.variable_data.get(id).unwrap();
+            id: _,
+        } = expr;
 
         PreStatementValue {
             pre_statements: String::new(),
@@ -1440,15 +1436,14 @@ impl CCodeGenerator<'_> {
         }
     }
 
-    fn generate_variable_lvalue(
-        &mut self,
-        VariableLValue {
+    fn generate_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> PreStatementValue {
+        let ref_var = self.variable_data.get(lvalue);
+
+        let VariableLValue {
             name: _,
             name_token: _,
-            id,
-        }: &mut VariableLValue,
-    ) -> PreStatementValue {
-        let ref_var = self.variable_data.get(id).unwrap();
+            id: _,
+        } = lvalue;
 
         PreStatementValue {
             pre_statements: String::new(),

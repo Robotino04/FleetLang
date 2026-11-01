@@ -283,6 +283,88 @@ impl<'a> HasID for AstNodeRefMut<'a> {
     }
 }
 
+macro_rules! impl_ast_node_has_data {
+    ($Self:ident $(<$lifetime:lifetime>)?) => {
+        impl<$($lifetime, )? T: NodeDataSpec, A> HasData<T> for $Self $(<$lifetime>)?
+        where
+            Program: HasData<T, Data = A>,
+            TopLevelStatement: HasData<T, Data = A>,
+            FunctionBody: HasData<T, Data = A>,
+            SimpleBinding: HasData<T, Data = A>,
+            Statement: HasData<T, Data = A>,
+            ExecutorHost: HasData<T, Data = A>,
+            Executor: HasData<T, Data = A>,
+            Expression: HasData<T, Data = A>,
+            LValue: HasData<T, Data = A>,
+            Type: HasData<T, Data = A>,
+        {
+            type Data = A;
+
+            fn extract_data_enum(data: &NodeDataEnum<T>) -> Option<&Self::Data> {
+                Program::extract_data_enum(data)
+                    .or_else(|| TopLevelStatement::extract_data_enum(data))
+                    .or_else(|| FunctionBody::extract_data_enum(data))
+                    .or_else(|| SimpleBinding::extract_data_enum(data))
+                    .or_else(|| Statement::extract_data_enum(data))
+                    .or_else(|| ExecutorHost::extract_data_enum(data))
+                    .or_else(|| Executor::extract_data_enum(data))
+                    .or_else(|| Expression::extract_data_enum(data))
+                    .or_else(|| LValue::extract_data_enum(data))
+                    .or_else(|| Type::extract_data_enum(data))
+                    .or_else(|| unreachable!("This should cover all options"))
+            }
+            fn extract_data_enum_mut(data: &mut NodeDataEnum<T>) -> Option<&mut Self::Data> {
+                Some(
+                    if let Some(x) = Program::extract_data_enum_mut(data) { x }
+                    else if let Some(x) = TopLevelStatement::extract_data_enum_mut(data) { x }
+                    else if let Some(x) = FunctionBody::extract_data_enum_mut(data) { x }
+                    else if let Some(x) = SimpleBinding::extract_data_enum_mut(data) { x }
+                    else if let Some(x) = Statement::extract_data_enum_mut(data) { x }
+                    else if let Some(x) = ExecutorHost::extract_data_enum_mut(data) { x }
+                    else if let Some(x) = Executor::extract_data_enum_mut(data) { x }
+                    else if let Some(x) = Expression::extract_data_enum_mut(data) { x }
+                    else if let Some(x) = LValue::extract_data_enum_mut(data) { x }
+                    else if let Some(x) = Type::extract_data_enum_mut(data) { x }
+                    else { unreachable!("This should cover all options") }
+                )
+            }
+        }
+
+        impl<$($lifetime, )? T: NodeDataSpec, A> CanStoreData<T> for $Self $(<$lifetime>)?
+        where
+            Program: CanStoreData<T, Data = A>,
+            TopLevelStatement: CanStoreData<T, Data = A>,
+            FunctionBody: CanStoreData<T, Data = A>,
+            SimpleBinding: CanStoreData<T, Data = A>,
+            Statement: CanStoreData<T, Data = A>,
+            ExecutorHost: CanStoreData<T, Data = A>,
+            Executor: CanStoreData<T, Data = A>,
+            Expression: CanStoreData<T, Data = A>,
+            LValue: CanStoreData<T, Data = A>,
+            Type: CanStoreData<T, Data = A>,
+        {
+            fn build_data_enum(&self, data: Self::Data) -> NodeDataEnum<T> {
+                match self {
+                    Self::Program(program) => program.build_data_enum(data),
+                    Self::TopLevelStatement(tls) => tls.build_data_enum(data),
+                    Self::FunctionBody(function_body) => function_body.build_data_enum(data),
+                    Self::SimpleBinding(simple_binding) => simple_binding.build_data_enum(data),
+                    Self::Statement(statement) => statement.build_data_enum(data),
+                    Self::ExecutorHost(executor_host) => executor_host.build_data_enum(data),
+                    Self::Executor(executor) => executor.build_data_enum(data),
+                    Self::Expression(expression) => expression.build_data_enum(data),
+                    Self::LValue(lvalue) => lvalue.build_data_enum(data),
+                    Self::Type(ty) => ty.build_data_enum(data),
+                }
+            }
+        }
+    };
+}
+
+impl_ast_node_has_data!(AstNode);
+impl_ast_node_has_data!(AstNodeRef<'a>);
+impl_ast_node_has_data!(AstNodeRefMut<'a>);
+
 macro_rules! impl_enum_node {
     {
         $(#[$attr:meta])*

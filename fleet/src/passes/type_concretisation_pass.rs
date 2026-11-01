@@ -1,7 +1,10 @@
 use std::{cell::RefCell, collections::HashMap, ops::ControlFlow, rc::Rc};
 
 use crate::{
-    ast::{Expression, HasSourceRange, LValue, Program, SimpleBinding, Type},
+    ast::{
+        AstNodeRefMut, Expression, HasSourceRange, LValue, Program, SimpleBinding, Type,
+        VariableAccessExpression, VariableDefinitionStatement, VariableLValue,
+    },
     error_reporting::{ErrorKind, Errors, PrefetchedType},
     node_data::{CanStoreData, HasData, PerNodeData},
     passes::{
@@ -34,9 +37,11 @@ pub struct TypeConcretisationPass<'state> {
 
     visited_types: HashMap<UnionFindSetPtr<RuntimeType>, Option<ConcreteRuntimeType>>,
 
-    concrete_referenced_variable: &'state mut ConcreteVariableData,
+    concrete_referenced_variable: PerNodeData<ConcreteVariableData>,
+    concrete_referenced_variable_entry: Empty<'state, ConcreteVariableData>,
     concrete_referenced_function: &'state mut ConcreteFunctionData,
-    concrete_contained_scope: &'state mut ConcreteScopeData,
+    concrete_contained_scope: PerNodeData<ConcreteScopeData>,
+    concrete_contained_scope_entry: Empty<'state, ConcreteScopeData>,
     concrete_type_data: PerNodeData<ConcreteTypeData>,
     concrete_type_data_entry: Empty<'state, ConcreteTypeData>,
 
@@ -78,9 +83,11 @@ impl PassFactory for TypeConcretisationPass<'_> {
 
             visited_types: Default::default(),
 
-            concrete_referenced_variable: concrete_referenced_variable.insert_default(),
+            concrete_referenced_variable: Default::default(),
+            concrete_referenced_variable_entry: concrete_referenced_variable,
             concrete_referenced_function: concrete_referenced_function.insert_default(),
-            concrete_contained_scope: concrete_contained_scope.insert_default(),
+            concrete_contained_scope: Default::default(),
+            concrete_contained_scope_entry: concrete_contained_scope,
             concrete_type_data: Default::default(),
             concrete_type_data_entry,
 
@@ -281,14 +288,6 @@ impl Pass for TypeConcretisationPass<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let program = self.program.take().unwrap();
         let _ = self.visit_program(program);
-        for (id, var) in self.referenced_variable.iter() {
-            let Some(var) = self.concretisize_variable(var) else {
-                self.failure = true;
-                continue;
-            };
-
-            self.concrete_referenced_variable.insert(*id, var);
-        }
         for (id, func) in self.referenced_function.iter() {
             let Some(func) = self.concretisize_function(func) else {
                 self.failure = true;
@@ -298,14 +297,6 @@ impl Pass for TypeConcretisationPass<'_> {
             self.concrete_referenced_function
                 .insert(*id, Rc::new(RefCell::new(func)));
         }
-        for (id, scope) in self.contained_scope.iter() {
-            let Some(scope) = self.concretisize_scope(&scope.borrow()) else {
-                self.failure = true;
-                continue;
-            };
-
-            self.concrete_contained_scope.insert(*id, scope);
-        }
         if self.failure {
             return Err(PassError::InvalidInput {
                 producing_pass: Self::name(),
@@ -313,8 +304,26 @@ impl Pass for TypeConcretisationPass<'_> {
             });
         }
 
+        self.concrete_referenced_variable_entry.insert(
+            self.concrete_referenced_variable
+                .finish(program)
+                .map_err(|err| PassError::CompilerError {
+                    producing_pass: Self::name(),
+                    source: err.into(),
+                })?
+                .into(),
+        );
         self.concrete_type_data_entry.insert(
             self.concrete_type_data
+                .finish(program)
+                .map_err(|err| PassError::CompilerError {
+                    producing_pass: Self::name(),
+                    source: err.into(),
+                })?
+                .into(),
+        );
+        self.concrete_contained_scope_entry.insert(
+            self.concrete_contained_scope
                 .finish(program)
                 .map_err(|err| PassError::CompilerError {
                     producing_pass: Self::name(),
@@ -330,6 +339,18 @@ impl Pass for TypeConcretisationPass<'_> {
 impl PartialAstVisitor for TypeConcretisationPass<'_> {
     type Break<'a> = ();
 
+    fn visit_pre<'a>(&mut self, node: AstNodeRefMut<'a>) -> ControlFlow<Self::Break<'a>> {
+        let scope = self.contained_scope.get(&node);
+
+        if let Some(scope) = self.concretisize_scope(&scope.borrow()) {
+            self.concrete_contained_scope.insert(&node, scope);
+        } else {
+            self.failure = true;
+        }
+
+        ControlFlow::Continue(())
+    }
+
     fn visit_type<'a>(&mut self, ty: &'a mut Type) -> ControlFlow<Self::Break<'a>> {
         self.concretisize_node(ty);
         self.walk_type(ty)
@@ -340,16 +361,62 @@ impl PartialAstVisitor for TypeConcretisationPass<'_> {
         self.walk_expression(expr)
     }
 
+    fn visit_variable_access_expression<'a>(
+        &mut self,
+        expr: &'a mut VariableAccessExpression,
+    ) -> ControlFlow<Self::Break<'a>> {
+        if let Some(var) = self.concretisize_variable(self.referenced_variable.get(expr)) {
+            self.concrete_referenced_variable.insert(expr, var);
+        } else {
+            self.failure = true;
+        }
+
+        self.walk_variable_access_expression(expr)
+    }
+
     fn visit_simple_binding<'a>(
         &mut self,
         binding: &'a mut SimpleBinding,
     ) -> ControlFlow<Self::Break<'a>> {
         self.concretisize_node(binding);
+
+        if let Some(var) = self.concretisize_variable(self.referenced_variable.get(binding)) {
+            self.concrete_referenced_variable.insert(binding, var);
+        } else {
+            self.failure = true;
+        }
+
         self.walk_simple_binding(binding)
     }
 
     fn visit_lvalue<'a>(&mut self, lvalue: &'a mut LValue) -> ControlFlow<Self::Break<'a>> {
         self.concretisize_node(lvalue);
         self.walk_lvalue(lvalue)
+    }
+
+    fn visit_variable_lvalue<'a>(
+        &mut self,
+        lvalue: &'a mut VariableLValue,
+    ) -> ControlFlow<Self::Break<'a>> {
+        if let Some(var) = self.concretisize_variable(self.referenced_variable.get(lvalue)) {
+            self.concrete_referenced_variable.insert(lvalue, var);
+        } else {
+            self.failure = true;
+        }
+
+        self.walk_variable_lvalue(lvalue)
+    }
+
+    fn visit_variable_definition_statement<'a>(
+        &mut self,
+        stmt: &'a mut VariableDefinitionStatement,
+    ) -> ControlFlow<Self::Break<'a>> {
+        if let Some(var) = self.concretisize_variable(self.referenced_variable.get(stmt)) {
+            self.concrete_referenced_variable.insert(stmt, var);
+        } else {
+            self.failure = true;
+        }
+
+        self.walk_variable_definition_statement(stmt)
     }
 }

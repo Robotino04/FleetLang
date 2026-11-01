@@ -8,8 +8,8 @@ use crate::{
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
         CompilerExpression, Expression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, HasSourceRange, IdkType, IfStatement, LiteralExpression,
-        LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
+        GroupingLValue, HasSourceRange, IdkType, IfStatement, LiteralExpression, LiteralKind,
+        OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
         SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody, StructAccessExpression,
         StructAccessLValue, StructExpression, StructMemberDefinition, StructMemberValue,
         StructType, ThreadExecutor, TopLevelStatement, TypeAlias, UnaryExpression, UnaryOperation,
@@ -22,7 +22,7 @@ use crate::{
         InternalError, Lint, MissingParameter, NotDefinedKind, ParameterCountDifference,
         PrefetchedType, SymbolDefinition, TypeMismatchKind, UnresolvedSymbol,
     },
-    node_data::PerNodeData,
+    node_data::{HasData, PerNodeData},
     parser::IdGenerator,
     passes::{
         global_state::{Empty, FetchError, Fetched, GlobalState},
@@ -31,7 +31,7 @@ use crate::{
             VariableData,
         },
         runtime_type::{RuntimeType, RuntimeTypeKind, StructHash},
-        scope_analysis::Function,
+        scope_analysis::{Function, VariableScope},
         union_find_set::UnionFindSetPtr,
     },
     tokenizer::NamedSourceRange,
@@ -146,7 +146,7 @@ impl<'a> TypePropagator<'a> {
             .iter_mut()
             .map(|(param, _comma)| {
                 self.typecheck_simple_binding(param);
-                self.referenced_variable.get(&param.id).unwrap().clone()
+                self.referenced_variable.get(param).clone()
             })
             .collect();
 
@@ -194,15 +194,19 @@ impl<'a> TypePropagator<'a> {
         }
     }
 
-    fn require_fully_specialized_scope(&mut self, scope_node: &impl HasID) {
-        let scope = self
-            .containing_scope
-            .get(&scope_node.get_id())
-            .unwrap()
-            .borrow();
+    fn require_fully_specialized_scope(
+        &mut self,
+        scope_node: &impl HasData<ScopeData, Data = Rc<RefCell<VariableScope>>>,
+    ) {
+        let scope = self.containing_scope.get(scope_node).borrow();
 
         for variable in scope.variable_map.values() {
-            let actual_type_ptr = variable.borrow().type_.unwrap();
+            let actual_type_ptr = *variable.borrow_mut().type_.get_or_insert_with(|| {
+                self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Unknown,
+                    definition_range: None,
+                })
+            });
             let actual_type = self.type_sets.get_mut(actual_type_ptr);
             actual_type.kind.specialize_number_size();
 
@@ -350,7 +354,7 @@ impl TypePropagator<'_> {
             name_token,
             name,
             type_,
-            id,
+            id: _,
         } = simple_binding;
 
         let defined_type_ptr = if let Some((_colon, type_)) = type_ {
@@ -374,7 +378,10 @@ impl TypePropagator<'_> {
             });
         }
 
-        self.referenced_variable.get(id).unwrap().borrow_mut().type_ = Some(defined_type_ptr);
+        self.referenced_variable
+            .get(simple_binding)
+            .borrow_mut()
+            .type_ = Some(defined_type_ptr);
 
         self.node_types.insert(simple_binding, defined_type_ptr);
 
@@ -443,17 +450,11 @@ impl TypePropagator<'_> {
 
             // TODO: HACK: remove when we have proper constness and mutability
             self.referenced_variable
-                .get(&binding.id)
-                .expect("variable data should exist by now")
+                .get(binding)
                 .borrow_mut()
                 .is_constant = true;
 
-            let is_iterator_const = self
-                .referenced_variable
-                .get(&binding.id)
-                .expect("variable data should exist by now")
-                .borrow()
-                .is_constant;
+            let is_iterator_const = self.referenced_variable.get(binding).borrow().is_constant;
 
             if !is_iterator_const {
                 self.errors.push(ErrorKind::MutableIterator {
@@ -567,21 +568,20 @@ impl TypePropagator<'_> {
         &mut self,
         vardef_stmt: &mut VariableDefinitionStatement,
     ) {
+        let var = self.referenced_variable.get(vardef_stmt);
         let VariableDefinitionStatement {
             let_token: _,
             binding,
             equals_token: _,
             value,
             semicolon_token: _,
-            id,
+            id: _,
         } = vardef_stmt;
 
         // evaluated before the binding so it can potentially access variables that get shadowed
         // by this binding
         let value_type_ptr = self.typecheck_expression(value);
         let defined_type_ptr = self.typecheck_simple_binding(binding);
-
-        let var = self.referenced_variable.get(id).unwrap();
 
         if !RuntimeTypeKind::merge_types(value_type_ptr, defined_type_ptr, self.type_sets) {
             self.errors.push(ErrorKind::TypeMismatch {
@@ -1043,7 +1043,7 @@ impl TypePropagator<'_> {
             match types {
                 EitherOrBoth::Both((arg_type_ptr, arg), param) => {
                     // function arguments shouldn't get specialized by calling the function
-                    let param_type_ptr = param.borrow().type_.unwrap_or_else(|| {
+                    let param_type_ptr = *param.borrow_mut().type_.get_or_insert_with(|| {
                         self.type_sets.insert_set(RuntimeType {
                             kind: RuntimeTypeKind::Unknown,
                             definition_range: None,
@@ -1079,7 +1079,7 @@ impl TypePropagator<'_> {
                     });
                 }
                 EitherOrBoth::Right(param) => {
-                    let param_type_ptr = param.borrow().type_.unwrap_or_else(|| {
+                    let param_type_ptr = *param.borrow_mut().type_.get_or_insert_with(|| {
                         self.type_sets.insert_set(RuntimeType {
                             kind: RuntimeTypeKind::Unknown,
                             definition_range: None,
@@ -1439,20 +1439,14 @@ impl TypePropagator<'_> {
         &mut self,
         expression: &mut VariableAccessExpression,
     ) -> UnifiableType {
+        let ref_variable = self.referenced_variable.get(expression);
+
         let VariableAccessExpression {
             name: _,
             name_token,
-            id,
+            id: _,
         } = expression;
-        let Some(ref_variable) = self.referenced_variable.get(id) else {
-            let type_ = self.type_sets.insert_set(RuntimeType {
-                kind: RuntimeTypeKind::Unknown,
-                definition_range: None,
-            });
 
-            self.node_types.insert(expression, type_);
-            return type_;
-        };
         if self.require_constant && !ref_variable.borrow().is_constant {
             self.errors.push(ErrorKind::ConstantVariableRequired {
                 variable: ref_variable
@@ -1463,7 +1457,12 @@ impl TypePropagator<'_> {
             });
         }
 
-        let type_ = ref_variable.borrow().type_.unwrap();
+        let type_ = *ref_variable.borrow_mut().type_.get_or_insert_with(|| {
+            self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Unknown,
+                definition_range: None,
+            })
+        });
         self.node_types.insert(expression, type_);
         type_
     }
@@ -2033,20 +2032,13 @@ impl TypePropagator<'_> {
     }
 
     fn typecheck_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> UnifiableType {
+        let ref_variable = self.referenced_variable.get(lvalue);
         let VariableLValue {
             name: _,
             name_token,
-            id,
+            id: _,
         } = lvalue;
-        let Some(ref_variable) = self.referenced_variable.get(id) else {
-            let type_ = self.type_sets.insert_set(RuntimeType {
-                kind: RuntimeTypeKind::Unknown,
-                definition_range: None,
-            });
 
-            self.node_types.insert(lvalue, type_);
-            return type_;
-        };
         if ref_variable.borrow().is_constant {
             self.errors.push(ErrorKind::ConstantVariableAsLValue {
                 variable: ref_variable
@@ -2057,7 +2049,12 @@ impl TypePropagator<'_> {
             });
         }
 
-        let type_ = ref_variable.borrow().type_.unwrap();
+        let type_ = *ref_variable.borrow_mut().type_.get_or_insert_with(|| {
+            self.type_sets.insert_set(RuntimeType {
+                kind: RuntimeTypeKind::Unknown,
+                definition_range: None,
+            })
+        });
         self.node_types.insert(lvalue, type_);
         type_
     }

@@ -944,21 +944,21 @@ impl StatTracker<'_> {
         expr: &mut VariableAccessExpression,
     ) -> NodeStats {
         let bounds = expr.get_source_range();
+        let var = self.variable_data.get(expr);
+
         let VariableAccessExpression {
             name: _,
             name_token: _,
             id,
         } = expr;
+
         let stat = NodeStats {
             terminates_function: YesNoMaybe::No,
             non_terminating_ranges: vec![bounds],
             uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord {
                 functions: vec![],
-                used_variables: self
-                    .variable_data
-                    .get(id)
-                    .map_or_else(Vec::new, |vd| vec![vd.clone()]),
+                used_variables: vec![var.clone()],
             },
         };
         self.stats.insert(*id, stat.clone());
@@ -1029,22 +1029,22 @@ impl StatTracker<'_> {
     }
 
     fn analyze_variable_lvalue(&mut self, lvalue: &mut VariableLValue) -> NodeStats {
+        let var = self.variable_data.get(lvalue);
         let bounds = lvalue.get_source_range();
+
         let VariableLValue {
             name: _,
             name_token: _,
             id,
         } = lvalue;
+
         let stat = NodeStats {
             terminates_function: YesNoMaybe::No,
             non_terminating_ranges: vec![bounds],
             uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord {
                 functions: vec![],
-                used_variables: self
-                    .variable_data
-                    .get(id)
-                    .map_or_else(Vec::new, |vd| vec![vd.clone()]),
+                used_variables: vec![var.clone()],
             },
         };
         self.stats.insert(*id, stat.clone());

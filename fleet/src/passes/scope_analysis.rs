@@ -24,10 +24,13 @@ use crate::{
     error_reporting::{
         DuplicateKind, ErrorKind, Errors, NotDefinedKind, SymbolDefinition, UnresolvedSymbol,
     },
+    node_data::PerNodeData,
     parser::IdGenerator,
     passes::{
-        global_state::{FetchError, Fetched, GlobalState},
-        pass_manager::{FunctionData, Pass, PassFactory, PassResult, ScopeData, VariableData},
+        global_state::{Empty, FetchError, Fetched, GlobalState},
+        pass_manager::{
+            FunctionData, Pass, PassError, PassFactory, PassResult, ScopeData, VariableData,
+        },
         runtime_type::{ConcreteRuntimeType, RuntimeType},
         union_find_set::UnionFindSetPtr,
     },
@@ -483,9 +486,11 @@ pub struct ScopeAnalyzer<'state> {
     program: Option<&'state mut Program>,
     id_generator: &'state mut IdGenerator,
 
-    referenced_variable: &'state mut VariableData,
+    referenced_variable: PerNodeData<VariableData>,
+    referenced_variable_entry: Empty<'state, VariableData>,
     referenced_function: &'state mut FunctionData,
-    contained_scope: &'state mut ScopeData,
+    contained_scope: PerNodeData<ScopeData>,
+    contained_scope_entry: Empty<'state, ScopeData>,
 
     variable_scopes: VariableScopeStack,
     function_list: HashMap<String, Rc<RefCell<Function>>>,
@@ -513,9 +518,11 @@ impl PassFactory for ScopeAnalyzer<'_> {
             program: Some(program),
             id_generator,
 
-            referenced_variable: referenced_variable.insert_default(),
+            referenced_variable: Default::default(),
+            referenced_variable_entry: referenced_variable,
             referenced_function: referenced_function.insert_default(),
-            contained_scope: contained_scope.insert_default(),
+            contained_scope: Default::default(),
+            contained_scope_entry: contained_scope,
 
             variable_scopes,
             function_list: HashMap::new(),
@@ -527,6 +534,24 @@ impl Pass for ScopeAnalyzer<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let program = self.program.take().unwrap();
         self.analyze_program(program);
+        self.referenced_variable_entry.insert(
+            self.referenced_variable
+                .finish(program)
+                .map_err(|err| PassError::CompilerError {
+                    producing_pass: Self::name(),
+                    source: err.into(),
+                })?
+                .into(),
+        );
+        self.contained_scope_entry.insert(
+            self.contained_scope
+                .finish(program)
+                .map_err(|err| PassError::CompilerError {
+                    producing_pass: Self::name(),
+                    source: err.into(),
+                })?
+                .into(),
+        );
 
         Ok(())
     }
@@ -597,13 +622,16 @@ impl ScopeAnalyzer<'_> {
         }
     }
 
-    fn analyze_program(mut self, program: &mut Program) {
+    fn analyze_program(&mut self, program: &mut Program) {
         for tls in &mut program.top_level_statements {
             self.register_top_level_statement(tls);
         }
         for tls in &mut program.top_level_statements {
             self.analyze_top_level_statement(tls);
         }
+
+        self.contained_scope
+            .insert(program, self.variable_scopes.current.clone());
     }
 
     fn analyze_function_definition(&mut self, fdef: &mut FunctionDefinition) {
@@ -648,7 +676,7 @@ impl ScopeAnalyzer<'_> {
         self.referenced_function.insert(*id, this_function);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(fdef, self.variable_scopes.current.clone());
     }
 
     fn analyze_type_alias(&mut self, type_alias: &mut TypeAlias) {
@@ -659,38 +687,35 @@ impl ScopeAnalyzer<'_> {
             equal_token: _,
             type_,
             semicolon_token: _,
-            id,
+            id: _,
         } = type_alias;
 
         self.analyze_type(type_);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(type_alias, self.variable_scopes.current.clone());
     }
 
-    fn analyze_statement_function_body(
-        &mut self,
-        StatementFunctionBody { statement, id }: &mut StatementFunctionBody,
-    ) {
+    fn analyze_statement_function_body(&mut self, fbody: &mut StatementFunctionBody) {
+        let StatementFunctionBody { statement, id: _ } = fbody;
         self.analyze_statement(statement);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(fbody, self.variable_scopes.current.clone());
     }
 
-    fn analyze_extern_function_body(
-        &mut self,
-        ExternFunctionBody {
+    fn analyze_extern_function_body(&mut self, fbody: &mut ExternFunctionBody) {
+        let ExternFunctionBody {
             at_token: _,
             extern_token: _,
             symbol: _,
             symbol_token: _,
             semicolon_token: _,
-            id,
-        }: &mut ExternFunctionBody,
-    ) {
+            id: _,
+        } = fbody;
+
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(fbody, self.variable_scopes.current.clone());
     }
 
     fn analyze_simple_binding(&mut self, simple_binding: &mut SimpleBinding) {
@@ -721,30 +746,29 @@ impl ScopeAnalyzer<'_> {
             });
         }
 
-        self.referenced_variable.insert(
-            *id,
-            self.variable_scopes
-                .get_write(name)
-                .expect("This variable should have just been added")
-                .clone(),
-        );
+        let var = self
+            .variable_scopes
+            .get_write(name)
+            .expect("This variable should have just been added")
+            .clone();
+
+        self.referenced_variable.insert(simple_binding, var);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(simple_binding, self.variable_scopes.current.clone());
     }
 
-    fn analyze_expression_statement(
-        &mut self,
-        ExpressionStatement {
+    fn analyze_expression_statement(&mut self, stmt: &mut ExpressionStatement) {
+        let ExpressionStatement {
             expression,
             semicolon_token: _,
-            id,
-        }: &mut ExpressionStatement,
-    ) {
+            id: _,
+        } = stmt;
+
         self.analyze_expression(expression);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(stmt, self.variable_scopes.current.clone());
     }
 
     fn analyze_on_statement(&mut self, stmt: &mut OnStatement) {
@@ -756,7 +780,7 @@ impl ScopeAnalyzer<'_> {
             bindings,
             close_paren_token: _,
             body,
-            id,
+            id: _,
         } = stmt;
 
         self.variable_scopes.push_child(self.id_generator);
@@ -784,7 +808,7 @@ impl ScopeAnalyzer<'_> {
         self.variable_scopes.pop();
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(stmt, self.variable_scopes.current.clone());
     }
 
     fn analyze_block_statement(&mut self, stmt: &mut BlockStatement) {
@@ -792,7 +816,7 @@ impl ScopeAnalyzer<'_> {
             open_brace_token: _,
             body,
             close_brace_token: _,
-            id,
+            id: _,
         } = stmt;
 
         self.variable_scopes.push_child(self.id_generator);
@@ -804,7 +828,7 @@ impl ScopeAnalyzer<'_> {
         self.variable_scopes.pop();
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(stmt, self.variable_scopes.current.clone());
     }
 
     fn analyze_return_statement(&mut self, stmt: &mut ReturnStatement) {
@@ -812,7 +836,7 @@ impl ScopeAnalyzer<'_> {
             return_token: _,
             value,
             semicolon_token: _,
-            id,
+            id: _,
         } = stmt;
 
         if let Some(value) = value {
@@ -824,7 +848,7 @@ impl ScopeAnalyzer<'_> {
             .expect("Return statements should only appear inside functions");
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(stmt, self.variable_scopes.current.clone());
     }
 
     fn analyze_variable_definition_statement(
@@ -837,7 +861,7 @@ impl ScopeAnalyzer<'_> {
             equals_token: _,
             value,
             semicolon_token: _,
-            id,
+            id: _,
         } = vardef_stmt;
 
         // evaluated before the binding so it can potentially access variables that get shadowed
@@ -845,24 +869,23 @@ impl ScopeAnalyzer<'_> {
         self.analyze_expression(value);
         self.analyze_simple_binding(binding);
 
-        let binding_ref_var = self.referenced_variable.get(&binding.id).unwrap().clone();
-        self.referenced_variable.insert(*id, binding_ref_var);
+        let binding_ref_var = self.referenced_variable.get(&**binding).unwrap().clone();
+        self.referenced_variable
+            .insert(vardef_stmt, binding_ref_var);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(vardef_stmt, self.variable_scopes.current.clone());
     }
 
-    fn analyze_if_statement(
-        &mut self,
-        IfStatement {
+    fn analyze_if_statement(&mut self, stmt: &mut IfStatement) {
+        let IfStatement {
             if_token: _,
             condition,
             if_body,
             elifs,
             else_,
-            id,
-        }: &mut IfStatement,
-    ) {
+            id: _,
+        } = stmt;
         self.analyze_expression(condition);
         self.analyze_statement(if_body);
 
@@ -875,28 +898,26 @@ impl ScopeAnalyzer<'_> {
         }
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(stmt, self.variable_scopes.current.clone());
     }
 
-    fn analyze_while_loop_statement(
-        &mut self,
-        WhileLoopStatement {
+    fn analyze_while_loop_statement(&mut self, stmt: &mut WhileLoopStatement) {
+        let WhileLoopStatement {
             while_token: _,
             condition,
             body,
-            id,
-        }: &mut WhileLoopStatement,
-    ) {
+            id: _,
+        } = stmt;
+
         self.analyze_expression(condition);
         self.analyze_statement(body);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(stmt, self.variable_scopes.current.clone());
     }
 
-    fn analyze_for_loop_statement(
-        &mut self,
-        ForLoopStatement {
+    fn analyze_for_loop_statement(&mut self, stmt: &mut ForLoopStatement) {
+        let ForLoopStatement {
             for_token: _,
             open_paren_token: _,
             initializer,
@@ -905,9 +926,9 @@ impl ScopeAnalyzer<'_> {
             incrementer,
             close_paren_token: _,
             body,
-            id,
-        }: &mut ForLoopStatement,
-    ) {
+            id: _,
+        } = stmt;
+
         self.variable_scopes.push_child(self.id_generator);
         self.analyze_statement(initializer);
 
@@ -922,88 +943,83 @@ impl ScopeAnalyzer<'_> {
         self.variable_scopes.pop();
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(stmt, self.variable_scopes.current.clone());
     }
 
-    fn analyze_break_statement(
-        &mut self,
-        BreakStatement {
+    fn analyze_break_statement(&mut self, stmt: &mut BreakStatement) {
+        let BreakStatement {
             break_token: _,
             semicolon_token: _,
-            id,
-        }: &mut BreakStatement,
-    ) {
+            id: _,
+        } = stmt;
+
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(stmt, self.variable_scopes.current.clone());
     }
 
-    fn analyze_skip_statement(
-        &mut self,
-        SkipStatement {
+    fn analyze_skip_statement(&mut self, stmt: &mut SkipStatement) {
+        let SkipStatement {
             skip_token: _,
             semicolon_token: _,
-            id,
-        }: &mut SkipStatement,
-    ) {
+            id: _,
+        } = stmt;
+
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(stmt, self.variable_scopes.current.clone());
     }
 
-    fn analyze_self_executor_host(
-        &mut self,
-        SelfExecutorHost { token: _, id }: &mut SelfExecutorHost,
-    ) {
+    fn analyze_self_executor_host(&mut self, host: &mut SelfExecutorHost) {
+        let SelfExecutorHost { token: _, id: _ } = host;
+
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(host, self.variable_scopes.current.clone());
     }
 
-    fn analyze_thread_executor(
-        &mut self,
-        ThreadExecutor {
+    fn analyze_thread_executor(&mut self, executor: &mut ThreadExecutor) {
+        let ThreadExecutor {
             host,
             dot_token: _,
             thread_token: _,
             open_bracket_token: _,
             index,
             close_bracket_token: _,
-            id,
-        }: &mut ThreadExecutor,
-    ) {
+            id: _,
+        } = executor;
+
         self.analyze_executor_host(host);
         self.analyze_expression(index);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(executor, self.variable_scopes.current.clone());
     }
 
-    fn analyze_gpu_executor(
-        &mut self,
-        GPUExecutor {
+    fn analyze_gpu_executor(&mut self, executor: &mut GPUExecutor) {
+        let GPUExecutor {
             host,
             dot_token: _,
             gpus_token: _,
             open_bracket_token: _,
             gpu_index,
             close_bracket_token: _,
-            id,
-        }: &mut GPUExecutor,
-    ) {
+            id: _,
+        } = executor;
+
         self.analyze_executor_host(host);
         self.analyze_expression(gpu_index);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(executor, self.variable_scopes.current.clone());
     }
 
     fn analyze_literal_expression(&mut self, expression: &mut LiteralExpression) {
         let LiteralExpression {
             value: _,
             token: _,
-            id,
+            id: _,
         } = expression;
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(expression, self.variable_scopes.current.clone());
     }
 
     fn analyze_array_expression(&mut self, expression: &mut ArrayExpression) {
@@ -1011,7 +1027,7 @@ impl ScopeAnalyzer<'_> {
             open_bracket_token: _,
             elements,
             close_bracket_token: _,
-            id,
+            id: _,
         } = expression;
 
         for (item, _comma) in &mut *elements {
@@ -1019,7 +1035,7 @@ impl ScopeAnalyzer<'_> {
         }
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(expression, self.variable_scopes.current.clone());
     }
 
     fn analyze_struct_expression(&mut self, expression: &mut StructExpression) {
@@ -1028,7 +1044,7 @@ impl ScopeAnalyzer<'_> {
             open_brace_token: _,
             members,
             close_brace_token: _,
-            id,
+            id: _,
         } = expression;
 
         self.analyze_type(type_);
@@ -1047,7 +1063,7 @@ impl ScopeAnalyzer<'_> {
         }
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(expression, self.variable_scopes.current.clone());
     }
 
     fn analyze_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
@@ -1059,19 +1075,14 @@ impl ScopeAnalyzer<'_> {
             close_paren_token: _,
             id,
         } = expression;
-        let Some(ref_function) = self.function_list.get(name).cloned() else {
+        if let Some(ref_function) = self.function_list.get(name).cloned() {
+            self.referenced_function.insert(*id, ref_function.clone());
+        } else {
             self.errors.push(ErrorKind::NotDefined {
                 kind: NotDefinedKind::Function,
                 item: UnresolvedSymbol::from_token(name.clone(), &expression.name_token),
             });
-
-            // still visit args, even though the function doesn't exist
-            for (arg, _comma) in &mut expression.arguments {
-                self.analyze_expression(arg);
-            }
-            return;
-        };
-        self.referenced_function.insert(*id, ref_function.clone());
+        }
 
         for (arg, _comma) in arguments {
             self.analyze_expression(arg);
@@ -1081,7 +1092,7 @@ impl ScopeAnalyzer<'_> {
         // information to report a better error
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(expression, self.variable_scopes.current.clone());
     }
 
     fn analyze_compiler_expression(&mut self, expression: &mut CompilerExpression) {
@@ -1092,7 +1103,7 @@ impl ScopeAnalyzer<'_> {
             open_paren_token: _,
             arguments,
             close_paren_token: _,
-            id,
+            id: _,
         } = expression;
 
         for (arg, _comma) in arguments {
@@ -1115,88 +1126,94 @@ impl ScopeAnalyzer<'_> {
         // as with functions, parameter count mismatch is handled while typechecking
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(expression, self.variable_scopes.current.clone());
     }
 
-    fn analyze_array_index_expression(
-        &mut self,
-        ArrayIndexExpression {
+    fn analyze_array_index_expression(&mut self, expression: &mut ArrayIndexExpression) {
+        let ArrayIndexExpression {
             array,
             open_bracket_token: _,
             index,
             close_bracket_token: _,
-            id,
-        }: &mut ArrayIndexExpression,
-    ) {
+            id: _,
+        } = expression;
+
         self.analyze_expression(array);
         self.analyze_expression(index);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(expression, self.variable_scopes.current.clone());
     }
 
-    fn analyze_struct_access_expression(
-        &mut self,
-        StructAccessExpression {
+    fn analyze_struct_access_expression(&mut self, expression: &mut StructAccessExpression) {
+        let StructAccessExpression {
             value,
             dot_token: _,
             member_name: _,
             member_name_token: _,
-            id,
-        }: &mut StructAccessExpression,
-    ) {
+            id: _,
+        } = expression;
+
         self.analyze_expression(value);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(expression, self.variable_scopes.current.clone());
     }
 
-    fn analyze_grouping_expression(
-        &mut self,
-        GroupingExpression {
+    fn analyze_grouping_expression(&mut self, expression: &mut GroupingExpression) {
+        let GroupingExpression {
             open_paren_token: _,
             subexpression,
             close_paren_token: _,
-            id,
-        }: &mut GroupingExpression,
-    ) {
+            id: _,
+        } = expression;
+
         self.analyze_expression(subexpression);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(expression, self.variable_scopes.current.clone());
     }
 
     fn analyze_variable_access_expression(&mut self, expression: &mut VariableAccessExpression) {
         let VariableAccessExpression {
             name,
-            name_token: _,
+            name_token,
             id,
         } = expression;
-        let Some(ref_variable) = self.variable_scopes.get_read(name) else {
+        let ref_variable = self.variable_scopes.get_read(name).unwrap_or_else(|| {
             self.errors.push(ErrorKind::NotDefined {
                 kind: NotDefinedKind::Variable,
-                item: UnresolvedSymbol::from_token(name.clone(), &expression.name_token),
+                item: UnresolvedSymbol::from_token(name.clone(), name_token),
             });
-            return;
-        };
 
-        self.referenced_variable.insert(*id, ref_variable.clone());
+            // create a fake variable
+            Rc::new(RefCell::new(Variable {
+                symbol: SymbolDefinition::from_token(name.clone(), name_token),
+                type_: None,
+                is_constant: false,
+                id: self.id_generator.next_variable_id(),
+                definition_node_id: *id,
+            }))
+        });
+
+        self.referenced_variable
+            .insert(expression, ref_variable.clone());
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(expression, self.variable_scopes.current.clone());
     }
     fn analyze_unary_expression(&mut self, expression: &mut UnaryExpression) {
         let UnaryExpression {
             operator_token: _,
             operation: _,
             operand,
-            id,
+            id: _,
         } = expression;
 
         self.analyze_expression(operand);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(expression, self.variable_scopes.current.clone());
     }
 
     fn analyze_cast_expression(&mut self, expression: &mut CastExpression) {
@@ -1204,14 +1221,14 @@ impl ScopeAnalyzer<'_> {
             operand,
             as_token: _,
             type_,
-            id,
+            id: _,
         } = expression;
 
         self.analyze_expression(operand);
         self.analyze_type(type_);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(expression, self.variable_scopes.current.clone());
     }
 
     fn analyze_binary_expression(&mut self, expression: &mut BinaryExpression) {
@@ -1220,13 +1237,13 @@ impl ScopeAnalyzer<'_> {
             operator_token: _,
             operation: _,
             right,
-            id,
+            id: _,
         } = expression;
         self.analyze_expression(left);
         self.analyze_expression(right);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(expression, self.variable_scopes.current.clone());
     }
 
     fn analyze_variable_assignment_expression(
@@ -1237,13 +1254,13 @@ impl ScopeAnalyzer<'_> {
             lvalue,
             equal_token: _,
             right,
-            id,
+            id: _,
         } = expression;
         self.analyze_lvalue(lvalue);
         self.analyze_expression(right);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(expression, self.variable_scopes.current.clone());
     }
 
     fn analyze_variable_lvalue(&mut self, lvalue: &mut VariableLValue) {
@@ -1252,13 +1269,22 @@ impl ScopeAnalyzer<'_> {
             name_token,
             id,
         } = lvalue;
-        let Some(ref_variable) = self.variable_scopes.get_write(name) else {
+        let ref_variable = self.variable_scopes.get_write(name).unwrap_or_else(|| {
             self.errors.push(ErrorKind::NotDefined {
                 kind: NotDefinedKind::Variable,
                 item: UnresolvedSymbol::from_token(name.clone(), name_token),
             });
-            return;
-        };
+
+            // create a fake variable
+            Rc::new(RefCell::new(Variable {
+                symbol: SymbolDefinition::from_token(name.clone(), name_token),
+                type_: None,
+                is_constant: false,
+                id: self.id_generator.next_variable_id(),
+                definition_node_id: *id,
+            }))
+        });
+
         if ref_variable.borrow().is_constant {
             self.errors.push(ErrorKind::ConstantVariableAsLValue {
                 variable: ref_variable
@@ -1268,10 +1294,11 @@ impl ScopeAnalyzer<'_> {
                     .with_use(name_token.range.clone()),
             });
         }
-        self.referenced_variable.insert(*id, ref_variable.clone());
+        self.referenced_variable
+            .insert(lvalue, ref_variable.clone());
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(lvalue, self.variable_scopes.current.clone());
     }
 
     fn analyze_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) {
@@ -1281,14 +1308,14 @@ impl ScopeAnalyzer<'_> {
             open_bracket_token: _,
             index,
             close_bracket_token: _,
-            id,
+            id: _,
         } = lvalue;
 
         self.analyze_lvalue(array);
         self.analyze_expression(index);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(lvalue, self.variable_scopes.current.clone());
     }
 
     fn analyze_struct_access_lvalue(&mut self, lvalue: &mut StructAccessLValue) {
@@ -1298,13 +1325,13 @@ impl ScopeAnalyzer<'_> {
             dot_token: _,
             member_name: _,
             member_name_token: _,
-            id,
+            id: _,
         } = lvalue;
 
         self.analyze_lvalue(value);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(lvalue, self.variable_scopes.current.clone());
     }
 
     fn analyze_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) {
@@ -1313,74 +1340,71 @@ impl ScopeAnalyzer<'_> {
             open_paren_token: _,
             sublvalue,
             close_paren_token: _,
-            id,
+            id: _,
         } = lvalue;
 
         self.analyze_lvalue(sublvalue);
 
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(lvalue, self.variable_scopes.current.clone());
     }
 
-    fn analyze_simple_type(
-        &mut self,
-        SimpleType {
+    fn analyze_simple_type(&mut self, ty: &mut SimpleType) {
+        let SimpleType {
             token: _,
             type_: _,
-            id,
-        }: &mut SimpleType,
-    ) {
+            id: _,
+        } = ty;
+
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(ty, self.variable_scopes.current.clone());
     }
 
-    fn analyze_unit_type(
-        &mut self,
-        UnitType {
+    fn analyze_unit_type(&mut self, ty: &mut UnitType) {
+        let UnitType {
             open_paren_token: _,
             close_paren_token: _,
-            id,
-        }: &mut UnitType,
-    ) {
+            id: _,
+        } = ty;
+
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(ty, self.variable_scopes.current.clone());
     }
 
-    fn analyze_idk_type(&mut self, IdkType { token: _, id }: &mut IdkType) {
+    fn analyze_idk_type(&mut self, ty: &mut IdkType) {
+        let IdkType { token: _, id: _ } = ty;
+
         self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            .insert(ty, self.variable_scopes.current.clone());
     }
 
-    fn analyze_array_type(
-        &mut self,
-        ArrayType {
-            subtype: _,
+    fn analyze_array_type(&mut self, ty: &mut ArrayType) {
+        let ArrayType {
+            subtype,
             open_bracket_token: _,
             size,
             close_bracket_token: _,
-            id,
-        }: &mut ArrayType,
-    ) {
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            id: _,
+        } = ty;
+
+        self.analyze_type(subtype);
 
         if let Some(size) = size {
             self.analyze_expression(size);
         }
+
+        self.contained_scope
+            .insert(ty, self.variable_scopes.current.clone());
     }
 
-    fn analyze_struct_type(
-        &mut self,
-        StructType {
+    fn analyze_struct_type(&mut self, ty: &mut StructType) {
+        let StructType {
             struct_token: _,
             open_brace_token: _,
             members,
             close_brace_token: _,
-            id,
-        }: &mut StructType,
-    ) {
-        self.contained_scope
-            .insert(*id, self.variable_scopes.current.clone());
+            id: _,
+        } = ty;
 
         let mut member_unique_set = HashMap::new();
 
@@ -1406,16 +1430,21 @@ impl ScopeAnalyzer<'_> {
                 });
             }
         }
+
+        self.contained_scope
+            .insert(ty, self.variable_scopes.current.clone());
     }
 
-    fn analyze_alias_type(
-        &mut self,
-        AliasType {
+    fn analyze_alias_type(&mut self, ty: &mut AliasType) {
+        let AliasType {
             name: _,
             name_token: _,
             id: _,
-        }: &mut AliasType,
-    ) {
+        } = ty;
+
         // Type aliases are handled by type propagation.
+
+        self.contained_scope
+            .insert(ty, self.variable_scopes.current.clone());
     }
 }

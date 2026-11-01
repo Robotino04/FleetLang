@@ -248,12 +248,14 @@ impl Backend {
                 ),
             },
 
-            AstNodeRef::SimpleBinding(SimpleBinding {
-                name_token: _,
-                name,
-                type_,
-                id,
-            }) => (
+            AstNodeRef::SimpleBinding(
+                node @ SimpleBinding {
+                    name_token: _,
+                    name,
+                    type_,
+                    id: _,
+                },
+            ) => (
                 format!(
                     "{name}: {}",
                     type_
@@ -268,12 +270,10 @@ impl Backend {
                                 scope_data: _,
                             }) = analysis_data
                             else {
-                                return "/* No type data available */".to_string();
+                                return "/* No analysis data available */".to_string();
                             };
 
-                            let Some(ref_var) = variable_data.get(id) else {
-                                return "/* Variable doesn't exist */".to_string();
-                            };
+                            let ref_var = variable_data.get(node);
 
                             let Some(type_) = ref_var.borrow().type_ else {
                                 return "/* Variable wasn't processed by ScopeAnalyzer */"
@@ -949,10 +949,7 @@ impl Backend {
                 )),
             analysis_data
                 .as_ref()
-                .and_then(|analysis| analysis
-                    .scope_data
-                    .get(&node_hierarchy.last()?.get_id())
-                    .cloned())
+                .and_then(|analysis| Some(analysis.scope_data.get(node_hierarchy.last()?)))
                 .map_or("No scope available".to_string(), |scope| format!(
                     "{scope:#?}"
                 )),
@@ -1024,14 +1021,19 @@ impl Backend {
                     .clone(),
             ),
 
-            AstNode::Expression(
-                Expression::VariableAccess(VariableAccessExpression { id, .. })
-                | Expression::VariableAssignment(VariableAssignmentExpression { id, .. }),
-            )
-            | AstNode::LValue(LValue::Variable(VariableLValue { id, .. })) => Some(
+            AstNode::Expression(Expression::VariableAccess(node)) => Some(
                 pm.state
                     .get::<VariableData>()?
-                    .get(id)?
+                    .get(node)
+                    .borrow()
+                    .symbol
+                    .definition
+                    .clone(),
+            ),
+            AstNode::LValue(LValue::Variable(node)) => Some(
+                pm.state
+                    .get::<VariableData>()?
+                    .get(node)
                     .borrow()
                     .symbol
                     .definition
@@ -1039,7 +1041,7 @@ impl Backend {
             ),
             // TODO: AstNode::StructAccessExpression(struct_access_expression) => todo!(),
             // TODO: AstNode::StructAccessLValue(struct_access_lvalue) => todo!(),
-            AstNode::Type(Type::Alias(node @ AliasType { .. })) => {
+            AstNode::Type(Type::Alias(node)) => {
                 let ptr = pm.state.get::<TypeData>()?.get(node);
 
                 Some(

@@ -481,15 +481,7 @@ impl<'a> IrGenerator<'_> {
         let params = function
             .parameters
             .iter()
-            .map(|(param, _comma)| {
-                (
-                    param.clone(),
-                    self.variable_data
-                        .get(&param.id)
-                        .expect("parameters should have variables assigned by now")
-                        .clone(),
-                )
-            })
+            .map(|(param, _comma)| (param.clone(), self.variable_data.get(param).clone()))
             .collect_vec()
             .iter()
             .flat_map(|(_param, var)| -> Result<_> {
@@ -867,8 +859,7 @@ impl<'state> IrGenerator<'state> {
             .unwrap_or_else(|| {
                 Ok(self
                     .variable_data
-                    .get(&simple_binding.id)
-                    .expect("variable data should exist before calling ir_generator")
+                    .get(simple_binding)
                     .borrow()
                     .type_
                     .clone())
@@ -886,16 +877,7 @@ impl<'state> IrGenerator<'state> {
             }
         };
 
-        let ref_variable = self
-            .variable_data
-            .get(&simple_binding.id)
-            .unwrap_or_else(|| {
-                pass_precondition!(
-                    "Variable data for {:?} should exist before calling ir_generator",
-                    simple_binding.name
-                )
-            })
-            .borrow();
+        let ref_variable = self.variable_data.get(simple_binding).borrow();
 
         assert!(
             self.variable_storage
@@ -992,13 +974,7 @@ impl<'state> IrGenerator<'state> {
             bindings,
             &iterators
                 .iter()
-                .map(|it| {
-                    Ok(self
-                        .variable_data
-                        .get(&it.binding.id)
-                        .expect("Variable data should exist before calling c_generator")
-                        .clone())
-                })
+                .map(|it| Ok(self.variable_data.get(&it.binding).clone()))
                 .collect::<Result<Vec<_>>>()?,
             body,
         );
@@ -2166,21 +2142,13 @@ impl<'state> IrGenerator<'state> {
         &mut self,
         expr: &mut VariableAccessExpression,
     ) -> Result<RuntimeValueIR<'state>> {
+        let var = self.variable_data.get(expr);
+
         let VariableAccessExpression {
             name,
             name_token: _,
             id,
         } = expr;
-
-        let var = self
-            .variable_data
-            .get(id)
-            .unwrap_or_else(|| {
-                pass_precondition!(
-                    "Variable data for {name:?} should exist before running ir_generator"
-                )
-            })
-            .clone();
 
         let storage = self.variable_storage.get(&var.borrow().id).unwrap_or_else(||
             panic!(
@@ -2969,17 +2937,14 @@ impl<'state> IrGenerator<'state> {
         &mut self,
         lvalue: &mut VariableLValue,
     ) -> Result<PointerValue<'state>> {
+        let var = self.variable_data.get(lvalue);
+
         let VariableLValue {
-            name,
+            name: _,
             name_token: _,
             id,
-        } = &*lvalue;
+        } = lvalue;
 
-        let var = self.variable_data.get(id).unwrap_or_else(|| {
-            pass_precondition!(
-                "Variable data for {name:?} should exist before calling ir_generator"
-            )
-        });
         let storage = self
             .variable_storage
             .get(&var.borrow().id)

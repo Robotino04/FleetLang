@@ -136,14 +136,6 @@ pub struct FinalPerNodeData<Data: NodeDataSpec> {
     map: PerNodeData<Data>,
 }
 
-impl<Data: NodeDataSpec> Deref for FinalPerNodeData<Data> {
-    type Target = HashMap<NodeID, NodeDataEnum<Data>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.map
-    }
-}
-
 impl<Data: NodeDataSpec + Debug> Debug for FinalPerNodeData<Data>
 where
     NodeDataEnum<Data>: Debug,
@@ -166,7 +158,12 @@ where
     }
 }
 
-impl<Data: NodeDataSpecGroups> FinalPerNodeData<Data> {
+impl<Data: NodeDataSpec> FinalPerNodeData<Data> {
+    // not a Deref impl so it doesn't get used by accident
+    pub fn inner(&self) -> &HashMap<NodeID, NodeDataEnum<Data>> {
+        &self.map
+    }
+
     pub fn get<Node: HasData<Data>>(&self, node: &Node) -> &Node::Data {
         self.map
             .get(node)
@@ -346,57 +343,57 @@ where
 }
 
 pub trait NodeDataSpec {
-    type Program: 'static;
+    type Program: 'static = ();
 
-    type FunctionDefinition: 'static;
-    type TypeAlias: 'static;
+    type FunctionDefinition: 'static = ();
+    type TypeAlias: 'static = ();
 
-    type ExternFunctionBody: 'static;
-    type StatementFunctionBody: 'static;
+    type ExternFunctionBody: 'static = ();
+    type StatementFunctionBody: 'static = ();
 
-    type SimpleBinding: 'static;
+    type SimpleBinding: 'static = ();
 
-    type ExpressionStatement: 'static;
-    type OnStatement: 'static;
-    type BlockStatement: 'static;
-    type ReturnStatement: 'static;
-    type VariableDefinitionStatement: 'static;
-    type IfStatement: 'static;
-    type WhileLoopStatement: 'static;
-    type ForLoopStatement: 'static;
-    type BreakStatement: 'static;
-    type SkipStatement: 'static;
+    type ExpressionStatement: 'static = ();
+    type OnStatement: 'static = ();
+    type BlockStatement: 'static = ();
+    type ReturnStatement: 'static = ();
+    type VariableDefinitionStatement: 'static = ();
+    type IfStatement: 'static = ();
+    type WhileLoopStatement: 'static = ();
+    type ForLoopStatement: 'static = ();
+    type BreakStatement: 'static = ();
+    type SkipStatement: 'static = ();
 
-    type SelfExecutorHost: 'static;
+    type SelfExecutorHost: 'static = ();
 
-    type ThreadExecutor: 'static;
-    type GPUExecutor: 'static;
+    type ThreadExecutor: 'static = ();
+    type GPUExecutor: 'static = ();
 
-    type LiteralExpression: 'static;
-    type ArrayExpression: 'static;
-    type StructExpression: 'static;
-    type FunctionCallExpression: 'static;
-    type CompilerExpression: 'static;
-    type ArrayIndexExpression: 'static;
-    type StructAccessExpression: 'static;
-    type GroupingExpression: 'static;
-    type VariableAccessExpression: 'static;
-    type UnaryExpression: 'static;
-    type CastExpression: 'static;
-    type BinaryExpression: 'static;
-    type VariableAssignmentExpression: 'static;
+    type LiteralExpression: 'static = ();
+    type ArrayExpression: 'static = ();
+    type StructExpression: 'static = ();
+    type FunctionCallExpression: 'static = ();
+    type CompilerExpression: 'static = ();
+    type ArrayIndexExpression: 'static = ();
+    type StructAccessExpression: 'static = ();
+    type GroupingExpression: 'static = ();
+    type VariableAccessExpression: 'static = ();
+    type UnaryExpression: 'static = ();
+    type CastExpression: 'static = ();
+    type BinaryExpression: 'static = ();
+    type VariableAssignmentExpression: 'static = ();
 
-    type VariableLValue: 'static;
-    type ArrayIndexLValue: 'static;
-    type StructAccessLValue: 'static;
-    type GroupingLValue: 'static;
+    type VariableLValue: 'static = ();
+    type ArrayIndexLValue: 'static = ();
+    type StructAccessLValue: 'static = ();
+    type GroupingLValue: 'static = ();
 
-    type SimpleType: 'static;
-    type UnitType: 'static;
-    type IdkType: 'static;
-    type ArrayType: 'static;
-    type StructType: 'static;
-    type AliasType: 'static;
+    type SimpleType: 'static = ();
+    type UnitType: 'static = ();
+    type IdkType: 'static = ();
+    type ArrayType: 'static = ();
+    type StructType: 'static = ();
+    type AliasType: 'static = ();
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -452,4 +449,197 @@ pub enum NodeDataEnum<T: NodeDataSpec> {
     ArrayType(T::ArrayType),
     StructType(T::StructType),
     AliasType(T::AliasType),
+}
+
+impl<T, U> NodeDataEnum<T>
+where
+    T: NodeDataSpec<
+            Program = U,
+            FunctionDefinition = U,
+            TypeAlias = U,
+            ExternFunctionBody = U,
+            StatementFunctionBody = U,
+            SimpleBinding = U,
+            ExpressionStatement = U,
+            OnStatement = U,
+            BlockStatement = U,
+            ReturnStatement = U,
+            VariableDefinitionStatement = U,
+            IfStatement = U,
+            WhileLoopStatement = U,
+            ForLoopStatement = U,
+            BreakStatement = U,
+            SkipStatement = U,
+            SelfExecutorHost = U,
+            ThreadExecutor = U,
+            GPUExecutor = U,
+            LiteralExpression = U,
+            ArrayExpression = U,
+            StructExpression = U,
+            FunctionCallExpression = U,
+            CompilerExpression = U,
+            ArrayIndexExpression = U,
+            StructAccessExpression = U,
+            GroupingExpression = U,
+            VariableAccessExpression = U,
+            UnaryExpression = U,
+            CastExpression = U,
+            BinaryExpression = U,
+            VariableAssignmentExpression = U,
+            VariableLValue = U,
+            ArrayIndexLValue = U,
+            StructAccessLValue = U,
+            GroupingLValue = U,
+            SimpleType = U,
+            UnitType = U,
+            IdkType = U,
+            ArrayType = U,
+            StructType = U,
+            AliasType = U,
+        >,
+{
+    #[must_use]
+    /// Extracts the contained value if all nodes store the same type
+    pub fn extract(self) -> U {
+        match self {
+            NodeDataEnum::Program(x)
+            | NodeDataEnum::FunctionDefinition(x)
+            | NodeDataEnum::TypeAlias(x)
+            | NodeDataEnum::ExternFunctionBody(x)
+            | NodeDataEnum::StatementFunctionBody(x)
+            | NodeDataEnum::SimpleBinding(x)
+            | NodeDataEnum::ExpressionStatement(x)
+            | NodeDataEnum::OnStatement(x)
+            | NodeDataEnum::BlockStatement(x)
+            | NodeDataEnum::ReturnStatement(x)
+            | NodeDataEnum::VariableDefinitionStatement(x)
+            | NodeDataEnum::IfStatement(x)
+            | NodeDataEnum::WhileLoopStatement(x)
+            | NodeDataEnum::ForLoopStatement(x)
+            | NodeDataEnum::BreakStatement(x)
+            | NodeDataEnum::SkipStatement(x)
+            | NodeDataEnum::SelfExecutorHost(x)
+            | NodeDataEnum::ThreadExecutor(x)
+            | NodeDataEnum::GPUExecutor(x)
+            | NodeDataEnum::LiteralExpression(x)
+            | NodeDataEnum::ArrayExpression(x)
+            | NodeDataEnum::StructExpression(x)
+            | NodeDataEnum::FunctionCallExpression(x)
+            | NodeDataEnum::CompilerExpression(x)
+            | NodeDataEnum::ArrayIndexExpression(x)
+            | NodeDataEnum::StructAccessExpression(x)
+            | NodeDataEnum::GroupingExpression(x)
+            | NodeDataEnum::VariableAccessExpression(x)
+            | NodeDataEnum::UnaryExpression(x)
+            | NodeDataEnum::CastExpression(x)
+            | NodeDataEnum::BinaryExpression(x)
+            | NodeDataEnum::VariableAssignmentExpression(x)
+            | NodeDataEnum::VariableLValue(x)
+            | NodeDataEnum::ArrayIndexLValue(x)
+            | NodeDataEnum::StructAccessLValue(x)
+            | NodeDataEnum::GroupingLValue(x)
+            | NodeDataEnum::SimpleType(x)
+            | NodeDataEnum::UnitType(x)
+            | NodeDataEnum::IdkType(x)
+            | NodeDataEnum::ArrayType(x)
+            | NodeDataEnum::StructType(x)
+            | NodeDataEnum::AliasType(x) => x,
+        }
+    }
+    #[must_use]
+    /// Extracts the contained value if all nodes store the same type
+    pub fn extract_ref(&self) -> &U {
+        match self {
+            NodeDataEnum::Program(x)
+            | NodeDataEnum::FunctionDefinition(x)
+            | NodeDataEnum::TypeAlias(x)
+            | NodeDataEnum::ExternFunctionBody(x)
+            | NodeDataEnum::StatementFunctionBody(x)
+            | NodeDataEnum::SimpleBinding(x)
+            | NodeDataEnum::ExpressionStatement(x)
+            | NodeDataEnum::OnStatement(x)
+            | NodeDataEnum::BlockStatement(x)
+            | NodeDataEnum::ReturnStatement(x)
+            | NodeDataEnum::VariableDefinitionStatement(x)
+            | NodeDataEnum::IfStatement(x)
+            | NodeDataEnum::WhileLoopStatement(x)
+            | NodeDataEnum::ForLoopStatement(x)
+            | NodeDataEnum::BreakStatement(x)
+            | NodeDataEnum::SkipStatement(x)
+            | NodeDataEnum::SelfExecutorHost(x)
+            | NodeDataEnum::ThreadExecutor(x)
+            | NodeDataEnum::GPUExecutor(x)
+            | NodeDataEnum::LiteralExpression(x)
+            | NodeDataEnum::ArrayExpression(x)
+            | NodeDataEnum::StructExpression(x)
+            | NodeDataEnum::FunctionCallExpression(x)
+            | NodeDataEnum::CompilerExpression(x)
+            | NodeDataEnum::ArrayIndexExpression(x)
+            | NodeDataEnum::StructAccessExpression(x)
+            | NodeDataEnum::GroupingExpression(x)
+            | NodeDataEnum::VariableAccessExpression(x)
+            | NodeDataEnum::UnaryExpression(x)
+            | NodeDataEnum::CastExpression(x)
+            | NodeDataEnum::BinaryExpression(x)
+            | NodeDataEnum::VariableAssignmentExpression(x)
+            | NodeDataEnum::VariableLValue(x)
+            | NodeDataEnum::ArrayIndexLValue(x)
+            | NodeDataEnum::StructAccessLValue(x)
+            | NodeDataEnum::GroupingLValue(x)
+            | NodeDataEnum::SimpleType(x)
+            | NodeDataEnum::UnitType(x)
+            | NodeDataEnum::IdkType(x)
+            | NodeDataEnum::ArrayType(x)
+            | NodeDataEnum::StructType(x)
+            | NodeDataEnum::AliasType(x) => x,
+        }
+    }
+    #[must_use]
+    /// Extracts the contained value if all nodes store the same type
+    pub fn extract_mut(&mut self) -> &mut U {
+        match self {
+            NodeDataEnum::Program(x)
+            | NodeDataEnum::FunctionDefinition(x)
+            | NodeDataEnum::TypeAlias(x)
+            | NodeDataEnum::ExternFunctionBody(x)
+            | NodeDataEnum::StatementFunctionBody(x)
+            | NodeDataEnum::SimpleBinding(x)
+            | NodeDataEnum::ExpressionStatement(x)
+            | NodeDataEnum::OnStatement(x)
+            | NodeDataEnum::BlockStatement(x)
+            | NodeDataEnum::ReturnStatement(x)
+            | NodeDataEnum::VariableDefinitionStatement(x)
+            | NodeDataEnum::IfStatement(x)
+            | NodeDataEnum::WhileLoopStatement(x)
+            | NodeDataEnum::ForLoopStatement(x)
+            | NodeDataEnum::BreakStatement(x)
+            | NodeDataEnum::SkipStatement(x)
+            | NodeDataEnum::SelfExecutorHost(x)
+            | NodeDataEnum::ThreadExecutor(x)
+            | NodeDataEnum::GPUExecutor(x)
+            | NodeDataEnum::LiteralExpression(x)
+            | NodeDataEnum::ArrayExpression(x)
+            | NodeDataEnum::StructExpression(x)
+            | NodeDataEnum::FunctionCallExpression(x)
+            | NodeDataEnum::CompilerExpression(x)
+            | NodeDataEnum::ArrayIndexExpression(x)
+            | NodeDataEnum::StructAccessExpression(x)
+            | NodeDataEnum::GroupingExpression(x)
+            | NodeDataEnum::VariableAccessExpression(x)
+            | NodeDataEnum::UnaryExpression(x)
+            | NodeDataEnum::CastExpression(x)
+            | NodeDataEnum::BinaryExpression(x)
+            | NodeDataEnum::VariableAssignmentExpression(x)
+            | NodeDataEnum::VariableLValue(x)
+            | NodeDataEnum::ArrayIndexLValue(x)
+            | NodeDataEnum::StructAccessLValue(x)
+            | NodeDataEnum::GroupingLValue(x)
+            | NodeDataEnum::SimpleType(x)
+            | NodeDataEnum::UnitType(x)
+            | NodeDataEnum::IdkType(x)
+            | NodeDataEnum::ArrayType(x)
+            | NodeDataEnum::StructType(x)
+            | NodeDataEnum::AliasType(x) => x,
+        }
+    }
 }

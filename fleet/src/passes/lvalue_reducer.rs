@@ -70,43 +70,42 @@ impl Pass for LValueReducer<'_> {
 }
 
 impl LValueReducer<'_> {
-    fn is_variable_lvalue_equal(&self, a: &VariableLValue, b: &LValue) -> Option<bool> {
-        Some(match b {
+    fn is_variable_lvalue_equal(&self, a: &VariableLValue, b: &LValue) -> bool {
+        match b {
             LValue::Variable(b) => {
-                self.variable_data.get(&a.id)?.borrow().id
-                    == self.variable_data.get(&b.id)?.borrow().id
+                self.variable_data.get(a).borrow().id == self.variable_data.get(b).borrow().id
             }
             LValue::Grouping(GroupingLValue { sublvalue: b, .. }) => {
-                self.is_variable_lvalue_equal(a, b)?
+                self.is_variable_lvalue_equal(a, b)
             }
             _ => false,
-        })
+        }
     }
-    fn is_array_index_lvalue_equal(&self, a: &ArrayIndexLValue, b: &LValue) -> Option<bool> {
-        Some(match b {
+    fn is_array_index_lvalue_equal(&self, a: &ArrayIndexLValue, b: &LValue) -> bool {
+        match b {
             LValue::ArrayIndex(b) => {
-                self.is_lvalue_equal(&a.array, &b.array)?
-                    && self.is_expression_equal(&a.index, &b.index)?
+                self.is_lvalue_equal(&a.array, &b.array)
+                    && self.is_expression_equal(&a.index, &b.index)
             }
             LValue::Grouping(GroupingLValue { sublvalue: b, .. }) => {
-                self.is_array_index_lvalue_equal(a, b)?
+                self.is_array_index_lvalue_equal(a, b)
             }
             _ => false,
-        })
+        }
     }
-    fn is_struct_access_lvalue_equal(&self, a: &StructAccessLValue, b: &LValue) -> Option<bool> {
-        Some(match b {
+    fn is_struct_access_lvalue_equal(&self, a: &StructAccessLValue, b: &LValue) -> bool {
+        match b {
             LValue::StructAccess(b) => {
-                self.is_lvalue_equal(&a.value, &b.value)? && a.member_name == b.member_name
+                self.is_lvalue_equal(&a.value, &b.value) && a.member_name == b.member_name
             }
             LValue::Grouping(GroupingLValue { sublvalue: b, .. }) => {
-                self.is_struct_access_lvalue_equal(a, b)?
+                self.is_struct_access_lvalue_equal(a, b)
             }
             _ => false,
-        })
+        }
     }
 
-    fn is_lvalue_equal(&self, a: &LValue, b: &LValue) -> Option<bool> {
+    fn is_lvalue_equal(&self, a: &LValue, b: &LValue) -> bool {
         match a {
             LValue::Variable(a) => self.is_variable_lvalue_equal(a, b),
             LValue::ArrayIndex(a) => self.is_array_index_lvalue_equal(a, b),
@@ -115,13 +114,13 @@ impl LValueReducer<'_> {
         }
     }
 
-    fn is_expression_equal(&self, a: &Expression, b: &Expression) -> Option<bool> {
+    fn is_expression_equal(&self, a: &Expression, b: &Expression) -> bool {
         match a {
             Expression::Literal(a) => self.is_literal_expression_equal(a, b),
             Expression::Array(a) => self.is_array_expression_equal(a, b),
             Expression::Struct(a) => self.is_struct_expression_equal(a, b),
-            Expression::FunctionCall(a) => Some(self.is_function_call_expression_equal(a, b)),
-            Expression::CompilerExpression(a) => Some(self.is_compiler_expression_equal(a, b)),
+            Expression::FunctionCall(a) => self.is_function_call_expression_equal(a, b),
+            Expression::CompilerExpression(a) => self.is_compiler_expression_equal(a, b),
             Expression::ArrayIndex(a) => self.is_array_index_expression_equal(a, b),
             Expression::StructAccess(a) => self.is_struct_access_expression_equal(a, b),
             Expression::Grouping(a) => self.is_expression_equal(&a.subexpression, b),
@@ -133,30 +132,30 @@ impl LValueReducer<'_> {
         }
     }
 
-    fn is_literal_expression_equal(&self, a: &LiteralExpression, b: &Expression) -> Option<bool> {
-        Some(match b {
+    fn is_literal_expression_equal(&self, a: &LiteralExpression, b: &Expression) -> bool {
+        match b {
             Expression::Literal(b) => {
                 a.value == b.value && self.type_data.get(a) == self.type_data.get(b)
             }
-            Expression::Grouping(b) => self.is_literal_expression_equal(a, &b.subexpression)?,
+            Expression::Grouping(b) => self.is_literal_expression_equal(a, &b.subexpression),
             _ => false,
-        })
+        }
     }
-    fn is_array_expression_equal(&self, a: &ArrayExpression, b: &Expression) -> Option<bool> {
-        Some(match b {
+    fn is_array_expression_equal(&self, a: &ArrayExpression, b: &Expression) -> bool {
+        match b {
             Expression::Array(b) => {
                 a.elements.len() == b.elements.len()
                     && a.elements
                         .iter()
                         .zip(&b.elements)
-                        .all(|(a, b)| self.is_expression_equal(&a.0, &b.0).unwrap_or(false))
+                        .all(|(a, b)| self.is_expression_equal(&a.0, &b.0))
             }
-            Expression::Grouping(b) => self.is_array_expression_equal(a, &b.subexpression)?,
+            Expression::Grouping(b) => self.is_array_expression_equal(a, &b.subexpression),
             _ => false,
-        })
+        }
     }
-    fn is_struct_expression_equal(&self, a: &StructExpression, b: &Expression) -> Option<bool> {
-        Some(match b {
+    fn is_struct_expression_equal(&self, a: &StructExpression, b: &Expression) -> bool {
+        match b {
             Expression::Struct(b) => {
                 a.members.len() == b.members.len()
                     && a.members.iter().zip(&b.members).all(
@@ -180,13 +179,13 @@ impl LValueReducer<'_> {
                                 _comma2,
                             ),
                         )| {
-                            name1 == name2 && self.is_expression_equal(v1, v2).unwrap_or(false)
+                            name1 == name2 && self.is_expression_equal(v1, v2)
                         },
                     )
             }
-            Expression::Grouping(b) => self.is_struct_expression_equal(a, &b.subexpression)?,
+            Expression::Grouping(b) => self.is_struct_expression_equal(a, &b.subexpression),
             _ => false,
-        })
+        }
     }
     fn is_function_call_expression_equal(
         &self,
@@ -199,99 +198,93 @@ impl LValueReducer<'_> {
     fn is_compiler_expression_equal(&self, _a: &CompilerExpression, _b: &Expression) -> bool {
         false
     }
-    fn is_array_index_expression_equal(
-        &self,
-        a: &ArrayIndexExpression,
-        b: &Expression,
-    ) -> Option<bool> {
-        Some(match b {
+    fn is_array_index_expression_equal(&self, a: &ArrayIndexExpression, b: &Expression) -> bool {
+        match b {
             Expression::ArrayIndex(b) => {
-                self.is_expression_equal(&a.array, &b.array)?
-                    && self.is_expression_equal(&a.index, &b.index)?
+                self.is_expression_equal(&a.array, &b.array)
+                    && self.is_expression_equal(&a.index, &b.index)
             }
-            Expression::Grouping(b) => self.is_array_index_expression_equal(a, &b.subexpression)?,
+            Expression::Grouping(b) => self.is_array_index_expression_equal(a, &b.subexpression),
             _ => false,
-        })
+        }
     }
     fn is_struct_access_expression_equal(
         &self,
         a: &StructAccessExpression,
         b: &Expression,
-    ) -> Option<bool> {
-        Some(match b {
+    ) -> bool {
+        match b {
             Expression::StructAccess(b) => {
-                self.is_expression_equal(&a.value, &b.value)? && a.member_name == b.member_name
+                self.is_expression_equal(&a.value, &b.value) && a.member_name == b.member_name
             }
-            Expression::Grouping(b) => {
-                self.is_struct_access_expression_equal(a, &b.subexpression)?
-            }
+            Expression::Grouping(b) => self.is_struct_access_expression_equal(a, &b.subexpression),
             _ => false,
-        })
+        }
     }
     fn is_variable_access_expression_equal(
         &self,
         a: &VariableAccessExpression,
         b: &Expression,
-    ) -> Option<bool> {
-        Some(match b {
+    ) -> bool {
+        match b {
             Expression::VariableAccess(b) => {
-                let a_data = self.variable_data.get(&a.id)?.borrow();
-                let b_data = self.variable_data.get(&b.id)?.borrow();
+                let a_data = self.variable_data.get(a).borrow();
+                let b_data = self.variable_data.get(b).borrow();
 
                 // "is-constant" is technically redundant, but lets be extra sure
                 a_data.id == b_data.id && a_data.is_constant && b_data.is_constant
             }
             Expression::Grouping(b) => {
-                self.is_variable_access_expression_equal(a, &b.subexpression)?
+                self.is_variable_access_expression_equal(a, &b.subexpression)
             }
             _ => false,
-        })
+        }
     }
-    fn is_unary_expression_equal(&self, a: &UnaryExpression, b: &Expression) -> Option<bool> {
-        Some(match b {
+    fn is_unary_expression_equal(&self, a: &UnaryExpression, b: &Expression) -> bool {
+        match b {
             Expression::Unary(b) => {
-                a.operation == b.operation && self.is_expression_equal(&a.operand, &b.operand)?
+                a.operation == b.operation && self.is_expression_equal(&a.operand, &b.operand)
             }
-            Expression::Grouping(b) => self.is_unary_expression_equal(a, &b.subexpression)?,
+            Expression::Grouping(b) => self.is_unary_expression_equal(a, &b.subexpression),
             _ => false,
-        })
+        }
     }
-    fn is_binary_expression_equal(&self, a: &BinaryExpression, b: &Expression) -> Option<bool> {
-        Some(match b {
+    fn is_binary_expression_equal(&self, a: &BinaryExpression, b: &Expression) -> bool {
+        match b {
             Expression::Binary(b) => {
                 a.operation == b.operation
-                    && self.is_expression_equal(&a.left, &b.left)?
-                    && self.is_expression_equal(&a.right, &b.right)?
+                    && self.is_expression_equal(&a.left, &b.left)
+                    && self.is_expression_equal(&a.right, &b.right)
             }
-            Expression::Grouping(b) => self.is_binary_expression_equal(a, &b.subexpression)?,
+            Expression::Grouping(b) => self.is_binary_expression_equal(a, &b.subexpression),
             _ => false,
-        })
+        }
     }
-    fn is_cast_expression_equal(&self, a: &CastExpression, b: &Expression) -> Option<bool> {
-        Some(match b {
+    fn is_cast_expression_equal(&self, a: &CastExpression, b: &Expression) -> bool {
+        match b {
             Expression::Cast(b) => {
-                self.is_expression_equal(&a.operand, &b.operand)?
+                self.is_expression_equal(&a.operand, &b.operand)
                     && self.is_type_equal(&a.type_, &b.type_)
             }
-            Expression::Grouping(b) => self.is_cast_expression_equal(a, &b.subexpression)?,
+            Expression::Grouping(b) => self.is_cast_expression_equal(a, &b.subexpression),
             _ => false,
-        })
+        }
     }
     fn is_variable_assignment_expression_equal(
         &self,
         a: &VariableAssignmentExpression,
         b: &Expression,
-    ) -> Option<bool> {
-        Some(match b {
+    ) -> bool {
+        match b {
             Expression::VariableAssignment(b) => {
-                self.is_lvalue_equal(&a.lvalue, &b.lvalue)?
-                    && self.is_expression_equal(&a.right, &b.right)?
+                self.is_lvalue_equal(&a.lvalue, &b.lvalue)
+                    && self.is_expression_equal(&a.right, &b.right)
             }
             Expression::Grouping(b) => {
-                self.is_variable_assignment_expression_equal(a, &b.subexpression)?
+                self.is_variable_assignment_expression_equal(a, &b.subexpression)
             }
             _ => false,
-        })
+        }
     }
 
     fn is_type_equal(&self, a: &Type, b: &Type) -> bool {
@@ -309,14 +302,13 @@ impl PartialAstVisitor for LValueReducer<'_> {
             return ControlFlow::Continue(());
         };
 
-        let is_defined_here = self.scope_data.get(&a.id).is_some_and(|scope| {
-            ConcreteVariableScopeReader::from_scope(scope.clone())
+        let is_defined_here =
+            ConcreteVariableScopeReader::from_scope(self.scope_data.get(a).clone())
                 .get_write_noref(&a.name)
-                .is_some()
-        });
+                .is_some();
         if !valid_lvalues
             .iter()
-            .any(|b| self.is_variable_lvalue_equal(a, b).unwrap_or(false))
+            .any(|b| self.is_variable_lvalue_equal(a, b))
             && !is_defined_here
         {
             if self.is_top_level_lvalue {
@@ -352,7 +344,7 @@ impl PartialAstVisitor for LValueReducer<'_> {
         if self.previous_lvalue_valid
             || valid_lvalues
                 .iter()
-                .any(|b| self.is_array_index_lvalue_equal(a, b).unwrap_or(false))
+                .any(|b| self.is_array_index_lvalue_equal(a, b))
         {
             // we either have full access or this index is allowed
             self.previous_lvalue_valid = true;
