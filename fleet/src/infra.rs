@@ -1,31 +1,30 @@
 use crate::{
     NewtypeDeref,
-    ast_to_dm::AstToDocumentModelConverter,
     document_model::{DocumentElement, stringify_document},
     error_reporting::{ErrorSeverity, Errors},
-    generate_c::CCodeGenerator,
-    generate_glsl::GLSLCodeGenerator,
-    parser::Parser,
     passes::{
-        err_missing_type_in_parameter::ErrMissingTypeInParam,
-        err_too_few_iterators::ErrTooFewIterators,
-        fix_non_block_statements::FixNonBlockStatements,
-        fix_trailing_comma::FixTrailingComma,
-        lint_variable_names::LintVariableNaming,
-        lvalue_reducer::LValueReducer,
-        pass_manager::{InputSource, PassError, PassManager},
-        remove_parens::RemoveParensPass,
-        scope_analysis::ScopeAnalyzer,
-        stat_tracker::StatTracker,
-        store_pass::StorePass,
-        type_concretisation_pass::TypeConcretisationPass,
-        type_propagation::TypePropagator,
+        err::{
+            limit_lvalues::ErrLimitLValues, missing_type_in_parameter::ErrMissingTypeInParam,
+            too_few_iterators::ErrTooFewIterators,
+        },
+        fix::{non_block_statements::FixNonBlockStatements, trailing_comma::FixTrailingComma},
+        lint::{removable_parens::LintRemovableParens, variable_naming::LintVariableNaming},
+        misc::store_pass::StorePass,
+        out::{ast_to_dm::OutAstToDM, generate_c::OutGenerateC, generate_glsl::OutGenerateGlsl},
+        pass_manager::{PassError, PassManager},
+        proc::{
+            parser::Parser,
+            scope_analyzer::ScopeAnalyzer,
+            stat_tracker::StatTracker,
+            tokenizer::{InputSource, Tokenizer},
+            type_checker::TypeChecker,
+            type_concretizer::TypeConcretizer,
+        },
     },
-    tokenizer::Tokenizer,
 };
 
 pub fn insert_fix_passes(pm: &mut PassManager) {
-    pm.insert::<RemoveParensPass>();
+    pm.insert::<LintRemovableParens>();
     pm.insert::<FixNonBlockStatements>();
     pm.insert::<FixTrailingComma>();
     pm.insert::<ErrMissingTypeInParam>();
@@ -39,15 +38,15 @@ pub fn insert_minimal_pipeline(pm: &mut PassManager) {
 }
 pub fn insert_compile_passes(pm: &mut PassManager) {
     pm.insert::<ScopeAnalyzer>();
-    pm.insert::<TypePropagator>();
-    pm.insert::<TypeConcretisationPass>();
-    pm.insert::<LValueReducer>();
+    pm.insert::<TypeChecker>();
+    pm.insert::<TypeConcretizer>();
+    pm.insert::<ErrLimitLValues>();
     pm.insert::<StatTracker>();
-    pm.insert::<GLSLCodeGenerator>();
+    pm.insert::<OutGenerateGlsl>();
 }
 
 pub fn insert_c_passes(pm: &mut PassManager) {
-    pm.insert::<CCodeGenerator>();
+    pm.insert::<OutGenerateC>();
 }
 
 NewtypeDeref!(ParseErrorsOnly, Errors);
@@ -57,7 +56,7 @@ pub fn format(source: InputSource) -> Result<String, PassError> {
     insert_minimal_pipeline(&mut pm);
     pm.insert::<StorePass<Errors, ParseErrorsOnly>>();
     insert_fix_passes(&mut pm);
-    pm.insert::<AstToDocumentModelConverter>();
+    pm.insert::<OutAstToDM>();
 
     pm.state.insert(source).unwrap();
     pm.state.insert_default::<Errors>().unwrap();

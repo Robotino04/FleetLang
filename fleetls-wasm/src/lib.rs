@@ -13,10 +13,13 @@ use fleetls_lib::{
             insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
         },
         passes::{
-            ast_json_dump::{AstJsonDumpPass, AstJsonOutput},
-            pass_manager::{CCodeOutput, InputSource, PassError, PassManager},
+            out::{
+                ast_to_json::{AstJsonOutput, OutAstToJson},
+                generate_c::CCodeOutput,
+            },
+            pass_manager::{PassError, PassManager},
+            proc::tokenizer::{FileName, InputSource},
         },
-        tokenizer::FileName,
     },
     tower_lsp_server::{LspService, Server},
 };
@@ -52,7 +55,7 @@ impl ServerConfig {
 pub fn extract_ast(src: String) -> Option<String> {
     let mut pm = PassManager::default();
     insert_minimal_pipeline(&mut pm);
-    pm.insert::<AstJsonDumpPass>();
+    pm.insert::<OutAstToJson>();
 
     pm.state
         .insert(InputSource {

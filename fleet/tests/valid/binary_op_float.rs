@@ -1,6 +1,4 @@
-use indoc::indoc;
-
-use crate::common::{assert_compile_and_return_value, assert_compile_and_return_value_unformatted};
+use crate::common::prelude::*;
 
 #[test]
 fn add_1_2() {

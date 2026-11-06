@@ -1,0 +1,3087 @@
+use std::{
+    collections::HashMap,
+    error::Error,
+    ops::{Deref, DerefMut},
+};
+
+use either::Either;
+use inkwell::{
+    AddressSpace, FloatPredicate, IntPredicate,
+    basic_block::BasicBlock,
+    builder::Builder,
+    context::Context,
+    memory_buffer::MemoryBuffer,
+    module::{Linkage, Module},
+    passes::PassBuilderOptions,
+    support::enable_llvm_pretty_stack_trace,
+    targets::TargetMachine,
+    types::{
+        AnyType, AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType,
+        VoidType,
+    },
+    values::{
+        BasicMetadataValueEnum, BasicValue, BasicValueEnum, FloatValue, FunctionValue, IntValue,
+        PointerValue,
+    },
+};
+use itertools::Itertools;
+
+use crate::{
+    ast::{
+        AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType,
+        BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
+        CompilerExpression, Executor, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
+        FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
+        GroupingLValue, HasSourceRange, IdkType, IfStatement, LiteralExpression, LiteralKind,
+        OnStatement, Program, ReturnStatement, SimpleBinding, SimpleType, SkipStatement,
+        StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
+        StructMemberValue, TopLevelStatement, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
+        accessors::top_level_binding::find_top_level_binding,
+        node_data::{HasData, NodeDataEnum},
+    },
+    define_dispatch_methods,
+    error_reporting::{
+        Backend, ErrorKind, ErrorSeverity, Errors, InternalError, Intrinsic, UnresolvedSymbol,
+    },
+    escape::{QuoteType, unescape},
+    passes::{
+        out::generate_glsl::{OutGenerateGlsl, PrecompiledGlslFunctions},
+        prelude::*,
+        proc::{
+            scope_analyzer::{FunctionID, VariableID},
+            stat_tracker::{StatData, YesNoMaybe},
+            tokenizer::SourceRange,
+            type_concretizer::{
+                ConcreteFunctionData, ConcreteScopeData, ConcreteTypeData, ConcreteVariableData,
+            },
+        },
+    },
+    runtime_type::ConcreteRuntimeType,
+};
+
+macro_rules! pass_precondition {
+    () => {
+        unreachable!("Pass precondition violated")
+    };
+    ($($arg:tt)*) => {
+        unreachable!("Pass precondition violated:\n{}", format!($($arg)*))
+    };
+}
+
+type Result<T> = ::core::result::Result<T, Box<dyn Error>>;
+
+#[derive(Clone, Debug)]
+pub struct VariableStorage<'a>(PointerValue<'a>);
+
+#[derive(Clone, Debug)]
+pub struct FunctionLocation<'a>(FunctionValue<'a>);
+
+impl<'a> Deref for VariableStorage<'a> {
+    type Target = PointerValue<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl DerefMut for VariableStorage<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+trait IntoBasicType<'b> {
+    fn into_basic_type<'a>(
+        self,
+    ) -> ::core::result::Result<BasicTypeEnum<'a>, Either<FunctionType<'a>, VoidType<'a>>>
+    where
+        Self: Sized,
+        'b: 'a;
+}
+
+impl<'b> IntoBasicType<'b> for AnyTypeEnum<'b> {
+    fn into_basic_type<'a>(
+        self,
+    ) -> ::core::result::Result<BasicTypeEnum<'a>, Either<FunctionType<'a>, VoidType<'a>>>
+    where
+        Self: Sized,
+        'b: 'a,
+    {
+        Ok(match self {
+            AnyTypeEnum::ArrayType(array_type) => array_type.into(),
+            AnyTypeEnum::FloatType(float_type) => float_type.into(),
+            AnyTypeEnum::FunctionType(function_type) => return Err(Either::Left(function_type)),
+            AnyTypeEnum::IntType(int_type) => int_type.into(),
+            AnyTypeEnum::PointerType(pointer_type) => pointer_type.into(),
+            AnyTypeEnum::StructType(struct_type) => struct_type.into(),
+            AnyTypeEnum::VectorType(vector_type) => vector_type.into(),
+            AnyTypeEnum::VoidType(void_type) => return Err(Either::Right(void_type)),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RuntimeValueIR<'a> {
+    Bool(IntValue<'a>),
+    SignedInt(IntValue<'a>),
+    UnsignedInt(IntValue<'a>),
+    Float(FloatValue<'a>),
+    Array(PointerValue<'a>),
+    Struct(PointerValue<'a>),
+    Unit,
+}
+
+impl<'a> RuntimeValueIR<'a> {
+    pub fn as_basic_value(&'a self) -> Option<&'a dyn BasicValue<'a>> {
+        match self {
+            RuntimeValueIR::Bool(int_value) => Some(int_value),
+            RuntimeValueIR::SignedInt(int_value) => Some(int_value),
+            RuntimeValueIR::UnsignedInt(int_value) => Some(int_value),
+            RuntimeValueIR::Float(float_value) => Some(float_value),
+            RuntimeValueIR::Array(pointer_value) => Some(pointer_value),
+            RuntimeValueIR::Struct(pointer_value) => Some(pointer_value),
+            RuntimeValueIR::Unit => None,
+        }
+    }
+    pub fn as_basic_value_enum(self) -> Option<BasicValueEnum<'a>> {
+        match self {
+            RuntimeValueIR::Bool(int_value) => Some(int_value.as_basic_value_enum()),
+            RuntimeValueIR::SignedInt(int_value) => Some(int_value.as_basic_value_enum()),
+            RuntimeValueIR::UnsignedInt(int_value) => Some(int_value.as_basic_value_enum()),
+            RuntimeValueIR::Float(float_value) => Some(float_value.as_basic_value_enum()),
+            RuntimeValueIR::Array(pointer_value) => Some(pointer_value.as_basic_value_enum()),
+            RuntimeValueIR::Struct(pointer_value) => Some(pointer_value.as_basic_value_enum()),
+            RuntimeValueIR::Unit => None,
+        }
+    }
+    pub fn as_basic_value_no_unit(self) -> BasicValueEnum<'a> {
+        match self {
+            RuntimeValueIR::Bool(int_value) => int_value.as_basic_value_enum(),
+            RuntimeValueIR::SignedInt(int_value) => int_value.as_basic_value_enum(),
+            RuntimeValueIR::UnsignedInt(int_value) => int_value.as_basic_value_enum(),
+            RuntimeValueIR::Float(float_value) => float_value.as_basic_value_enum(),
+            RuntimeValueIR::Array(pointer_value) => pointer_value.as_basic_value_enum(),
+            RuntimeValueIR::Struct(pointer_value) => pointer_value.as_basic_value_enum(),
+            RuntimeValueIR::Unit => panic!("Expected this to not be a RuntimeValueIR::Unit"),
+        }
+    }
+
+    pub fn unwrap_bool(self) -> IntValue<'a> {
+        if let RuntimeValueIR::Bool(x) = self {
+            x
+        } else {
+            panic!("Expected RuntimeValueIR::Bool, got {self:#?}")
+        }
+    }
+    pub fn unwrap_signed_int(self) -> IntValue<'a> {
+        if let RuntimeValueIR::SignedInt(x) = self {
+            x
+        } else {
+            panic!("Expected RuntimeValueIR::SignedInt, got {self:#?}")
+        }
+    }
+    pub fn unwrap_unsigned_int(self) -> IntValue<'a> {
+        if let RuntimeValueIR::UnsignedInt(x) = self {
+            x
+        } else {
+            panic!("Expected RuntimeValueIR::UnsignedInt, got {self:#?}")
+        }
+    }
+    pub fn unwrap_float(self) -> FloatValue<'a> {
+        if let RuntimeValueIR::Float(x) = self {
+            x
+        } else {
+            panic!("Expected RuntimeValueIR::Float, got {self:#?}")
+        }
+    }
+    pub fn unwrap_array(self) -> PointerValue<'a> {
+        if let RuntimeValueIR::Array(x) = self {
+            x
+        } else {
+            panic!("Expected RuntimeValueIR::Array, got {self:#?}")
+        }
+    }
+    pub fn unwrap_struct(self) -> PointerValue<'a> {
+        if let RuntimeValueIR::Struct(x) = self {
+            x
+        } else {
+            panic!("Expected RuntimeValueIR::Struct, got {self:#?}")
+        }
+    }
+    pub fn unwrap_unit(self) {
+        if let RuntimeValueIR::Unit = self {
+        } else {
+            panic!("Expected RuntimeValueIR::Unit, got {self:#?}")
+        }
+    }
+
+    pub fn unwrap_int_or_bool(self) -> IntValue<'a> {
+        if let RuntimeValueIR::Bool(x)
+        | RuntimeValueIR::UnsignedInt(x)
+        | RuntimeValueIR::SignedInt(x) = self
+        {
+            x
+        } else {
+            panic!("Expected UnsignedInt, SignedInt or Bool, got {self:#?}")
+        }
+    }
+}
+
+thread_local! {
+    static THREAD_LLVM_CONTEXT: &'static Context = Box::leak(Box::new(Context::create()));
+}
+
+pub struct OutGenerateLlvm<'state> {
+    errors: &'state mut Errors,
+    program: Option<&'state mut Program>,
+
+    context: &'static Context,
+    module: &'state mut Module<'static>,
+    builder: &'state mut Builder<'static>,
+
+    node_stats: &'state StatData,
+    variable_storage: HashMap<VariableID, VariableStorage<'state>>,
+    function_locations: HashMap<FunctionID, FunctionLocation<'state>>,
+
+    variable_data: &'state ConcreteVariableData,
+    function_data: &'state ConcreteFunctionData,
+    type_data: &'state ConcreteTypeData,
+    scope_data: &'state ConcreteScopeData,
+    glsl_functions: &'state PrecompiledGlslFunctions,
+
+    break_block: Option<BasicBlock<'state>>,
+    skip_block: Option<BasicBlock<'state>>,
+}
+
+impl PassFactory for OutGenerateLlvm<'_> {
+    type Output<'state> = OutGenerateLlvm<'state>;
+    type Params = ();
+
+    fn try_new<'state>(
+        state: &'state mut GlobalState,
+        _params: Self::Params,
+    ) -> ::core::result::Result<Self::Output<'state>, FetchError>
+    where
+        Self: Sized,
+    {
+        enable_llvm_pretty_stack_trace();
+
+        let Fetched {
+            read: (node_stats, variable_data, function_data, type_data, scope_data, glsl_functions),
+            write: (errors, program),
+            empty: (module, builder),
+        } = state.fetch()?;
+
+        let module = module.insert(THREAD_LLVM_CONTEXT.with(|ctx| ctx.create_module("module")));
+        let builder = builder.insert(THREAD_LLVM_CONTEXT.with(|ctx| ctx.create_builder()));
+
+        Ok(Self::Output {
+            errors,
+            program: Some(program),
+
+            context: THREAD_LLVM_CONTEXT.with(|&ctx| ctx),
+            module,
+            builder,
+
+            node_stats,
+
+            variable_data,
+            variable_storage: HashMap::new(),
+            function_data,
+            function_locations: HashMap::new(),
+
+            type_data,
+            scope_data,
+            glsl_functions,
+
+            break_block: None,
+            skip_block: None,
+        })
+    }
+}
+impl Pass for OutGenerateLlvm<'_> {
+    fn run<'state>(mut self: Box<Self>) -> PassResult {
+        if self
+            .errors
+            .iter()
+            .any(|err| err.severity() == ErrorSeverity::Error)
+        {
+            return Err(PassError::InvalidInput {
+                producing_pass: Self::name(),
+                source: "Compilation has errors. Not continuing further.".into(),
+            });
+        }
+
+        let program = self.program.take().unwrap();
+        self.generate_program(program)
+            .map_err(|err| PassError::CompilerError {
+                producing_pass: Self::name(),
+                source: err,
+            })?;
+
+        Ok(())
+    }
+}
+
+impl<'a> OutGenerateLlvm<'_> {
+    fn make_into_function_type<'c>(
+        &self,
+        type_: AnyTypeEnum<'c>,
+        param_types: &[BasicMetadataTypeEnum<'c>],
+        is_var_args: bool,
+    ) -> FunctionType<'c> {
+        match type_.into_basic_type() {
+            Ok(type_) => type_.fn_type(param_types, is_var_args),
+            Err(Either::Left(_func)) => panic!("Tried to make a function returning function"),
+            Err(Either::Right(void)) => void.fn_type(param_types, is_var_args),
+        }
+    }
+
+    fn package_llvm_in_runtime_value(
+        &mut self,
+        value: Option<BasicValueEnum<'a>>,
+        expected_type: &ConcreteRuntimeType,
+    ) -> RuntimeValueIR<'a> {
+        match expected_type {
+            ConcreteRuntimeType::I8
+            | ConcreteRuntimeType::I16
+            | ConcreteRuntimeType::I32
+            | ConcreteRuntimeType::I64 => {
+                RuntimeValueIR::SignedInt(value.unwrap().into_int_value())
+            }
+            ConcreteRuntimeType::U8
+            | ConcreteRuntimeType::U16
+            | ConcreteRuntimeType::U32
+            | ConcreteRuntimeType::U64 => {
+                RuntimeValueIR::UnsignedInt(value.unwrap().into_int_value())
+            }
+            ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64 => {
+                RuntimeValueIR::Float(value.unwrap().into_float_value())
+            }
+            ConcreteRuntimeType::Boolean => RuntimeValueIR::Bool(value.unwrap().into_int_value()),
+            ConcreteRuntimeType::Unit => {
+                assert!(value.is_none());
+                RuntimeValueIR::Unit
+            }
+
+            ConcreteRuntimeType::ArrayOf { .. } => {
+                RuntimeValueIR::Array(value.unwrap().into_pointer_value())
+            }
+            ConcreteRuntimeType::Struct { .. } => {
+                RuntimeValueIR::Struct(value.unwrap().into_pointer_value())
+            }
+        }
+    }
+
+    fn llvm_type_of_node<Node>(&mut self, node: &Node) -> AnyTypeEnum<'a>
+    where
+        Node: HasSourceRange + HasData<ConcreteTypeData, Data = ConcreteRuntimeType>,
+    {
+        let infered_type = self.type_data.get(node);
+
+        self.runtime_type_to_llvm(infered_type)
+    }
+
+    fn runtime_type_to_llvm(&self, type_ptr: &ConcreteRuntimeType) -> AnyTypeEnum<'a> {
+        match type_ptr {
+            ConcreteRuntimeType::I8 | ConcreteRuntimeType::U8 => self.context.i8_type().into(),
+            ConcreteRuntimeType::I16 | ConcreteRuntimeType::U16 => self.context.i16_type().into(),
+            ConcreteRuntimeType::I32 | ConcreteRuntimeType::U32 => self.context.i32_type().into(),
+            ConcreteRuntimeType::I64 | ConcreteRuntimeType::U64 => self.context.i64_type().into(),
+            ConcreteRuntimeType::F32 => self.context.f32_type().into(),
+            ConcreteRuntimeType::F64 => self.context.f64_type().into(),
+            ConcreteRuntimeType::Unit => self.context.void_type().into(),
+            ConcreteRuntimeType::Boolean => self.context.bool_type().into(),
+            ConcreteRuntimeType::ArrayOf {
+                subtype: inner_type,
+                size,
+            } => {
+                let inner_type_ir = self.runtime_type_to_llvm(inner_type);
+
+                match inner_type_ir.into_basic_type() {
+                    Ok(type_) => type_.array_type(*size as u32).as_any_type_enum(),
+                    Err(Either::Left(_func)) => {
+                        panic!("Cannot have array of functions")
+                    }
+                    Err(Either::Right(_void)) => {
+                        pass_precondition!("Cannot have array of Unit")
+                    }
+                }
+            }
+            ConcreteRuntimeType::Struct {
+                members,
+                source_hash: _,
+            } => self
+                .context
+                .struct_type(
+                    &members
+                        .clone()
+                        .into_iter()
+                        .map(|(_name, type_)| {
+                            match (self.runtime_type_to_llvm(&type_)).into_basic_type() {
+                                Ok(type_) => type_.as_basic_type_enum(),
+                                Err(Either::Left(_)) => {
+                                    panic!("Cannot have struct containing function")
+                                }
+                                Err(Either::Right(_)) => {
+                                    pass_precondition!("Cannot have struct containing Unit")
+                                }
+                            }
+                        })
+                        .collect_vec(),
+                    false,
+                )
+                .into(),
+        }
+    }
+
+    fn mangle_function(&self, name: &str) -> String {
+        format!("fleet_{name}")
+    }
+
+    fn register_top_level_statement(&mut self, tls: &mut TopLevelStatement) -> Result<()> {
+        match tls {
+            TopLevelStatement::FunctionDefinition(function_definition) => {
+                self.register_function(function_definition)
+            }
+            TopLevelStatement::TypeAlias(_type_alias) => {
+                // type aliases get completely compiled out and aren't relevant after type propagation
+                Ok(())
+            }
+        }
+    }
+    fn register_function(&mut self, function: &mut FunctionDefinition) -> Result<()> {
+        let return_type = function
+            .return_type
+            .as_mut()
+            // TODO: shouldn't need to generate types at all
+            .map(|type_| self.generate_type(type_))
+            .unwrap_or_else(|| {
+                Ok(self
+                    .function_data
+                    .get(function)
+                    .borrow()
+                    .return_type
+                    .clone())
+            })?;
+        let return_type_ir = self.runtime_type_to_llvm(&return_type);
+
+        let name = match &*function.body {
+            FunctionBody::Extern(ExternFunctionBody {
+                at_token: _,
+                extern_token: _,
+                symbol,
+                symbol_token: _,
+                semicolon_token: _,
+                id: _,
+            }) => symbol.clone(),
+            FunctionBody::Statement(_) => self.mangle_function(&function.name),
+        };
+
+        let params = function
+            .parameters
+            .iter()
+            .map(|(param, _comma)| (param.clone(), self.variable_data.get(param)))
+            .collect_vec()
+            .iter()
+            .flat_map(|(_param, var)| -> Result<_> {
+                Ok(
+                    match self
+                        .runtime_type_to_llvm(&var.borrow().type_)
+                        .into_basic_type()
+                    {
+                        Ok(type_) => type_.into(),
+                        Err(Either::Left(_)) => {
+                            panic!("cannot have function types as parameter")
+                        }
+                        Err(Either::Right(_)) => {
+                            pass_precondition!("cannot have unit type as parameter");
+                        }
+                    },
+                )
+            })
+            .collect_vec();
+
+        let ir_function = self.module.add_function(
+            &name,
+            self.make_into_function_type(return_type_ir, params.as_slice(), false),
+            Some(Linkage::External),
+        );
+        let ref_function = self.function_data.get(function);
+
+        assert!(
+            self.function_locations
+                .insert(ref_function.borrow().id, FunctionLocation(ir_function))
+                .is_none()
+        );
+        Ok(())
+    }
+}
+
+#[allow(clippy::unnecessary_wraps)]
+impl<'state> OutGenerateLlvm<'state> {
+    define_dispatch_methods! {
+        generate {
+            TopLevelStatement => Result<Option<FunctionValue<'state>>>,
+            FunctionBody => Result<()>,
+            Statement => Result<()>,
+            Expression => Result<RuntimeValueIR<'state>>,
+            LValue => Result<PointerValue<'state>>,
+            Type => Result<ConcreteRuntimeType>,
+        }
+    }
+
+    fn generate_program(mut self, program: &mut Program) -> Result<()> {
+        let needs_runtime = self.node_stats.get(program).uses_gpu.at_least_maybe();
+
+        if needs_runtime {
+            let runtime_module_declarations =
+                self.context
+                    .create_module_from_ir(MemoryBuffer::create_from_memory_range(
+                        include_bytes!("../../../../fl_runtime/fl_runtime_declarations.bc"),
+                        "fl_runtime_declarations",
+                    ))?;
+
+            if let Err(err) = self.module.link_in_module(runtime_module_declarations) {
+                self.errors.push(ErrorKind::InternalError(
+                    InternalError::LlvmRuntimeLinkFailure {
+                        file_start: SourceRange::empty_start().named(program.file_name.clone()),
+                        error: unescape(err.to_str().unwrap(), QuoteType::Double)
+                            .unwrap_or_else(|_| err.to_str().unwrap().to_string()),
+                        module_dump: self.module.print_to_string().to_string(),
+                    },
+                ));
+            }
+        }
+
+        for tls in &mut program.top_level_statements {
+            self.register_top_level_statement(tls)?;
+        }
+
+        for tls in &mut program.top_level_statements {
+            self.generate_top_level_statement(tls)?;
+        }
+
+        {
+            let fleet_main_fn_ir = self
+                .module
+                .get_function(&self.mangle_function("main"))
+                .expect("Program must have a main function");
+            let fleet_main_fn = self
+                .function_data
+                .inner()
+                .iter()
+                .find_map(|(_, func)| {
+                    if let NodeDataEnum::FunctionDefinition(func) = func
+                        && func.borrow().symbol.name == "main"
+                    {
+                        Some(func)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+
+            let initialize_fleet_fn = self.module.add_function(
+                "initialize_fleet",
+                self.context.void_type().fn_type(&[], false),
+                None,
+            );
+            let entry = self
+                .context
+                .append_basic_block(initialize_fleet_fn, "entry");
+            self.builder.position_at_end(entry);
+
+            if needs_runtime {
+                let fl_runtime_init = self
+                    .module
+                    .get_function("fl_runtime_init")
+                    .expect("fl runtime functions should exist before walking the ast");
+
+                self.builder
+                    .build_call(fl_runtime_init, &[], "fl_runtime_init")?;
+            }
+            self.builder.build_return(None)?;
+
+            let deinitialize_fleet_fn = self.module.add_function(
+                "deinitialize_fleet",
+                self.context.void_type().fn_type(&[], false),
+                None,
+            );
+            let entry = self
+                .context
+                .append_basic_block(deinitialize_fleet_fn, "entry");
+            self.builder.position_at_end(entry);
+
+            if needs_runtime {
+                let fl_runtime_deinit = self
+                    .module
+                    .get_function("fl_runtime_deinit")
+                    .expect("fl runtime functions should exist before walking the ast");
+
+                self.builder
+                    .build_call(fl_runtime_deinit, &[], "fl_runtime_deinit")?;
+            }
+            self.builder.build_return(None)?;
+
+            let actual_main_return_type = self.context.i32_type();
+            let actual_main_fn =
+                self.module
+                    .add_function("main", actual_main_return_type.fn_type(&[], false), None);
+
+            let entry = self.context.append_basic_block(actual_main_fn, "entry");
+            self.builder.position_at_end(entry);
+
+            self.builder
+                .build_call(initialize_fleet_fn, &[], "initialize_fleet")?;
+
+            let retvalue = self
+                .builder
+                .build_call(fleet_main_fn_ir, &[], "main call")?;
+
+            let cast_retvalue = match fleet_main_fn_ir.get_type().get_return_type() {
+                None => actual_main_return_type.const_zero(),
+                Some(BasicTypeEnum::IntType(int_type)) if int_type.get_bit_width() == 1 => {
+                    self.builder.build_int_z_extend_or_bit_cast(
+                        retvalue.try_as_basic_value().unwrap_left().into_int_value(),
+                        actual_main_return_type,
+                        "upcast",
+                    )?
+                }
+                Some(BasicTypeEnum::IntType(int_type))
+                    if int_type.get_bit_width() <= actual_main_return_type.get_bit_width() =>
+                {
+                    self.builder.build_int_s_extend_or_bit_cast(
+                        retvalue.try_as_basic_value().unwrap_left().into_int_value(),
+                        actual_main_return_type,
+                        "upcast",
+                    )?
+                }
+                Some(BasicTypeEnum::IntType(int_type))
+                    if int_type.get_bit_width() > actual_main_return_type.get_bit_width() =>
+                {
+                    self.builder.build_int_truncate_or_bit_cast(
+                        retvalue.try_as_basic_value().unwrap_left().into_int_value(),
+                        actual_main_return_type,
+                        "downcast",
+                    )?
+                }
+                Some(BasicTypeEnum::FloatType(_float_type)) => {
+                    self.builder.build_float_to_signed_int(
+                        retvalue
+                            .try_as_basic_value()
+                            .unwrap_left()
+                            .into_float_value(),
+                        actual_main_return_type,
+                        "downcast",
+                    )?
+                }
+
+                Some(_other_type) => {
+                    self.errors.push(ErrorKind::InternalError(
+                        InternalError::LlvmUnsupportedMainReturnType {
+                            type_: fleet_main_fn.borrow().return_type.clone().into(),
+                            main_function: fleet_main_fn.borrow().symbol.clone(),
+                        },
+                    ));
+                    return Err("Unsupported main function type".into());
+                }
+            };
+
+            self.builder
+                .build_call(deinitialize_fleet_fn, &[], "deinitialize_fleet")?;
+
+            self.builder.build_return(Some(&cast_retvalue))?;
+        }
+
+        self.module.verify().inspect_err(|err| {
+            self.errors
+                .push(ErrorKind::InternalError(InternalError::LlvmModuleInvalid {
+                    file_start: SourceRange::empty_start().named(program.file_name.clone()),
+                    error: unescape(err.to_str().unwrap(), QuoteType::Double)
+                        .unwrap_or_else(|_| err.to_str().unwrap().to_string()),
+                    module_dump: self.module.print_to_string().to_string(),
+                }));
+        })?;
+
+        Ok(())
+    }
+
+    fn generate_function_definition(
+        &mut self,
+        function: &mut FunctionDefinition,
+    ) -> Result<Option<FunctionValue<'state>>> {
+        let function_ref = self.function_data.get(function);
+
+        let return_type = function
+            .return_type
+            .as_mut()
+            .map(|type_| self.generate_type(type_))
+            .unwrap_or_else(|| Ok(function_ref.borrow().return_type.clone()))?;
+
+        let return_type_ir = self.runtime_type_to_llvm(&return_type);
+        let ir_function = self
+            .function_locations
+            .get(&function_ref.borrow().id)
+            .expect("Functions should be registered before traversing the tree")
+            .clone()
+            .0;
+
+        let entry = self.context.append_basic_block(ir_function, "entry");
+        self.builder.position_at_end(entry);
+
+        assert_eq!(
+            ir_function.count_params() as usize,
+            function.parameters.len(),
+            "ir function has an incorrect number of parameters"
+        );
+        for ((param, _comma), ir_param) in function
+            .parameters
+            .iter_mut()
+            .zip(ir_function.get_param_iter())
+        {
+            let ptr = self.generate_simple_binding(param)?;
+            self.builder.build_store(ptr, ir_param)?;
+        }
+
+        self.generate_function_body(&mut function.body)?;
+
+        if self.node_stats.get(&*function.body).terminates_function == YesNoMaybe::Yes {
+            for block in ir_function.get_basic_blocks() {
+                if block.get_first_use().is_none() && block != entry {
+                    block
+                        .remove_from_function()
+                        .map_err(|_| "Removing unreachable block from a function failed")?;
+                    continue;
+                }
+
+                if block.get_terminator().is_none() {
+                    self.builder.position_at_end(block);
+                    match return_type_ir.into_basic_type() {
+                        Ok(type_) => {
+                            self.builder.build_return(Some(&type_.const_zero()))?;
+                        }
+                        Err(Either::Left(_fn_type)) => {
+                            todo!();
+                        }
+                        Err(Either::Right(_unit_type)) => {
+                            self.builder.build_return(None)?;
+                        }
+                    }
+                }
+            }
+        } else if matches!(return_type_ir, AnyTypeEnum::VoidType(_)) {
+            for block in ir_function.get_basic_blocks() {
+                if block.get_terminator().is_none() {
+                    self.builder.position_at_end(block);
+                    self.builder.build_return(None)?;
+                }
+            }
+        } else {
+            match *function.body {
+                FunctionBody::Extern(_) => {}
+                FunctionBody::Statement(_) => {
+                    pass_precondition!(
+                        "non-terminating functions should have caused errors earlier"
+                    )
+                }
+            }
+        }
+
+        match &*function.body {
+            FunctionBody::Extern(ExternFunctionBody { .. }) => {
+                for block in ir_function.get_basic_block_iter() {
+                    block.remove_from_function().unwrap();
+                }
+            }
+            FunctionBody::Statement(_) => {}
+        }
+
+        if !ir_function.verify(false) {
+            self.errors.push(ErrorKind::InternalError(
+                InternalError::LlvmFunctionInvalid {
+                    function: function_ref.borrow().symbol.clone(),
+                },
+            ));
+        }
+
+        Ok(Some(ir_function))
+    }
+
+    fn generate_type_alias(
+        &mut self,
+        _type_alias: &mut TypeAlias,
+    ) -> Result<Option<FunctionValue<'state>>> {
+        // type aliases get completely compiled out and aren't relevant after type propagation
+        Ok(None)
+    }
+
+    fn generate_statement_function_body(
+        &mut self,
+        StatementFunctionBody { statement, id: _ }: &mut StatementFunctionBody,
+    ) -> Result<()> {
+        self.generate_statement(statement)?;
+        Ok(())
+    }
+
+    fn generate_extern_function_body(
+        &mut self,
+        ExternFunctionBody {
+            at_token: _,
+            extern_token: _,
+            symbol: _,
+            symbol_token: _,
+            semicolon_token: _,
+            id: _,
+        }: &mut ExternFunctionBody,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn generate_simple_binding(
+        &mut self,
+        simple_binding: &mut SimpleBinding,
+    ) -> Result<PointerValue<'state>> {
+        let type_ = simple_binding
+            .type_
+            .as_mut()
+            .map(|(_colon, type_)| self.generate_type(type_))
+            .unwrap_or_else(|| {
+                Ok(self
+                    .variable_data
+                    .get(simple_binding)
+                    .borrow()
+                    .type_
+                    .clone())
+            })?;
+
+        let type_ = self.runtime_type_to_llvm(&type_);
+
+        let ptr = match type_.into_basic_type() {
+            Ok(type_) => self.builder.build_alloca(type_, &simple_binding.name)?,
+            Err(Either::Left(_)) => {
+                panic!("Tried to bind a function type")
+            }
+            Err(Either::Right(_)) => {
+                pass_precondition!("Tried to bind a unit type")
+            }
+        };
+
+        let ref_variable = self.variable_data.get(simple_binding).borrow();
+
+        assert!(
+            self.variable_storage
+                .insert(ref_variable.id, VariableStorage(ptr))
+                .is_none(),
+            "Variable {:?} was already assigned some storage",
+            simple_binding.name
+        );
+
+        Ok(ptr)
+    }
+
+    fn generate_expression_statement(
+        &mut self,
+        ExpressionStatement {
+            expression,
+            semicolon_token: _,
+            id: _,
+        }: &mut ExpressionStatement,
+    ) -> Result<()> {
+        self.generate_expression(expression)?;
+        Ok(())
+    }
+
+    fn generate_on_statement(&mut self, on_stmt: &mut OnStatement) -> Result<()> {
+        let OnStatement {
+            on_token: _,
+            executor,
+            iterators,
+            open_paren_token: _,
+            bindings,
+            close_paren_token: _,
+            body,
+            id: _,
+        } = on_stmt;
+
+        let Executor::GPU(gpu_executor) = &**executor else {
+            todo!()
+        };
+
+        let mut gpu_executor_clone = gpu_executor.clone();
+        let GPUExecutor {
+            host: _,
+            dot_token: _,
+            gpus_token: _,
+            open_bracket_token: _,
+            gpu_index: _,
+            close_bracket_token: _,
+            id: _,
+        } = gpu_executor;
+
+        let bindings = bindings
+            .iter_mut()
+            .map(|binding| find_top_level_binding(&mut binding.0).unwrap().clone())
+            .collect_vec();
+
+        let current_block = self
+            .builder
+            .get_insert_block()
+            .expect("Builder should always be in a block");
+
+        let bindings_block = self
+            .context
+            .insert_basic_block_after(current_block, "on-statement bindings");
+        let ro_allocations_block = self
+            .context
+            .insert_basic_block_after(bindings_block, "on-statement ro allocations");
+        let rw_allocations_block = self
+            .context
+            .insert_basic_block_after(ro_allocations_block, "on-statement rw allocations");
+        let exec_block = self
+            .context
+            .insert_basic_block_after(rw_allocations_block, "on-statement dispatch");
+        let rw_deallocations_block = self
+            .context
+            .insert_basic_block_after(exec_block, "on-statement deallocations");
+        let ro_deallocations_block = self
+            .context
+            .insert_basic_block_after(rw_deallocations_block, "on-statement deallocations");
+
+        self.builder.position_at_end(bindings_block);
+
+        let iterator_end_values_ir = iterators
+            .iter_mut()
+            .map(|it| self.generate_expression(&mut it.max_value))
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut buffers = vec![];
+
+        let mut bindings = OutGenerateGlsl::get_on_statement_bindings(
+            self.variable_data,
+            self.scope_data,
+            self.type_data,
+            bindings,
+            &iterators
+                .iter()
+                .map(|it| Ok(self.variable_data.get(&it.binding).clone()))
+                .collect::<Result<Vec<_>>>()?,
+            body,
+        );
+        let fl_runtime_allocate_gpu_backing = self
+            .module
+            .get_function("fl_runtime_allocate_gpu_backing")
+            .expect("fl runtime functions should exist before walking the ast");
+        let fl_runtime_copy_to_backing = self
+            .module
+            .get_function("fl_runtime_copy_to_backing")
+            .expect("fl runtime functions should exist before walking the ast");
+        let fl_runtime_copy_from_backing = self
+            .module
+            .get_function("fl_runtime_copy_from_backing")
+            .expect("fl runtime functions should exist before walking the ast");
+        let fl_runtime_free_gpu_backing = self
+            .module
+            .get_function("fl_runtime_free_gpu_backing")
+            .expect("fl runtime functions should exist before walking the ast");
+
+        for (type_, top_level_binding) in &mut bindings.rw {
+            self.builder.position_at_end(bindings_block);
+            let binding_ir = self.generate_variable_lvalue(top_level_binding)?;
+            let size = self
+                .runtime_type_to_llvm(type_)
+                .size_of()
+                .expect("data passed to GPU must be sized");
+
+            buffers.push(binding_ir);
+
+            self.builder.position_at_end(rw_allocations_block);
+            self.builder.build_call(
+                fl_runtime_allocate_gpu_backing,
+                &[binding_ir.into(), size.into()],
+                "fl_runtime_allocate_gpu_backing",
+            )?;
+            self.builder.build_call(
+                fl_runtime_copy_to_backing,
+                &[binding_ir.into()],
+                "fl_runtime_copy_to_backing",
+            )?;
+
+            self.builder.position_at_end(rw_deallocations_block);
+            self.builder.build_call(
+                fl_runtime_copy_from_backing,
+                &[binding_ir.into()],
+                "fl_runtime_copy_from_backing",
+            )?;
+            self.builder.build_call(
+                fl_runtime_free_gpu_backing,
+                &[binding_ir.into()],
+                "fl_runtime_free_gpu_backing",
+            )?;
+        }
+
+        let bindings_ir = bindings
+            .ro
+            .iter()
+            .map(|(type_, top_level_binding)| {
+                self.builder.position_at_end(bindings_block);
+                let binding_ir = self
+                    .variable_storage
+                    .get(&top_level_binding.borrow().id)
+                    .expect("variable used in on-statement must already have storage")
+                    .0;
+
+                let size = self
+                    .runtime_type_to_llvm(type_)
+                    .size_of()
+                    .expect("data passed to GPU must be sized");
+                Ok((size, binding_ir))
+            })
+            .collect_vec()
+            .into_iter()
+            .chain({
+                let iterator_size_subtype_ir = self.context.i32_type();
+                let num_iterators = iterator_end_values_ir.len();
+
+                self.builder.position_at_end(bindings_block);
+                let ptr = self.builder.build_array_alloca(
+                    iterator_size_subtype_ir,
+                    self.context
+                        .i32_type()
+                        .const_int(num_iterators as u64, false),
+                    "iterator_size_buffer",
+                )?;
+                let mut array = iterator_size_subtype_ir
+                    .array_type(num_iterators as u32)
+                    .const_zero();
+                for (n, it) in iterator_end_values_ir.iter().enumerate() {
+                    assert_eq!(
+                        n as u32 as usize, n,
+                        "Iterator end value would overflow u32"
+                    );
+                    array = self
+                        .builder
+                        .build_insert_value(
+                            array,
+                            it.unwrap_unsigned_int(),
+                            n as u32,
+                            "iterator_size_buffer",
+                        )?
+                        .into_array_value();
+                }
+                self.builder.build_store(ptr, array)?;
+
+                let size = array
+                    .get_type()
+                    .size_of()
+                    .expect("data passed to the GPU must be sized");
+                Some(Ok((size, ptr)))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        for (size, binding_ir) in bindings_ir {
+            buffers.push(binding_ir);
+
+            self.builder.position_at_end(ro_allocations_block);
+            self.builder.build_call(
+                fl_runtime_allocate_gpu_backing,
+                &[binding_ir.into(), size.into()],
+                "fl_runtime_allocate_gpu_backing",
+            )?;
+            self.builder.build_call(
+                fl_runtime_copy_to_backing,
+                &[binding_ir.into()],
+                "fl_runtime_copy_to_backing",
+            )?;
+
+            self.builder.position_at_end(ro_deallocations_block);
+            self.builder.build_call(
+                fl_runtime_free_gpu_backing,
+                &[binding_ir.into()],
+                "fl_runtime_free_gpu_backing",
+            )?;
+        }
+
+        if cfg!(not(feature = "gpu_backend")) {
+            self.errors.push(ErrorKind::GpuBackendDisabled {
+                use_location: executor.get_source_range(),
+            });
+        }
+
+        let mut glsl_errors = Errors::default();
+
+        let mut glsl_generator = OutGenerateGlsl::new(
+            &mut glsl_errors,
+            self.variable_data,
+            self.function_data,
+            self.type_data,
+            self.node_stats,
+        );
+        let glsl_source = glsl_generator.generate_on_statement_shader(
+            &bindings,
+            body,
+            iterators,
+            &mut gpu_executor_clone,
+            (*self.glsl_functions).clone(),
+        )?;
+
+        #[cfg(not(feature = "gpu_backend"))]
+        {
+            drop(glsl_generator);
+            self.errors.append(&mut glsl_errors.borrow_mut());
+        }
+        #[cfg(feature = "gpu_backend")]
+        {
+            let shaderc_output =
+                glsl_generator.compile_on_statement_shader(&glsl_source, &**body)?;
+
+            self.errors.append(&mut glsl_errors);
+
+            self.builder.position_at_end(exec_block);
+
+            let shader_code = self.context.i32_type().const_array(
+                &shaderc_output
+                    .as_binary()
+                    .iter()
+                    .map(|x| self.context.i32_type().const_int((*x).into(), false))
+                    .collect_vec(),
+            );
+            let global_shader_code =
+                self.module
+                    .add_global(shader_code.get_type(), None, "shader code");
+            global_shader_code.set_initializer(&shader_code);
+            global_shader_code.set_constant(true);
+
+            let void_ptr_type = self.context.ptr_type(AddressSpace::default());
+            let mut buffers_ir = void_ptr_type.array_type(buffers.len() as u32).const_zero();
+            for (i, buffer) in buffers.iter().enumerate() {
+                buffers_ir = self
+                    .builder
+                    .build_insert_value(buffers_ir, *buffer, i as u32, "buffers construction")?
+                    .into_array_value();
+            }
+
+            let buffers_ir_ptr = self
+                .builder
+                .build_alloca(buffers_ir.get_type(), "buffers alloca")?;
+            self.builder.build_store(buffers_ir_ptr, buffers_ir)?;
+
+            let fl_runtime_bind_buffers = self
+                .module
+                .get_function("fl_runtime_bind_buffers")
+                .expect("fl runtime functions should exist before walking the ast");
+            let fl_runtime_dispatch_shader = self
+                .module
+                .get_function("fl_runtime_dispatch_shader")
+                .expect("fl runtime functions should exist before walking the ast");
+
+            self.builder.build_call(
+                fl_runtime_bind_buffers,
+                &[
+                    buffers_ir_ptr.into(),
+                    self.context
+                        .i64_type()
+                        .const_int(buffers_ir.get_type().len().into(), false)
+                        .into(),
+                ],
+                "fl_runtime_bind_buffers",
+            )?;
+
+            let dispatch_size = iterator_end_values_ir
+                .iter()
+                .map(|it| {
+                    self.builder.build_int_z_extend_or_bit_cast(
+                        it.unwrap_unsigned_int(),
+                        self.context.i64_type(),
+                        "iterator upcast",
+                    )
+                })
+                .reduce(|a, b| self.builder.build_int_mul(a?, b?, "dispatch_size"))
+                .expect("An on-statement must have at least one iterator")?;
+
+            self.builder.build_call(
+                fl_runtime_dispatch_shader,
+                &[
+                    dispatch_size.into(),
+                    global_shader_code.as_pointer_value().into(),
+                    self.context
+                        .i64_type()
+                        .const_int(shaderc_output.len() as u64, false)
+                        .into(),
+                ],
+                "fl_runtime_dispatch_shader",
+            )?;
+
+            self.builder.position_at_end(current_block);
+            self.builder.build_unconditional_branch(bindings_block)?;
+            self.builder.position_at_end(bindings_block);
+            self.builder
+                .build_unconditional_branch(ro_allocations_block)?;
+            self.builder.position_at_end(ro_allocations_block);
+            self.builder
+                .build_unconditional_branch(rw_allocations_block)?;
+            self.builder.position_at_end(rw_allocations_block);
+            self.builder.build_unconditional_branch(exec_block)?;
+            self.builder.position_at_end(exec_block);
+            self.builder
+                .build_unconditional_branch(rw_deallocations_block)?;
+            self.builder.position_at_end(rw_deallocations_block);
+            self.builder
+                .build_unconditional_branch(ro_deallocations_block)?;
+            self.builder.position_at_end(ro_deallocations_block);
+        }
+
+        Ok(())
+    }
+
+    fn generate_block_statement(
+        &mut self,
+        BlockStatement {
+            open_brace_token: _,
+            body,
+            close_brace_token: _,
+            id: _,
+        }: &mut BlockStatement,
+    ) -> Result<()> {
+        for substmt in body {
+            self.generate_statement(substmt)?;
+        }
+        Ok(())
+    }
+
+    fn generate_return_statement(&mut self, return_stmt: &mut ReturnStatement) -> Result<()> {
+        if let Some(retvalue) = &mut return_stmt.value {
+            let ir_value = self.generate_expression(retvalue)?;
+            let value_type = self
+                .llvm_type_of_node(&**retvalue)
+                .into_basic_type()
+                .unwrap();
+
+            if let RuntimeValueIR::Array(ir_ptr) | RuntimeValueIR::Struct(ir_ptr) = ir_value {
+                let value = self
+                    .builder
+                    .build_load(value_type, ir_ptr, "load_retvalue")?;
+                self.builder.build_return(Some(&value))?;
+            } else {
+                self.builder.build_return(ir_value.as_basic_value())?;
+            }
+        } else {
+            self.builder.build_return(None)?;
+        }
+        let next_block = self.context.insert_basic_block_after(
+            self.builder
+                .get_insert_block()
+                .expect("Builder should always be in a block"),
+            "after_return",
+        );
+        self.builder.position_at_end(next_block);
+        Ok(())
+    }
+
+    fn generate_variable_definition_statement(
+        &mut self,
+        vardef_stmt: &mut VariableDefinitionStatement,
+    ) -> Result<()> {
+        let eval_value = self.generate_expression(&mut vardef_stmt.value)?;
+
+        let ptr = self.generate_simple_binding(&mut vardef_stmt.binding)?;
+
+        if let RuntimeValueIR::Array(right_value) | RuntimeValueIR::Struct(right_value) = eval_value
+        {
+            let size = self
+                .llvm_type_of_node(&*vardef_stmt.value)
+                .size_of()
+                .unwrap();
+            self.builder.build_memcpy(
+                ptr,
+                1, // alignment gets read from the pointer itself in LLVM 7 and above
+                right_value,
+                1, // alignment gets read from the pointer itself in LLVM 7 and above
+                size,
+            )?;
+            return Ok(());
+        }
+
+        self.builder
+            .build_store(ptr, eval_value.as_basic_value_no_unit())?;
+
+        Ok(())
+    }
+
+    fn generate_if_statement(&mut self, if_stmt: &mut IfStatement) -> Result<()> {
+        let current_block = self
+            .builder
+            .get_insert_block()
+            .expect("expected builder to be in a block");
+
+        let body_block = self
+            .context
+            .insert_basic_block_after(current_block, "if_body");
+
+        let mut next_block = self.context.insert_basic_block_after(body_block, "elif");
+
+        let end_block = self.context.insert_basic_block_after(next_block, "if_end");
+
+        self.builder.position_at_end(current_block);
+        let condition_value = self
+            .generate_expression(&mut if_stmt.condition)?
+            .unwrap_bool();
+
+        self.builder
+            .build_conditional_branch(condition_value, body_block, next_block)?;
+
+        self.builder.position_at_end(body_block);
+        self.generate_statement(&mut if_stmt.if_body)?;
+
+        if self.node_stats.get(&*if_stmt.if_body).terminates_function != YesNoMaybe::Yes {
+            self.builder.build_unconditional_branch(end_block)?;
+        }
+
+        self.builder.position_at_end(next_block);
+
+        for (_token, condition, body) in &mut if_stmt.elifs {
+            next_block.set_name("elif_condition");
+            self.builder.position_at_end(next_block);
+
+            let condition_value = self.generate_expression(condition)?.unwrap_bool();
+
+            let body_block = self
+                .context
+                .insert_basic_block_after(next_block, "elif_body");
+
+            next_block = self
+                .context
+                .insert_basic_block_after(body_block, "elif_or_else");
+
+            self.builder
+                .build_conditional_branch(condition_value, body_block, next_block)?;
+
+            self.builder.position_at_end(body_block);
+            self.generate_statement(body)?;
+
+            if self.node_stats.get(body).terminates_function != YesNoMaybe::Yes {
+                self.builder.build_unconditional_branch(end_block)?;
+            }
+            self.builder.position_at_end(next_block);
+        }
+
+        if let Some((_token, else_body)) = &mut if_stmt.else_ {
+            next_block.set_name("else_body");
+
+            self.generate_statement(else_body)?;
+            if self.node_stats.get(&**else_body).terminates_function != YesNoMaybe::Yes {
+                self.builder.build_unconditional_branch(end_block)?;
+            }
+        } else {
+            next_block.replace_all_uses_with(&end_block);
+            next_block
+                .remove_from_function()
+                .expect("any block produced for conditionals should be part of a function");
+        }
+
+        self.builder.position_at_end(end_block);
+
+        Ok(())
+    }
+
+    fn generate_while_loop_statement(
+        &mut self,
+        WhileLoopStatement {
+            while_token: _,
+            condition,
+            body,
+            id: _,
+        }: &mut WhileLoopStatement,
+    ) -> Result<()> {
+        let current_block = self
+            .builder
+            .get_insert_block()
+            .expect("builder should always be in a function");
+        let condition_block = self
+            .context
+            .insert_basic_block_after(current_block, "while_condition");
+        let body_block = self
+            .context
+            .insert_basic_block_after(condition_block, "while_body");
+        let end_block = self
+            .context
+            .insert_basic_block_after(body_block, "while_end");
+
+        self.builder.build_unconditional_branch(condition_block)?;
+        self.builder.position_at_end(condition_block);
+
+        let cond_value = self.generate_expression(condition)?.unwrap_bool();
+
+        self.builder
+            .build_conditional_branch(cond_value, body_block, end_block)?;
+
+        self.builder.position_at_end(body_block);
+        {
+            let prev_skip = self.skip_block;
+            let prev_break = self.break_block;
+
+            self.skip_block = Some(condition_block);
+            self.break_block = Some(end_block);
+
+            self.generate_statement(body)?;
+
+            self.skip_block = prev_skip;
+            self.break_block = prev_break;
+        }
+        self.builder.build_unconditional_branch(condition_block)?;
+
+        self.builder.position_at_end(end_block);
+
+        Ok(())
+    }
+
+    fn generate_for_loop_statement(
+        &mut self,
+        ForLoopStatement {
+            for_token: _,
+            open_paren_token: _,
+            initializer,
+            condition,
+            second_semicolon_token: _,
+            incrementer,
+            close_paren_token: _,
+            body,
+            id: _,
+        }: &mut ForLoopStatement,
+    ) -> Result<()> {
+        let current_block = self
+            .builder
+            .get_insert_block()
+            .expect("builder should always be in a function");
+        let condition_block = self
+            .context
+            .insert_basic_block_after(current_block, "for_condition");
+        let body_block = self
+            .context
+            .insert_basic_block_after(condition_block, "for_body");
+        let incrementer_block = self
+            .context
+            .insert_basic_block_after(body_block, "for_incrementer");
+        let end_block = self
+            .context
+            .insert_basic_block_after(incrementer_block, "for_end");
+
+        self.generate_statement(initializer)?;
+
+        self.builder.build_unconditional_branch(condition_block)?;
+        self.builder.position_at_end(condition_block);
+
+        let cond_value = condition
+            .as_mut()
+            .map(|cond| self.generate_expression(cond))
+            .unwrap_or(Ok(RuntimeValueIR::Bool(
+                self.context.bool_type().const_int(1, false),
+            )))?
+            .unwrap_bool();
+
+        self.builder
+            .build_conditional_branch(cond_value, body_block, end_block)?;
+
+        self.builder.position_at_end(body_block);
+
+        {
+            let prev_skip = self.skip_block;
+            let prev_break = self.break_block;
+
+            self.skip_block = Some(incrementer_block);
+            self.break_block = Some(end_block);
+
+            self.generate_statement(body)?;
+
+            self.skip_block = prev_skip;
+            self.break_block = prev_break;
+        }
+
+        self.builder.build_unconditional_branch(incrementer_block)?;
+        self.builder.position_at_end(incrementer_block);
+        if let Some(inc) = incrementer {
+            self.generate_expression(inc)?;
+        }
+        self.builder.build_unconditional_branch(condition_block)?;
+
+        self.builder.position_at_end(end_block);
+
+        Ok(())
+    }
+
+    fn generate_break_statement(&mut self, _break_stmt: &mut BreakStatement) -> Result<()> {
+        let break_block = self
+            .break_block
+            .expect("Break statements can only appear inside of loops");
+        self.builder.build_unconditional_branch(break_block)?;
+        let next_block = self.context.insert_basic_block_after(
+            self.builder
+                .get_insert_block()
+                .expect("Builder should always be in a block"),
+            "after_break",
+        );
+        self.builder.position_at_end(next_block);
+        Ok(())
+    }
+
+    fn generate_skip_statement(&mut self, _skip_stmt: &mut SkipStatement) -> Result<()> {
+        let skip_block = self
+            .skip_block
+            .expect("Skip statements can only appear inside of loops");
+        self.builder.build_unconditional_branch(skip_block)?;
+        let next_block = self.context.insert_basic_block_after(
+            self.builder
+                .get_insert_block()
+                .expect("Builder should always be in a block"),
+            "after_skip",
+        );
+        self.builder.position_at_end(next_block);
+
+        Ok(())
+    }
+
+    fn generate_literal_expression(
+        &mut self,
+        literal: &mut LiteralExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
+        let LiteralExpression {
+            value,
+            token: _,
+            id: _,
+        } = &*literal;
+        let rt_type_ptr = self.type_data.get(literal);
+
+        Ok(match value {
+            LiteralKind::Number(value) => match self.llvm_type_of_node(literal) {
+                AnyTypeEnum::FloatType(type_) =>
+                {
+                    #[expect(clippy::cast_precision_loss)]
+                    RuntimeValueIR::Float(type_.const_float(*value as f64))
+                }
+
+                AnyTypeEnum::IntType(type_) if rt_type_ptr.is_signed() => {
+                    RuntimeValueIR::SignedInt(type_.const_int(*value, true))
+                }
+                AnyTypeEnum::IntType(type_) if rt_type_ptr.is_unsigned() => {
+                    RuntimeValueIR::UnsignedInt(type_.const_int(*value, false))
+                }
+                AnyTypeEnum::IntType(_type) => {
+                    unreachable!("all ints should either be signed or unsigned")
+                }
+
+                _ => {
+                    self.errors.push(ErrorKind::InternalError(
+                        InternalError::LlvmNumberLiteralMistyped {
+                            literal: literal.get_source_range(),
+                        },
+                    ));
+
+                    return Err(
+                        "Number literal was neither a float nor int in the llvm backend".into(),
+                    );
+                }
+            },
+            LiteralKind::Char(value) => RuntimeValueIR::UnsignedInt(
+                self.llvm_type_of_node(literal)
+                    .into_int_type()
+                    .const_int(*value as u64, false),
+            ),
+            LiteralKind::Float(value) => RuntimeValueIR::Float(
+                self.llvm_type_of_node(literal)
+                    .into_float_type()
+                    .const_float(*value),
+            ),
+            LiteralKind::Bool(value) => RuntimeValueIR::Bool(
+                #[expect(clippy::bool_to_int_with_if)]
+                self.context
+                    .bool_type()
+                    .const_int(if *value { 1 } else { 0 }, false),
+            ),
+        })
+    }
+
+    fn generate_array_expression(
+        &mut self,
+        expression: &mut ArrayExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
+        let expression_clone = expression.clone();
+        let ArrayExpression {
+            open_bracket_token: _,
+            elements,
+            close_bracket_token: _,
+            id: _,
+        } = expression;
+
+        let array_type = self.llvm_type_of_node(&expression_clone).into_array_type();
+        let item_type = array_type.get_element_type();
+
+        let mut array_ir = array_type.get_undef();
+
+        for (i, (item, _comma)) in elements.iter_mut().enumerate() {
+            let item_ir = self.generate_expression(item)?;
+            if let RuntimeValueIR::Array(item_ir) | RuntimeValueIR::Struct(item_ir) = item_ir {
+                let item =
+                    self.builder
+                        .build_load(item_type, item_ir, "load_subarray_or_substruct")?;
+                array_ir = self
+                    .builder
+                    .build_insert_value(array_ir, item, i as u32, "init_array")?
+                    .into_array_value();
+            } else {
+                array_ir = self
+                    .builder
+                    .build_insert_value(
+                        array_ir,
+                        item_ir.as_basic_value_no_unit(),
+                        i as u32,
+                        "init_array",
+                    )?
+                    .into_array_value();
+            }
+        }
+
+        let ptr = self
+            .builder
+            .build_alloca(array_ir.get_type(), "array_expression")?;
+        self.builder.build_store(ptr, array_ir)?;
+
+        Ok(RuntimeValueIR::Array(ptr))
+    }
+
+    fn generate_struct_expression(
+        &mut self,
+        expression: &mut crate::ast::StructExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
+        let expression_clone = expression.clone();
+        let StructExpression {
+            type_,
+            open_brace_token: _,
+            members,
+            close_brace_token: _,
+            id: _,
+        } = expression;
+
+        let type_ = self.generate_type(type_)?;
+        let ConcreteRuntimeType::Struct { .. } = type_ else {
+            pass_precondition!("Struct doesn't have a Struct(_) type")
+        };
+
+        let struct_type = self.llvm_type_of_node(&expression_clone).into_struct_type();
+
+        let mut struct_ir = struct_type.get_undef();
+
+        for (
+            i,
+            (
+                StructMemberValue {
+                    name: _,
+                    name_token: _,
+                    colon_token: _,
+                    value,
+                },
+                _comma,
+            ),
+        ) in members.iter_mut().enumerate()
+        {
+            let item_ir = self.generate_expression(value)?;
+            let item_type = match self.llvm_type_of_node(&**value).into_basic_type() {
+                Ok(ok) => ok,
+                Err(Either::Left(_fn_type)) => {
+                    panic!("Struct cannot contain functions")
+                }
+                Err(Either::Right(_void_type)) => {
+                    pass_precondition!("Struct cannot contain unit values")
+                }
+            };
+            if let RuntimeValueIR::Array(item_ir) | RuntimeValueIR::Struct(item_ir) = item_ir {
+                let item =
+                    self.builder
+                        .build_load(item_type, item_ir, "load_subarray_or_substruct")?;
+                struct_ir = self
+                    .builder
+                    .build_insert_value(struct_ir, item, i as u32, "init_struct")?
+                    .into_struct_value();
+            } else {
+                struct_ir = self
+                    .builder
+                    .build_insert_value(
+                        struct_ir,
+                        item_ir.as_basic_value_no_unit(),
+                        i as u32,
+                        "init_struct",
+                    )?
+                    .into_struct_value();
+            }
+        }
+
+        let ptr = self
+            .builder
+            .build_alloca(struct_ir.get_type(), "struct_expression")?;
+        self.builder.build_store(ptr, struct_ir)?;
+
+        Ok(RuntimeValueIR::Struct(ptr))
+    }
+
+    fn generate_function_call_expression(
+        &mut self,
+        expr: &mut FunctionCallExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
+        let return_type = self.type_data.get(expr);
+        let ref_func = self.function_data.get(expr);
+
+        let FunctionCallExpression {
+            name,
+            name_token: _,
+            open_paren_token: _,
+            arguments,
+            close_paren_token: _,
+            id: _,
+        } = expr;
+
+        let mut args: Vec<BasicMetadataValueEnum> = vec![];
+        for (arg, _comma) in arguments {
+            let ir_value = self.generate_expression(arg)?;
+            let value_type = self.llvm_type_of_node(arg).into_basic_type().unwrap();
+
+            if let RuntimeValueIR::Array(ir_ptr) | RuntimeValueIR::Struct(ir_ptr) = ir_value {
+                let value = self
+                    .builder
+                    .build_load(value_type, ir_ptr, "load_argument")?;
+                args.push(value.into());
+            } else {
+                args.push(ir_value.as_basic_value_enum().unwrap().into());
+            }
+        }
+
+        let ir_function = self
+            .function_locations
+            .get(&ref_func.borrow().id)
+            .expect("Functions should be registered before traversing the tree")
+            .clone()
+            .0;
+
+        let mut retvalue = self
+            .builder
+            .build_call(ir_function, &args[..], name)?
+            .try_as_basic_value()
+            .left();
+
+        if let Some(BasicValueEnum::ArrayValue(_) | BasicValueEnum::StructValue(_)) = retvalue {
+            let ptr = self
+                .builder
+                .build_alloca(retvalue.unwrap().get_type(), "array_or_struct_retvalue")?;
+            self.builder.build_store(ptr, retvalue.unwrap())?;
+            retvalue = Some(ptr.into());
+        }
+
+        Ok(self.package_llvm_in_runtime_value(retvalue, return_type))
+    }
+
+    fn generate_compiler_expression(
+        &mut self,
+        expr: &mut CompilerExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
+        let expected_type = self.type_data.get(expr);
+
+        let CompilerExpression {
+            at_token: _,
+            name,
+            name_token,
+            open_paren_token: _,
+            arguments,
+            close_paren_token: _,
+            id: _,
+        } = expr;
+
+        let mut args = vec![];
+        for (arg, _comma) in arguments {
+            let ir_value = self.generate_expression(arg)?;
+            args.push((arg, ir_value));
+        }
+
+        match name.as_str() {
+            "zero" => {
+                let expected_type_ir = self.runtime_type_to_llvm(expected_type);
+
+                Ok(match expected_type {
+                    ConcreteRuntimeType::I8
+                    | ConcreteRuntimeType::I16
+                    | ConcreteRuntimeType::I32
+                    | ConcreteRuntimeType::I64 => {
+                        RuntimeValueIR::SignedInt(expected_type_ir.into_int_type().const_zero())
+                    }
+                    ConcreteRuntimeType::U8
+                    | ConcreteRuntimeType::U16
+                    | ConcreteRuntimeType::U32
+                    | ConcreteRuntimeType::U64 => {
+                        RuntimeValueIR::UnsignedInt(expected_type_ir.into_int_type().const_zero())
+                    }
+                    ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64 => {
+                        RuntimeValueIR::Float(expected_type_ir.into_float_type().const_zero())
+                    }
+                    ConcreteRuntimeType::Boolean => {
+                        RuntimeValueIR::Bool(expected_type_ir.into_int_type().const_zero())
+                    }
+                    ConcreteRuntimeType::Unit => pass_precondition!("@zero cannot have Unit type"),
+                    ConcreteRuntimeType::ArrayOf { .. } => {
+                        let ptr = self
+                            .builder
+                            .build_alloca(expected_type_ir.into_array_type(), "zero_temporary")?;
+
+                        self.builder.build_memset(
+                            ptr,
+                            1, // alignment gets read from the pointer itself in LLVM 7 and above
+                            self.context.i8_type().const_zero(),
+                            expected_type_ir.into_array_type().size_of().unwrap(),
+                        )?;
+
+                        RuntimeValueIR::Array(ptr)
+                    }
+                    ConcreteRuntimeType::Struct { .. } => {
+                        let ptr = self
+                            .builder
+                            .build_alloca(expected_type_ir.into_struct_type(), "zero_temporary")?;
+
+                        self.builder.build_memset(
+                            ptr,
+                            1, // alignment gets read from the pointer itself in LLVM 7 and above
+                            self.context.i8_type().const_zero(),
+                            expected_type_ir.into_struct_type().size_of().unwrap(),
+                        )?;
+
+                        RuntimeValueIR::Struct(ptr)
+                    }
+                })
+            }
+            "sqrt" => {
+                let expected_type_ir = self.runtime_type_to_llvm(expected_type);
+
+                let RuntimeValueIR::Float(value) = args.first().unwrap().1 else {
+                    self.errors.push(ErrorKind::InvalidIntrinsicType {
+                        backend: Backend::Llvm,
+                        intrinsic: Intrinsic::Sqrt,
+                        intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                        type_: expected_type.clone().into(),
+                    });
+
+                    return Err(format!(
+                        "@sqrt compiler function has unknown or error type: {expected_type}"
+                    )
+                    .into());
+                };
+
+                let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.sqrt").unwrap();
+                let intrinsic = intrinsic
+                    .get_declaration(self.module, &[expected_type_ir.into_basic_type().unwrap()])
+                    .unwrap();
+                Ok(RuntimeValueIR::Float(
+                    self.builder
+                        .build_direct_call(intrinsic, &[value.into()], "intrinsic_sqrt")?
+                        .try_as_basic_value()
+                        .unwrap_left()
+                        .into_float_value(),
+                ))
+            }
+            "sin" => {
+                let expected_type_ir = self.runtime_type_to_llvm(expected_type);
+
+                let RuntimeValueIR::Float(value) = args.first().unwrap().1 else {
+                    self.errors.push(ErrorKind::InvalidIntrinsicType {
+                        backend: Backend::Llvm,
+                        intrinsic: Intrinsic::Sin,
+                        intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                        type_: expected_type.clone().into(),
+                    });
+
+                    return Err(format!(
+                        "@sin compiler function has unknown or error type: {expected_type}"
+                    )
+                    .into());
+                };
+
+                let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.sin").unwrap();
+                let intrinsic = intrinsic
+                    .get_declaration(self.module, &[expected_type_ir.into_basic_type().unwrap()])
+                    .unwrap();
+                Ok(RuntimeValueIR::Float(
+                    self.builder
+                        .build_direct_call(intrinsic, &[value.into()], "intrinsic_sin")?
+                        .try_as_basic_value()
+                        .unwrap_left()
+                        .into_float_value(),
+                ))
+            }
+            "cos" => {
+                let expected_type_ir = self.runtime_type_to_llvm(expected_type);
+
+                let RuntimeValueIR::Float(value) = args.first().unwrap().1 else {
+                    self.errors.push(ErrorKind::InvalidIntrinsicType {
+                        backend: Backend::Llvm,
+                        intrinsic: Intrinsic::Cos,
+                        intrinsic_sym: UnresolvedSymbol::from_token(name.clone(), name_token),
+                        type_: expected_type.clone().into(),
+                    });
+
+                    return Err(format!(
+                        "@cos compiler function has unknown or error type: {expected_type}"
+                    )
+                    .into());
+                };
+
+                let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.cos").unwrap();
+                let intrinsic = intrinsic
+                    .get_declaration(self.module, &[expected_type_ir.into_basic_type().unwrap()])
+                    .unwrap();
+                Ok(RuntimeValueIR::Float(
+                    self.builder
+                        .build_direct_call(intrinsic, &[value.into()], "intrinsic_cos")?
+                        .try_as_basic_value()
+                        .unwrap_left()
+                        .into_float_value(),
+                ))
+            }
+            "length" => {
+                let array_type = self.type_data.get(args.first().unwrap().0).clone();
+
+                let ConcreteRuntimeType::ArrayOf {
+                    subtype: _,
+                    size: length,
+                } = array_type
+                else {
+                    pass_precondition!(
+                        "@length called with non-array typed value of type {array_type}"
+                    )
+                };
+
+                let ir_type = self.runtime_type_to_llvm(expected_type);
+
+                Ok(match args.first().unwrap().1 {
+                    RuntimeValueIR::Array(_value) => match ir_type {
+                        AnyTypeEnum::IntType(type_) if expected_type.is_signed() => {
+                            RuntimeValueIR::SignedInt(type_.const_int(length as u64, true))
+                        }
+                        AnyTypeEnum::IntType(type_) if expected_type.is_unsigned() => {
+                            RuntimeValueIR::UnsignedInt(type_.const_int(length as u64, false))
+                        }
+                        AnyTypeEnum::IntType(_type) => {
+                            unreachable!("all ints should either be signed or unsigned")
+                        }
+
+                        _ => pass_precondition!("result of @length() isn't an integer"),
+                    },
+                    _ => pass_precondition!(
+                        "@length called with non-array typed value of type {array_type}"
+                    ),
+                })
+            }
+            _ => {
+                self.errors.push(ErrorKind::IntrinsicNotImplemented {
+                    backend: Backend::Glsl,
+                    intrinsic: UnresolvedSymbol::from_token(name.clone(), name_token),
+                });
+                Err(format!(
+                    "No compiler function named {name:?} is implemented for the LLVM backend"
+                )
+                .into())
+            }
+        }
+    }
+
+    fn generate_array_index_expression(
+        &mut self,
+        expr: &mut ArrayIndexExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
+        let ArrayIndexExpression {
+            array,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id: _,
+        } = expr;
+        let array_ptr = self.generate_expression(array)?.unwrap_array();
+        let array_type = self.type_data.get(&**array);
+        let index_ir = self.generate_expression(index)?.unwrap_unsigned_int();
+
+        let array_type_ir = self.runtime_type_to_llvm(array_type);
+
+        let index_ptr = unsafe {
+            self.builder.build_gep(
+                array_type_ir.into_array_type().get_element_type(),
+                array_ptr,
+                &[index_ir],
+                "array_index",
+            )?
+        };
+
+        let ConcreteRuntimeType::ArrayOf {
+            subtype: result_type,
+            size: _,
+        } = array_type
+        else {
+            pass_precondition!("indexed array has non-array type")
+        };
+
+        let result = if let ConcreteRuntimeType::ArrayOf { .. }
+        | ConcreteRuntimeType::Struct { .. } = &**result_type
+        {
+            index_ptr.into()
+        } else {
+            self.builder.build_load(
+                array_type_ir.into_array_type().get_element_type(),
+                index_ptr,
+                "load_from_array",
+            )?
+        };
+
+        Ok(self.package_llvm_in_runtime_value(Some(result), result_type))
+    }
+
+    fn generate_struct_access_expression(
+        &mut self,
+        expr: &mut StructAccessExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
+        let StructAccessExpression {
+            value,
+            dot_token: _,
+            member_name,
+            member_name_token: _,
+            id: _,
+        } = expr;
+        let value_ptr = self.generate_expression(value)?.unwrap_struct();
+        let value_type = self.type_data.get(&**value);
+
+        let value_type_ir = self.runtime_type_to_llvm(value_type);
+
+        let ConcreteRuntimeType::Struct {
+            members,
+            source_hash: _,
+        } = value_type
+        else {
+            pass_precondition!("Struct access used on non-struct")
+        };
+
+        let (member_index, (_, member_type)) = members
+            .iter()
+            .find_position(|m| m.0 == *member_name)
+            .unwrap_or_else(|| {
+                pass_precondition!("Struct doesn't have member named {member_name:?}")
+            });
+
+        let index_ptr = self.builder.build_struct_gep(
+            value_type_ir.into_struct_type(),
+            value_ptr,
+            member_index as u32,
+            "struct_Access",
+        )?;
+
+        let result = if let ConcreteRuntimeType::ArrayOf { .. }
+        | ConcreteRuntimeType::Struct { .. } = member_type
+        {
+            index_ptr.into()
+        } else {
+            self.builder.build_load(
+                value_type_ir
+                    .into_struct_type()
+                    .get_field_type_at_index(member_index as u32)
+                    .unwrap(),
+                index_ptr,
+                "load_from_struct",
+            )?
+        };
+
+        Ok(self.package_llvm_in_runtime_value(Some(result), member_type))
+    }
+
+    fn generate_grouping_expression(
+        &mut self,
+        GroupingExpression {
+            open_paren_token: _,
+            subexpression,
+            close_paren_token: _,
+            id: _,
+        }: &mut GroupingExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
+        self.generate_expression(subexpression)
+    }
+
+    fn generate_variable_access_expression(
+        &mut self,
+        expr: &mut VariableAccessExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
+        let var = self.variable_data.get(expr);
+
+        let VariableAccessExpression {
+            name,
+            name_token: _,
+            id,
+        } = expr;
+
+        let storage = self.variable_storage.get(&var.borrow().id).unwrap_or_else(||
+            panic!(
+                "Variables should have storage before being accessed.\nVarData: {:#?}\nVarStorage: {:#?}\nThis ID: {id:?}",
+                self.variable_data, self.variable_storage
+            )
+        );
+        let storage = storage.clone();
+
+        let result_type = var.borrow().type_.clone();
+        let result_type_ir = self.runtime_type_to_llvm(&result_type);
+
+        let result = if let ConcreteRuntimeType::ArrayOf { .. }
+        | ConcreteRuntimeType::Struct { .. } = result_type
+        {
+            Some(storage.0.into())
+        } else {
+            Some(self.builder.build_load(
+                result_type_ir.into_basic_type().unwrap(),
+                storage.0,
+                name,
+            )?)
+        };
+
+        Ok(self.package_llvm_in_runtime_value(result, &result_type))
+    }
+
+    fn generate_unary_expression(
+        &mut self,
+        expr: &mut UnaryExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
+        let UnaryExpression {
+            operator_token: _,
+            operation,
+            operand,
+            id: _,
+        } = expr;
+
+        let value = self.generate_expression(operand)?;
+
+        let result = match operation {
+            UnaryOperation::BitwiseNot => match value {
+                RuntimeValueIR::SignedInt(value) => {
+                    RuntimeValueIR::SignedInt(self.builder.build_not(value, "bitwise_not")?)
+                }
+                RuntimeValueIR::UnsignedInt(value) => {
+                    RuntimeValueIR::UnsignedInt(self.builder.build_not(value, "bitwise_not")?)
+                }
+                _ => pass_precondition!("Bitwise not operand was not an int in llvm backend"),
+            },
+
+            UnaryOperation::LogicalNot => RuntimeValueIR::Bool(match value {
+                RuntimeValueIR::Bool(value)
+                | RuntimeValueIR::SignedInt(value)
+                | RuntimeValueIR::UnsignedInt(value) => self.builder.build_int_compare(
+                    IntPredicate::EQ,
+                    value,
+                    value.get_type().const_zero(),
+                    "logical_not",
+                )?,
+                RuntimeValueIR::Float(value) => self.builder.build_float_compare(
+                    FloatPredicate::OEQ, // OEQ because NaN is truthy
+                    value,
+                    value.get_type().const_zero(),
+                    "logical_not",
+                )?,
+                _ => pass_precondition!("LogicalNot operand wasn't a number in llvm backend"),
+            }),
+            UnaryOperation::Negate => match value {
+                RuntimeValueIR::SignedInt(value) => {
+                    RuntimeValueIR::SignedInt(self.builder.build_int_neg(value, "negate")?)
+                }
+                RuntimeValueIR::Float(value) => {
+                    RuntimeValueIR::Float(self.builder.build_float_neg(value, "negate")?)
+                }
+
+                _ => pass_precondition!(
+                    "Negate operand wasn't a signed integer or float in llvm backend"
+                ),
+            },
+        };
+
+        Ok(result)
+    }
+
+    fn generate_cast_expression(
+        &mut self,
+        expr: &mut CastExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
+        let target_type = self.type_data.get(expr);
+
+        let CastExpression {
+            operand,
+            as_token: _,
+            type_,
+            id: _,
+        } = expr;
+
+        let value = self.generate_expression(&mut *operand)?;
+        let value_type = self.type_data.get(&**operand);
+
+        match (&value_type, &target_type) {
+            (a, b) if a == b => Ok(value),
+            (
+                ConcreteRuntimeType::I8
+                | ConcreteRuntimeType::I16
+                | ConcreteRuntimeType::I32
+                | ConcreteRuntimeType::I64
+                | ConcreteRuntimeType::U8
+                | ConcreteRuntimeType::U16
+                | ConcreteRuntimeType::U32
+                | ConcreteRuntimeType::U64
+                | ConcreteRuntimeType::Boolean,
+                ConcreteRuntimeType::I8
+                | ConcreteRuntimeType::I16
+                | ConcreteRuntimeType::I32
+                | ConcreteRuntimeType::I64
+                | ConcreteRuntimeType::U8
+                | ConcreteRuntimeType::U16
+                | ConcreteRuntimeType::U32
+                | ConcreteRuntimeType::U64,
+            ) => {
+                let expected_type = self.generate_type(type_)?;
+                let expected_type_ir = self.runtime_type_to_llvm(&expected_type).into_int_type();
+
+                let ir_value = match value {
+                    RuntimeValueIR::Bool(value)
+                    | RuntimeValueIR::SignedInt(value)
+                    | RuntimeValueIR::UnsignedInt(value)
+                        if expected_type_ir.get_bit_width() <= value.get_type().get_bit_width() =>
+                    {
+                        self.builder.build_int_truncate_or_bit_cast(
+                            value,
+                            expected_type_ir,
+                            &format!("as_{value_type}"),
+                        )?
+                    }
+                    RuntimeValueIR::UnsignedInt(value) | RuntimeValueIR::Bool(value) => self
+                        .builder
+                        .build_int_z_extend(value, expected_type_ir, &format!("as_{value_type}"))?,
+                    RuntimeValueIR::SignedInt(value) => self.builder.build_int_s_extend(
+                        value,
+                        expected_type_ir,
+                        &format!("as_{value_type}"),
+                    )?,
+                    _ => {
+                        pass_precondition!("Value cast to an integer should be an integer or bool")
+                    }
+                };
+
+                if expected_type.is_signed() {
+                    Ok(RuntimeValueIR::SignedInt(ir_value))
+                } else if expected_type.is_unsigned() {
+                    Ok(RuntimeValueIR::UnsignedInt(ir_value))
+                } else {
+                    unreachable!("casting target has to be signed or unsigned here")
+                }
+            }
+            (
+                ConcreteRuntimeType::I8
+                | ConcreteRuntimeType::I16
+                | ConcreteRuntimeType::I32
+                | ConcreteRuntimeType::I64
+                | ConcreteRuntimeType::U8
+                | ConcreteRuntimeType::U16
+                | ConcreteRuntimeType::U32
+                | ConcreteRuntimeType::U64
+                | ConcreteRuntimeType::Boolean,
+                ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64,
+            ) => {
+                let expected_type = self.generate_type(type_)?;
+                let expected_type = self.runtime_type_to_llvm(&expected_type).into_float_type();
+
+                Ok(RuntimeValueIR::Float(match value {
+                    RuntimeValueIR::UnsignedInt(value) | RuntimeValueIR::Bool(value) => {
+                        self.builder.build_unsigned_int_to_float(
+                            value,
+                            expected_type,
+                            &format!("as_{value_type}"),
+                        )?
+                    }
+                    RuntimeValueIR::SignedInt(value) => self.builder.build_signed_int_to_float(
+                        value,
+                        expected_type,
+                        &format!("as_{value_type}"),
+                    )?,
+                    _ => pass_precondition!("Value cast to a float should be an integer or bool"),
+                }))
+            }
+            (
+                ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64,
+                ConcreteRuntimeType::I8
+                | ConcreteRuntimeType::I16
+                | ConcreteRuntimeType::I32
+                | ConcreteRuntimeType::I64,
+            ) => {
+                let expected_type = self.generate_type(type_)?;
+                let expected_type = self.runtime_type_to_llvm(&expected_type).into_int_type();
+
+                Ok(RuntimeValueIR::SignedInt(
+                    self.builder.build_float_to_signed_int(
+                        value.unwrap_float(),
+                        expected_type,
+                        &format!("as_{value_type}"),
+                    )?,
+                ))
+            }
+            (
+                ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64,
+                ConcreteRuntimeType::U8
+                | ConcreteRuntimeType::U16
+                | ConcreteRuntimeType::U32
+                | ConcreteRuntimeType::U64,
+            ) => {
+                let expected_type = self.generate_type(type_)?;
+                let expected_type = self.runtime_type_to_llvm(&expected_type).into_int_type();
+
+                Ok(RuntimeValueIR::UnsignedInt(
+                    self.builder.build_float_to_unsigned_int(
+                        value.unwrap_float(),
+                        expected_type,
+                        &format!("as_{value_type}"),
+                    )?,
+                ))
+            }
+            (ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64, ConcreteRuntimeType::F64) => {
+                let expected_type = self.generate_type(type_)?;
+                let expected_type = self.runtime_type_to_llvm(&expected_type).into_float_type();
+
+                Ok(RuntimeValueIR::Float(self.builder.build_float_ext(
+                    value.unwrap_float(),
+                    expected_type,
+                    &format!("as_{value_type}"),
+                )?))
+            }
+            (ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64, ConcreteRuntimeType::F32) => {
+                let expected_type = self.generate_type(type_)?;
+                let expected_type = self.runtime_type_to_llvm(&expected_type).into_float_type();
+
+                Ok(RuntimeValueIR::Float(self.builder.build_float_trunc(
+                    value.unwrap_float(),
+                    expected_type,
+                    &format!("as_{value_type}"),
+                )?))
+            }
+            (
+                _,
+                ConcreteRuntimeType::ArrayOf {
+                    subtype: _,
+                    size: _,
+                },
+            )
+            | (
+                ConcreteRuntimeType::ArrayOf {
+                    subtype: _,
+                    size: _,
+                },
+                _,
+            ) => pass_precondition!("cannot cast to or from array currently"),
+            (
+                _,
+                ConcreteRuntimeType::Struct {
+                    members: _,
+                    source_hash: _,
+                },
+            )
+            | (
+                ConcreteRuntimeType::Struct {
+                    members: _,
+                    source_hash: _,
+                },
+                _,
+            ) => pass_precondition!("cannot cast to or from struct currently"),
+            (
+                ConcreteRuntimeType::I8
+                | ConcreteRuntimeType::I16
+                | ConcreteRuntimeType::I32
+                | ConcreteRuntimeType::I64
+                | ConcreteRuntimeType::U8
+                | ConcreteRuntimeType::U16
+                | ConcreteRuntimeType::U32
+                | ConcreteRuntimeType::U64
+                | ConcreteRuntimeType::Boolean,
+                ConcreteRuntimeType::Boolean,
+            ) => {
+                if let RuntimeValueIR::Bool(value)
+                | RuntimeValueIR::SignedInt(value)
+                | RuntimeValueIR::UnsignedInt(value) = value
+                {
+                    Ok(RuntimeValueIR::Bool(self.builder.build_int_compare(
+                        IntPredicate::NE,
+                        value,
+                        value.get_type().const_zero(),
+                        "as_bool",
+                    )?))
+                } else {
+                    pass_precondition!("trying to cast {value:?} to boolean")
+                }
+            }
+            (ConcreteRuntimeType::F32 | ConcreteRuntimeType::F64, ConcreteRuntimeType::Boolean) => {
+                let value = value.unwrap_float();
+
+                Ok(RuntimeValueIR::Bool(self.builder.build_float_compare(
+                    FloatPredicate::UNE,
+                    value,
+                    value.get_type().const_zero(),
+                    "as_bool",
+                )?))
+            }
+            (_, ConcreteRuntimeType::Unit) | (ConcreteRuntimeType::Unit, _) => {
+                pass_precondition!("cannot cast from or to Unit")
+            }
+        }
+    }
+
+    fn generate_binary_expression(
+        &mut self,
+        BinaryExpression {
+            left,
+            operator_token: _,
+            operation,
+            right,
+            id: _,
+        }: &mut BinaryExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
+        let left_value = self.generate_expression(left)?;
+        let mut right_value_gen = |self_: &mut Self| -> Result<RuntimeValueIR<'state>> {
+            self_.generate_expression(right)
+        };
+
+        match operation {
+            BinaryOperation::Add => {
+                let right_value = right_value_gen(self)?;
+                Ok(match right_value {
+                    RuntimeValueIR::SignedInt(right_value) => {
+                        RuntimeValueIR::SignedInt(self.builder.build_int_add(
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "add",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::UnsignedInt(self.builder.build_int_add(
+                            left_value.unwrap_unsigned_int(),
+                            right_value,
+                            "add",
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Float(self.builder.build_float_add(
+                            left_value.unwrap_float(),
+                            right_value,
+                            "add",
+                        )?)
+                    }
+
+                    _ => pass_precondition!("Add RHS should be float or int in llvm backend"),
+                })
+            }
+            BinaryOperation::Subtract => {
+                let right_value = right_value_gen(self)?;
+                Ok(match right_value {
+                    RuntimeValueIR::SignedInt(right_value) => {
+                        RuntimeValueIR::SignedInt(self.builder.build_int_sub(
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "sub",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::UnsignedInt(self.builder.build_int_sub(
+                            left_value.unwrap_unsigned_int(),
+                            right_value,
+                            "sub",
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Float(self.builder.build_float_sub(
+                            left_value.unwrap_float(),
+                            right_value,
+                            "sub",
+                        )?)
+                    }
+
+                    _ => pass_precondition!("Subtract RHS should be float or int in llvm backend"),
+                })
+            }
+
+            BinaryOperation::Multiply => {
+                let right_value = right_value_gen(self)?;
+                Ok(match right_value {
+                    RuntimeValueIR::SignedInt(right_value) => {
+                        RuntimeValueIR::SignedInt(self.builder.build_int_mul(
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "mul",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::UnsignedInt(self.builder.build_int_mul(
+                            left_value.unwrap_unsigned_int(),
+                            right_value,
+                            "mul",
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Float(self.builder.build_float_mul(
+                            left_value.unwrap_float(),
+                            right_value,
+                            "mul",
+                        )?)
+                    }
+
+                    _ => pass_precondition!("Multiply RHS should be float or int in llvm backend"),
+                })
+            }
+            BinaryOperation::Divide => {
+                let right_value = right_value_gen(self)?;
+                Ok(match right_value {
+                    RuntimeValueIR::SignedInt(right_value) => {
+                        RuntimeValueIR::SignedInt(self.builder.build_int_signed_div(
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "div",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::UnsignedInt(self.builder.build_int_unsigned_div(
+                            left_value.unwrap_unsigned_int(),
+                            right_value,
+                            "div",
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Float(self.builder.build_float_div(
+                            left_value.unwrap_float(),
+                            right_value,
+                            "div",
+                        )?)
+                    }
+
+                    _ => pass_precondition!("Divide RHS should be float or int in llvm backend"),
+                })
+            }
+            BinaryOperation::Modulo => {
+                let right_value = right_value_gen(self)?;
+                Ok(match right_value {
+                    RuntimeValueIR::SignedInt(right_value) => {
+                        RuntimeValueIR::SignedInt(self.builder.build_int_signed_rem(
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "mod",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::UnsignedInt(self.builder.build_int_unsigned_rem(
+                            left_value.unwrap_unsigned_int(),
+                            right_value,
+                            "mod",
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Float(self.builder.build_float_rem(
+                            left_value.unwrap_float(),
+                            right_value,
+                            "mod",
+                        )?)
+                    }
+
+                    _ => pass_precondition!("Modulo RHS should be float or int in llvm backend"),
+                })
+            }
+
+            BinaryOperation::LessThan => {
+                let right_value = right_value_gen(self)?;
+                Ok(match right_value {
+                    RuntimeValueIR::SignedInt(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
+                            IntPredicate::SLT,
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "less_than",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
+                            IntPredicate::ULT,
+                            left_value.unwrap_unsigned_int(),
+                            right_value,
+                            "less_than",
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_float_compare(
+                            FloatPredicate::OLT,
+                            left_value.unwrap_float(),
+                            right_value,
+                            "less_than",
+                        )?)
+                    }
+
+                    _ => pass_precondition!("LessThan RHS should be float or int in llvm backend"),
+                })
+            }
+            BinaryOperation::LessThanOrEqual => {
+                let right_value = right_value_gen(self)?;
+                Ok(match right_value {
+                    RuntimeValueIR::SignedInt(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
+                            IntPredicate::SLE,
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "less_than_or_equal",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
+                            IntPredicate::ULE,
+                            left_value.unwrap_unsigned_int(),
+                            right_value,
+                            "less_than_or_equal",
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_float_compare(
+                            FloatPredicate::OLE,
+                            left_value.unwrap_float(),
+                            right_value,
+                            "less_than_or_equal",
+                        )?)
+                    }
+
+                    _ => pass_precondition!(
+                        "LessThanOrEqual RHS should be float or int in llvm backend"
+                    ),
+                })
+            }
+            BinaryOperation::GreaterThan => {
+                let right_value = right_value_gen(self)?;
+                Ok(match right_value {
+                    RuntimeValueIR::SignedInt(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
+                            IntPredicate::SGT,
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "greater_than",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
+                            IntPredicate::UGT,
+                            left_value.unwrap_unsigned_int(),
+                            right_value,
+                            "greater_than",
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_float_compare(
+                            FloatPredicate::OGT,
+                            left_value.unwrap_float(),
+                            right_value,
+                            "greater_than",
+                        )?)
+                    }
+
+                    _ => {
+                        pass_precondition!("GreaterThan RHS should be float or int in llvm backend")
+                    }
+                })
+            }
+            BinaryOperation::GreaterThanOrEqual => {
+                let right_value = right_value_gen(self)?;
+                Ok(match right_value {
+                    RuntimeValueIR::SignedInt(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
+                            IntPredicate::SGE,
+                            left_value.unwrap_signed_int(),
+                            right_value,
+                            "greater_than_or_equal",
+                        )?)
+                    }
+                    RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
+                            IntPredicate::UGE,
+                            left_value.unwrap_unsigned_int(),
+                            right_value,
+                            "greater_than_or_equal",
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_float_compare(
+                            FloatPredicate::OGE,
+                            left_value.unwrap_float(),
+                            right_value,
+                            "greater_than_or_equal",
+                        )?)
+                    }
+
+                    _ => pass_precondition!(
+                        "GreaterThanOrEqual RHS should be float or int in llvm backend"
+                    ),
+                })
+            }
+            BinaryOperation::Equal => {
+                let right_value = right_value_gen(self)?;
+                Ok(match right_value {
+                    RuntimeValueIR::Bool(right_value)
+                    | RuntimeValueIR::SignedInt(right_value)
+                    | RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
+                            IntPredicate::EQ,
+                            left_value.unwrap_int_or_bool(),
+                            right_value,
+                            "equal",
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_float_compare(
+                            FloatPredicate::OEQ,
+                            left_value.unwrap_float(),
+                            right_value,
+                            "equal",
+                        )?)
+                    }
+
+                    _ => {
+                        pass_precondition!("Equal RHS should be float, int or bool in llvm backend")
+                    }
+                })
+            }
+            BinaryOperation::NotEqual => {
+                let right_value = right_value_gen(self)?;
+                Ok(match right_value {
+                    RuntimeValueIR::Bool(right_value)
+                    | RuntimeValueIR::SignedInt(right_value)
+                    | RuntimeValueIR::UnsignedInt(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_int_compare(
+                            IntPredicate::NE,
+                            left_value.unwrap_int_or_bool(),
+                            right_value,
+                            "not_equal",
+                        )?)
+                    }
+                    RuntimeValueIR::Float(right_value) => {
+                        RuntimeValueIR::Bool(self.builder.build_float_compare(
+                            FloatPredicate::UNE,
+                            left_value.unwrap_float(),
+                            right_value,
+                            "not_equal",
+                        )?)
+                    }
+
+                    _ => {
+                        pass_precondition!(
+                            "NotEqual RHS should be float, int or bool in llvm backend"
+                        )
+                    }
+                })
+            }
+
+            BinaryOperation::LogicalAnd => {
+                let current_block = self
+                    .builder
+                    .get_insert_block()
+                    .expect("expected builder to be in a block");
+                let right_block = self
+                    .context
+                    .insert_basic_block_after(current_block, "logical_and_rhs");
+                let end_block = self
+                    .context
+                    .insert_basic_block_after(right_block, "logical_and_end");
+
+                self.builder.position_at_end(current_block);
+                self.builder.build_conditional_branch(
+                    left_value.unwrap_bool(),
+                    right_block,
+                    end_block,
+                )?;
+
+                self.builder.position_at_end(right_block);
+                let right_value = right_value_gen(self)?.unwrap_bool();
+                let left_value = left_value.unwrap_bool();
+                self.builder.build_unconditional_branch(end_block)?;
+                // needed because right_value may have generated new basic blocks and
+                // right_block isn't the branch source anymore
+                let last_right_block = self
+                    .builder
+                    .get_insert_block()
+                    .expect("expected builder to be in a block");
+
+                self.builder.position_at_end(end_block);
+                let result = self
+                    .builder
+                    .build_phi(left_value.get_type(), "logical_and_result")?;
+
+                result.add_incoming(&[
+                    (&left_value.get_type().const_zero(), current_block),
+                    (&right_value, last_right_block),
+                ]);
+
+                Ok(RuntimeValueIR::Bool(
+                    result.as_basic_value().into_int_value(),
+                ))
+            }
+            BinaryOperation::LogicalOr => {
+                let current_block = self
+                    .builder
+                    .get_insert_block()
+                    .expect("expected builder to be in a block");
+                let right_block = self
+                    .context
+                    .insert_basic_block_after(current_block, "logical_or_rhs");
+                let end_block = self
+                    .context
+                    .insert_basic_block_after(right_block, "logical_or_end");
+
+                self.builder.position_at_end(current_block);
+                self.builder.build_conditional_branch(
+                    left_value.unwrap_bool(),
+                    end_block,
+                    right_block,
+                )?;
+
+                self.builder.position_at_end(right_block);
+                let right_value = right_value_gen(self)?.unwrap_bool();
+                let left_value = left_value.unwrap_bool();
+                self.builder.build_unconditional_branch(end_block)?;
+                // needed because right_value may have generated new basic blocks and
+                // right_block isn't the branch source anymore
+                let last_right_block = self
+                    .builder
+                    .get_insert_block()
+                    .expect("expected builder to be in a block");
+
+                self.builder.position_at_end(end_block);
+                let result = self
+                    .builder
+                    .build_phi(left_value.get_type(), "logical_or_result")?;
+
+                result.add_incoming(&[
+                    (&left_value.get_type().const_int(1, false), current_block),
+                    (&right_value, last_right_block),
+                ]);
+
+                Ok(RuntimeValueIR::Bool(
+                    result.as_basic_value().into_int_value(),
+                ))
+            }
+        }
+    }
+
+    fn generate_variable_assignment_expression(
+        &mut self,
+        expr: &mut VariableAssignmentExpression,
+    ) -> Result<RuntimeValueIR<'state>> {
+        let VariableAssignmentExpression {
+            lvalue,
+            equal_token: _,
+            right,
+            id: _,
+        } = expr;
+
+        let storage = self.generate_lvalue(lvalue)?;
+        let right_value = self.generate_expression(right)?;
+
+        if let RuntimeValueIR::Array(right_value) | RuntimeValueIR::Struct(right_value) =
+            right_value
+        {
+            let size = self.llvm_type_of_node(&**right).size_of().unwrap();
+            self.builder.build_memcpy(
+                storage,
+                1, // alignment gets read from the pointer itself in LLVM 7 and above
+                right_value,
+                1, // alignment gets read from the pointer itself in LLVM 7 and above
+                size,
+            )?;
+        } else {
+            self.builder
+                .build_store(storage, right_value.as_basic_value_no_unit())?;
+        }
+
+        Ok(right_value)
+    }
+
+    fn generate_variable_lvalue(
+        &mut self,
+        lvalue: &mut VariableLValue,
+    ) -> Result<PointerValue<'state>> {
+        let var = self.variable_data.get(lvalue);
+
+        let VariableLValue {
+            name: _,
+            name_token: _,
+            id,
+        } = lvalue;
+
+        let storage = self
+            .variable_storage
+            .get(&var.borrow().id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Variables should have storage before being accessed.\
+                        \nVarData: {:#?}\nVarStorage: {:#?}\nThis ID: {:?}",
+                    self.variable_data, self.variable_storage, id
+                )
+            });
+
+        Ok(storage.0)
+    }
+
+    fn generate_array_index_lvalue(
+        &mut self,
+        ArrayIndexLValue {
+            array,
+            open_bracket_token: _,
+            index,
+            close_bracket_token: _,
+            id: _,
+        }: &mut ArrayIndexLValue,
+    ) -> Result<PointerValue<'state>> {
+        let array_ptr = self.generate_lvalue(array)?;
+        let index_ir = self.generate_expression(index)?.unwrap_unsigned_int();
+
+        let array_type_ir = self.llvm_type_of_node(&**array);
+
+        let index_ptr = unsafe {
+            self.builder.build_gep(
+                array_type_ir.into_array_type().get_element_type(),
+                array_ptr,
+                &[index_ir],
+                "array_index",
+            )?
+        };
+
+        Ok(index_ptr)
+    }
+
+    fn generate_struct_access_lvalue(
+        &mut self,
+        lvalue: &mut StructAccessLValue,
+    ) -> Result<PointerValue<'state>> {
+        let StructAccessLValue {
+            value,
+            dot_token: _,
+            member_name,
+            member_name_token: _,
+            id: _,
+        } = lvalue;
+        let value_ptr = self.generate_lvalue(value)?;
+        let value_type = self.type_data.get(&**value);
+
+        let value_type_ir = self.runtime_type_to_llvm(value_type);
+
+        let ConcreteRuntimeType::Struct {
+            members,
+            source_hash: _,
+        } = value_type
+        else {
+            pass_precondition!("Struct access used on non-struct")
+        };
+
+        let (member_index, (_, _member_type)) = members
+            .iter()
+            .find_position(|m| m.0 == *member_name)
+            .unwrap_or_else(|| {
+                pass_precondition!("Struct doesn't have member named {member_name:?}")
+            });
+
+        let index_ptr = self.builder.build_struct_gep(
+            value_type_ir.into_struct_type(),
+            value_ptr,
+            member_index as u32,
+            "struct_Access",
+        )?;
+
+        Ok(index_ptr)
+    }
+
+    fn generate_grouping_lvalue(
+        &mut self,
+        GroupingLValue {
+            open_paren_token: _,
+            sublvalue,
+            close_paren_token: _,
+            id: _,
+        }: &mut GroupingLValue,
+    ) -> Result<PointerValue<'state>> {
+        self.generate_lvalue(sublvalue)
+    }
+
+    fn generate_simple_type(&mut self, type_: &mut SimpleType) -> Result<ConcreteRuntimeType> {
+        Ok(self.type_data.get(type_).clone())
+    }
+
+    fn generate_unit_type(&mut self, ty: &mut UnitType) -> Result<ConcreteRuntimeType> {
+        let infered_type = self.type_data.get(ty).clone();
+
+        assert_eq!(
+            ConcreteRuntimeType::Unit,
+            infered_type,
+            "Inferred type (right) of UnitType doesn't match its actual type (left)"
+        );
+        Ok(infered_type)
+    }
+
+    fn generate_idk_type(&mut self, type_: &mut IdkType) -> Result<ConcreteRuntimeType> {
+        Ok(self.type_data.get(type_).clone())
+    }
+
+    fn generate_array_type(&mut self, array_type: &mut ArrayType) -> Result<ConcreteRuntimeType> {
+        Ok(self.type_data.get(array_type).clone())
+    }
+
+    fn generate_struct_type(
+        &mut self,
+        struct_type: &mut crate::ast::StructType,
+    ) -> Result<ConcreteRuntimeType> {
+        Ok(self.type_data.get(struct_type).clone())
+    }
+
+    fn generate_alias_type(&mut self, alias_type: &mut AliasType) -> Result<ConcreteRuntimeType> {
+        Ok(self.type_data.get(alias_type).clone())
+    }
+}
+
+pub struct LLVMOptimizerPass<'state> {
+    module: &'state Module<'static>,
+    target_machine: &'state TargetMachine,
+}
+
+impl PassFactory for LLVMOptimizerPass<'_> {
+    type Output<'state> = LLVMOptimizerPass<'state>;
+    type Params = ();
+
+    fn try_new<'state>(
+        state: &'state mut GlobalState,
+        _params: Self::Params,
+    ) -> ::core::result::Result<Self::Output<'state>, FetchError>
+    where
+        Self: Sized,
+    {
+        let Fetched {
+            read: (module, target_machine),
+            write: (),
+            empty: (),
+        } = state.fetch()?;
+
+        Ok(Self::Output {
+            module,
+            target_machine,
+        })
+    }
+}
+impl Pass for LLVMOptimizerPass<'_> {
+    fn run<'state>(self: Box<Self>) -> PassResult {
+        self.module
+            .run_passes(
+                "default<O1>,asan",
+                self.target_machine,
+                PassBuilderOptions::create(),
+            )
+            .map_err(|err| PassError::CompilerError {
+                producing_pass: Self::name(),
+                source: err.into(),
+            })?;
+
+        Ok(())
+    }
+}

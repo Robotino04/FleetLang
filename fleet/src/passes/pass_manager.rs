@@ -1,32 +1,13 @@
 use std::{
-    any::type_name,
-    boxed::Box,
-    cell::RefCell,
-    collections::{HashMap, VecDeque},
-    error::Error,
-    fmt::Debug,
+    any::type_name, boxed::Box, collections::VecDeque, error::Error, fmt::Debug,
     marker::PhantomData,
-    rc::Rc,
 };
 
 use itertools::Itertools;
 use log::{info, warn};
 use thiserror::Error;
 
-use crate::{
-    node_data::{FinalPerNodeData, NodeDataSpec, NodeDataSpecGroups},
-    passes::{
-        global_state::{FetchError, GlobalState},
-        runtime_type::{ConcreteRuntimeType, RuntimeType},
-        scope_analysis::{
-            ConcreteFunction, ConcreteVariable, ConcreteVariableScope, Function, FunctionID,
-            Variable, VariableScope,
-        },
-        stat_tracker::NodeStats,
-        union_find_set::{UnionFindSet, UnionFindSetPtr},
-    },
-    tokenizer::FileName,
-};
+use super::prelude::*;
 
 #[macro_export]
 macro_rules! NewtypeDerefNoDefault {
@@ -84,123 +65,6 @@ macro_rules! NewtypeDeref {
 
 pub use NewtypeDeref;
 pub use NewtypeDerefNoDefault;
-
-// TODO: distribute these to their generating pass
-impl NodeDataSpecGroups for TypeData {
-    type Program = ();
-    type TopLevelStatement = ();
-    type FunctionBody = ();
-    type SimpleBinding = UnionFindSetPtr<RuntimeType>;
-    type Statement = ();
-    type ExecutorHost = ();
-    type Executor = ();
-    type Expression = UnionFindSetPtr<RuntimeType>;
-    type LValue = UnionFindSetPtr<RuntimeType>;
-    type Type = UnionFindSetPtr<RuntimeType>;
-}
-NewtypeDerefNoDefault!(pub TypeData, FinalPerNodeData<TypeData>);
-
-impl NodeDataSpec for VariableData {
-    // TODO: will become incorrect once we have more complex patterns
-    type VariableDefinitionStatement = Rc<RefCell<Variable>>;
-
-    type SimpleBinding = Rc<RefCell<Variable>>;
-    type VariableAccessExpression = Rc<RefCell<Variable>>;
-    type VariableLValue = Rc<RefCell<Variable>>;
-}
-NewtypeDerefNoDefault!(pub VariableData, FinalPerNodeData<VariableData>);
-
-impl NodeDataSpecGroups for ScopeData {
-    type Program = Rc<RefCell<VariableScope>>;
-    type TopLevelStatement = Rc<RefCell<VariableScope>>;
-    type FunctionBody = Rc<RefCell<VariableScope>>;
-    type SimpleBinding = Rc<RefCell<VariableScope>>;
-    type Statement = Rc<RefCell<VariableScope>>;
-    type ExecutorHost = Rc<RefCell<VariableScope>>;
-    type Executor = Rc<RefCell<VariableScope>>;
-    type Expression = Rc<RefCell<VariableScope>>;
-    type LValue = Rc<RefCell<VariableScope>>;
-    type Type = Rc<RefCell<VariableScope>>;
-}
-NewtypeDerefNoDefault!(pub ScopeData, FinalPerNodeData<ScopeData>);
-
-impl NodeDataSpec for FunctionData {
-    type FunctionDefinition = Rc<RefCell<Function>>;
-    type FunctionCallExpression = Rc<RefCell<Function>>;
-    type ExternFunctionBody = Rc<RefCell<Function>>;
-}
-NewtypeDerefNoDefault!(pub FunctionData, FinalPerNodeData<FunctionData>);
-
-NewtypeDeref!(pub TypeSets, UnionFindSet<RuntimeType>);
-
-impl NodeDataSpecGroups for ConcreteTypeData {
-    type Program = ();
-    type TopLevelStatement = ();
-    type FunctionBody = ();
-    type SimpleBinding = ConcreteRuntimeType;
-    type Statement = ();
-    type ExecutorHost = ();
-    type Executor = ();
-    type Expression = ConcreteRuntimeType;
-    type LValue = ConcreteRuntimeType;
-    type Type = ConcreteRuntimeType;
-}
-NewtypeDerefNoDefault!(pub ConcreteTypeData, FinalPerNodeData<ConcreteTypeData>);
-
-impl NodeDataSpec for ConcreteVariableData {
-    // TODO: will become incorrect once we have more complex patterns
-    type VariableDefinitionStatement = Rc<RefCell<ConcreteVariable>>;
-
-    type SimpleBinding = Rc<RefCell<ConcreteVariable>>;
-    type VariableAccessExpression = Rc<RefCell<ConcreteVariable>>;
-    type VariableLValue = Rc<RefCell<ConcreteVariable>>;
-}
-NewtypeDerefNoDefault!(pub ConcreteVariableData, FinalPerNodeData<ConcreteVariableData>);
-
-impl NodeDataSpecGroups for ConcreteScopeData {
-    type Program = Rc<RefCell<ConcreteVariableScope>>;
-    type TopLevelStatement = Rc<RefCell<ConcreteVariableScope>>;
-    type FunctionBody = Rc<RefCell<ConcreteVariableScope>>;
-    type SimpleBinding = Rc<RefCell<ConcreteVariableScope>>;
-    type Statement = Rc<RefCell<ConcreteVariableScope>>;
-    type ExecutorHost = Rc<RefCell<ConcreteVariableScope>>;
-    type Executor = Rc<RefCell<ConcreteVariableScope>>;
-    type Expression = Rc<RefCell<ConcreteVariableScope>>;
-    type LValue = Rc<RefCell<ConcreteVariableScope>>;
-    type Type = Rc<RefCell<ConcreteVariableScope>>;
-}
-NewtypeDerefNoDefault!(pub ConcreteScopeData, FinalPerNodeData<ConcreteScopeData>);
-
-impl NodeDataSpec for ConcreteFunctionData {
-    type FunctionDefinition = Rc<RefCell<ConcreteFunction>>;
-    type FunctionCallExpression = Rc<RefCell<ConcreteFunction>>;
-    type ExternFunctionBody = Rc<RefCell<ConcreteFunction>>;
-}
-NewtypeDerefNoDefault!(pub ConcreteFunctionData, FinalPerNodeData<ConcreteFunctionData>);
-
-impl NodeDataSpecGroups for StatData {
-    type Program = NodeStats;
-    type TopLevelStatement = NodeStats;
-    type FunctionBody = NodeStats;
-    type SimpleBinding = NodeStats;
-    type Statement = NodeStats;
-    type ExecutorHost = NodeStats;
-    type Executor = NodeStats;
-    type Expression = NodeStats;
-    type LValue = NodeStats;
-    type Type = NodeStats;
-}
-NewtypeDerefNoDefault!(pub StatData, FinalPerNodeData<StatData>);
-
-NewtypeDeref!(pub StructAliasMap, HashMap<String, (usize, String)>, Clone);
-NewtypeDeref!(pub PrecompiledGlslFunctions, (HashMap<FunctionID, (String, String)>, StructAliasMap, u64), Clone);
-NewtypeDeref!(pub CCodeOutput, String);
-
-#[derive(Debug, Clone)]
-pub struct InputSource {
-    pub source: String,
-    pub file_name: FileName,
-}
 
 pub trait PassFactory {
     type Output<'state>: Pass + 'state;

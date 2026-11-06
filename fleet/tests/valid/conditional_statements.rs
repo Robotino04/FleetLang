@@ -1,9 +1,4 @@
-use fleet::tokenizer::SourceLocation;
-use indoc::indoc;
-
-use crate::common::{
-    assert_compile_and_return_value, assert_compile_and_warning, assert_compile_error,
-};
+use crate::common::prelude::*;
 
 #[test]
 fn if_else() {

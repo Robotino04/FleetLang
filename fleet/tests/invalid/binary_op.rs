@@ -1,7 +1,4 @@
-use fleet::tokenizer::SourceLocation;
-use indoc::indoc;
-
-use crate::common::assert_parser_or_tokenizer_error;
+use crate::common::prelude::*;
 
 #[test]
 fn paren_malformed() {

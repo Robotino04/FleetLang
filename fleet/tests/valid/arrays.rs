@@ -1,6 +1,4 @@
-use indoc::indoc;
-
-use crate::common::{assert_compile_and_output_subprocess, assert_compile_and_return_value};
+use crate::common::prelude::*;
 
 #[test]
 fn _15d_array() {

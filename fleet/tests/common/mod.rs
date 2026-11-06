@@ -15,23 +15,38 @@ use inkwell::{
 };
 
 use fleet::{
-    ast::Program,
+    ast::{Program, node_data::NodeDataEnum},
     error_reporting::{ErrorKind, ErrorSeverity, Errors},
     infra::{
         format, insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
     },
-    ir_generator::{IrGenerator, LLVMOptimizerPass},
-    node_data::NodeDataEnum,
     passes::{
-        pass_manager::{ConcreteFunctionData, InputSource, PassError, PassManager, StatData},
-        runtime_type::ConcreteRuntimeType,
-        save_artifact_pass::{ArtifactType, SaveArtifactPass},
+        out::{
+            generate_llvm::{LLVMOptimizerPass, OutGenerateLlvm},
+            save_artifact::{ArtifactType, OutSaveArtifact},
+        },
+        pass_manager::{PassError, PassManager},
+        proc::{
+            stat_tracker::StatData,
+            tokenizer::{InputSource, SourceLocation},
+            type_concretizer::ConcreteFunctionData,
+        },
     },
-    tokenizer::SourceLocation,
+    runtime_type::ConcreteRuntimeType,
 };
 use itertools::Itertools;
 use libc::{RTLD_GLOBAL, RTLD_NOW, dlopen, mkfifo};
 use tempfile::{TempDir, tempdir};
+
+pub mod prelude {
+    pub use super::{
+        assert_compile_and_output_subprocess, assert_compile_and_return_value,
+        assert_compile_and_return_value_unformatted, assert_compile_and_warning,
+        assert_compile_error, assert_compile_error_no_formatting, assert_parser_or_tokenizer_error,
+    };
+    pub use fleet::passes::proc::tokenizer::SourceLocation;
+    pub use indoc::indoc;
+}
 
 pub trait SubprocessTestableReturnType {
     fn expected_bytes(self) -> Vec<u8>;
@@ -177,7 +192,7 @@ pub fn assert_compile_error_no_formatting(src: &str, error_start: SourceLocation
     insert_minimal_pipeline(&mut pm);
     insert_fix_passes(&mut pm);
     insert_compile_passes(&mut pm);
-    pm.insert::<IrGenerator>();
+    pm.insert::<OutGenerateLlvm>();
 
     match pm.run() {
         Err(PassError::InvalidInput { .. }) => {}
@@ -205,7 +220,7 @@ pub fn assert_compile_and_warning(src: &str, warning_start: SourceLocation) {
     insert_minimal_pipeline(&mut pm);
     insert_fix_passes(&mut pm);
     insert_compile_passes(&mut pm);
-    pm.insert::<IrGenerator>();
+    pm.insert::<OutGenerateLlvm>();
 
     pm.run().unwrap();
 
@@ -375,7 +390,7 @@ fn compile_or_panic(src: &str) -> PassManager {
     insert_compile_passes(&mut pm);
 
     insert_c_passes(&mut pm);
-    pm.insert::<IrGenerator>();
+    pm.insert::<OutGenerateLlvm>();
 
     pm.run()
         .inspect_err(|_| {
@@ -521,7 +536,7 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
 
     pm.state.insert(target_machine).unwrap();
     pm.insert::<LLVMOptimizerPass>();
-    pm.insert_params::<SaveArtifactPass>((object_file.clone(), ArtifactType::Object));
+    pm.insert_params::<OutSaveArtifact>((object_file.clone(), ArtifactType::Object));
     pm.run().unwrap();
 
     let program = pm.state.get::<Program>().unwrap();
@@ -583,7 +598,7 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
     let binary_file = dir.path().join("test");
 
     let mut pm = compile_or_panic(src);
-    pm.insert_params::<SaveArtifactPass>((c_file.clone(), ArtifactType::CCode));
+    pm.insert_params::<OutSaveArtifact>((c_file.clone(), ArtifactType::CCode));
     pm.run().unwrap();
 
     let needs_runtime = pm

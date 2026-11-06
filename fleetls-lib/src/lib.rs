@@ -10,25 +10,28 @@ use fleet::{
         StructAccessExpression, StructAccessLValue, StructExpression, StructType, ThreadExecutor,
         TopLevelStatement, Type, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
-        VariableLValue, WhileLoopStatement,
+        VariableLValue, WhileLoopStatement, accessors::containing_node::find_containing_node,
+        node_data::HasData,
     },
     error_reporting::{ErrorSeverity, Errors, HighlightTag},
     escape::{QuoteType, escape},
+    global_state::Fetched,
     infra::{
         self, insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
     },
-    node_data::HasData,
     passes::{
-        find_containing_node::find_containing_node,
-        global_state::Fetched,
-        pass_manager::{
-            FunctionData, InputSource, PassError, PassManager, ScopeData, StatData, TypeData,
-            TypeSets, VariableData,
+        pass_manager::{PassError, PassManager},
+        proc::{
+            scope_analyzer::{FunctionData, ScopeData, VariableData},
+            stat_tracker::StatData,
+            tokenizer::{
+                FileName, InputSource, NamedSourceRange, SourceLocation, SourceRange, Token,
+            },
+            type_checker::{TypeData, TypeSets},
         },
-        runtime_type::RuntimeType,
-        union_find_set::UnionFindSetPtr,
     },
-    tokenizer::{FileName, NamedSourceRange, SourceLocation, SourceRange, Token},
+    runtime_type::RuntimeType,
+    union_find_set::UnionFindSetPtr,
 };
 use indoc::indoc;
 use itertools::Itertools;
@@ -1109,9 +1112,9 @@ impl LanguageServer for Backend {
 
         #[cfg(feature = "llvm_backend")]
         {
-            use fleet::ir_generator::IrGenerator;
+            use fleet::passes::out::generate_llvm::OutGenerateLlvm;
 
-            pm.insert::<IrGenerator>();
+            pm.insert::<OutGenerateLlvm>();
             // don't optimize in the lsp
             //pm.insert::<LLVMOptimizerPass>();
         };

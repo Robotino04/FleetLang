@@ -5,25 +5,32 @@ use std::{fs::read_to_string, process::exit};
 
 use clap::{Parser, ValueEnum};
 
-use fleet::NewtypeDerefNoDefault;
-use fleet::ast::Program;
-use fleet::ast_to_dm::AstToDocumentModelConverter;
-use fleet::document_model::{DocumentElement, fully_flatten_document, stringify_document};
-use fleet::error_reporting::{ErrorSeverity, Errors};
-use fleet::infra::{
-    insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
+use fleet::passes::out::ast_to_json::{AstJsonOutput, OutAstToJson};
+use fleet::passes::out::generate_llvm::{LLVMOptimizerPass, OutGenerateLlvm};
+use fleet::{
+    NewtypeDerefNoDefault,
+    ast::Program,
+    document_model::{DocumentElement, fully_flatten_document, stringify_document},
+    error_reporting::{ErrorSeverity, Errors},
+    infra::{insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline},
+    inkwell::{
+        self, OptimizationLevel,
+        module::Module,
+        targets::{CodeModel, RelocMode, Target, TargetTriple},
+    },
+    passes::{
+        misc::{simple_function::SimpleFunctionPass, store_pass::StorePass, swap_pass::SwapPass},
+        out::{
+            ast_to_dm::OutAstToDM,
+            save_artifact::{ArtifactType, OutSaveArtifact},
+        },
+        pass_manager::{PassError, PassManager},
+        proc::{
+            stat_tracker::StatData,
+            tokenizer::{FileName, InputSource, Token},
+        },
+    },
 };
-use fleet::inkwell::module::Module;
-use fleet::inkwell::targets::{CodeModel, RelocMode, Target, TargetTriple};
-use fleet::inkwell::{self, OptimizationLevel};
-use fleet::ir_generator::{IrGenerator, LLVMOptimizerPass};
-use fleet::passes::ast_json_dump::{AstJsonDumpPass, AstJsonOutput};
-use fleet::passes::pass_manager::{InputSource, PassError, PassManager, StatData};
-use fleet::passes::save_artifact_pass::{ArtifactType, SaveArtifactPass};
-use fleet::passes::simple_function_pass::SingleFunctionPass;
-use fleet::passes::store_pass::StorePass;
-use fleet::passes::swap_pass::SwapPass;
-use fleet::tokenizer::{FileName, Token};
 
 #[allow(unused)]
 fn generate_header(text: impl AsRef<str>, length: usize) -> String {
@@ -147,7 +154,7 @@ fn main() {
             if cli.format {
                 let output_file_name = output_file_name.clone();
                 let src = src.clone();
-                pm.insert_params::<SingleFunctionPass<_, _>>(move |dm: &DocumentElement| {
+                pm.insert_params::<SimpleFunctionPass<_, _>>(move |dm: &DocumentElement| {
                     let formatted = stringify_document(fully_flatten_document(dm.clone()));
                     std::fs::write(output_file_name, &formatted).unwrap();
                     if formatted != src {
@@ -156,7 +163,7 @@ fn main() {
                     Ok(())
                 });
             } else {
-                pm.insert_params::<SaveArtifactPass>((
+                pm.insert_params::<OutSaveArtifact>((
                     cli.output.unwrap_or(cli.input_file.with_extension("o")),
                     ArtifactType::Object,
                 ));
@@ -167,53 +174,53 @@ fn main() {
             let output_file_name = output_file_name.clone();
             match dump_type {
                 DumpOption::CCode => {
-                    pm.insert_params::<SaveArtifactPass>((output_file_name, ArtifactType::CCode));
+                    pm.insert_params::<OutSaveArtifact>((output_file_name, ArtifactType::CCode));
                 }
                 DumpOption::AstRaw => {
-                    pm.insert_params::<SingleFunctionPass<_, _>>(|rp: &RawProgram| {
+                    pm.insert_params::<SimpleFunctionPass<_, _>>(|rp: &RawProgram| {
                         std::fs::write(output_file_name, format!("{rp:#?}\n")).unwrap();
                         Ok(())
                     });
                 }
                 DumpOption::LlvmIr => {
-                    pm.insert_params::<SingleFunctionPass<_, _>>(|module: &Module| {
+                    pm.insert_params::<SimpleFunctionPass<_, _>>(|module: &Module| {
                         std::fs::write(output_file_name, module.to_string() + "\n").unwrap();
                         Ok(())
                     });
                 }
                 DumpOption::Tokens => {
-                    pm.insert_params::<SingleFunctionPass<_, _>>(|tokens: &Vec<Token>| {
+                    pm.insert_params::<SimpleFunctionPass<_, _>>(|tokens: &Vec<Token>| {
                         std::fs::write(output_file_name, format!("{tokens:#?}\n")).unwrap();
                         Ok(())
                     });
                 }
                 DumpOption::AstFull => {
-                    pm.insert_params::<SingleFunctionPass<_, _>>(|program: &Program| {
+                    pm.insert_params::<SimpleFunctionPass<_, _>>(|program: &Program| {
                         std::fs::write(output_file_name, format!("{program:#?}\n")).unwrap();
                         Ok(())
                     });
                 }
                 DumpOption::AstJson => {
-                    pm.insert::<AstJsonDumpPass>();
-                    pm.insert_params::<SingleFunctionPass<_, _>>(|out: &AstJsonOutput| {
+                    pm.insert::<OutAstToJson>();
+                    pm.insert_params::<SimpleFunctionPass<_, _>>(|out: &AstJsonOutput| {
                         std::fs::write(output_file_name, out.0.clone()).unwrap();
                         Ok(())
                     });
                 }
                 DumpOption::DocumentModel => {
-                    pm.insert_params::<SingleFunctionPass<_, _>>(|dm: &DocumentElement| {
+                    pm.insert_params::<SimpleFunctionPass<_, _>>(|dm: &DocumentElement| {
                         std::fs::write(output_file_name, format!("{dm:#?}\n")).unwrap();
                         Ok(())
                     });
                 }
                 DumpOption::LlvmIrOptimized => {
-                    pm.insert_params::<SingleFunctionPass<_, _>>(|module: &OptimizedModule| {
+                    pm.insert_params::<SimpleFunctionPass<_, _>>(|module: &OptimizedModule| {
                         std::fs::write(output_file_name, module.to_string() + "\n").unwrap();
                         Ok(())
                     });
                 }
                 DumpOption::DocumentModelFlat => {
-                    pm.insert_params::<SingleFunctionPass<_, _>>(|dm: &DocumentElement| {
+                    pm.insert_params::<SimpleFunctionPass<_, _>>(|dm: &DocumentElement| {
                         std::fs::write(
                             output_file_name,
                             format!("{:#?}\n", fully_flatten_document(dm.clone())),
@@ -223,7 +230,7 @@ fn main() {
                     });
                 }
                 DumpOption::NodeStats => {
-                    pm.insert_params::<SingleFunctionPass<_, _>>(|stats: &StatData| {
+                    pm.insert_params::<SimpleFunctionPass<_, _>>(|stats: &StatData| {
                         std::fs::write(output_file_name, format!("{stats:#?}\n")).unwrap();
                         Ok(())
                     });
@@ -238,22 +245,22 @@ fn main() {
     pm.insert::<StorePass<Program, FixedProgram>>();
     insert_compile_passes(&mut pm);
     insert_c_passes(&mut pm);
-    pm.insert_params::<SaveArtifactPass>((cli.input_file.with_extension("c"), ArtifactType::CCode));
+    pm.insert_params::<OutSaveArtifact>((cli.input_file.with_extension("c"), ArtifactType::CCode));
 
-    pm.insert::<IrGenerator>();
-    pm.insert_params::<SaveArtifactPass>((
+    pm.insert::<OutGenerateLlvm>();
+    pm.insert_params::<OutSaveArtifact>((
         cli.input_file.with_extension("unopt.ll"),
         ArtifactType::LlvmIr,
     ));
     pm.insert::<LLVMOptimizerPass>();
     pm.insert::<StorePass<Module, OptimizedModule>>();
-    pm.insert_params::<SaveArtifactPass>((
+    pm.insert_params::<OutSaveArtifact>((
         cli.input_file.with_extension("opt.ll"),
         ArtifactType::LlvmIr,
     ));
 
     pm.insert::<SwapPass<Program, FixedProgram>>();
-    pm.insert::<AstToDocumentModelConverter>();
+    pm.insert::<OutAstToDM>();
     pm.insert::<SwapPass<Program, FixedProgram>>();
 
     pm.state.insert_default::<Errors>().unwrap();

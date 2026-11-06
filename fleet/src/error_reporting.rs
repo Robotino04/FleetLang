@@ -9,12 +9,12 @@ use crate::{
     NewtypeDeref, NewtypeDerefNoDefault,
     ast::{BinaryOperation, UnaryOperation},
     natural_language::{JoinAnd, JoinOr, an, nth, plural},
-    passes::{
-        pass_manager::TypeSets,
-        runtime_type::{ConcreteRuntimeType, RuntimeType, RuntimeTypeKind},
-        union_find_set::UnionFindSetPtr,
+    passes::proc::{
+        tokenizer::{FileName, NamedSourceRange, SourceLocation, Token},
+        type_checker::TypeSets,
     },
-    tokenizer::{FileName, NamedSourceRange, SourceLocation, Token},
+    runtime_type::{ConcreteRuntimeType, RuntimeType, RuntimeTypeKind},
+    union_find_set::UnionFindSetPtr,
 };
 
 NewtypeDeref!(pub Errors, Vec<ErrorKind>, Clone);

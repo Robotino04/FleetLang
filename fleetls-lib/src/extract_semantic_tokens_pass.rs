@@ -12,7 +12,7 @@ use fleet::{
         VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
         VariableLValue, WhileLoopStatement,
     },
-    tokenizer::{SourceLocation, SourceRange, Token, Trivia, TriviaKind},
+    passes::proc::tokenizer::{SourceLocation, SourceRange, Token, Trivia, TriviaKind},
 };
 use tower_lsp_server::lsp_types::{SemanticToken, SemanticTokenModifier, SemanticTokenType};
 

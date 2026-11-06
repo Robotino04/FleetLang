@@ -1,7 +1,4 @@
-use fleet::tokenizer::SourceLocation;
-use indoc::indoc;
-
-use crate::common::assert_compile_and_warning;
+use crate::common::prelude::*;
 
 #[test]
 fn variable_not_snake_case() {

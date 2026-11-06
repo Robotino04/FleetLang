@@ -1,7 +1,4 @@
-use fleet::tokenizer::SourceLocation;
-use indoc::indoc;
-
-use crate::common::{assert_compile_error, assert_parser_or_tokenizer_error};
+use crate::common::prelude::*;
 
 #[test]
 fn missing_operand() {
