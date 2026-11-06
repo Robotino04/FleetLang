@@ -342,304 +342,133 @@ where
     type AliasType = T::Type;
 }
 
+macro_rules! with_data_enum_variants {
+    ( $($rules:tt)* ) => {
+        macro_rules! __emit__ { $($rules)* }
+
+        __emit__! {
+            Program
+            FunctionDefinition
+            TypeAlias
+            ExternFunctionBody
+            StatementFunctionBody
+            SimpleBinding
+            ExpressionStatement
+            OnStatement
+            BlockStatement
+            ReturnStatement
+            VariableDefinitionStatement
+            IfStatement
+            WhileLoopStatement
+            ForLoopStatement
+            BreakStatement
+            SkipStatement
+            SelfExecutorHost
+            ThreadExecutor
+            GPUExecutor
+            LiteralExpression
+            ArrayExpression
+            StructExpression
+            FunctionCallExpression
+            CompilerExpression
+            ArrayIndexExpression
+            StructAccessExpression
+            GroupingExpression
+            VariableAccessExpression
+            UnaryExpression
+            CastExpression
+            BinaryExpression
+            VariableAssignmentExpression
+            VariableLValue
+            ArrayIndexLValue
+            StructAccessLValue
+            GroupingLValue
+            SimpleType
+            UnitType
+            IdkType
+            ArrayType
+            StructType
+            AliasType
+        }
+    };
+}
+
+with_data_enum_variants! { ( $($Variant:ident)* ) => {
+
 pub trait NodeDataSpec {
-    type Program: 'static = ();
-
-    type FunctionDefinition: 'static = ();
-    type TypeAlias: 'static = ();
-
-    type ExternFunctionBody: 'static = ();
-    type StatementFunctionBody: 'static = ();
-
-    type SimpleBinding: 'static = ();
-
-    type ExpressionStatement: 'static = ();
-    type OnStatement: 'static = ();
-    type BlockStatement: 'static = ();
-    type ReturnStatement: 'static = ();
-    type VariableDefinitionStatement: 'static = ();
-    type IfStatement: 'static = ();
-    type WhileLoopStatement: 'static = ();
-    type ForLoopStatement: 'static = ();
-    type BreakStatement: 'static = ();
-    type SkipStatement: 'static = ();
-
-    type SelfExecutorHost: 'static = ();
-
-    type ThreadExecutor: 'static = ();
-    type GPUExecutor: 'static = ();
-
-    type LiteralExpression: 'static = ();
-    type ArrayExpression: 'static = ();
-    type StructExpression: 'static = ();
-    type FunctionCallExpression: 'static = ();
-    type CompilerExpression: 'static = ();
-    type ArrayIndexExpression: 'static = ();
-    type StructAccessExpression: 'static = ();
-    type GroupingExpression: 'static = ();
-    type VariableAccessExpression: 'static = ();
-    type UnaryExpression: 'static = ();
-    type CastExpression: 'static = ();
-    type BinaryExpression: 'static = ();
-    type VariableAssignmentExpression: 'static = ();
-
-    type VariableLValue: 'static = ();
-    type ArrayIndexLValue: 'static = ();
-    type StructAccessLValue: 'static = ();
-    type GroupingLValue: 'static = ();
-
-    type SimpleType: 'static = ();
-    type UnitType: 'static = ();
-    type IdkType: 'static = ();
-    type ArrayType: 'static = ();
-    type StructType: 'static = ();
-    type AliasType: 'static = ();
+    $(type $Variant: 'static = ();)*
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Debug)]
 pub enum NodeDataEnum<T: NodeDataSpec> {
-    Program(T::Program),
-
-    FunctionDefinition(T::FunctionDefinition),
-    TypeAlias(T::TypeAlias),
-
-    ExternFunctionBody(T::ExternFunctionBody),
-    StatementFunctionBody(T::StatementFunctionBody),
-
-    SimpleBinding(T::SimpleBinding),
-
-    ExpressionStatement(T::ExpressionStatement),
-    OnStatement(T::OnStatement),
-    BlockStatement(T::BlockStatement),
-    ReturnStatement(T::ReturnStatement),
-    VariableDefinitionStatement(T::VariableDefinitionStatement),
-    IfStatement(T::IfStatement),
-    WhileLoopStatement(T::WhileLoopStatement),
-    ForLoopStatement(T::ForLoopStatement),
-    BreakStatement(T::BreakStatement),
-    SkipStatement(T::SkipStatement),
-
-    SelfExecutorHost(T::SelfExecutorHost),
-
-    ThreadExecutor(T::ThreadExecutor),
-    GPUExecutor(T::GPUExecutor),
-
-    LiteralExpression(T::LiteralExpression),
-    ArrayExpression(T::ArrayExpression),
-    StructExpression(T::StructExpression),
-    FunctionCallExpression(T::FunctionCallExpression),
-    CompilerExpression(T::CompilerExpression),
-    ArrayIndexExpression(T::ArrayIndexExpression),
-    StructAccessExpression(T::StructAccessExpression),
-    GroupingExpression(T::GroupingExpression),
-    VariableAccessExpression(T::VariableAccessExpression),
-    UnaryExpression(T::UnaryExpression),
-    CastExpression(T::CastExpression),
-    BinaryExpression(T::BinaryExpression),
-    VariableAssignmentExpression(T::VariableAssignmentExpression),
-
-    VariableLValue(T::VariableLValue),
-    ArrayIndexLValue(T::ArrayIndexLValue),
-    StructAccessLValue(T::StructAccessLValue),
-    GroupingLValue(T::GroupingLValue),
-
-    SimpleType(T::SimpleType),
-    UnitType(T::UnitType),
-    IdkType(T::IdkType),
-    ArrayType(T::ArrayType),
-    StructType(T::StructType),
-    AliasType(T::AliasType),
+    $($Variant(T::$Variant),)*
 }
+
+impl<T: NodeDataSpec> Clone for NodeDataEnum<T>
+where
+    $(T::$Variant: Clone),*
+{
+    fn clone(&self) -> Self {
+        match self {
+            $(
+                Self::$Variant(x) => Self::$Variant(x.clone()),
+            )*
+        }
+    }
+}
+
+impl<T: NodeDataSpec> PartialEq for NodeDataEnum<T>
+where
+    $(T::$Variant: PartialEq),*
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            $(
+                (Self::$Variant(s), Self::$Variant(o)) => s.eq(o),
+            )*
+            _ => false,
+        }
+    }
+}
+
+impl<T: NodeDataSpec> Eq for NodeDataEnum<T>
+where
+    $(T::$Variant: Eq),*
+{}
 
 impl<T, U> NodeDataEnum<T>
 where
     T: NodeDataSpec<
-            Program = U,
-            FunctionDefinition = U,
-            TypeAlias = U,
-            ExternFunctionBody = U,
-            StatementFunctionBody = U,
-            SimpleBinding = U,
-            ExpressionStatement = U,
-            OnStatement = U,
-            BlockStatement = U,
-            ReturnStatement = U,
-            VariableDefinitionStatement = U,
-            IfStatement = U,
-            WhileLoopStatement = U,
-            ForLoopStatement = U,
-            BreakStatement = U,
-            SkipStatement = U,
-            SelfExecutorHost = U,
-            ThreadExecutor = U,
-            GPUExecutor = U,
-            LiteralExpression = U,
-            ArrayExpression = U,
-            StructExpression = U,
-            FunctionCallExpression = U,
-            CompilerExpression = U,
-            ArrayIndexExpression = U,
-            StructAccessExpression = U,
-            GroupingExpression = U,
-            VariableAccessExpression = U,
-            UnaryExpression = U,
-            CastExpression = U,
-            BinaryExpression = U,
-            VariableAssignmentExpression = U,
-            VariableLValue = U,
-            ArrayIndexLValue = U,
-            StructAccessLValue = U,
-            GroupingLValue = U,
-            SimpleType = U,
-            UnitType = U,
-            IdkType = U,
-            ArrayType = U,
-            StructType = U,
-            AliasType = U,
-        >,
+        $($Variant = U,)*
+    >,
 {
     #[must_use]
     /// Extracts the contained value if all nodes store the same type
     pub fn extract(self) -> U {
         match self {
-            NodeDataEnum::Program(x)
-            | NodeDataEnum::FunctionDefinition(x)
-            | NodeDataEnum::TypeAlias(x)
-            | NodeDataEnum::ExternFunctionBody(x)
-            | NodeDataEnum::StatementFunctionBody(x)
-            | NodeDataEnum::SimpleBinding(x)
-            | NodeDataEnum::ExpressionStatement(x)
-            | NodeDataEnum::OnStatement(x)
-            | NodeDataEnum::BlockStatement(x)
-            | NodeDataEnum::ReturnStatement(x)
-            | NodeDataEnum::VariableDefinitionStatement(x)
-            | NodeDataEnum::IfStatement(x)
-            | NodeDataEnum::WhileLoopStatement(x)
-            | NodeDataEnum::ForLoopStatement(x)
-            | NodeDataEnum::BreakStatement(x)
-            | NodeDataEnum::SkipStatement(x)
-            | NodeDataEnum::SelfExecutorHost(x)
-            | NodeDataEnum::ThreadExecutor(x)
-            | NodeDataEnum::GPUExecutor(x)
-            | NodeDataEnum::LiteralExpression(x)
-            | NodeDataEnum::ArrayExpression(x)
-            | NodeDataEnum::StructExpression(x)
-            | NodeDataEnum::FunctionCallExpression(x)
-            | NodeDataEnum::CompilerExpression(x)
-            | NodeDataEnum::ArrayIndexExpression(x)
-            | NodeDataEnum::StructAccessExpression(x)
-            | NodeDataEnum::GroupingExpression(x)
-            | NodeDataEnum::VariableAccessExpression(x)
-            | NodeDataEnum::UnaryExpression(x)
-            | NodeDataEnum::CastExpression(x)
-            | NodeDataEnum::BinaryExpression(x)
-            | NodeDataEnum::VariableAssignmentExpression(x)
-            | NodeDataEnum::VariableLValue(x)
-            | NodeDataEnum::ArrayIndexLValue(x)
-            | NodeDataEnum::StructAccessLValue(x)
-            | NodeDataEnum::GroupingLValue(x)
-            | NodeDataEnum::SimpleType(x)
-            | NodeDataEnum::UnitType(x)
-            | NodeDataEnum::IdkType(x)
-            | NodeDataEnum::ArrayType(x)
-            | NodeDataEnum::StructType(x)
-            | NodeDataEnum::AliasType(x) => x,
+            $(
+                Self::$Variant(x) => x,
+            )*
         }
     }
     #[must_use]
     /// Extracts the contained value if all nodes store the same type
     pub fn extract_ref(&self) -> &U {
         match self {
-            NodeDataEnum::Program(x)
-            | NodeDataEnum::FunctionDefinition(x)
-            | NodeDataEnum::TypeAlias(x)
-            | NodeDataEnum::ExternFunctionBody(x)
-            | NodeDataEnum::StatementFunctionBody(x)
-            | NodeDataEnum::SimpleBinding(x)
-            | NodeDataEnum::ExpressionStatement(x)
-            | NodeDataEnum::OnStatement(x)
-            | NodeDataEnum::BlockStatement(x)
-            | NodeDataEnum::ReturnStatement(x)
-            | NodeDataEnum::VariableDefinitionStatement(x)
-            | NodeDataEnum::IfStatement(x)
-            | NodeDataEnum::WhileLoopStatement(x)
-            | NodeDataEnum::ForLoopStatement(x)
-            | NodeDataEnum::BreakStatement(x)
-            | NodeDataEnum::SkipStatement(x)
-            | NodeDataEnum::SelfExecutorHost(x)
-            | NodeDataEnum::ThreadExecutor(x)
-            | NodeDataEnum::GPUExecutor(x)
-            | NodeDataEnum::LiteralExpression(x)
-            | NodeDataEnum::ArrayExpression(x)
-            | NodeDataEnum::StructExpression(x)
-            | NodeDataEnum::FunctionCallExpression(x)
-            | NodeDataEnum::CompilerExpression(x)
-            | NodeDataEnum::ArrayIndexExpression(x)
-            | NodeDataEnum::StructAccessExpression(x)
-            | NodeDataEnum::GroupingExpression(x)
-            | NodeDataEnum::VariableAccessExpression(x)
-            | NodeDataEnum::UnaryExpression(x)
-            | NodeDataEnum::CastExpression(x)
-            | NodeDataEnum::BinaryExpression(x)
-            | NodeDataEnum::VariableAssignmentExpression(x)
-            | NodeDataEnum::VariableLValue(x)
-            | NodeDataEnum::ArrayIndexLValue(x)
-            | NodeDataEnum::StructAccessLValue(x)
-            | NodeDataEnum::GroupingLValue(x)
-            | NodeDataEnum::SimpleType(x)
-            | NodeDataEnum::UnitType(x)
-            | NodeDataEnum::IdkType(x)
-            | NodeDataEnum::ArrayType(x)
-            | NodeDataEnum::StructType(x)
-            | NodeDataEnum::AliasType(x) => x,
+            $(
+                Self::$Variant(x) => x,
+            )*
         }
     }
     #[must_use]
     /// Extracts the contained value if all nodes store the same type
     pub fn extract_mut(&mut self) -> &mut U {
         match self {
-            NodeDataEnum::Program(x)
-            | NodeDataEnum::FunctionDefinition(x)
-            | NodeDataEnum::TypeAlias(x)
-            | NodeDataEnum::ExternFunctionBody(x)
-            | NodeDataEnum::StatementFunctionBody(x)
-            | NodeDataEnum::SimpleBinding(x)
-            | NodeDataEnum::ExpressionStatement(x)
-            | NodeDataEnum::OnStatement(x)
-            | NodeDataEnum::BlockStatement(x)
-            | NodeDataEnum::ReturnStatement(x)
-            | NodeDataEnum::VariableDefinitionStatement(x)
-            | NodeDataEnum::IfStatement(x)
-            | NodeDataEnum::WhileLoopStatement(x)
-            | NodeDataEnum::ForLoopStatement(x)
-            | NodeDataEnum::BreakStatement(x)
-            | NodeDataEnum::SkipStatement(x)
-            | NodeDataEnum::SelfExecutorHost(x)
-            | NodeDataEnum::ThreadExecutor(x)
-            | NodeDataEnum::GPUExecutor(x)
-            | NodeDataEnum::LiteralExpression(x)
-            | NodeDataEnum::ArrayExpression(x)
-            | NodeDataEnum::StructExpression(x)
-            | NodeDataEnum::FunctionCallExpression(x)
-            | NodeDataEnum::CompilerExpression(x)
-            | NodeDataEnum::ArrayIndexExpression(x)
-            | NodeDataEnum::StructAccessExpression(x)
-            | NodeDataEnum::GroupingExpression(x)
-            | NodeDataEnum::VariableAccessExpression(x)
-            | NodeDataEnum::UnaryExpression(x)
-            | NodeDataEnum::CastExpression(x)
-            | NodeDataEnum::BinaryExpression(x)
-            | NodeDataEnum::VariableAssignmentExpression(x)
-            | NodeDataEnum::VariableLValue(x)
-            | NodeDataEnum::ArrayIndexLValue(x)
-            | NodeDataEnum::StructAccessLValue(x)
-            | NodeDataEnum::GroupingLValue(x)
-            | NodeDataEnum::SimpleType(x)
-            | NodeDataEnum::UnitType(x)
-            | NodeDataEnum::IdkType(x)
-            | NodeDataEnum::ArrayType(x)
-            | NodeDataEnum::StructType(x)
-            | NodeDataEnum::AliasType(x) => x,
+            $(
+                Self::$Variant(x) => x,
+            )*
         }
     }
 }
+
+}}
