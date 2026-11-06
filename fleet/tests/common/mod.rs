@@ -21,6 +21,7 @@ use fleet::{
         format, insert_c_passes, insert_compile_passes, insert_fix_passes, insert_minimal_pipeline,
     },
     ir_generator::{IrGenerator, LLVMOptimizerPass},
+    node_data::NodeDataEnum,
     passes::{
         pass_manager::{ConcreteFunctionData, InputSource, PassError, PassManager, StatData},
         runtime_type::ConcreteRuntimeType,
@@ -244,10 +245,18 @@ where
     let function_data = pm.state.get::<ConcreteFunctionData>().unwrap();
 
     let function = function_data
+        .inner()
         .iter()
-        .find(|(_id, function)| function.borrow().symbol.name == function_name)
-        .unwrap()
-        .1;
+        .find_map(|(_, func)| {
+            if let NodeDataEnum::FunctionDefinition(func) = func
+                && func.borrow().symbol.name == function_name
+            {
+                Some(func)
+            } else {
+                None
+            }
+        })
+        .unwrap();
 
     let actual_return_type = function.borrow().return_type.clone();
 

@@ -11,8 +11,8 @@ use crate::{
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
         CompilerExpression, Executor, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement,
-        Program, ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
+        GroupingLValue, IdkType, IfStatement, LiteralExpression, LiteralKind, OnStatement, Program,
+        ReturnStatement, SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement,
         StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
         StructMemberDefinition, StructMemberValue, StructType, ThreadExecutor, TopLevelStatement,
         TypeAlias, UnaryExpression, UnaryOperation, UnitType, VariableAccessExpression,
@@ -22,6 +22,7 @@ use crate::{
     define_dispatch_methods,
     error_reporting::{Backend, ErrorKind, ErrorSeverity, Errors, Intrinsic, UnresolvedSymbol},
     generate_glsl::GLSLCodeGenerator,
+    node_data::NodeDataEnum,
     passes::{
         global_state::{Empty, FetchError, Fetched, GlobalState},
         pass_manager::{
@@ -240,15 +241,10 @@ impl CCodeGenerator<'_> {
             .top_level_statements
             .iter()
             .filter_map(|f| {
-                if let TopLevelStatement::FunctionDefinition(_) = f {
+                if let TopLevelStatement::FunctionDefinition(f) = f {
                     Some(
                         self.generate_function_declaration(
-                            &self
-                                .function_data
-                                .get(&f.get_id())
-                                .expect("Functions should be tracked before calling c_generator")
-                                .borrow()
-                                .clone(),
+                            &self.function_data.get(f).borrow(),
                             true,
                         ) + ";",
                     )
@@ -285,10 +281,18 @@ impl CCodeGenerator<'_> {
 
         let main_function = self
             .function_data
+            .inner()
             .iter()
-            .find(|(_, func)| func.borrow().symbol.name == "main")
-            .unwrap()
-            .1;
+            .find_map(|(_, func)| {
+                if let NodeDataEnum::FunctionDefinition(func) = func
+                    && func.borrow().symbol.name == "main"
+                {
+                    Some(func)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
 
         let main_call = if main_function.borrow().return_type.is_unit() {
             "fleet_main();\nint retvalue = 0;"
@@ -333,9 +337,10 @@ impl CCodeGenerator<'_> {
         )
     }
 
-    fn generate_function_definition(
-        &mut self,
-        FunctionDefinition {
+    fn generate_function_definition(&mut self, fdef: &mut FunctionDefinition) -> String {
+        let function = self.function_data.get(fdef);
+
+        let FunctionDefinition {
             let_token: _,
             name: _,
             name_token: _,
@@ -346,15 +351,10 @@ impl CCodeGenerator<'_> {
             right_arrow_token: _,
             return_type: _,
             body,
-            id,
-        }: &mut FunctionDefinition,
-    ) -> String {
-        let function = self
-            .function_data
-            .get(id)
-            .expect("Functions should be tracked before calling c_generator");
+            id: _,
+        } = fdef;
 
-        let decl = self.generate_function_declaration(&function.borrow().clone(), true);
+        let decl = self.generate_function_declaration(&function.borrow(), true);
         let body = self.generate_function_body(body);
         decl + &body
     }
@@ -371,20 +371,23 @@ impl CCodeGenerator<'_> {
         format!("{{{}}}", self.generate_statement(statement))
     }
 
-    fn generate_extern_function_body(
-        &mut self,
-        ExternFunctionBody {
+    fn generate_extern_function_body(&mut self, body: &mut ExternFunctionBody) -> String {
+        let parent_function = self.function_data.get(body);
+
+        let ExternFunctionBody {
             at_token: _,
             extern_token: _,
             symbol,
             symbol_token: _,
             semicolon_token: _,
-            id,
-        }: &mut ExternFunctionBody,
-    ) -> String {
-        let parent_function = self.function_data.get(id).unwrap();
-        let mut fake_extern_function = parent_function.borrow().clone();
-        fake_extern_function.symbol.name = symbol.clone();
+            id: _,
+        } = body;
+
+        let fake_extern_function = {
+            let mut tmp = parent_function.borrow().clone();
+            tmp.symbol.name = symbol.clone();
+            tmp
+        };
 
         formatdoc!(
             "
@@ -394,8 +397,7 @@ impl CCodeGenerator<'_> {
             }}\
             ",
             self.generate_function_declaration(&fake_extern_function, false),
-            parent_function
-                .borrow()
+            fake_extern_function
                 .parameter_types
                 .iter()
                 .map(|param| self.mangle_variable(&param.borrow()))

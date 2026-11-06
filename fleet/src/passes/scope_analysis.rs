@@ -5,6 +5,7 @@ use std::{
     rc::Rc,
 };
 
+use itertools::Itertools;
 use thiserror::Error;
 
 use crate::{
@@ -12,7 +13,7 @@ use crate::{
         AliasType, ArrayExpression, ArrayIndexExpression, ArrayIndexLValue, ArrayType,
         BinaryExpression, BlockStatement, BreakStatement, CastExpression, CompilerExpression,
         ExpressionStatement, ExternFunctionBody, ForLoopStatement, FunctionCallExpression,
-        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasID, HasSourceRange,
+        FunctionDefinition, GPUExecutor, GroupingExpression, GroupingLValue, HasSourceRange,
         IdkType, IfStatement, LiteralExpression, NodeID, OnStatement, Program, ReturnStatement,
         SelfExecutorHost, SimpleBinding, SimpleType, SkipStatement, StatementFunctionBody,
         StructAccessExpression, StructAccessLValue, StructExpression, StructMemberDefinition,
@@ -488,7 +489,8 @@ pub struct ScopeAnalyzer<'state> {
 
     referenced_variable: PerNodeData<VariableData>,
     referenced_variable_entry: Empty<'state, VariableData>,
-    referenced_function: &'state mut FunctionData,
+    referenced_function: PerNodeData<FunctionData>,
+    referenced_function_entry: Empty<'state, FunctionData>,
     contained_scope: PerNodeData<ScopeData>,
     contained_scope_entry: Empty<'state, ScopeData>,
 
@@ -520,7 +522,8 @@ impl PassFactory for ScopeAnalyzer<'_> {
 
             referenced_variable: Default::default(),
             referenced_variable_entry: referenced_variable,
-            referenced_function: referenced_function.insert_default(),
+            referenced_function: Default::default(),
+            referenced_function_entry: referenced_function,
             contained_scope: Default::default(),
             contained_scope_entry: contained_scope,
 
@@ -545,6 +548,16 @@ impl Pass for ScopeAnalyzer<'_> {
         );
         self.contained_scope_entry.insert(
             self.contained_scope
+                .finish(program)
+                .map_err(|err| PassError::CompilerError {
+                    producing_pass: Self::name(),
+                    source: err.into(),
+                })?
+                .into(),
+        );
+
+        self.referenced_function_entry.insert(
+            self.referenced_function
                 .finish(program)
                 .map_err(|err| PassError::CompilerError {
                     producing_pass: Self::name(),
@@ -646,7 +659,7 @@ impl ScopeAnalyzer<'_> {
             right_arrow_token: _,
             return_type,
             body,
-            id,
+            id: _,
         } = fdef;
 
         let this_function = self
@@ -670,10 +683,7 @@ impl ScopeAnalyzer<'_> {
 
         self.variable_scopes.pop();
 
-        self.referenced_function
-            .insert(body.get_id(), this_function.clone());
-
-        self.referenced_function.insert(*id, this_function);
+        self.referenced_function.insert(fdef, this_function);
 
         self.contained_scope
             .insert(fdef, self.variable_scopes.current.clone());
@@ -713,6 +723,9 @@ impl ScopeAnalyzer<'_> {
             semicolon_token: _,
             id: _,
         } = fbody;
+
+        self.referenced_function
+            .insert(fbody, self.current_function.clone().unwrap());
 
         self.contained_scope
             .insert(fbody, self.variable_scopes.current.clone());
@@ -1069,20 +1082,42 @@ impl ScopeAnalyzer<'_> {
     fn analyze_function_call_expression(&mut self, expression: &mut FunctionCallExpression) {
         let FunctionCallExpression {
             name,
-            name_token: _,
+            name_token,
             open_paren_token: _,
             arguments,
             close_paren_token: _,
             id,
         } = expression;
-        if let Some(ref_function) = self.function_list.get(name).cloned() {
-            self.referenced_function.insert(*id, ref_function.clone());
-        } else {
+        let ref_function = self.function_list.get(name).cloned().unwrap_or_else(|| {
             self.errors.push(ErrorKind::NotDefined {
                 kind: NotDefinedKind::Function,
-                item: UnresolvedSymbol::from_token(name.clone(), &expression.name_token),
+                item: UnresolvedSymbol::from_token(name.clone(), name_token),
             });
-        }
+
+            // create a fake function
+            Rc::new(RefCell::new(Function {
+                symbol: SymbolDefinition::from_token(name.clone(), name_token),
+                return_type: None,
+                parameter_types: Some(
+                    (0..arguments.len())
+                        .map(|i| {
+                            Rc::new(RefCell::new(Variable {
+                                symbol: SymbolDefinition::from_token(
+                                    format!("{name}_{i}"),
+                                    name_token,
+                                ),
+                                type_: None,
+                                is_constant: false,
+                                id: self.id_generator.next_variable_id(),
+                                definition_node_id: *id,
+                            }))
+                        })
+                        .collect_vec(),
+                ),
+                id: self.id_generator.next_function_id(),
+                definition_node_id: *id,
+            }))
+        });
 
         for (arg, _comma) in arguments {
             self.analyze_expression(arg);
@@ -1090,6 +1125,9 @@ impl ScopeAnalyzer<'_> {
 
         // we don't handle mismatched argument/parameter count here because type checking has more
         // information to report a better error
+
+        self.referenced_function
+            .insert(expression, ref_function.clone());
 
         self.contained_scope
             .insert(expression, self.variable_scopes.current.clone());

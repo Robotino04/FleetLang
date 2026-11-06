@@ -553,8 +553,8 @@ impl GLSLCodeGenerator<'_> {
                 .top_level_statements
                 .iter_mut()
                 .filter_map(|tls| {
-                    if let TopLevelStatement::FunctionDefinition(_) = tls {
-                        let id = self.function_data.get(&tls.get_id()).unwrap().borrow().id;
+                    if let TopLevelStatement::FunctionDefinition(func) = tls {
+                        let id = self.function_data.get(func).borrow().id;
                         let tls_generated = match self.generate_top_level_statement(tls) {
                             Ok(x) => x,
                             Err(err) => return Some(Err(err)),
@@ -580,7 +580,11 @@ impl GLSLCodeGenerator<'_> {
 
     fn generate_function_definition(
         &mut self,
-        FunctionDefinition {
+        fdef: &mut FunctionDefinition,
+    ) -> Result<Option<(String, String)>> {
+        let function = self.function_data.get(fdef);
+
+        let FunctionDefinition {
             let_token: _,
             name,
             name_token: _,
@@ -592,12 +596,7 @@ impl GLSLCodeGenerator<'_> {
             return_type: _,
             body,
             id,
-        }: &mut FunctionDefinition,
-    ) -> Result<Option<(String, String)>> {
-        let function = self
-            .function_data
-            .get(id)
-            .expect("Functions should be tracked before calling glsl_generator");
+        } = fdef;
 
         if self.stats.get(id).unwrap().uses_gpu.at_least_maybe() {
             warn!("Not generating GLSL for function {name:?} because it may use the gpu.");
@@ -628,22 +627,22 @@ impl GLSLCodeGenerator<'_> {
         Ok(format!("{{{}}}", self.generate_statement(statement)?))
     }
 
-    fn generate_extern_function_body(
-        &mut self,
-        ExternFunctionBody {
+    fn generate_extern_function_body(&mut self, body: &mut ExternFunctionBody) -> Result<String> {
+        self.errors.push(ErrorKind::GpuLimitationUsed(
+            GpuLimitation::ExternalFunction {
+                function: self.function_data.get(body).borrow().symbol.clone(),
+            },
+        ));
+
+        let ExternFunctionBody {
             at_token: _,
             extern_token: _,
             symbol: _,
             symbol_token: _,
             semicolon_token: _,
-            id,
-        }: &mut ExternFunctionBody,
-    ) -> Result<String> {
-        self.errors.push(ErrorKind::GpuLimitationUsed(
-            GpuLimitation::ExternalFunction {
-                function: self.function_data.get(id).unwrap().borrow().symbol.clone(),
-            },
-        ));
+            id: _,
+        } = body;
+
         Err("Tried using external function from gpu".into())
     }
 
@@ -745,7 +744,7 @@ impl GLSLCodeGenerator<'_> {
             id: _,
         }: &mut VariableDefinitionStatement,
     ) -> Result<String> {
-        let ref_var = self.variable_data.get(&**binding).clone();
+        let ref_var = self.variable_data.get(&**binding);
 
         let type_ = &ref_var.borrow().type_;
 
@@ -1108,6 +1107,8 @@ impl GLSLCodeGenerator<'_> {
         &mut self,
         expr: &mut FunctionCallExpression,
     ) -> PreStatementValue {
+        let ref_func = self.function_data.get(expr);
+
         let FunctionCallExpression {
             name,
             name_token,
@@ -1131,10 +1132,7 @@ impl GLSLCodeGenerator<'_> {
         if self.stats.get(id).unwrap().uses_gpu.at_least_maybe() {
             self.errors
                 .push(ErrorKind::GpuLimitationUsed(GpuLimitation::GpuFunction {
-                    function: self
-                        .function_data
-                        .get(id)
-                        .unwrap()
+                    function: ref_func
                         .borrow()
                         .symbol
                         .clone()

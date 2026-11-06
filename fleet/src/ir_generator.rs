@@ -45,7 +45,7 @@ use crate::{
     },
     escape::{QuoteType, unescape},
     generate_glsl::GLSLCodeGenerator,
-    node_data::HasData,
+    node_data::{HasData, NodeDataEnum},
     passes::{
         global_state::{FetchError, Fetched, GlobalState},
         pass_manager::{
@@ -454,12 +454,12 @@ impl<'a> IrGenerator<'_> {
         let return_type = function
             .return_type
             .as_mut()
+            // TODO: shouldn't need to generate types at all
             .map(|type_| self.generate_type(type_))
             .unwrap_or_else(|| {
                 Ok(self
                     .function_data
-                    .get(&function.get_id())
-                    .expect("Function data should exist before calling ir_generator")
+                    .get(function)
                     .borrow()
                     .return_type
                     .clone())
@@ -481,7 +481,7 @@ impl<'a> IrGenerator<'_> {
         let params = function
             .parameters
             .iter()
-            .map(|(param, _comma)| (param.clone(), self.variable_data.get(param).clone()))
+            .map(|(param, _comma)| (param.clone(), self.variable_data.get(param)))
             .collect_vec()
             .iter()
             .flat_map(|(_param, var)| -> Result<_> {
@@ -507,10 +507,7 @@ impl<'a> IrGenerator<'_> {
             self.make_into_function_type(return_type_ir, params.as_slice(), false),
             Some(Linkage::External),
         );
-        let ref_function = self
-            .function_data
-            .get(&function.id)
-            .expect("Function data should exist before calling ir_generator");
+        let ref_function = self.function_data.get(function);
 
         assert!(
             self.function_locations
@@ -577,10 +574,18 @@ impl<'state> IrGenerator<'state> {
                 .expect("Program must have a main function");
             let fleet_main_fn = self
                 .function_data
+                .inner()
                 .iter()
-                .find(|(_id, func)| func.borrow().symbol.name == "main")
-                .unwrap()
-                .1;
+                .find_map(|(_, func)| {
+                    if let NodeDataEnum::FunctionDefinition(func) = func
+                        && func.borrow().symbol.name == "main"
+                    {
+                        Some(func)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
 
             let initialize_fleet_fn = self.module.add_function(
                 "initialize_fleet",
@@ -711,11 +716,7 @@ impl<'state> IrGenerator<'state> {
         &mut self,
         function: &mut FunctionDefinition,
     ) -> Result<Option<FunctionValue<'state>>> {
-        let function_ref = self
-            .function_data
-            .get(&function.get_id())
-            .expect("Function data should exist before calling ir_generator")
-            .clone();
+        let function_ref = self.function_data.get(function);
 
         let return_type = function
             .return_type
@@ -1577,7 +1578,7 @@ impl<'state> IrGenerator<'state> {
             token: _,
             id: _,
         } = &*literal;
-        let rt_type_ptr = self.type_data.get(literal).clone();
+        let rt_type_ptr = self.type_data.get(literal);
 
         Ok(match value {
             LiteralKind::Number(value) => match self.llvm_type_of_node(literal) {
@@ -1754,7 +1755,8 @@ impl<'state> IrGenerator<'state> {
         &mut self,
         expr: &mut FunctionCallExpression,
     ) -> Result<RuntimeValueIR<'state>> {
-        let return_type = self.type_data.get(expr).clone();
+        let return_type = self.type_data.get(expr);
+        let ref_func = self.function_data.get(expr);
 
         let FunctionCallExpression {
             name,
@@ -1762,7 +1764,7 @@ impl<'state> IrGenerator<'state> {
             open_paren_token: _,
             arguments,
             close_paren_token: _,
-            id,
+            id: _,
         } = expr;
 
         let mut args: Vec<BasicMetadataValueEnum> = vec![];
@@ -1782,14 +1784,7 @@ impl<'state> IrGenerator<'state> {
 
         let ir_function = self
             .function_locations
-            .get(
-                &self
-                    .function_data
-                    .get(id)
-                    .expect("Function data should exist before calling ir_generator")
-                    .borrow()
-                    .id,
-            )
+            .get(&ref_func.borrow().id)
             .expect("Functions should be registered before traversing the tree")
             .clone()
             .0;
@@ -1808,14 +1803,14 @@ impl<'state> IrGenerator<'state> {
             retvalue = Some(ptr.into());
         }
 
-        Ok(self.package_llvm_in_runtime_value(retvalue, &return_type))
+        Ok(self.package_llvm_in_runtime_value(retvalue, return_type))
     }
 
     fn generate_compiler_expression(
         &mut self,
         expr: &mut CompilerExpression,
     ) -> Result<RuntimeValueIR<'state>> {
-        let expected_type = self.type_data.get(expr).clone();
+        let expected_type = self.type_data.get(expr);
 
         let CompilerExpression {
             at_token: _,
@@ -1835,7 +1830,7 @@ impl<'state> IrGenerator<'state> {
 
         match name.as_str() {
             "zero" => {
-                let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
+                let expected_type_ir = self.runtime_type_to_llvm(expected_type);
 
                 Ok(match expected_type {
                     ConcreteRuntimeType::I8
@@ -1888,7 +1883,7 @@ impl<'state> IrGenerator<'state> {
                 })
             }
             "sqrt" => {
-                let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
+                let expected_type_ir = self.runtime_type_to_llvm(expected_type);
 
                 let RuntimeValueIR::Float(value) = args.first().unwrap().1 else {
                     self.errors.push(ErrorKind::InvalidIntrinsicType {
@@ -1917,7 +1912,7 @@ impl<'state> IrGenerator<'state> {
                 ))
             }
             "sin" => {
-                let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
+                let expected_type_ir = self.runtime_type_to_llvm(expected_type);
 
                 let RuntimeValueIR::Float(value) = args.first().unwrap().1 else {
                     self.errors.push(ErrorKind::InvalidIntrinsicType {
@@ -1946,7 +1941,7 @@ impl<'state> IrGenerator<'state> {
                 ))
             }
             "cos" => {
-                let expected_type_ir = self.runtime_type_to_llvm(&expected_type);
+                let expected_type_ir = self.runtime_type_to_llvm(expected_type);
 
                 let RuntimeValueIR::Float(value) = args.first().unwrap().1 else {
                     self.errors.push(ErrorKind::InvalidIntrinsicType {
@@ -1987,7 +1982,7 @@ impl<'state> IrGenerator<'state> {
                     )
                 };
 
-                let ir_type = self.runtime_type_to_llvm(&expected_type);
+                let ir_type = self.runtime_type_to_llvm(expected_type);
 
                 Ok(match args.first().unwrap().1 {
                     RuntimeValueIR::Array(_value) => match ir_type {
@@ -2033,10 +2028,10 @@ impl<'state> IrGenerator<'state> {
             id: _,
         } = expr;
         let array_ptr = self.generate_expression(array)?.unwrap_array();
-        let array_type = self.type_data.get(&**array).clone();
+        let array_type = self.type_data.get(&**array);
         let index_ir = self.generate_expression(index)?.unwrap_unsigned_int();
 
-        let array_type_ir = self.runtime_type_to_llvm(&array_type);
+        let array_type_ir = self.runtime_type_to_llvm(array_type);
 
         let index_ptr = unsafe {
             self.builder.build_gep(
@@ -2056,7 +2051,7 @@ impl<'state> IrGenerator<'state> {
         };
 
         let result = if let ConcreteRuntimeType::ArrayOf { .. }
-        | ConcreteRuntimeType::Struct { .. } = &*result_type
+        | ConcreteRuntimeType::Struct { .. } = &**result_type
         {
             index_ptr.into()
         } else {
@@ -2067,7 +2062,7 @@ impl<'state> IrGenerator<'state> {
             )?
         };
 
-        Ok(self.package_llvm_in_runtime_value(Some(result), &result_type))
+        Ok(self.package_llvm_in_runtime_value(Some(result), result_type))
     }
 
     fn generate_struct_access_expression(
@@ -2082,9 +2077,9 @@ impl<'state> IrGenerator<'state> {
             id: _,
         } = expr;
         let value_ptr = self.generate_expression(value)?.unwrap_struct();
-        let value_type = self.type_data.get(&**value).clone();
+        let value_type = self.type_data.get(&**value);
 
-        let value_type_ir = self.runtime_type_to_llvm(&value_type);
+        let value_type_ir = self.runtime_type_to_llvm(value_type);
 
         let ConcreteRuntimeType::Struct {
             members,
@@ -2238,7 +2233,7 @@ impl<'state> IrGenerator<'state> {
         &mut self,
         expr: &mut CastExpression,
     ) -> Result<RuntimeValueIR<'state>> {
-        let target_type = self.type_data.get(expr).clone();
+        let target_type = self.type_data.get(expr);
 
         let CastExpression {
             operand,
@@ -2248,7 +2243,7 @@ impl<'state> IrGenerator<'state> {
         } = expr;
 
         let value = self.generate_expression(&mut *operand)?;
-        let value_type = self.type_data.get(&**operand).clone();
+        let value_type = self.type_data.get(&**operand);
 
         match (&value_type, &target_type) {
             (a, b) if a == b => Ok(value),
@@ -2998,9 +2993,9 @@ impl<'state> IrGenerator<'state> {
             id: _,
         } = lvalue;
         let value_ptr = self.generate_lvalue(value)?;
-        let value_type = self.type_data.get(&**value).clone();
+        let value_type = self.type_data.get(&**value);
 
-        let value_type_ir = self.runtime_type_to_llvm(&value_type);
+        let value_type_ir = self.runtime_type_to_llvm(value_type);
 
         let ConcreteRuntimeType::Struct {
             members,

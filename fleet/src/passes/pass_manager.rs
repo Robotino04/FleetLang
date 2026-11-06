@@ -86,6 +86,7 @@ macro_rules! NewtypeDeref {
 pub use NewtypeDeref;
 pub use NewtypeDerefNoDefault;
 
+// TODO: distribute these to their generating pass
 impl NodeDataSpecGroups for TypeData {
     type Program = ();
     type TopLevelStatement = ();
@@ -124,8 +125,13 @@ impl NodeDataSpecGroups for ScopeData {
 }
 NewtypeDerefNoDefault!(pub ScopeData, FinalPerNodeData<ScopeData>);
 
-// TODO: distribute these to their generating pass
-NewtypeDeref!(pub FunctionData, HashMap<NodeID, Rc<RefCell<Function>>>);
+impl NodeDataSpec for FunctionData {
+    type FunctionDefinition = Rc<RefCell<Function>>;
+    type FunctionCallExpression = Rc<RefCell<Function>>;
+    type ExternFunctionBody = Rc<RefCell<Function>>;
+}
+NewtypeDerefNoDefault!(pub FunctionData, FinalPerNodeData<FunctionData>);
+
 NewtypeDeref!(pub TypeSets, UnionFindSet<RuntimeType>);
 
 impl NodeDataSpecGroups for ConcreteTypeData {
@@ -166,7 +172,12 @@ impl NodeDataSpecGroups for ConcreteScopeData {
 }
 NewtypeDerefNoDefault!(pub ConcreteScopeData, FinalPerNodeData<ConcreteScopeData>);
 
-NewtypeDeref!(pub ConcreteFunctionData, HashMap<NodeID, Rc<RefCell<ConcreteFunction>>>);
+impl NodeDataSpec for ConcreteFunctionData {
+    type FunctionDefinition = Rc<RefCell<ConcreteFunction>>;
+    type FunctionCallExpression = Rc<RefCell<ConcreteFunction>>;
+    type ExternFunctionBody = Rc<RefCell<ConcreteFunction>>;
+}
+NewtypeDerefNoDefault!(pub ConcreteFunctionData, FinalPerNodeData<ConcreteFunctionData>);
 
 NewtypeDeref!(pub StatData, HashMap<NodeID, NodeStats>);
 NewtypeDeref!(pub StructAliasMap, HashMap<String, (usize, String)>, Clone);

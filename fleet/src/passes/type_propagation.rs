@@ -19,8 +19,8 @@ use crate::{
     define_dispatch_methods,
     error_reporting::{
         CastDirection, DuplicateKind, ErrorKind, Errors, ExtraParameter, ImpossibleCastReason,
-        InternalError, Lint, MissingParameter, NotDefinedKind, ParameterCountDifference,
-        PrefetchedType, SymbolDefinition, TypeMismatchKind, UnresolvedSymbol,
+        Lint, MissingParameter, NotDefinedKind, ParameterCountDifference, PrefetchedType,
+        SymbolDefinition, TypeMismatchKind, UnresolvedSymbol,
     },
     node_data::{HasData, PerNodeData},
     parser::IdGenerator,
@@ -118,6 +118,8 @@ impl<'a> TypePropagator<'a> {
     }
 
     fn register_function(&mut self, function: &mut FunctionDefinition) {
+        let ref_func = self.referenced_function.get(function);
+
         let FunctionDefinition {
             let_token: _,
             name,
@@ -150,14 +152,6 @@ impl<'a> TypePropagator<'a> {
             })
             .collect();
 
-        let Some(ref_func) = self.referenced_function.get(id) else {
-            self.errors.push(ErrorKind::InternalError(
-                InternalError::ScopeAnalysisMissedFunction {
-                    function: SymbolDefinition::from_token(name.clone(), name_token),
-                },
-            ));
-            return;
-        };
         *ref_func.borrow_mut() = Function {
             symbol: SymbolDefinition::from_token(name.clone(), name_token),
             return_type: Some(return_type),
@@ -261,6 +255,8 @@ impl TypePropagator<'_> {
     }
 
     fn typecheck_function_definition(&mut self, fdef: &mut FunctionDefinition) {
+        let this_function = self.referenced_function.get(fdef);
+
         let FunctionDefinition {
             let_token: _,
             name: _,
@@ -272,14 +268,8 @@ impl TypePropagator<'_> {
             right_arrow_token: _,
             return_type: _,
             body,
-            id,
+            id: _,
         } = fdef;
-
-        let this_function = self
-            .referenced_function
-            .get(id)
-            .expect("All functions should have been registered before traversing the tree")
-            .clone();
 
         // return type was already handled when registering
 
@@ -926,9 +916,9 @@ impl TypePropagator<'_> {
             // TODO: allow reordering
             if let Some(defined_members) = defined_members.as_ref()
                 && let Some((this_defined_name, this_defined_range, this_defined_type_ptr)) =
-                    defined_members.get(i).cloned()
+                    defined_members.get(i)
             {
-                if *name != this_defined_name {
+                if name != this_defined_name {
                     self.errors.push(ErrorKind::StructMemberMismatch {
                         member_index: i,
                         struct_type: PrefetchedType::fetch(defined_type_ptr, self.type_sets),
@@ -941,7 +931,7 @@ impl TypePropagator<'_> {
                 }
                 if !RuntimeTypeKind::merge_types(
                     this_type_ptr,
-                    this_defined_type_ptr,
+                    *this_defined_type_ptr,
                     self.type_sets,
                 ) {
                     self.errors.push(ErrorKind::TypeMismatch {
@@ -955,7 +945,7 @@ impl TypePropagator<'_> {
                         },
                         value_range: value.get_source_range(),
                         expected_types: vec![PrefetchedType::fetch(
-                            this_defined_type_ptr,
+                            *this_defined_type_ptr,
                             self.type_sets,
                         )],
                         actual_type: PrefetchedType::fetch(this_type_ptr, self.type_sets),
@@ -994,32 +984,16 @@ impl TypePropagator<'_> {
         &mut self,
         expression: &mut FunctionCallExpression,
     ) -> UnifiableType {
+        let ref_function = self.referenced_function.get(expression);
+
         let FunctionCallExpression {
-            name,
+            name: _,
             name_token,
             open_paren_token: _,
             arguments: _,
             close_paren_token: _,
-            id,
+            id: _,
         } = expression;
-        let Some(ref_function) = self.referenced_function.get(id).cloned() else {
-            self.errors.push(ErrorKind::NotDefined {
-                kind: NotDefinedKind::Function,
-                item: UnresolvedSymbol::from_token(name.clone(), name_token),
-            });
-
-            // still typecheck args, even though the function doesn't exist
-            for (arg, _comma) in &mut expression.arguments {
-                self.typecheck_expression(arg);
-            }
-
-            let type_ = self.type_sets.insert_set(RuntimeType {
-                kind: RuntimeTypeKind::Error,
-                definition_range: None,
-            });
-            self.node_types.insert(expression, type_);
-            return type_;
-        };
 
         let mut extra_parameters = Vec::new();
         let mut missing_parameters = Vec::new();
@@ -1136,13 +1110,21 @@ impl TypePropagator<'_> {
             }
         }
 
-        let detached_return_type = self
-            .type_sets
-            .detach(ref_function.borrow().return_type.unwrap());
+        let return_type = *ref_function
+            .borrow_mut()
+            .return_type
+            .get_or_insert_with(|| {
+                self.type_sets.insert_set(RuntimeType {
+                    kind: RuntimeTypeKind::Error,
+                    definition_range: None,
+                })
+            });
 
-        self.node_types.insert(expression, detached_return_type);
+        let return_type = self.type_sets.detach(return_type);
 
-        detached_return_type
+        self.node_types.insert(expression, return_type);
+
+        return_type
     }
 
     fn typecheck_compiler_expression(

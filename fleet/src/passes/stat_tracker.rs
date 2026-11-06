@@ -320,9 +320,10 @@ impl StatTracker<'_> {
         }
     }
 
-    fn analyze_function_definition(
-        &mut self,
-        FunctionDefinition {
+    fn analyze_function_definition(&mut self, fdef: &mut FunctionDefinition) -> NodeStats {
+        let referenced_function = self.function_data.get(fdef);
+
+        let FunctionDefinition {
             let_token: _,
             name: _,
             name_token: _,
@@ -334,13 +335,8 @@ impl StatTracker<'_> {
             return_type,
             body,
             id,
-        }: &mut FunctionDefinition,
-    ) -> NodeStats {
-        let referenced_function = self
-            .function_data
-            .get(id)
-            .expect("function data must exist before calling function_termination_analyzer")
-            .clone();
+        } = fdef;
+
         self.current_function = Some(referenced_function.clone());
 
         for (param, _comma) in parameters {
@@ -839,6 +835,7 @@ impl StatTracker<'_> {
         function_call: &mut FunctionCallExpression,
     ) -> NodeStats {
         let bounds = function_call.get_source_range();
+        let ref_function = self.function_data.get(function_call).clone();
         let FunctionCallExpression {
             name: _,
             name_token: _,
@@ -852,16 +849,12 @@ impl StatTracker<'_> {
             non_terminating_ranges: vec![bounds],
             uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord {
-                functions: self
-                    .function_data
-                    .get(id)
-                    .map_or_else(Vec::new, |fd| vec![fd.clone()]),
+                functions: vec![ref_function.clone()],
                 used_variables: vec![],
             },
         };
-        if let Some(ref_function) = self.function_data.get(id)
-            && let Some(stat2) = self.function_stats.get(&ref_function.borrow().id)
-        {
+
+        if let Some(stat2) = self.function_stats.get(&ref_function.borrow().id) {
             stat = stat.serial(stat2.clone());
         }
         stat.terminates_function = YesNoMaybe::No;

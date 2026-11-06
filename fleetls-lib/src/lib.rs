@@ -161,19 +161,21 @@ impl Backend {
             AstNodeRef::Program(_) => (String::new(), "program".to_string()),
 
             AstNodeRef::TopLevelStatement(node) => match node {
-                TopLevelStatement::FunctionDefinition(FunctionDefinition {
-                    let_token: _,
-                    name,
-                    name_token: _,
-                    equal_token: _,
-                    open_paren_token: _,
-                    parameters,
-                    close_paren_token: _,
-                    right_arrow_token: _,
-                    return_type,
-                    body: _,
-                    id,
-                }) => (
+                TopLevelStatement::FunctionDefinition(
+                    node @ FunctionDefinition {
+                        let_token: _,
+                        name,
+                        name_token: _,
+                        equal_token: _,
+                        open_paren_token: _,
+                        parameters,
+                        close_paren_token: _,
+                        right_arrow_token: _,
+                        return_type,
+                        body: _,
+                        id: _,
+                    },
+                ) => (
                     format!(
                         "let {name} = ({}) -> {}",
                         Itertools::intersperse(
@@ -198,9 +200,7 @@ impl Backend {
                                     return "/* No type data available */".to_string();
                                 };
 
-                                let Some(ref_func) = function_data.get(id) else {
-                                    return "/* Function doesn't exist */".to_string();
-                                };
+                                let ref_func = function_data.get(node);
 
                                 let Some(return_type) = ref_func.borrow().return_type else {
                                     return "/* Not processed by ScopeAnalyzer */".to_string();
@@ -575,14 +575,16 @@ impl Backend {
                     "expression grouping".to_string(),
                 ),
 
-                Expression::FunctionCall(FunctionCallExpression {
-                    name,
-                    name_token: _,
-                    open_paren_token: _,
-                    arguments: _,
-                    close_paren_token: _,
-                    id,
-                }) => {
+                Expression::FunctionCall(
+                    node @ FunctionCallExpression {
+                        name,
+                        name_token: _,
+                        open_paren_token: _,
+                        arguments: _,
+                        close_paren_token: _,
+                        id: _,
+                    },
+                ) => {
                     let (parameters, return_type) = (|| {
                         let Some(AnalysisData {
                             type_data: _,
@@ -598,12 +600,7 @@ impl Backend {
                             );
                         };
 
-                        let Some(ref_func) = function_data.get(id) else {
-                            return (
-                                "/* Function doesn't exist */".to_string(),
-                                "/* Function doesn't exist */".to_string(),
-                            );
-                        };
+                        let ref_func = function_data.get(node);
 
                         let Some(return_type) = ref_func.borrow().return_type else {
                             return (
@@ -648,65 +645,14 @@ impl Backend {
                     open_paren_token: _,
                     arguments: _,
                     close_paren_token: _,
-                    id,
-                }) => {
-                    let (parameters, return_type) = (|| {
-                        let Some(AnalysisData {
-                            type_data: _,
-                            type_sets,
-                            function_data,
-                            variable_data: _,
-                            scope_data: _,
-                        }) = analysis_data
-                        else {
-                            return (
-                                "/* No type data available */".to_string(),
-                                "/* No type data available */".to_string(),
-                            );
-                        };
-
-                        let Some(ref_func) = function_data.get(id) else {
-                            return (
-                                "/* Compiler function doesn't exist */".to_string(),
-                                "/* Compiler function doesn't exist */".to_string(),
-                            );
-                        };
-
-                        let Some(return_type) = ref_func.borrow().return_type else {
-                            return (
-                                "/* Return type not processed by ScopeAnalyzer */".to_string(),
-                                "/* Return type not processed by ScopeAnalyzer */".to_string(),
-                            );
-                        };
-
-                        let return_type = type_sets.get(return_type).kind.stringify(type_sets);
-
-                        let parameters =
-                            if let Some(param_types) = ref_func.borrow().parameter_types.as_ref() {
-                                Itertools::intersperse(
-                                    param_types.iter().map(|param| {
-                                        name.clone()
-                                            + ": "
-                                            + &type_sets
-                                                .get(param.borrow().type_.unwrap())
-                                                .kind
-                                                .stringify(type_sets)
-                                    }),
-                                    ", ".to_string(),
-                                )
-                                .collect::<String>()
-                            } else {
-                                "/* Param types not processed by ScopeAnalyzer */".to_string()
-                            };
-
-                        (parameters, return_type)
-                    })();
-
-                    (
-                        format!("@{name}({parameters}) -> {return_type}"),
-                        "compiler expression".to_string(),
-                    )
-                }
+                    id: _,
+                }) => (
+                    // TODO: do analyze compiler expressions
+                    format!(
+                        "@{name}(/* compiler expressions aren't analyzed */) -> /* compiler expressions aren't analyzed */"
+                    ),
+                    "compiler expression".to_string(),
+                ),
 
                 Expression::ArrayIndex(
                     node @ ArrayIndexExpression {
@@ -1009,12 +955,12 @@ impl Backend {
         };
 
         Ok(node_hierarchy.iter().rev().find_map(|node| match node {
-            AstNode::Expression(Expression::FunctionCall(FunctionCallExpression {
-                id, ..
-            })) => Some(
+            AstNode::Expression(Expression::FunctionCall(
+                node @ FunctionCallExpression { .. },
+            )) => Some(
                 pm.state
                     .get::<FunctionData>()?
-                    .get(id)?
+                    .get(node)
                     .borrow()
                     .symbol
                     .definition
@@ -1694,9 +1640,8 @@ impl LanguageServer for Backend {
                 return Ok(None);
             };
 
-            let Some(ref_func) = analysis_data.function_data.get(&function_call.get_id()) else {
-                return Ok(None);
-            };
+            let ref_func = analysis_data.function_data.get(function_call);
+
             let ref_func_borrow = ref_func.borrow();
             let Some(parameter_types) = ref_func_borrow.parameter_types.as_ref() else {
                 return Ok(None);

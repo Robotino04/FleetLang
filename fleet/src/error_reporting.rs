@@ -837,10 +837,6 @@ pub enum InternalError {
     LlvmNumberLiteralMistyped {
         literal: NamedSourceRange,
     },
-
-    ScopeAnalysisMissedFunction {
-        function: SymbolDefinition,
-    },
 }
 
 #[derive(Clone, Debug)]
@@ -1853,15 +1849,6 @@ impl ErrorKind {
                 InternalError::LlvmNumberLiteralMistyped { literal } => RenderedError {
                     highlight_groups: vec![error(literal, "invalid llvm type")],
                     main_message: "This number literal doesn't actually have a number type."
-                        .to_string(),
-                    severity: ErrorSeverity::Error,
-                },
-                InternalError::ScopeAnalysisMissedFunction { function } => RenderedError {
-                    highlight_groups: vec![error(
-                        &function.definition,
-                        "missed during scope analysis",
-                    )],
-                    main_message: "Function `{function}` was not processed during scope analysis."
                         .to_string(),
                     severity: ErrorSeverity::Error,
                 },
