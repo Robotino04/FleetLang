@@ -32,12 +32,12 @@ use crate::{
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
         CompilerExpression, Executor, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionBody, FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, HasSourceRange, IdkType, IfStatement, LiteralExpression,
-        LiteralKind, OnStatement, Program, ReturnStatement, SimpleBinding, SimpleType,
-        SkipStatement, StatementFunctionBody, StructAccessExpression, StructAccessLValue,
-        StructExpression, StructMemberValue, TopLevelStatement, TypeAlias, UnaryExpression,
-        UnaryOperation, UnitType, VariableAccessExpression, VariableAssignmentExpression,
-        VariableDefinitionStatement, VariableLValue, WhileLoopStatement,
+        GroupingLValue, HasSourceRange, IdkType, IfStatement, LiteralExpression, LiteralKind,
+        OnStatement, Program, ReturnStatement, SimpleBinding, SimpleType, SkipStatement,
+        StatementFunctionBody, StructAccessExpression, StructAccessLValue, StructExpression,
+        StructMemberValue, TopLevelStatement, TypeAlias, UnaryExpression, UnaryOperation, UnitType,
+        VariableAccessExpression, VariableAssignmentExpression, VariableDefinitionStatement,
+        VariableLValue, WhileLoopStatement,
     },
     define_dispatch_methods,
     error_reporting::{
@@ -532,12 +532,7 @@ impl<'state> IrGenerator<'state> {
     }
 
     fn generate_program(mut self, program: &mut Program) -> Result<()> {
-        let needs_runtime = self
-            .node_stats
-            .get(&program.id)
-            .expect("Program must have stats")
-            .uses_gpu
-            .at_least_maybe();
+        let needs_runtime = self.node_stats.get(program).uses_gpu.at_least_maybe();
 
         if needs_runtime {
             let runtime_module_declarations =
@@ -751,13 +746,7 @@ impl<'state> IrGenerator<'state> {
 
         self.generate_function_body(&mut function.body)?;
 
-        if self
-            .node_stats
-            .get(&function.body.get_id())
-            .expect("stats should be available before calling ir_generator")
-            .terminates_function
-            == YesNoMaybe::Yes
-        {
+        if self.node_stats.get(&*function.body).terminates_function == YesNoMaybe::Yes {
             for block in ir_function.get_basic_blocks() {
                 if block.get_first_use().is_none() && block != entry {
                     block
@@ -1344,13 +1333,7 @@ impl<'state> IrGenerator<'state> {
         self.builder.position_at_end(body_block);
         self.generate_statement(&mut if_stmt.if_body)?;
 
-        if self
-            .node_stats
-            .get(&if_stmt.if_body.get_id())
-            .unwrap_or_else(|| pass_precondition!("{:?} doesn't have stats", if_stmt.if_body))
-            .terminates_function
-            != YesNoMaybe::Yes
-        {
+        if self.node_stats.get(&*if_stmt.if_body).terminates_function != YesNoMaybe::Yes {
             self.builder.build_unconditional_branch(end_block)?;
         }
 
@@ -1376,13 +1359,7 @@ impl<'state> IrGenerator<'state> {
             self.builder.position_at_end(body_block);
             self.generate_statement(body)?;
 
-            if self
-                .node_stats
-                .get(&body.get_id())
-                .unwrap_or_else(|| pass_precondition!("{body:?} doesn't have stats"))
-                .terminates_function
-                != YesNoMaybe::Yes
-            {
+            if self.node_stats.get(body).terminates_function != YesNoMaybe::Yes {
                 self.builder.build_unconditional_branch(end_block)?;
             }
             self.builder.position_at_end(next_block);
@@ -1392,13 +1369,7 @@ impl<'state> IrGenerator<'state> {
             next_block.set_name("else_body");
 
             self.generate_statement(else_body)?;
-            if self
-                .node_stats
-                .get(&else_body.get_id())
-                .unwrap_or_else(|| pass_precondition!("{else_body:?} doesn't have stats"))
-                .terminates_function
-                != YesNoMaybe::Yes
-            {
+            if self.node_stats.get(&**else_body).terminates_function != YesNoMaybe::Yes {
                 self.builder.build_unconditional_branch(end_block)?;
             }
         } else {

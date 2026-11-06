@@ -14,7 +14,6 @@ use log::{info, warn};
 use thiserror::Error;
 
 use crate::{
-    ast::NodeID,
     node_data::{FinalPerNodeData, NodeDataSpec, NodeDataSpecGroups},
     passes::{
         global_state::{FetchError, GlobalState},
@@ -179,7 +178,20 @@ impl NodeDataSpec for ConcreteFunctionData {
 }
 NewtypeDerefNoDefault!(pub ConcreteFunctionData, FinalPerNodeData<ConcreteFunctionData>);
 
-NewtypeDeref!(pub StatData, HashMap<NodeID, NodeStats>);
+impl NodeDataSpecGroups for StatData {
+    type Program = NodeStats;
+    type TopLevelStatement = NodeStats;
+    type FunctionBody = NodeStats;
+    type SimpleBinding = NodeStats;
+    type Statement = NodeStats;
+    type ExecutorHost = NodeStats;
+    type Executor = NodeStats;
+    type Expression = NodeStats;
+    type LValue = NodeStats;
+    type Type = NodeStats;
+}
+NewtypeDerefNoDefault!(pub StatData, FinalPerNodeData<StatData>);
+
 NewtypeDeref!(pub StructAliasMap, HashMap<String, (usize, String)>, Clone);
 NewtypeDeref!(pub PrecompiledGlslFunctions, (HashMap<FunctionID, (String, String)>, StructAliasMap, u64), Clone);
 NewtypeDeref!(pub CCodeOutput, String);

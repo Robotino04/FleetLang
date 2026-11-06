@@ -303,14 +303,13 @@ pub fn assert_compile_and_return_value_unformatted<ReturnType>(
 {
     let pm = compile_or_panic(src);
 
-    let program_id = pm.state.get::<Program>().unwrap().id;
+    let program = pm.state.get::<Program>().unwrap();
 
     let needs_runtime = pm
         .state
         .get::<StatData>()
         .expect("Compilation failed before inserting stats")
-        .get(&program_id)
-        .expect("No stats available for function to test")
+        .get(program)
         .uses_gpu
         .at_least_maybe();
 
@@ -410,8 +409,7 @@ where
         .state
         .get::<StatData>()
         .unwrap()
-        .get(&pm.state.get::<Program>().unwrap().id)
-        .expect("No stats available for function to test")
+        .get(pm.state.get::<Program>().unwrap())
         .uses_gpu
         .at_least_maybe();
 
@@ -526,14 +524,13 @@ fn compile_to_binary_llvm(src: &str, dir: &TempDir) -> String {
     pm.insert_params::<SaveArtifactPass>((object_file.clone(), ArtifactType::Object));
     pm.run().unwrap();
 
-    let program_id = pm.state.get::<Program>().unwrap().id;
+    let program = pm.state.get::<Program>().unwrap();
 
     let needs_runtime = pm
         .state
         .get::<StatData>()
         .unwrap()
-        .get(&program_id)
-        .expect("No stats available for function to test")
+        .get(program)
         .uses_gpu
         .at_least_maybe();
 
@@ -593,8 +590,7 @@ fn compile_to_binary_c(src: &str, dir: &TempDir) -> String {
         .state
         .get::<StatData>()
         .unwrap()
-        .get(&pm.state.get::<Program>().unwrap().id)
-        .expect("No stats available for function to test")
+        .get(pm.state.get::<Program>().unwrap())
         .uses_gpu
         .at_least_maybe();
 

@@ -17,8 +17,8 @@ use crate::{
         BinaryExpression, BinaryOperation, BlockStatement, BreakStatement, CastExpression,
         CompilerExpression, ExpressionStatement, ExternFunctionBody, ForLoopStatement,
         FunctionCallExpression, FunctionDefinition, GPUExecutor, GroupingExpression,
-        GroupingLValue, HasID, HasSourceRange, IdkType, IfStatement, LiteralExpression,
-        LiteralKind, OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
+        GroupingLValue, HasSourceRange, IdkType, IfStatement, LiteralExpression, LiteralKind,
+        OnStatement, OnStatementIterator, Program, ReturnStatement, SelfExecutorHost,
         SimpleBinding, SimpleType, SkipStatement, Statement, StatementFunctionBody,
         StructAccessExpression, StructAccessLValue, StructExpression, StructMemberDefinition,
         StructMemberValue, StructType, ThreadExecutor, TopLevelStatement, TypeAlias,
@@ -113,13 +113,7 @@ impl Pass for GLSLCodeGenerator<'_> {
             .take()
             .expect("This GLSLCodeGenerator was constructed using ::new. It cannot run as a pass");
 
-        let output = if self
-            .stats
-            .get(&program.id)
-            .expect("No stats available for program")
-            .uses_gpu
-            .at_least_maybe()
-        {
+        let output = if self.stats.get(program).uses_gpu.at_least_maybe() {
             self.generate_program(program)
                 .map_err(|err| PassError::CompilerError {
                     source: err,
@@ -341,8 +335,7 @@ impl<'state> GLSLCodeGenerator<'state> {
 
         let (function_declarations, function_definitions): (Vec<_>, Vec<_>) = self
             .stats
-            .get(&main_body.get_id())
-            .unwrap()
+            .get(main_body)
             .accessed_items
             .functions
             .iter()
@@ -583,6 +576,7 @@ impl GLSLCodeGenerator<'_> {
         fdef: &mut FunctionDefinition,
     ) -> Result<Option<(String, String)>> {
         let function = self.function_data.get(fdef);
+        let stats = self.stats.get(fdef);
 
         let FunctionDefinition {
             let_token: _,
@@ -595,10 +589,10 @@ impl GLSLCodeGenerator<'_> {
             right_arrow_token: _,
             return_type: _,
             body,
-            id,
+            id: _,
         } = fdef;
 
-        if self.stats.get(id).unwrap().uses_gpu.at_least_maybe() {
+        if stats.uses_gpu.at_least_maybe() {
             warn!("Not generating GLSL for function {name:?} because it may use the gpu.");
             return Ok(None);
         }
@@ -1108,6 +1102,7 @@ impl GLSLCodeGenerator<'_> {
         expr: &mut FunctionCallExpression,
     ) -> PreStatementValue {
         let ref_func = self.function_data.get(expr);
+        let stats = self.stats.get(expr);
 
         let FunctionCallExpression {
             name,
@@ -1115,7 +1110,7 @@ impl GLSLCodeGenerator<'_> {
             open_paren_token: _,
             arguments,
             close_paren_token: _,
-            id,
+            id: _,
         } = expr;
 
         let (pre_statements, args): (Vec<_>, Vec<_>) = arguments
@@ -1129,7 +1124,7 @@ impl GLSLCodeGenerator<'_> {
             )
             .unzip();
 
-        if self.stats.get(id).unwrap().uses_gpu.at_least_maybe() {
+        if stats.uses_gpu.at_least_maybe() {
             self.errors
                 .push(ErrorKind::GpuLimitationUsed(GpuLimitation::GpuFunction {
                     function: ref_func

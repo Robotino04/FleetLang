@@ -23,10 +23,12 @@ use crate::{
     },
     define_dispatch_methods,
     error_reporting::{ErrorKind, Errors, Lint, LoopControl},
+    node_data::PerNodeData,
     passes::{
-        global_state::{FetchError, Fetched, GlobalState},
+        global_state::{Empty, FetchError, Fetched, GlobalState},
         pass_manager::{
-            ConcreteFunctionData, ConcreteVariableData, Pass, PassFactory, PassResult, StatData,
+            ConcreteFunctionData, ConcreteVariableData, Pass, PassError, PassFactory, PassResult,
+            StatData,
         },
         runtime_type::ConcreteRuntimeType,
         scope_analysis::{ConcreteFunction, ConcreteVariable, FunctionID},
@@ -199,7 +201,8 @@ pub struct StatTracker<'state> {
     variable_data: &'state ConcreteVariableData,
     function_data: &'state ConcreteFunctionData,
 
-    stats: &'state mut StatData,
+    stats: PerNodeData<StatData>,
+    stats_entry: Empty<'state, StatData>,
 
     function_stats: HashMap<FunctionID, NodeStats>,
     current_function: Option<Rc<RefCell<ConcreteFunction>>>,
@@ -227,7 +230,8 @@ impl PassFactory for StatTracker<'_> {
             variable_data,
             function_data,
 
-            stats: stats.insert_default(),
+            stats: Default::default(),
+            stats_entry: stats,
 
             function_stats: HashMap::default(),
             current_function: None,
@@ -239,6 +243,16 @@ impl Pass for StatTracker<'_> {
     fn run<'state>(mut self: Box<Self>) -> PassResult {
         let program = self.program.take().unwrap();
         self.analyze_program(program);
+
+        self.stats_entry.insert(
+            self.stats
+                .finish(program)
+                .map_err(|err| PassError::CompilerError {
+                    producing_pass: Self::name(),
+                    source: err.into(),
+                })?
+                .into(),
+        );
 
         Ok(())
     }
@@ -258,7 +272,7 @@ impl StatTracker<'_> {
         }
     }
 
-    fn analyze_program(mut self, program: &mut Program) {
+    fn analyze_program(&mut self, program: &mut Program) {
         let mut stats = NodeStats {
             terminates_function: YesNoMaybe::No,
             non_terminating_ranges: vec![],
@@ -285,7 +299,7 @@ impl StatTracker<'_> {
                 }
                 stats.uses_gpu = stats.uses_gpu.serial(uses_gpu);
             }
-            if prev_stats == **self.stats {
+            if *prev_stats == *self.stats {
                 break;
             }
 
@@ -295,7 +309,7 @@ impl StatTracker<'_> {
             info!("Stats aren't stable yet.");
         }
 
-        if let Some(main_function) = program
+        let program_stat = if let Some(main_function) = program
             .top_level_statements
             .iter()
             .find_map(|tls| match tls {
@@ -305,19 +319,17 @@ impl StatTracker<'_> {
                     Some(function_definition)
                 }
                 _ => None,
-            })
-        {
-            let main_stat = self
-                .stats
-                .get(&main_function.id)
-                .expect("All functions should have been analyzed by now")
-                .clone();
-            self.stats.insert(program.id, main_stat);
+            }) {
+            self.stats.get(main_function).unwrap().clone()
         } else {
             self.errors.push(ErrorKind::NoMainFunction {
                 file_start: SourceRange::empty_start().named(program.file_name.clone()),
             });
-        }
+
+            stats
+        };
+
+        self.stats.insert(program, program_stat);
     }
 
     fn analyze_function_definition(&mut self, fdef: &mut FunctionDefinition) -> NodeStats {
@@ -334,7 +346,7 @@ impl StatTracker<'_> {
             right_arrow_token: _,
             return_type,
             body,
-            id,
+            id: _,
         } = fdef;
 
         self.current_function = Some(referenced_function.clone());
@@ -347,7 +359,7 @@ impl StatTracker<'_> {
             self.analyze_type(return_type);
         }
         let body_stat = self.analyze_function_body(body);
-        self.stats.insert(*id, body_stat.clone());
+        self.stats.insert(fdef, body_stat.clone());
         self.function_stats
             .insert(referenced_function.borrow().id, body_stat.clone());
 
@@ -356,26 +368,25 @@ impl StatTracker<'_> {
         body_stat
     }
 
-    fn analyze_type_alias(
-        &mut self,
-        TypeAlias {
+    fn analyze_type_alias(&mut self, alias: &mut TypeAlias) -> NodeStats {
+        let TypeAlias {
             let_token: _,
             name: _,
             name_token: _,
             equal_token: _,
             type_,
             semicolon_token: _,
-            id,
-        }: &mut TypeAlias,
-    ) -> NodeStats {
+            id: _,
+        } = alias;
+
         let stats = self.analyze_type(type_);
-        self.stats.insert(*id, stats.clone());
+        self.stats.insert(alias, stats.clone());
 
         stats
     }
 
     fn analyze_statement_function_body(&mut self, body: &mut StatementFunctionBody) -> NodeStats {
-        let StatementFunctionBody { statement, id } = body;
+        let StatementFunctionBody { statement, id: _ } = body;
         let stat = self.analyze_statement(statement);
 
         assert_eq!(
@@ -401,7 +412,7 @@ impl StatTracker<'_> {
             }
         }
 
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(body, stat.clone());
         stat
     }
 
@@ -415,7 +426,7 @@ impl StatTracker<'_> {
             symbol: _,
             symbol_token: _,
             semicolon_token: _,
-            id,
+            id: _,
         } = extern_function_body;
 
         let stat = NodeStats {
@@ -424,7 +435,7 @@ impl StatTracker<'_> {
             uses_gpu: YesNoMaybe::Maybe,
             accessed_items: AccessRecord::default(),
         };
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(extern_function_body, stat.clone());
         stat
     }
 
@@ -434,7 +445,7 @@ impl StatTracker<'_> {
             name_token: _,
             name: _,
             type_,
-            id,
+            id: _,
         } = binding;
 
         let stat = if let Some((_colon, type_)) = type_ {
@@ -451,7 +462,7 @@ impl StatTracker<'_> {
                 used_variables: vec![],
             },
         });
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(binding, stat.clone());
         stat
     }
 
@@ -460,18 +471,17 @@ impl StatTracker<'_> {
         let ExpressionStatement {
             expression,
             semicolon_token: _,
-            id,
+            id: _,
         } = stmt;
         let exp_stat = self
             .analyze_expression(expression)
             .serial(NodeStats::default_with_range(vec![bounds]));
-        self.stats.insert(*id, exp_stat.clone());
+        self.stats.insert(stmt, exp_stat.clone());
         exp_stat
     }
 
-    fn analyze_on_statement(
-        &mut self,
-        OnStatement {
+    fn analyze_on_statement(&mut self, stmt: &mut OnStatement) -> NodeStats {
+        let OnStatement {
             on_token: _,
             executor,
             iterators,
@@ -479,9 +489,9 @@ impl StatTracker<'_> {
             bindings,
             close_paren_token: _,
             body,
-            id,
-        }: &mut OnStatement,
-    ) -> NodeStats {
+            id: _,
+        } = stmt;
+
         let exec_stats = self.analyze_executor(executor);
 
         let mut it_stats = NodeStats::default_with_range(vec![]);
@@ -518,7 +528,7 @@ impl StatTracker<'_> {
             .serial(binding_stats)
             .serial(body_stats);
 
-        self.stats.insert(*id, stats.clone());
+        self.stats.insert(stmt, stats.clone());
         stats
     }
 
@@ -528,7 +538,7 @@ impl StatTracker<'_> {
             open_brace_token: _,
             body,
             close_brace_token,
-            id,
+            id: _,
         } = stmt;
 
         let mut body_stat = NodeStats::default_with_range(vec![bounds]);
@@ -554,7 +564,7 @@ impl StatTracker<'_> {
             self.errors
                 .push(ErrorKind::Lint(Lint::CodeUnreachable { range }));
         }
-        self.stats.insert(*id, body_stat.clone());
+        self.stats.insert(stmt, body_stat.clone());
         body_stat
     }
 
@@ -564,7 +574,7 @@ impl StatTracker<'_> {
             return_token: _,
             value,
             semicolon_token: _,
-            id,
+            id: _,
         } = stmt;
 
         let stat = match value {
@@ -577,7 +587,7 @@ impl StatTracker<'_> {
             uses_gpu: YesNoMaybe::No,
             accessed_items: AccessRecord::default(),
         });
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(stmt, stat.clone());
         stat
     }
 
@@ -592,13 +602,13 @@ impl StatTracker<'_> {
             equals_token: _,
             value,
             semicolon_token: _,
-            id,
+            id: _,
         } = stmt;
         self.analyze_simple_binding(binding);
         let stat = self
             .analyze_expression(value)
             .serial(NodeStats::default_with_range(vec![bounds]));
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(stmt, stat.clone());
         stat
     }
 
@@ -610,7 +620,7 @@ impl StatTracker<'_> {
             if_body,
             elifs,
             else_,
-            id,
+            id: _,
         } = stmt;
 
         let mut if_stats = self.analyze_expression(condition);
@@ -636,31 +646,29 @@ impl StatTracker<'_> {
             if_stats = if_stats.serial(NodeStats::default_with_range(vec![bounds]));
         }
 
-        self.stats.insert(*id, if_stats.clone());
+        self.stats.insert(stmt, if_stats.clone());
         if_stats
     }
 
-    fn analyze_while_loop_statement(
-        &mut self,
-        WhileLoopStatement {
+    fn analyze_while_loop_statement(&mut self, stmt: &mut WhileLoopStatement) -> NodeStats {
+        let WhileLoopStatement {
             while_token: _,
             condition,
             body,
-            id,
-        }: &mut WhileLoopStatement,
-    ) -> NodeStats {
+            id: _,
+        } = stmt;
+
         let con_stat = self.analyze_expression(condition);
         self.loop_count += 1;
         let body_stat = self.analyze_statement(body);
         self.loop_count -= 1;
         let stat = con_stat.serial(body_stat);
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(stmt, stat.clone());
         stat
     }
 
-    fn analyze_for_loop_statement(
-        &mut self,
-        ForLoopStatement {
+    fn analyze_for_loop_statement(&mut self, stmt: &mut ForLoopStatement) -> NodeStats {
+        let ForLoopStatement {
             for_token: _,
             open_paren_token: _,
             initializer,
@@ -669,9 +677,9 @@ impl StatTracker<'_> {
             incrementer,
             close_paren_token,
             body,
-            id,
-        }: &mut ForLoopStatement,
-    ) -> NodeStats {
+            id: _,
+        } = stmt;
+
         let init_stat = self.analyze_statement(initializer);
 
         let con_stat = condition
@@ -694,13 +702,13 @@ impl StatTracker<'_> {
             .parallel(con_stat)
             .parallel(inc_stat)
             .parallel(body_stat);
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(stmt, stat.clone());
         stat
     }
 
     fn analyze_break_statement(&mut self, break_stmt: &mut BreakStatement) -> NodeStats {
         let stat = NodeStats::default_with_range(vec![break_stmt.get_source_range()]);
-        self.stats.insert(break_stmt.id, stat.clone());
+        self.stats.insert(break_stmt, stat.clone());
         if self.loop_count == 0 {
             self.errors.push(ErrorKind::LoopControlOutsideLoop {
                 kind: LoopControl::Break,
@@ -713,7 +721,7 @@ impl StatTracker<'_> {
 
     fn analyze_skip_statement(&mut self, skip_stmt: &mut SkipStatement) -> NodeStats {
         let stat = NodeStats::default_with_range(vec![skip_stmt.get_source_range()]);
-        self.stats.insert(skip_stmt.id, stat.clone());
+        self.stats.insert(skip_stmt, stat.clone());
         if self.loop_count == 0 {
             self.errors.push(ErrorKind::LoopControlOutsideLoop {
                 kind: LoopControl::Skip,
@@ -726,26 +734,25 @@ impl StatTracker<'_> {
 
     fn analyze_self_executor_host(&mut self, executor_host: &mut SelfExecutorHost) -> NodeStats {
         let stat = NodeStats::default_with_range(vec![executor_host.get_source_range()]);
-        self.stats.insert(executor_host.id, stat.clone());
+        self.stats.insert(executor_host, stat.clone());
         stat
     }
 
-    fn analyze_thread_executor(
-        &mut self,
-        ThreadExecutor {
+    fn analyze_thread_executor(&mut self, executor: &mut ThreadExecutor) -> NodeStats {
+        let ThreadExecutor {
             host,
             dot_token: _,
             thread_token: _,
             open_bracket_token: _,
             index,
             close_bracket_token: _,
-            id,
-        }: &mut ThreadExecutor,
-    ) -> NodeStats {
+            id: _,
+        } = executor;
+
         let host_stat = self.analyze_executor_host(host);
         let index_stat = self.analyze_expression(index);
         let stat = host_stat.serial(index_stat);
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(executor, stat.clone());
         stat
     }
 
@@ -758,7 +765,7 @@ impl StatTracker<'_> {
             open_bracket_token: _,
             gpu_index,
             close_bracket_token: _,
-            id,
+            id: _,
         } = executor;
         let stat = NodeStats {
             terminates_function: YesNoMaybe::No,
@@ -768,7 +775,7 @@ impl StatTracker<'_> {
         }
         .serial(self.analyze_executor_host(host))
         .serial(self.analyze_expression(gpu_index));
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(executor, stat.clone());
         stat
     }
 
@@ -777,11 +784,11 @@ impl StatTracker<'_> {
         let LiteralExpression {
             value: _,
             token: _,
-            id,
+            id: _,
         } = expr;
 
         let stat = NodeStats::default_with_range(vec![bounds]);
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(expr, stat.clone());
         stat
     }
 
@@ -791,14 +798,14 @@ impl StatTracker<'_> {
             open_bracket_token: _,
             elements,
             close_bracket_token: _,
-            id,
+            id: _,
         } = expr;
         let mut stat = NodeStats::default_with_range(vec![bounds]);
         for (item, _comma) in elements {
             stat = stat.serial(self.analyze_expression(item));
         }
 
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(expr, stat.clone());
         stat
     }
 
@@ -809,7 +816,7 @@ impl StatTracker<'_> {
             open_brace_token: _,
             members,
             close_brace_token: _,
-            id,
+            id: _,
         } = expr;
         let mut stat = NodeStats::default_with_range(vec![bounds]);
         stat = stat.serial(self.analyze_type(type_));
@@ -826,7 +833,7 @@ impl StatTracker<'_> {
             stat = stat.serial(self.analyze_expression(value));
         }
 
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(expr, stat.clone());
         stat
     }
 
@@ -842,7 +849,7 @@ impl StatTracker<'_> {
             open_paren_token: _,
             arguments,
             close_paren_token: _,
-            id,
+            id: _,
         } = function_call;
         let mut stat = NodeStats {
             terminates_function: YesNoMaybe::No,
@@ -862,7 +869,7 @@ impl StatTracker<'_> {
         for (arg, _comma) in arguments {
             stat = stat.serial(self.analyze_expression(arg));
         }
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(function_call, stat.clone());
         stat
     }
 
@@ -875,60 +882,57 @@ impl StatTracker<'_> {
             open_paren_token: _,
             arguments,
             close_paren_token: _,
-            id,
+            id: _,
         } = expr;
 
         let mut stat = NodeStats::default_with_range(vec![bounds]);
         for (arg, _comma) in arguments {
             stat = stat.serial(self.analyze_expression(arg));
         }
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(expr, stat.clone());
         stat
     }
 
-    fn analyze_array_index_expression(
-        &mut self,
-        ArrayIndexExpression {
+    fn analyze_array_index_expression(&mut self, expr: &mut ArrayIndexExpression) -> NodeStats {
+        let ArrayIndexExpression {
             array,
             open_bracket_token: _,
             index,
             close_bracket_token: _,
-            id,
-        }: &mut ArrayIndexExpression,
-    ) -> NodeStats {
+            id: _,
+        } = expr;
+
         let stat = self
             .analyze_expression(array)
             .serial(self.analyze_expression(index));
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(expr, stat.clone());
         stat
     }
 
-    fn analyze_struct_access_expression(
-        &mut self,
-        StructAccessExpression {
+    fn analyze_struct_access_expression(&mut self, expr: &mut StructAccessExpression) -> NodeStats {
+        let StructAccessExpression {
             value,
             dot_token: _,
             member_name: _,
             member_name_token: _,
-            id,
-        }: &mut StructAccessExpression,
-    ) -> NodeStats {
+            id: _,
+        } = expr;
+
         let stat = self.analyze_expression(value);
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(expr, stat.clone());
         stat
     }
 
-    fn analyze_grouping_expression(
-        &mut self,
-        GroupingExpression {
+    fn analyze_grouping_expression(&mut self, expr: &mut GroupingExpression) -> NodeStats {
+        let GroupingExpression {
             open_paren_token: _,
             subexpression,
             close_paren_token: _,
-            id,
-        }: &mut GroupingExpression,
-    ) -> NodeStats {
+            id: _,
+        } = expr;
+
         let stat = self.analyze_expression(subexpression);
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(expr, stat.clone());
         stat
     }
 
@@ -942,7 +946,7 @@ impl StatTracker<'_> {
         let VariableAccessExpression {
             name: _,
             name_token: _,
-            id,
+            id: _,
         } = expr;
 
         let stat = NodeStats {
@@ -954,70 +958,69 @@ impl StatTracker<'_> {
                 used_variables: vec![var.clone()],
             },
         };
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(expr, stat.clone());
         stat
     }
 
-    fn analyze_unary_expression(
-        &mut self,
-        UnaryExpression {
+    fn analyze_unary_expression(&mut self, expr: &mut UnaryExpression) -> NodeStats {
+        let UnaryExpression {
             operator_token: _,
             operation: _,
             operand,
-            id,
-        }: &mut UnaryExpression,
-    ) -> NodeStats {
+            id: _,
+        } = expr;
+
         let stat = self.analyze_expression(operand);
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(expr, stat.clone());
         stat
     }
 
-    fn analyze_cast_expression(
-        &mut self,
-        CastExpression {
+    fn analyze_cast_expression(&mut self, expr: &mut CastExpression) -> NodeStats {
+        let CastExpression {
             operand,
             as_token: _,
             type_,
-            id,
-        }: &mut CastExpression,
-    ) -> NodeStats {
+            id: _,
+        } = expr;
+
         let operand_stat = self.analyze_expression(operand);
         let type_stat = self.analyze_type(type_);
         let stat = operand_stat.serial(type_stat);
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(expr, stat.clone());
         stat
     }
 
-    fn analyze_binary_expression(
-        &mut self,
-        BinaryExpression {
+    fn analyze_binary_expression(&mut self, expr: &mut BinaryExpression) -> NodeStats {
+        let BinaryExpression {
             left,
             operator_token: _,
             operation: _,
             right,
-            id,
-        }: &mut BinaryExpression,
-    ) -> NodeStats {
+            id: _,
+        } = expr;
+
         let stat = self
             .analyze_expression(left)
             .serial(self.analyze_expression(right));
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(expr, stat.clone());
         stat
     }
 
     fn analyze_variable_assignment_expression(
         &mut self,
-        VariableAssignmentExpression {
+        expr: &mut VariableAssignmentExpression,
+    ) -> NodeStats {
+        let VariableAssignmentExpression {
             lvalue,
             equal_token: _,
             right,
-            id,
-        }: &mut VariableAssignmentExpression,
-    ) -> NodeStats {
+            id: _,
+        } = expr;
+
         let stat = self
             .analyze_lvalue(lvalue)
             .serial(self.analyze_expression(right));
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(expr, stat.clone());
         stat
     }
 
@@ -1028,7 +1031,7 @@ impl StatTracker<'_> {
         let VariableLValue {
             name: _,
             name_token: _,
-            id,
+            id: _,
         } = lvalue;
 
         let stat = NodeStats {
@@ -1040,53 +1043,50 @@ impl StatTracker<'_> {
                 used_variables: vec![var.clone()],
             },
         };
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(lvalue, stat.clone());
         stat
     }
 
-    fn analyze_array_index_lvalue(
-        &mut self,
-        ArrayIndexLValue {
+    fn analyze_array_index_lvalue(&mut self, lvalue: &mut ArrayIndexLValue) -> NodeStats {
+        let ArrayIndexLValue {
             array,
             open_bracket_token: _,
             index,
             close_bracket_token: _,
-            id,
-        }: &mut ArrayIndexLValue,
-    ) -> NodeStats {
+            id: _,
+        } = lvalue;
+
         let stat = self
             .analyze_lvalue(array)
             .serial(self.analyze_expression(index));
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(lvalue, stat.clone());
         stat
     }
 
-    fn analyze_struct_access_lvalue(
-        &mut self,
-        StructAccessLValue {
+    fn analyze_struct_access_lvalue(&mut self, lvalue: &mut StructAccessLValue) -> NodeStats {
+        let StructAccessLValue {
             value,
             dot_token: _,
             member_name: _,
             member_name_token: _,
-            id,
-        }: &mut StructAccessLValue,
-    ) -> NodeStats {
+            id: _,
+        } = lvalue;
+
         let stat = self.analyze_lvalue(value);
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(lvalue, stat.clone());
         stat
     }
 
-    fn analyze_grouping_lvalue(
-        &mut self,
-        GroupingLValue {
+    fn analyze_grouping_lvalue(&mut self, lvalue: &mut GroupingLValue) -> NodeStats {
+        let GroupingLValue {
             open_paren_token: _,
             sublvalue,
             close_paren_token: _,
-            id,
-        }: &mut GroupingLValue,
-    ) -> NodeStats {
+            id: _,
+        } = lvalue;
+
         let stat = self.analyze_lvalue(sublvalue);
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(lvalue, stat.clone());
         stat
     }
 
@@ -1095,10 +1095,10 @@ impl StatTracker<'_> {
         let SimpleType {
             token: _,
             type_: _,
-            id,
+            id: _,
         } = type_;
         let stat = NodeStats::default_with_range(vec![bounds]);
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(type_, stat.clone());
         stat
     }
 
@@ -1107,49 +1107,47 @@ impl StatTracker<'_> {
         let UnitType {
             open_paren_token: _,
             close_paren_token: _,
-            id,
+            id: _,
         } = type_;
         let stat = NodeStats::default_with_range(vec![bounds]);
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(type_, stat.clone());
         stat
     }
 
     fn analyze_idk_type(&mut self, type_: &mut IdkType) -> NodeStats {
         let bounds = type_.get_source_range();
-        let IdkType { token: _, id } = type_;
+        let IdkType { token: _, id: _ } = type_;
         let stat = NodeStats::default_with_range(vec![bounds]);
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(type_, stat.clone());
         stat
     }
 
-    fn analyze_array_type(
-        &mut self,
-        ArrayType {
+    fn analyze_array_type(&mut self, type_: &mut ArrayType) -> NodeStats {
+        let ArrayType {
             subtype,
             open_bracket_token: _,
             size,
             close_bracket_token: _,
-            id,
-        }: &mut ArrayType,
-    ) -> NodeStats {
+            id: _,
+        } = type_;
+
         let mut stat = self.analyze_type(subtype);
         if let Some(size) = size {
             stat = stat.serial(self.analyze_expression(size));
         }
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(type_, stat.clone());
         stat
     }
 
-    fn analyze_struct_type(
-        &mut self,
-        StructType {
+    fn analyze_struct_type(&mut self, type_: &mut StructType) -> NodeStats {
+        let StructType {
             struct_token,
             open_brace_token: _,
             members,
             close_brace_token: _,
-            id,
-        }: &mut StructType,
-    ) -> NodeStats {
+            id: _,
+        } = type_;
+
         let mut stat = NodeStats::default_with_range(vec![struct_token.range.clone()]);
         for (
             StructMemberDefinition {
@@ -1163,20 +1161,19 @@ impl StatTracker<'_> {
         {
             stat = stat.serial(self.analyze_type(type_));
         }
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(type_, stat.clone());
         stat
     }
 
-    fn analyze_alias_type(
-        &mut self,
-        AliasType {
+    fn analyze_alias_type(&mut self, type_: &mut AliasType) -> NodeStats {
+        let AliasType {
             name: _,
             name_token,
-            id,
-        }: &mut AliasType,
-    ) -> NodeStats {
+            id: _,
+        } = type_;
+
         let stat = NodeStats::default_with_range(vec![name_token.range.clone()]);
-        self.stats.insert(*id, stat.clone());
+        self.stats.insert(type_, stat.clone());
         stat
     }
 }

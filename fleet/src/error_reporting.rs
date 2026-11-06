@@ -572,8 +572,14 @@ impl RenderedError {
                     }
                 });
 
-            let max_line_number_length =
-                displayed_lines.clone().last().unwrap().0.to_string().len() + 1;
+            let max_line_number_length = displayed_lines
+                .clone()
+                .last()
+                .map(|(nr, _line)| nr)
+                .unwrap_or(0)
+                .to_string()
+                .len()
+                + 1;
 
             let snippet = displayed_lines
                 .map(|(nr, line)| {
@@ -628,13 +634,13 @@ impl RenderedError {
                         );
                     }
 
-                    out
+                    out + "\n"
                 })
-                .join("\n");
+                .join("");
 
             highlighted_sources.push(format!(
             "{structure_color}{empty:─<max_line_number_length$}╭─ {filename}:{line}:{column}{ansi_reset}\n\
-            {snippet}\n\
+            {snippet}\
             {structure_color}{empty:─<max_line_number_length$}╯{ansi_reset}",
             empty = "",
         ));

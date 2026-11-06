@@ -262,12 +262,7 @@ impl CCodeGenerator<'_> {
             .map(|(body, (_i, name))| format!("struct {name} {{\n{}\n}};", indent_all_by(4, body)))
             .join("\n");
 
-        let needs_runtime = self
-            .node_stats
-            .get(&program.id)
-            .expect("Program must have stats")
-            .uses_gpu
-            .at_least_maybe();
+        let needs_runtime = self.node_stats.get(program).uses_gpu.at_least_maybe();
 
         let (runtime_include_str, runtime_init_str, runtime_deinit_str) = if needs_runtime {
             (

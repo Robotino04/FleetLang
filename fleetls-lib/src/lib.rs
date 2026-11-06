@@ -887,18 +887,18 @@ impl Backend {
                 .map_or("No AST Node".to_string(), |(info, debug)| format!(
                     "{info} // {debug}"
                 )),
-            stats
-                .as_ref()
-                .and_then(|stat| stat.get(&node_hierarchy.last()?.get_id()).cloned())
-                .map_or("No stats available".to_string(), |stat| format!(
-                    "{stat:#?}"
-                )),
-            analysis_data
-                .as_ref()
-                .and_then(|analysis| Some(analysis.scope_data.get(node_hierarchy.last()?)))
-                .map_or("No scope available".to_string(), |scope| format!(
-                    "{scope:#?}"
-                )),
+            match (stats, node_hierarchy.last()) {
+                (Some(stat), Some(node)) => {
+                    format!("{:#?}", stat.get(node))
+                }
+                _ => "No stats available".to_string(),
+            },
+            match (analysis_data, node_hierarchy.last()) {
+                (Some(analysis), Some(node)) => {
+                    format!("{:#?}", analysis.scope_data.get(node))
+                }
+                _ => "No scope available".to_string(),
+            },
             hovered_token,
         )
     }
@@ -955,17 +955,17 @@ impl Backend {
         };
 
         Ok(node_hierarchy.iter().rev().find_map(|node| match node {
-            AstNode::Expression(Expression::FunctionCall(
-                node @ FunctionCallExpression { .. },
-            )) => Some(
-                pm.state
-                    .get::<FunctionData>()?
-                    .get(node)
-                    .borrow()
-                    .symbol
-                    .definition
-                    .clone(),
-            ),
+            AstNode::Expression(Expression::FunctionCall(node @ FunctionCallExpression { .. })) => {
+                Some(
+                    pm.state
+                        .get::<FunctionData>()?
+                        .get(node)
+                        .borrow()
+                        .symbol
+                        .definition
+                        .clone(),
+                )
+            }
 
             AstNode::Expression(Expression::VariableAccess(node)) => Some(
                 pm.state
